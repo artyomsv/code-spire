@@ -70,6 +70,24 @@ describe('SettingsProviders — provider form', () => {
    * submit that reaches the API with a blank workspace becomes a bad registry row whose failure
    * only surfaces later, during a real review, as an SCM error nobody can trace back.
    */
+  it('registers an Atlassian account without forge role or workspace fields', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    renderPage();
+    const dialog = await openAddForm();
+    const form = within(dialog);
+    fireEvent.click(form.getByRole('combobox', { name: 'Kind' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'atlassian' }));
+    expect(form.queryByRole('combobox', { name: 'Role' })).not.toBeInTheDocument();
+    expect(form.queryByLabelText('Workspace')).not.toBeInTheDocument();
+    expect(form.getByRole('combobox', { name: 'Auth kind' })).toHaveTextContent('basic');
+    fireEvent.change(form.getByLabelText('Name'), { target: { value: 'Site bot' } });
+    fireEvent.change(form.getByLabelText('Base URL'), { target: { value: 'https://site.atlassian.net' } });
+    fireEvent.change(form.getByLabelText('Username'), { target: { value: 'bot@example.test' } });
+    typeSecret(dialog);
+    submit(dialog);
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ type: 'atlassian', role: 'CONTEXT', workspace: null, authKind: 'basic' })));
+  });
+
   it('refuses to submit without the required fields and does not call the API', async () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(undefined as never);
     renderPage();
@@ -127,7 +145,7 @@ describe('SettingsProviders — provider form', () => {
     const form = within(dialog);
     expect(form.getByLabelText(/base url/i)).toHaveValue('https://api.bitbucket.org/2.0');
 
-    fireEvent.click(form.getByRole('combobox', { name: /^type$/i }));
+    fireEvent.click(form.getByRole('combobox', { name: /^kind$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'github' }));
 
     await waitFor(() => expect(form.getByLabelText(/base url/i)).toHaveValue('https://api.github.com'));
@@ -145,7 +163,7 @@ describe('SettingsProviders — provider form', () => {
       target: { value: 'https://git.example.invalid/api/v4' },
     });
 
-    fireEvent.click(form.getByRole('combobox', { name: /^type$/i }));
+    fireEvent.click(form.getByRole('combobox', { name: /^kind$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'gitlab' }));
 
     expect(form.getByLabelText(/base url/i)).toHaveValue('https://git.example.invalid/api/v4');
@@ -164,7 +182,7 @@ describe('SettingsProviders — provider form', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'basic' }));
     expect(form.getByRole('combobox', { name: /auth kind/i })).toHaveTextContent(/basic/i);
 
-    fireEvent.click(form.getByRole('combobox', { name: /^type$/i }));
+    fireEvent.click(form.getByRole('combobox', { name: /^kind$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'github' }));
 
     await waitFor(() =>

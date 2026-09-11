@@ -77,6 +77,11 @@ class ProviderCheckRecordTest {
         ProviderResource resource = new ProviderResource();
         resource.registry = registry;
         resource.identity = identity;
+        resource.clients = new ProviderClients() {
+            @Override public String reportedScopes(String type, String url, String kind, String user, String secret, String workspace) {
+                return null; // This fixture isolates identity outcomes without a live scope probe.
+            }
+        };
         // scm.example.invalid deliberately never resolves via DNS; skip the SSRF host check
         // (the real https+public-address enforcement is exercised elsewhere, not by this test).
         resource.allowInsecureProviderUrls = true;
@@ -150,6 +155,7 @@ class ProviderCheckRecordTest {
     private ProviderResource resourceThatFailsCheckWith(RuntimeException toThrow) {
         ProviderResource resource = new ProviderResource();
         resource.registry = registry;
+        resource.clients = new ProviderClients(); // Stub kind has no scope endpoint.
         resource.identity = new ProviderIdentityResolver() {
             @Override
             public Author resolveForCheck(ScmProvider p) {

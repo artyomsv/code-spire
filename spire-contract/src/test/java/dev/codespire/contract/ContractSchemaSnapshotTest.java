@@ -140,6 +140,9 @@ class ContractSchemaSnapshotTest {
             lines.addAll(subtypes);
             lines.add("");
         }
+        lines.add("# ContextCredential");
+        lines.add(render(dev.codespire.contract.context.ContextCredential.class, "ContextCredential"));
+        lines.add("");
         return String.join("\n", lines);
     }
 

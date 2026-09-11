@@ -33,7 +33,7 @@ public class WorkerContextCredentials {
     /** The encrypted list of all enabled context credentials bound to a workspace, or empty when none exist. */
     public Optional<String> packAll(String workspace) {
         List<ContextCredential> creds = registry.resolveAllEnabled().stream()
-                .map(cfg -> new ContextCredential(cfg.type(), cfg.baseUrl(),
+                .map(cfg -> new ContextCredential(cfg.type(), cfg.platform(), cfg.baseUrl(),
                         cfg.authKind(), cfg.username(), cfg.secret(), cfg.projectKeys()))
                 .toList();
         if (creds.isEmpty()) {

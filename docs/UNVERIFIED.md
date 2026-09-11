@@ -33,6 +33,47 @@ evidence would settle it**.
 
 ---
 
+## Accounts normalization — live evidence still needed (ADR-041, 2026-09-12)
+
+Sources below were retrieved **2026-09-11**. WireMock checks prove how the application handles
+responses; they do not establish which real token families send those responses. One live
+GitHub `/user` request returned HTTP 200 and `X-OAuth-Scopes` on 2026-09-11, but the credential
+was an **OAuth token**, so that observation does not establish classic PAT behavior.
+
+| Unmeasured claim | Why the suite does not establish it | Evidence needed |
+|---|---|---|
+| GitHub classic PATs return `X-OAuth-Scopes` | The [GitHub scope documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) documents OAuth; the live request used OAuth, and PAT fixtures supply their own header. | A live classic PAT `/user` response, recording only status and scope header. |
+| GitLab project/group access tokens answer `/personal_access_tokens/self` | The [API contract](https://docs.gitlab.com/api/personal_access_tokens/) covers PAT introspection; fixtures cannot prove bot-token support. | One project token and one group token on a recorded server version. |
+| GitLab's minimum supported version provides `self` | The retrieved [API page](https://docs.gitlab.com/api/personal_access_tokens/) does not establish the minimum version for this deployment's supported range. | Versioned documentation or a live check at the minimum supported version. |
+| Bitbucket Basic email/API-token responses carry `x-oauth-scopes` | The [REST authentication documentation](https://developer.atlassian.com/cloud/bitbucket/rest/intro/) and synthetic headers do not demonstrate this request/credential combination. | A live Basic request to `/user`, or the workspace repositories fallback, recording status and header only. |
+| Bitbucket Basic API-token reports use the vocabulary understood by the warning rule | The [REST scope documentation](https://developer.atlassian.com/cloud/bitbucket/rest/) describes scope families; the fixture chooses its own vocabulary. | Observe real read/write token reports and compare them with both classic and modern scope names. |
+
+Fine-grained GitHub tokens are represented as unknown when no granted-scope header is present;
+`X-Accepted-GitHub-Permissions` is never treated as a grant. That fixture passes, but no live
+fine-grained PAT was exercised for this change. Unknown scope reports still allow registration;
+an empty report is displayed separately. Advice never establishes per-repository access.
+
+**Scoped Atlassian tokens remain unsupported by the site-host flow.** Atlassian's
+[token guidance](https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/)
+requires the `api.atlassian.com/ex/jira/{cloudId}` or `/ex/confluence/{cloudId}` gateway for scoped
+tokens. The account probe tries site-host Jira and Confluence identity routes; readers keep their
+existing site-relative paths. Gateway-base compatibility has not been measured and is not claimed.
+Classic email/API-token identity and Confluence-only fallback are covered by synthetic responses,
+not by a live Atlassian credential in this change.
+
+**Upgrade evidence is synthetic.** A real PostgreSQL/Flyway V58→V59 test seeds six forge accounts
+and five legacy source types; reconciler tests exercise deduplication, new-AAD decryption,
+idempotency, per-row rollback and recovery. The operator's actual five source credentials were
+not decrypted or migrated. Legacy code sources still need a one-time host-based platform guess;
+custom GitLab hosts without `gitlab` in their name need operator reassignment to the correct
+account. Legacy Bitbucket code rows are retained for recovery, since the new code-source picker
+supports GitHub and GitLab only. No production rollout is claimed. A headless Chrome rendering of
+the actual account-table component and stylesheet at 1280/1440/1920 widths exercised long values:
+smaller widths scroll inside the table without body overflow, and 1920 fits fully. This isolated
+render is not a live, authenticated application walkthrough.
+
+---
+
 ## A. Known not to work — documented, and guarded where a guard is possible
 
 These are not suspicions: each gap is proven. **A1 and A2 are build-enforced** — a guard fails the

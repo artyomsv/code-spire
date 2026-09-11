@@ -60,32 +60,6 @@ class ContextKeyValidatorTest {
                 aResponse().withStatus(status).withHeader("Content-Type", contentType).withBody(body)));
     }
 
-    // --- platform inference -------------------------------------------------
-
-    @Test
-    void aHostNamingItsPlatformIsReadAsThatPlatform() {
-        assertEquals("gitlab", ContextKeyValidator.codePlatform("https://gitlab.acme.example"));
-        assertEquals("gitlab", ContextKeyValidator.codePlatform("https://GitLab.example.com"));
-        assertEquals("bitbucket", ContextKeyValidator.codePlatform("https://api.bitbucket.org/2.0"));
-    }
-
-    /**
-     * GitHub is the fallback because its own hostname is the least predictable of the three — and a
-     * self-managed GitLab whose host does not say "gitlab" lands here too, which is exactly what the
-     * Settings base-URL hint warns an operator about.
-     */
-    @Test
-    void anyOtherHostFallsBackToGitHub() {
-        assertEquals("github", ContextKeyValidator.codePlatform("https://api.github.com"));
-        assertEquals("github", ContextKeyValidator.codePlatform("https://source.acme.example"));
-    }
-
-    /** A base URL the JDK cannot parse must pick a branch rather than throw out of the probe. */
-    @Test
-    void anUnparseableBaseUrlStillResolvesToAPlatform() {
-        assertEquals("github", ContextKeyValidator.codePlatform("not a url"));
-    }
-
     @Test
     void eachPlatformProbesItsOwnRawContentRoute() {
         assertTrue(ContextKeyValidator.codeCheckPath("github")
@@ -109,7 +83,7 @@ class ContextKeyValidatorTest {
         answer(404, "application/json", "{\"message\":\"Not Found\"}");
 
         ContextKeyValidator.CheckOutcome outcome =
-                validator.check("code", baseUrl(), "bearer", null, "token");
+                validator.check("code", "github", baseUrl(), "bearer", null, "token");
 
         assertTrue(outcome.ok());
         assertNull(outcome.account(), "a raw-content API has no account record to report");
@@ -120,7 +94,7 @@ class ContextKeyValidatorTest {
     void aCodeProbeAnsweredWithTheFileItselfCountsAsAccepted() {
         answer(200, "text/plain", "# Placeholder\n");
 
-        assertTrue(validator.check("code", baseUrl(), "bearer", null, "token").ok());
+        assertTrue(validator.check("code", "github", baseUrl(), "bearer", null, "token").ok());
     }
 
     /**
@@ -133,7 +107,7 @@ class ContextKeyValidatorTest {
         answer(200, "text/html", "<!DOCTYPE html><html><body>Sign in</body></html>");
 
         ContextKeyValidator.CheckOutcome outcome =
-                validator.check("code", baseUrl(), "bearer", null, "token");
+                validator.check("code", "github", baseUrl(), "bearer", null, "token");
 
         assertFalse(outcome.ok());
         assertTrue(outcome.isRejected(), "a 2xx that is a login page IS a refusal, not an outage");
@@ -145,7 +119,7 @@ class ContextKeyValidatorTest {
     void aSignInPageWithoutAnHtmlContentTypeIsStillRecognised() {
         answer(200, "text/plain", "<html><body>Sign in</body></html>");
 
-        assertFalse(validator.check("code", baseUrl(), "bearer", null, "token").ok());
+        assertFalse(validator.check("code", "github", baseUrl(), "bearer", null, "token").ok());
     }
 
     @Test
@@ -153,7 +127,7 @@ class ContextKeyValidatorTest {
         answer(401, "application/json", "{\"message\":\"Bad credentials\"}");
 
         ContextKeyValidator.CheckOutcome outcome =
-                validator.check("code", baseUrl(), "bearer", null, "token");
+                validator.check("code", "github", baseUrl(), "bearer", null, "token");
 
         assertFalse(outcome.ok());
         assertTrue(outcome.isRejected());
@@ -165,7 +139,7 @@ class ContextKeyValidatorTest {
         answer(503, "text/plain", "upstream unavailable");
 
         ContextKeyValidator.CheckOutcome outcome =
-                validator.check("code", baseUrl(), "bearer", null, "token");
+                validator.check("code", "github", baseUrl(), "bearer", null, "token");
 
         assertFalse(outcome.ok());
         assertFalse(outcome.isRejected());
@@ -177,7 +151,7 @@ class ContextKeyValidatorTest {
     void pingAcceptsACodeCredentialThePlatformAnsweredWith404() {
         answer(404, "application/json", "{}");
 
-        validator.ping("code", baseUrl(), "bearer", null, "token"); // must not throw
+        validator.ping("code", "github", baseUrl(), "bearer", null, "token"); // must not throw
     }
 
     @Test
@@ -185,7 +159,7 @@ class ContextKeyValidatorTest {
         answer(200, "text/html", "<html>Sign in</html>");
 
         BadRequestException thrown = assertThrows(BadRequestException.class,
-                () -> validator.ping("code", baseUrl(), "bearer", null, "token"));
+                () -> validator.ping("code", "github", baseUrl(), "bearer", null, "token"));
 
         assertTrue(thrown.getMessage().contains("sign-in page"));
     }
@@ -195,7 +169,7 @@ class ContextKeyValidatorTest {
         answer(403, "application/json", "{}");
 
         assertThrows(BadRequestException.class,
-                () -> validator.ping("code", baseUrl(), "bearer", null, "token"));
+                () -> validator.ping("code", "github", baseUrl(), "bearer", null, "token"));
     }
 
     // --- the unchanged branch, so the code branch cannot be widened by accident ---

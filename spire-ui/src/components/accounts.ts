@@ -10,6 +10,8 @@ export function roleLabel(role: string | null | undefined): string {
       return 'Reviewer';
     case 'FACTORY':
       return 'Factory';
+    case 'CONTEXT':
+      return 'Context';
     default:
       return `Unknown (${role ?? ''})`;
   }
@@ -30,4 +32,9 @@ export function hostOf(baseUrl: string): string {
   } catch {
     return baseUrl;
   }
+}
+
+export function scopeLabel(scopes: string | null | undefined): string {
+  return scopes == null ? 'This token kind does not report its scopes'
+    : scopes.trim() ? 'Token reports: ' + scopes : 'Token reports no scopes';
 }

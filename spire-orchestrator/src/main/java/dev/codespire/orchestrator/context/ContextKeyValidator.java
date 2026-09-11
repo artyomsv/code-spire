@@ -84,7 +84,11 @@ public class ContextKeyValidator {
 
     /** Save-time validation: throws {@link BadRequestException} if the credential is rejected or unreachable. */
     public void ping(String type, String baseUrl, String authKind, String username, String secret) {
-        Probe p = probe(type, baseUrl, authKind, username, secret);
+        ping(type, null, baseUrl, authKind, username, secret);
+    }
+
+    public void ping(String type, String platform, String baseUrl, String authKind, String username, String secret) {
+        Probe p = probe(type, platform, baseUrl, authKind, username, secret);
         if (p.status() == 401 || p.status() == 403) {
             throw new BadRequestException("The context provider rejected the credential");
         }
@@ -104,21 +108,16 @@ public class ContextKeyValidator {
 
     /** On-demand connectivity check: never throws for an HTTP/network outcome — returns it structured. */
     public CheckOutcome check(String type, String baseUrl, String authKind, String username, String secret) {
-        Probe p = probe(type, baseUrl, authKind, username, secret);
+        return check(type, null, baseUrl, authKind, username, secret);
+    }
+
+    public CheckOutcome check(String type, String platform, String baseUrl, String authKind, String username, String secret) {
+        Probe p = probe(type, platform, baseUrl, authKind, username, secret);
         if (isCredentialAccepted(type, p)) {
             return new CheckOutcome(true, accountFor(type, p), p.status(), null);
         }
-        // Log the failure with the technical detail — otherwise a red indicator has no trail in the logs.
-        String detail = p.status() == 0 ? "network/TLS failure (see the earlier stack)"
-                : p.status() / 100 != 2 ? "HTTP " + p.status()
-                : SIGN_IN_PAGE;
-        // A 401/403 body can echo the token back (some APIs quote the offending Authorization header
-        // in the error message) — never log it. Every other status is diagnostic, not a credential
-        // rejection, so its body is still worth the trail.
-        String bodyForLog = p.status() == 401 || p.status() == 403 ? "(withheld: auth failure)"
-                : bodySnippet(p.body());
-        LOG.warnf("Context connectivity check FAILED for %s — status=%d contentType=%s reason=%s body: %s",
-                p.host(), p.status(), p.contentType(), detail, bodyForLog);
+        // Upstream bodies can echo credentials even on a non-auth status. Log metadata only.
+        LOG.warnf("Context connectivity check failed for %s: HTTP %d", p.host(), p.status());
         String outcomeDetail = p.status() / 100 != 2 ? null : SIGN_IN_PAGE; // resource maps a bad status itself
         return new CheckOutcome(false, null, p.status(), outcomeDetail);
     }
@@ -164,9 +163,9 @@ public class ContextKeyValidator {
     }
 
     /** GET the "who am I" endpoint; {@code status}=0 signals a network/TLS failure (no HTTP status). */
-    private Probe probe(String type, String baseUrl, String authKind, String username, String secret) {
+    private Probe probe(String type, String platform, String baseUrl, String authKind, String username, String secret) {
         if (RAW_CONTENT_TYPES.contains(type)) {
-            return codeProbe(baseUrl, authKind, secret);
+            return codeProbe(platform, baseUrl, authKind, secret);
         }
         // Each provider's cheap, authenticated, Cloud+Data-Center-portable "who am I" endpoint.
         String whoAmI = switch (type) {
@@ -191,14 +190,10 @@ public class ContextKeyValidator {
      * instead requests {@link #CODE_CHECK_PATH} from the near-certainly-absent {@link #CODE_CHECK_REPO}
      * and lets {@link #isCredentialAccepted} read the outcome off the status alone: a 404 there proves
      * the token WAS accepted (the platform told us truthfully that it doesn't exist), while 401/403
-     * prove it was refused. The platform is inferred from the host — the same heuristic
-     * {@code WorkerContextClients.readerFor} applies on the worker side of this registry type, kept
-     * independently here because a "code" credential carries no platform field to read instead, and the
-     * orchestrator and worker modules do not share code across this boundary.
+     * prove it was refused. The platform comes from the referenced account.
      */
-    private Probe codeProbe(String baseUrl, String authKind, String secret) {
+    private Probe codeProbe(String platform, String baseUrl, String authKind, String secret) {
         String trimmed = trimTrailingSlash(baseUrl);
-        String platform = codePlatform(trimmed);
         URI uri = URI.create(trimmed + codeCheckPath(platform));
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(10))
@@ -224,58 +219,19 @@ public class ContextKeyValidator {
         }
     }
 
-    /**
-     * Same host-substring heuristic as {@code WorkerContextClients.readerFor} — see that method's
-     * javadoc for why a single generic {@code code} type needs one at all. GitLab and Bitbucket both
-     * conventionally publish a host containing their own name; anything else (including a self-managed
-     * GitLab that does not) falls through to GitHub, the least predictable of the three hostnames.
-     *
-     * <p>Package-private so a same-package test can assert the mapping directly. It cannot be reached
-     * through {@link #check}: the branch is chosen from the base URL's <em>host</em>, and a test
-     * server answers on {@code localhost}, which is the fallback branch — the very gap this method's
-     * absence of coverage left open (PR 63 QA review).
-     */
-    static String codePlatform(String baseUrl) {
-        String host;
-        try {
-            host = URI.create(baseUrl).getHost();
-        } catch (IllegalArgumentException e) {
-            host = null;
-        }
-        String h = host == null ? "" : host.toLowerCase(Locale.ROOT);
-        if (h.contains("gitlab")) {
-            return "gitlab";
-        }
-        if (h.contains("bitbucket")) {
-            return "bitbucket";
-        }
-        return "github";
-    }
-
-    /**
-     * The raw-content route for {@link #CODE_CHECK_REPO}/{@link #CODE_CHECK_PATH}, per platform.
-     * Package-private for the same reason as {@link #codePlatform}.
-     */
+    /** Raw-content probe route selected by the account platform. */
     static String codeCheckPath(String platform) {
         return switch (platform) {
             case "gitlab" -> "/api/v4/projects/" + encode(CODE_CHECK_REPO) + "/repository/files/"
                     + encode(CODE_CHECK_PATH) + "/raw?ref=" + CODE_CHECK_REF;
             case "bitbucket" -> "/repositories/" + CODE_CHECK_REPO + "/src/" + CODE_CHECK_REF + "/" + CODE_CHECK_PATH;
-            default -> "/repos/" + CODE_CHECK_REPO + "/contents/" + CODE_CHECK_PATH + "?ref=" + CODE_CHECK_REF;
+            case "github" -> "/repos/" + CODE_CHECK_REPO + "/contents/" + CODE_CHECK_PATH + "?ref=" + CODE_CHECK_REF;
+            default -> throw new BadRequestException("Unsupported account platform for code source");
         };
     }
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
-    }
-
-    /** Truncated, whitespace-collapsed body excerpt for a log line — enough to spot an HTML sign-in page. */
-    private static String bodySnippet(String body) {
-        if (body == null || body.isBlank()) {
-            return "(empty)";
-        }
-        String cleaned = body.replaceAll("\\s+", " ").trim();
-        return cleaned.length() <= 300 ? cleaned : cleaned.substring(0, 300) + "…";
     }
 
     /** The token owner's display name (falling back to email/accountId), or null if unparseable. */

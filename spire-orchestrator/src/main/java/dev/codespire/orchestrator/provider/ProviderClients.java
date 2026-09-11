@@ -44,8 +44,169 @@ public class ProviderClients {
      */
     public static final Set<String> SUPPORTED_TYPES = Set.of("bitbucket-cloud", "github", "gitlab");
 
+    /** Account kinds also include credentials for the context-only adapters. */
+    public static final Set<String> ACCOUNT_TYPES = Set.of("bitbucket-cloud", "github", "gitlab", "atlassian");
+
+    public static boolean supportsContext(String source, String account) {
+        return switch (source) {
+            case "jira", "confluence" -> "atlassian".equals(account);
+            case "github-issues" -> "github".equals(account);
+            case "gitlab-issues" -> "gitlab".equals(account);
+            case "code" -> Set.of("github", "gitlab").contains(account);
+            default -> false;
+        };
+    }
+
+    public static boolean supportsContextAuth(String source, String authKind) {
+        return switch (source) {
+            case "github-issues", "gitlab-issues", "code" -> "bearer".equals(authKind);
+            default -> Set.of("basic", "bearer").contains(authKind);
+        };
+    }
+
+    /** Only the legacy migration guesses a platform; new sources explicitly select an account. */
+    public static String legacyContextAccountType(String source, String baseUrl) {
+        return switch (source) {
+            case "jira", "confluence" -> "atlassian";
+            case "github-issues" -> "github";
+            case "gitlab-issues" -> "gitlab";
+            case "code" -> {
+                String host = java.net.URI.create(baseUrl).getHost();
+                if (host == null) throw new IllegalArgumentException("Source URL has no host");
+                String normalized = host.toLowerCase(java.util.Locale.ROOT);
+                if (normalized.contains("bitbucket")) {
+                    throw new IllegalArgumentException("Legacy source needs an explicitly supported account");
+                }
+                yield normalized.contains("gitlab") ? "gitlab" : "github";
+            }
+            default -> throw new IllegalArgumentException("Unsupported legacy source type");
+        };
+    }
+
     @Inject
     ObjectMapper mapper;
+
+    private final java.net.http.HttpClient accountHttp = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+
+    public dev.codespire.contract.scm.Author accountIdentity(String type, String baseUrl, String authKind,
+                                                            String username, String secret, String workspace) {
+        if (!"atlassian".equals(type)) {
+            String apiBase = "gitlab".equals(type) ? gitlabAccountBase(baseUrl) : baseUrl;
+            return identitySource(type, apiBase, authKind, username, secret).whoamiOrValidate(workspace);
+        }
+        String base = baseUrl.replaceAll("/+$", "");
+        // A site may have only one product. Try both existing identity endpoints, without redirects.
+        String site = base.endsWith("/wiki") ? base.substring(0, base.length() - 5) : base;
+        AccountProbeFailure failure = new AccountProbeFailure(0);
+        for (String path : java.util.List.of("/rest/api/3/myself", "/wiki/rest/api/user/current")) {
+            try {
+                var response = accountGet(site + path, authKind, username, secret);
+                if (response.statusCode() / 100 != 2) {
+                    if (!failure.isUnauthorized()) failure = new AccountProbeFailure(response.statusCode());
+                    continue;
+                }
+                com.fasterxml.jackson.databind.JsonNode json;
+                try {
+                    json = mapper.readTree(response.body());
+                } catch (java.io.IOException e) {
+                    failure = new AccountProbeFailure(401);
+                    continue;
+                }
+                if (json == null) { failure = new AccountProbeFailure(401); continue; }
+                String id = json.path("accountId").asText("");
+                String name = json.path("displayName").asText("");
+                if (!id.isBlank()) return dev.codespire.contract.scm.Author.of(id, "", name);
+                failure = new AccountProbeFailure(401);
+            } catch (java.io.IOException e) {
+                if (!failure.isUnauthorized()) failure = new AccountProbeFailure(0);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AccountProbeFailure(0);
+            }
+        }
+        throw failure;
+    }
+
+    /** Advisory: missing headers or a failed introspection never invalidate an account. */
+    public String reportedScopes(String type, String baseUrl, String authKind, String username,
+                                 String secret, String workspace) {
+        String base = baseUrl.replaceAll("/+$", "");
+        try {
+            return switch (type) {
+                case "github" -> scopeHeader(accountGet(base + "/user", "bearer", null, secret));
+                case "gitlab" -> {
+                    var response = accountGet(gitlabAccountBase(base) + "/personal_access_tokens/self", "bearer", null, secret);
+                    if (response.statusCode() / 100 != 2) yield null;
+                    var scopes = mapper.readTree(response.body()).path("scopes");
+                    if (!scopes.isArray()) yield null;
+                    var values = new java.util.ArrayList<String>();
+                    for (var scope : scopes) {
+                        if (!scope.isTextual()) yield null;
+                        values.add(scope.asText());
+                    }
+                    yield String.join(", ", values);
+                }
+                case "bitbucket-cloud" -> {
+                    var response = accountGet(base + "/user", authKind, username, secret);
+                    if (response.statusCode() / 100 != 2 && workspace != null) {
+                        response = accountGet(base + "/repositories/" + java.net.URLEncoder.encode(workspace,
+                                java.nio.charset.StandardCharsets.UTF_8), authKind, username, secret);
+                    }
+                    yield scopeHeader(response);
+                }
+                default -> null;
+            };
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    private static String gitlabAccountBase(String url) {
+        String base = url.replaceAll("/+$", "");
+        return base.endsWith("/api/v4") ? base : base + "/api/v4";
+    }
+
+    private static String scopeHeader(java.net.http.HttpResponse<String> response) {
+        return response.statusCode() / 100 == 2 ? response.headers().firstValue("X-OAuth-Scopes").orElse(null) : null;
+    }
+
+    private java.net.http.HttpResponse<String> accountGet(String url, String kind, String username, String secret)
+            throws java.io.IOException, InterruptedException {
+        String auth = "basic".equals(kind) ? "Basic " + java.util.Base64.getEncoder().encodeToString(
+                (username + ":" + secret).getBytes(java.nio.charset.StandardCharsets.UTF_8)) : "Bearer " + secret;
+        var request = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(10)).header("Accept", "application/json")
+                .header("Authorization", auth).GET().build();
+        return accountHttp.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+    }
+
+    public static boolean scopesNeedAttention(String type, ProviderRole role, String reported) {
+        if (reported == null || role == ProviderRole.CONTEXT) return false;
+        var scopes = new java.util.HashSet<>(java.util.Arrays.asList(reported.split("[,\\s]+")));
+        Set<String> expected = switch (type) {
+            case "github" -> role == ProviderRole.FACTORY ? Set.of("repo", "public_repo")
+                    : Set.of("repo", "public_repo");
+            case "gitlab" -> role == ProviderRole.FACTORY ? Set.of("api", "write_repository")
+                    : Set.of("api", "read_api", "read_repository");
+            case "bitbucket-cloud" -> role == ProviderRole.FACTORY
+                    ? Set.of("repository:write", "write:repository:bitbucket")
+                    : Set.of("repository", "repository:write", "read:repository:bitbucket", "write:repository:bitbucket");
+            default -> Set.of();
+        };
+        return !expected.isEmpty() && java.util.Collections.disjoint(scopes, expected);
+    }
+
+    private static final class AccountProbeFailure extends RuntimeException implements dev.codespire.contract.scm.ScmApiException {
+        private final int status;
+        AccountProbeFailure(int status) { super("Account identity probe failed (HTTP " + status + ")"); this.status = status; }
+        public int status() { return status; }
+        public boolean isUnauthorized() { return status == 401 || status == 403; }
+    }
 
     public DiffSource diffSource(ScmProvider provider) {
         return switch (provider.type()) {

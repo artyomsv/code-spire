@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   checkProvider,
-  fetchContextProviders,
   fetchProviders,
-  type ContextProviderView,
   type ProviderView,
 } from '../api';
 import AccountsTable, { type Conn } from './AccountsTable';
@@ -19,10 +17,6 @@ export default function SettingsProviders() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
-  // Tracker and knowledge accounts, listed read-only beneath the forge rows.
-  const [trackers, setTrackers] = useState<ContextProviderView[]>([]);
-  const [trackerError, setTrackerError] = useState<string | null>(null);
-
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
@@ -33,6 +27,8 @@ export default function SettingsProviders() {
     setConns((prev) => ({ ...prev, [id]: { state: 'checking' } }));
     try {
       const r = await checkProvider(id);
+      if (r.scopesCheckedAt !== undefined) setProviders((rows) => rows.map((row) => row.id === id
+        ? { ...row, reportedScopes: r.reportedScopes, scopesCheckedAt: r.scopesCheckedAt } : row));
       setConns((prev) => ({
         ...prev,
         [id]: r.ok ? { state: 'ok', account: r.account } : { state: 'fail', detail: r.detail },
@@ -65,18 +61,6 @@ export default function SettingsProviders() {
       setError(err instanceof Error ? err.message : String(err));
     }
 
-    // Tracker and knowledge accounts are listed read-only. Loaded separately so a failure there
-    // cannot take the forge list with it: the forge list is the one a review depends on.
-    try {
-      setTrackers(await fetchContextProviders());
-      setTrackerError(null);
-    } catch (err) {
-      setTrackerError(err instanceof Error ? err.message : String(err));
-    }
-
-    // Cleared once, after BOTH lists have answered. Clearing it after the forge list alone renders
-    // the page with no forge accounts and no trackers yet, which is exactly the empty state — so a
-    // deployment holding only tracker accounts flashed "no machine accounts yet" before its rows.
     setLoading(false);
   }
 
@@ -103,7 +87,7 @@ export default function SettingsProviders() {
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading && providers.length === 0 ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : providers.length === 0 && trackers.length === 0 ? (
+        ) : providers.length === 0 ? (
           <div className="prov-empty">
             <span>No machine accounts yet. Add a reviewer account to start reviewing.</span>
             <button className="btn" onClick={() => setForm('new')}>
@@ -115,10 +99,8 @@ export default function SettingsProviders() {
           </div>
         ) : (
           <>
-            {trackerError && <p className="prov-note">Tracker accounts could not be loaded: {trackerError}</p>}
             <AccountsTable
               providers={providers}
-              trackers={trackers}
               conns={conns}
               onRecheck={(id) => void checkOne(id)}
               onEdit={setForm}

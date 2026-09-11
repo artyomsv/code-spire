@@ -58,17 +58,6 @@ public class ContextProviderResource {
     private static final Logger LOG = Logger.getLogger(ContextProviderResource.class);
     private static final Set<String> TYPES =
             Set.of("jira", "confluence", "github-issues", "gitlab-issues", "code");
-    private static final Set<String> AUTH_KINDS = Set.of("basic", "bearer");
-
-    /**
-     * Types whose API accepts only a bearer token. GitHub's basic auth is deprecated and a GitLab
-     * personal access token works on the OAuth-compliant {@code Authorization} header, so accepting
-     * {@code basic} here would only let an operator save something the worker has to refuse later —
-     * failing the context step with nothing on screen to explain why. {@code code}'s raw-content APIs
-     * are bearer-token-only on all three platforms it may read from, for the same reason.
-     */
-    private static final Set<String> BEARER_ONLY_TYPES = Set.of("github-issues", "gitlab-issues", "code");
-
     /**
      * Preview resolves one reference with no pull request behind it, so a bare {@code #123} has no
      * repository to belong to. Saying which two inputs DO work turns a dead end into a next step.
@@ -127,11 +116,7 @@ public class ContextProviderResource {
     @RolesAllowed("spire-admin")
     public Response create(ContextProviderInput in) {
         validate(in, true);
-        validator.ping(in.type(), in.baseUrl(), in.authKind(), in.username(), in.secret());
         ContextProviderView created = registry.create(in);
-        // validator.ping(...) just proved the credential works; a secret is required to create
-        // (validate() above), so this call always re-validated it.
-        registry.recordCheck(UUID.fromString(created.id()), true, null);
         return Response.status(Response.Status.CREATED).entity(created).build();
     }
 
@@ -140,20 +125,8 @@ public class ContextProviderResource {
     @Path("/{id}")
     public ContextProviderView update(@PathParam("id") String id, ContextProviderInput in) {
         validate(in, false);
-        // Validate the credential only when a new one is supplied (blank = keep the stored secret).
-        boolean rotatingSecret = in.secret() != null && !in.secret().isBlank();
-        if (rotatingSecret) {
-            validator.ping(in.type(), in.baseUrl(), in.authKind(), in.username(), in.secret());
-        }
         ContextProviderView updated = registry.update(uuid(id), in)
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
-        // Only record when a secret was actually supplied and pinged: that's the only case that
-        // re-validated the credential. Recording success unconditionally would silently clear a
-        // real prior rejection on an update that never touched the credential at all (mirrors
-        // ProviderResource.update).
-        if (rotatingSecret) {
-            registry.recordCheck(uuid(id), true, null);
-        }
         return updated;
     }
 
@@ -178,10 +151,13 @@ public class ContextProviderResource {
     @Path("/{id}/check")
     @Consumes(MediaType.WILDCARD) // no request body — don't require a JSON content type
     public CheckResult check(@PathParam("id") String id) {
+        ContextProviderView source = get(id);
+        if (source.accountId() == null) return new CheckResult(false, null, "Credential migration is pending; check the server log for this source id.");
+        if (Boolean.FALSE.equals(source.accountEnabled())) return new CheckResult(false, null, "Account disabled — this source does not resolve.");
         ContextProviderConfig cfg = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No context provider " + id));
         ContextKeyValidator.CheckOutcome out =
-                validator.check(cfg.type(), cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret());
+                validator.check(cfg.type(), cfg.platform(), cfg.baseUrl(), cfg.authKind(), cfg.username(), cfg.secret());
         if (out.ok()) {
             registry.recordCheck(cfg.id(), true, null);
             return new CheckResult(true, out.account(), null);
@@ -396,29 +372,13 @@ public class ContextProviderResource {
         requireField(in.name(), "name");
         requireField(in.type(), "type");
         requireField(in.baseUrl(), "baseUrl");
-        requireField(in.authKind(), "authKind");
+        requireField(in.accountId(), "accountId");
         if (!TYPES.contains(in.type())) {
             throw new BadRequestException("Unsupported context provider type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
-        if (!AUTH_KINDS.contains(in.authKind())) {
-            throw new BadRequestException("Unsupported authKind '" + in.authKind()
-                    + "' (expected one of: " + String.join(", ", AUTH_KINDS.stream().sorted().toList()) + ")");
-        }
-        if (BEARER_ONLY_TYPES.contains(in.type()) && !"bearer".equals(in.authKind())) {
-            throw new BadRequestException("Context provider type '" + in.type()
-                    + "' requires authKind 'bearer' (a personal access token). Basic auth is not "
-                    + "supported for this type.");
-        }
-        // Basic auth (Jira Cloud: email + API token) needs a username; bearer (PAT) does not.
-        if ("basic".equals(in.authKind())) {
-            requireField(in.username(), "username");
-        }
         // SSRF guard: the baseUrl is dereferenced server-side (credential ping) and later by the worker.
         PublicHttpsGuard.validate(in.baseUrl(), allowInsecureProviderUrls);
-        if (creating && (in.secret() == null || in.secret().isBlank())) {
-            throw new BadRequestException("secret is required");
-        }
     }
 
     private static void requireField(String value, String name) {

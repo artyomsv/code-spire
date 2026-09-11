@@ -32,21 +32,6 @@ describe('context provider types', () => {
   });
 
   /**
-   * The backend rejects `basic` auth for the two issue providers (GitHub's basic auth is
-   * deprecated; a GitLab PAT is bearer-only) — the form must not offer a choice it cannot save.
-   */
-  it('permits only bearer auth for the issue and code types, both kinds for Jira and Confluence', () => {
-    expect(TYPE_COPY.jira.authKinds).toEqual(['basic', 'bearer']);
-    expect(TYPE_COPY.confluence.authKinds).toEqual(['basic', 'bearer']);
-    expect(TYPE_COPY['github-issues'].authKinds).toEqual(['bearer']);
-    expect(TYPE_COPY['gitlab-issues'].authKinds).toEqual(['bearer']);
-    expect(TYPE_COPY.code.authKinds).toEqual(['bearer']);
-    for (const type of CONTEXT_TYPES) {
-      expect(TYPE_COPY[type].authKinds.length).toBeGreaterThan(0);
-    }
-  });
-
-  /**
    * `code`'s registry column is a path allow-list, not a project-key allow-list — the label and hint
    * must say so (both the words and the empty-means-unrestricted semantics), and warn that the match
    * is a prefix, not a directory boundary, since that is surprising and easy to get wrong.

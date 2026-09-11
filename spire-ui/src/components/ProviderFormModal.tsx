@@ -1,11 +1,9 @@
 /**
- * The add/edit dialog and the delete confirmation for a forge account. Extracted from the page so
- * each file has one job and stays under the 250-line guideline; behaviour is unchanged.
+ * Account identity and role controls. Credentials and reviewer policy live in focused child components.
  */
 import { useState } from 'react';
 import {
   createProvider,
-  deleteProvider,
   updateProvider,
   type AuthKind,
   type ProviderInput,
@@ -14,9 +12,9 @@ import {
 } from '../api';
 import { roleLabel } from './accounts';
 import Select from './Select';
-
-// Options for the per-provider conversation-level override ('' = inherit the global default).
-const CONVERSATION_OPTIONS = ['', 'REPORT_ONLY', 'EXPLAIN', 'INTERACTIVE'] as const;
+import AccountCredentialFields, { type AccountFields } from './AccountCredentialFields';
+export { DeleteConfirmModal } from './DeleteAccountModal';
+import ReviewerFieldsSection, { type ReviewerFields } from './ReviewerFieldsSection';
 
 /** Human label for a conversation level; '' / null / unknown = inherit the global default. */
 export function conversationLabel(level: string | null | undefined): string {
@@ -34,23 +32,17 @@ export function conversationLabel(level: string | null | undefined): string {
 
 // Provider types and their default API base URLs. When a user switches type
 // without having customised the base URL, we swap in the matching default.
-const PROVIDER_TYPES = ['bitbucket-cloud', 'github', 'gitlab'] as const;
+const PROVIDER_TYPES = ['bitbucket-cloud', 'github', 'gitlab', 'atlassian'] as const;
 const DEFAULT_BASE_URLS: Record<string, string> = {
   'bitbucket-cloud': 'https://api.bitbucket.org/2.0',
   github: 'https://api.github.com',
   gitlab: 'https://gitlab.com/api/v4',
+  atlassian: '',
 };
 // Providers that authenticate with a Bearer token only (no Basic-auth path).
 const BEARER_ONLY = new Set(['github', 'gitlab']);
 const KNOWN_DEFAULTS = new Set(Object.values(DEFAULT_BASE_URLS));
 const DEFAULT_BASE_URL = DEFAULT_BASE_URLS['bitbucket-cloud'];
-
-/** The fields only a REVIEWER has, held together: a Factory row has none of them. */
-interface ReviewerFields {
-  conversationLevel: string;
-  authors: string[];
-  authorDraft: string;
-}
 
 const ROLE_OPTIONS: { value: ProviderRole; label: string }[] = [
   { value: 'REVIEWER', label: 'Reviewer' },
@@ -68,15 +60,19 @@ export default function ProviderFormModal({
 }) {
   const editing = initial !== null;
 
-  const [name, setName] = useState(initial?.name ?? '');
-  const [type, setType] = useState(initial?.type ?? 'bitbucket-cloud');
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? DEFAULT_BASE_URL);
-  const [workspace, setWorkspace] = useState(initial?.workspace ?? '');
-  const [authKind, setAuthKind] = useState<AuthKind>(initial?.authKind ?? 'bearer');
-  const [authUsername, setAuthUsername] = useState(initial?.authUsername ?? '');
-  const [secret, setSecret] = useState('');
-  const [botAccountId, setBotAccountId] = useState(initial?.botAccountId ?? '');
-  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [fields, setFields] = useState<AccountFields>({
+    name: initial?.name ?? '',
+    type: initial?.type ?? 'bitbucket-cloud',
+    baseUrl: initial?.baseUrl ?? DEFAULT_BASE_URL,
+    workspace: initial?.workspace ?? '',
+    authKind: initial?.authKind ?? 'bearer' as AuthKind,
+    authUsername: initial?.authUsername ?? '',
+    secret: '',
+    botAccountId: initial?.botAccountId ?? '',
+    enabled: initial?.enabled ?? true,
+  });
+  const patch = (next: Partial<typeof fields>) => setFields((previous) => ({ ...previous, ...next }));
+  const { name, type, baseUrl, workspace, authKind, authUsername, secret, botAccountId, enabled } = fields;
   const [role, setRole] = useState<ProviderRole>(initial?.role ?? 'REVIEWER');
   const [reviewer, setReviewer] = useState<ReviewerFields>({
     conversationLevel: initial?.conversationLevel ?? '',
@@ -89,14 +85,16 @@ export default function ProviderFormModal({
   const [error, setError] = useState<string | null>(null);
 
   function changeType(next: string) {
-    setType(next);
+    patch({ type: next });
+    if (next === 'atlassian') { setRole('CONTEXT'); patch({ workspace: '', authKind: 'basic' }); }
+    else if (role === 'CONTEXT' && !editing) setRole('REVIEWER');
     // Swap the base URL to the new type's default unless the user has customised it.
     if (!baseUrl.trim() || KNOWN_DEFAULTS.has(baseUrl.trim())) {
-      setBaseUrl(DEFAULT_BASE_URLS[next] ?? baseUrl);
+      patch({ baseUrl: DEFAULT_BASE_URLS[next] ?? baseUrl });
     }
     // GitHub and GitLab authenticate with a Bearer token only.
     if (BEARER_ONLY.has(next)) {
-      setAuthKind('bearer');
+      patch({ authKind: 'bearer' });
     }
   }
 
@@ -115,7 +113,7 @@ export default function ProviderFormModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !workspace.trim() || !baseUrl.trim()) {
+    if (!name.trim() || (role !== 'CONTEXT' && !workspace.trim()) || !baseUrl.trim()) {
       setError('Name, base URL and workspace are required.');
       return;
     }
@@ -136,7 +134,7 @@ export default function ProviderFormModal({
       name: name.trim(),
       type,
       baseUrl: baseUrl.trim(),
-      workspace: workspace.trim(),
+      workspace: role === 'CONTEXT' ? null : workspace.trim(),
       authKind,
       authUsername: authKind === 'basic' ? authUsername.trim() : null,
       botAccountId: botAccountId.trim(),
@@ -174,7 +172,7 @@ export default function ProviderFormModal({
           </button>
         </div>
         <form className="modal-body scroll" onSubmit={submit}>
-          <label className="field">
+          {type !== 'atlassian' && <label className="field">
             <span>Role</span>
             {editing && initial ? (
               <>
@@ -197,32 +195,33 @@ export default function ProviderFormModal({
                 </small>
               </>
             )}
-          </label>
+          </label>}
 
           <label className="field">
             <span>Name</span>
-            <input placeholder="Acme Bitbucket" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+            <input placeholder="Acme Bitbucket" value={name} onChange={(e) => patch({ name: e.target.value })} autoFocus />
           </label>
 
           <div className="field-row-12">
             <label className="field">
-              <span>Type</span>
+              <span>Kind</span>
               <Select
-                ariaLabel="Type"
+                ariaLabel="Kind"
                 value={type}
                 options={PROVIDER_TYPES.map((t) => ({ value: t, label: t }))}
+                disabled={editing}
                 onChange={changeType}
               />
             </label>
-            <label className="field">
+            {role !== 'CONTEXT' && <label className="field">
               <span>Workspace</span>
               <input
                 className="mono"
                 placeholder="workspace"
                 value={workspace}
-                onChange={(e) => setWorkspace(e.target.value)}
+                onChange={(e) => patch({ workspace: e.target.value })}
               />
-            </label>
+            </label>}
           </div>
 
           <label className="field">
@@ -231,131 +230,16 @@ export default function ProviderFormModal({
               className="mono"
               placeholder={DEFAULT_BASE_URL}
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => patch({ baseUrl: e.target.value })}
             />
           </label>
 
-          <div className="field-row-13">
-            <label className="field">
-              <span>Auth kind</span>
-              <Select
-                ariaLabel="Auth kind"
-                value={authKind}
-                disabled={BEARER_ONLY.has(type)}
-                options={[
-                  { value: 'bearer', label: 'bearer' },
-                  ...(BEARER_ONLY.has(type) ? [] : [{ value: 'basic', label: 'basic' }]),
-                ]}
-                onChange={(v) => setAuthKind(v as AuthKind)}
-              />
-            </label>
-            <label className="field">
-              <span>Secret / token</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                placeholder={editing ? 'leave blank to keep current' : 'access token'}
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-              />
-              {editing && (
-                <small className="field-hint">
-                  {initial?.hasSecret ? 'A token is stored — leave blank to keep it.' : 'No token stored yet.'}
-                </small>
-              )}
-            </label>
-          </div>
+          <AccountCredentialFields fields={fields} patch={patch} initial={initial} role={role} />
 
-          {role === 'REVIEWER' && (
-            <label className="field">
-              <span>Conversation level</span>
-              <Select
-                ariaLabel="Conversation level"
-                value={reviewer.conversationLevel}
-                options={CONVERSATION_OPTIONS.map((lvl) => ({ value: lvl, label: conversationLabel(lvl) }))}
-                onChange={(v) => patchReviewer({ conversationLevel: v })}
-              />
-              <small className="field-hint">
-                How deeply the bot converses in this provider&apos;s review threads. Inherit uses the global default.
-              </small>
-            </label>
-          )}
-
-          {authKind === 'basic' && (
-            <label className="field">
-              <span>Username</span>
-              <input
-                className="mono"
-                placeholder="username"
-                value={authUsername}
-                onChange={(e) => setAuthUsername(e.target.value)}
-              />
-            </label>
-          )}
-
-          <label className="field">
-            <span>Bot account id <span className="field-optional">optional</span></span>
-            <input
-              className="mono"
-              placeholder="auto-detected from the token"
-              value={botAccountId}
-              onChange={(e) => setBotAccountId(e.target.value)}
-            />
-            <small className="field-hint">
-              Leave blank — it's resolved from the token when you save (which also validates the token).
-              A Bitbucket workspace/repo access token has no user account, so it stays blank; the token
-              is still validated against the workspace.
-              {role === 'FACTORY' && (
-                <>
-                  {' '}
-                  A Factory account must resolve to a login: a push is authenticated as one, and a workspace
-                  access token with no user cannot push.
-                </>
-              )}
-            </small>
-          </label>
-
-          {role === 'REVIEWER' && (
-            <div className="field">
-              <span>May command this bot</span>
-              <div className="chip-add">
-                <input
-                  className="mono"
-                  placeholder="stable user id"
-                  value={reviewer.authorDraft}
-                  onChange={(e) => patchReviewer({ authorDraft: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addAuthor();
-                    }
-                  }}
-                />
-                <button type="button" className="btn-ghost" onClick={addAuthor}>
-                  Add
-                </button>
-              </div>
-              <small className="field-hint">
-                The id the forge reports for the user, not the handle: /fix accepts ids only, because a
-                handle can change hands and /fix pushes code. Empty means everyone may /review; nobody may /fix.
-              </small>
-              {reviewer.authors.length > 0 && (
-                <div className="chips-edit">
-                  {reviewer.authors.map((a) => (
-                    <span key={a} className="chip-x">
-                      {a}
-                      <button type="button" onClick={() => removeAuthor(a)} aria-label={`Remove ${a}`}>
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {role === 'REVIEWER' && <ReviewerFieldsSection reviewer={reviewer} patchReviewer={patchReviewer} addAuthor={addAuthor} removeAuthor={removeAuthor} />}
 
           <label className="field-check">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <input type="checkbox" checked={enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
             <span>Enabled</span>
           </label>
 
@@ -370,59 +254,6 @@ export default function ProviderFormModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
-  );
-}
-
-export function DeleteConfirmModal({
-  provider,
-  onClose,
-  onDeleted,
-}: {
-  provider: ProviderView;
-  onClose: () => void;
-  onDeleted: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await deleteProvider(provider.id);
-      onDeleted();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modal-head">
-          <h3>Delete account</h3>
-          <button className="iconbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        <div className="modal-body">
-          <p style={{ margin: 0, fontSize: 13.5, color: 'var(--text)' }}>
-            Delete <strong>{provider.name}</strong>? This removes its stored token and cannot be undone.
-          </p>
-          {error && <div className="modal-msg modal-error">{error}</div>}
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

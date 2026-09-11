@@ -9,12 +9,11 @@ const source: api.ContextProviderView = {
   name: 'TEST Jira',
   type: 'jira',
   baseUrl: 'https://test-acme.atlassian.net',
-  authKind: 'basic',
-  username: 'jira-bot@example.invalid',
+  accountId: 'account',
+  accountName: 'Site bot',
+  accountEnabled: true,
   projectKeys: null,
-  hasSecret: true,
   enabled: true,
-  isDefault: false,
   createdAt: '2026-09-07T00:00:00Z',
   lastCheckAt: null,
   lastCheckOk: null,
@@ -32,9 +31,9 @@ describe('SettingsContextProviders — Used by', () => {
     vi.spyOn(api, 'checkContextProvider').mockResolvedValue({ ok: true, account: 'jira-bot', detail: null } as never);
   });
 
-  it('shows Reviewer · read on every row', async () => {
+  it('shows Site bot on every row', async () => {
     render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>);
-    expect(await screen.findAllByText('Reviewer · read')).toHaveLength(2);
-    expect(screen.getByRole('columnheader', { name: 'Used by' })).toBeInTheDocument();
+    expect(await screen.findAllByText('Site bot')).toHaveLength(2);
+    expect(screen.getByRole('columnheader', { name: 'Account' })).toBeInTheDocument();
   });
 });

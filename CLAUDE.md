@@ -32,7 +32,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | ADR-001..040 — every locked decision with its why. ADR-029..040 are the software factory's; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | ADR-001..041 — every locked decision with its why. ADR-029..040 are the software factory's; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -45,7 +45,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 The per-milestone story — what shipped, what each review round found, the traps each one paid for —
 is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-08**.
+describe the new current state. Everything below is true as of **2026-09-12**.
 
 - **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
   `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
@@ -77,21 +77,26 @@ describe the new current state. Everything below is true as of **2026-09-08**.
   dispatch, the push and the reconciliation are each proved separately, and a run unit cannot
   reach the e2e stack's GitLab because `RunUnitSpec` has no network field (`docs/UNVERIFIED.md`).
   **Next is M3** — `docs/factory/ROADMAP.md`. The two factory images are still not on GHCR.
-- **Accounts and roles (PR #120, 2026-09-07/08).** The Settings screens say what the code does:
-  **Accounts** (`/settings/accounts`; tabs *Machine accounts* and *People*) is the bot-account
-  registry that was labelled "Repositories", with a **Role** field (Reviewer | Factory) fixed at
-  registration — a role-changing `PUT /api/providers/{id}` is refused with 409; **Repositories**
-  (`/settings/repositories`) is the per-repository webhook registry that was labelled "Webhooks",
-  and shows per row which account reviews and which pushes, from `GET /api/providers/serving`
-  (five states: `ok | no-identity | no-login | disabled | missing`, computed with the pipeline's own
-  resolvers). Old routes redirect and keep `?edit=<id>`. The machine account a `/fix` needs can now
-  be registered from the UI. Design: `docs/superpowers/specs/2026-09-07-accounts-and-roles-design.md`.
+- **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
+  credentials in one registry. Context sources select a compatible account and retain their own
+  URL, project keys and path allowlists. V59 plus an idempotent startup reconciler moves legacy
+  credentials across Tink AADs atomically per source; failed rows remain recoverable. Account
+  rotation reaches every source, disabling an account stops its context resolution, and referenced
+  deletion returns the source names. Accounts show Used by and advisory scope reports. REVIEWER
+  and FACTORY remain separate scalar roles; CONTEXT has no workspace. Code credentials carry an
+  explicit platform through the worker contract. Repositories still show the existing serving
+  identities through unchanged role resolvers. Live token-family and rollout gaps are recorded in
+  UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 retains workspace
+  remodeling, per-repository push checks and handle-to-id allowlist resolution.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-08):** 2889 Java tests across 324 suites, 0 failures, 1
-  skipped (`testFast` + `testServices`, every module re-run); 560 `spire-ui` vitest tests across
-  71 files; `tsc --noEmit` silent. The nightly `testE2e` tier is separate and was **not** re-run
-  for this figure — 44 tests across 9 suites when it was last measured, on 2026-09-03.
+- **Measured, not estimated (2026-09-12):** 2952 Java tests across 335 suites, 0 failures,
+  1 skipped; 611 UI tests across 75 files; TypeScript clean. Java verification uses JDK 25,
+  Docker and Git's shell on PATH. Seven intentional mutations fail their targeted tests, including
+  migration rollback, credential equality, disabled-account filtering, platform dispatch,
+  provider-neutrality, unknown scopes and account-picker compatibility. UI table layout was
+  observed in headless Chrome at 1280/1440/1920 widths. The nightly testE2e tier and a production
+  credential migration were not run for this change.
 
 ## Build & run
 

@@ -59,7 +59,7 @@ class WorkerContextClientsTest {
 
     @Test
     void codeCredentialCarriesItsPathAllowListIntoTheConstructedProvider() throws Exception {
-        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+        ContextCredential cred = new ContextCredential("code", "github", "https://api.github.com", "bearer",
                 null, "gh-token", "src/main/, src/allowed/");
 
         List<ContextProvider> providers = clients().forCommand(command(pack(cred)));
@@ -74,7 +74,7 @@ class WorkerContextClientsTest {
 
     @Test
     void aBlankProjectKeysColumnLeavesTheAllowListEmptyMeaningUnrestricted() throws Exception {
-        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+        ContextCredential cred = new ContextCredential("code", "github", "https://api.github.com", "bearer",
                 null, "gh-token", null);
 
         List<ContextProvider> providers = clients().forCommand(command(pack(cred)));
@@ -98,7 +98,7 @@ class WorkerContextClientsTest {
      */
     @Test
     void theSymbolIndexReachesTheConstructedProvider() throws Exception {
-        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+        ContextCredential cred = new ContextCredential("code", "github", "https://api.github.com", "bearer",
                 null, "gh-token", null);
 
         assertTrue(providerFor(clients(), cred).hasSymbolIndex(),
@@ -114,7 +114,7 @@ class WorkerContextClientsTest {
      */
     @Test
     void turningTheIndexOffLeavesARungOneProvider() throws Exception {
-        ContextCredential cred = new ContextCredential("code", "https://api.github.com", "bearer",
+        ContextCredential cred = new ContextCredential("code", "github", "https://api.github.com", "bearer",
                 null, "gh-token", null);
         WorkerContextClients off = clients();
         off.symbolIndexEnabled = false;
@@ -132,29 +132,10 @@ class WorkerContextClientsTest {
                 .orElseThrow(() -> new AssertionError("forCommand did not construct a CodeContextProvider"));
     }
 
-    /**
-     * One generic {@code code} credential covers three raw-content APIs and carries no platform field,
-     * so {@code readerFor} infers it from the base URL's host. Which reader that picks has no other
-     * observable trace: routing a self-managed GitLab to the GitHub reader produces 404s
-     * indistinguishable from "the file isn't there", so context is silently never contributed. Both
-     * pre-existing tests used {@code api.github.com}, which is the fallback branch, and asserted only
-     * the allow-list — so nothing covered the selection at all (PR 63 QA review).
-     */
     @Test
-    void aGitLabHostSelectsTheGitLabReader() throws Exception {
-        assertEquals(GitLabSourceFileReader.class, readerClassFor("https://gitlab.acme.example"));
-    }
-
-    @Test
-    void aBitbucketHostSelectsTheBitbucketReader() throws Exception {
-        assertEquals(BitbucketSourceFileReader.class, readerClassFor("https://api.bitbucket.org/2.0"));
-    }
-
-    /** GitHub is the fallback — its hostname is the least predictable of the three. */
-    @Test
-    void anyOtherHostFallsBackToTheGitHubReader() throws Exception {
-        assertEquals(GitHubSourceFileReader.class, readerClassFor("https://api.github.com"));
-        assertEquals(GitHubSourceFileReader.class, readerClassFor("https://source.acme.example"));
+    void anExplicitPlatformSelectsTheReaderRegardlessOfHostname() throws Exception {
+        assertEquals(GitLabSourceFileReader.class, readerClassFor("gitlab", "https://source.acme.example"));
+        assertEquals(GitHubSourceFileReader.class, readerClassFor("github", "https://gitlab.acme.example"));
     }
 
     /**
@@ -162,9 +143,9 @@ class WorkerContextClientsTest {
      * is only visible through the wrapper — asserted here rather than assumed, since a wiring that
      * skipped the breaker would leave one struggling host able to stall every review.
      */
-    private Class<?> readerClassFor(String baseUrl) throws Exception {
+    private Class<?> readerClassFor(String platform, String baseUrl) throws Exception {
         ContextCredential cred =
-                new ContextCredential("code", baseUrl, "bearer", null, "token", null);
+                new ContextCredential("code", platform, baseUrl, "bearer", null, "token", null);
 
         CodeContextProvider code = clients().forCommand(command(pack(cred))).stream()
                 .filter(CodeContextProvider.class::isInstance)

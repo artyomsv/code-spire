@@ -49,7 +49,7 @@ public class ProviderResource {
 
     // Deliberately not a second list of provider names: a registry that accepts a type
     // ProviderClients cannot build would fail only later, on the first review.
-    private static final Set<String> TYPES = ProviderClients.SUPPORTED_TYPES;
+    private static final Set<String> TYPES = ProviderClients.ACCOUNT_TYPES;
 
     @Inject
     ProviderRegistry registry;
@@ -83,24 +83,34 @@ public class ProviderResource {
     @POST
     @RolesAllowed("spire-admin")
     public Response create(ProviderInput in) {
+        in = normalize(in, null);
         validate(in, true);
-        ProviderView created = registry.create(resolveIdentity(in));
+        ProviderView created;
+        try {
+            created = registry.create(resolveIdentity(in));
+        } catch (ProviderRegistry.AccountConflict e) {
+            throw conflict(e.getMessage());
+        }
         // resolveIdentity(...) just proved the token works by resolving the bot's identity with it.
         // A secret is required to create (validate() above), so this call always re-validated it.
         registry.recordCheck(UUID.fromString(created.id()), true, null);
-        return Response.status(Response.Status.CREATED).entity(created).build();
+        recordScopes(UUID.fromString(created.id()), in);
+        return Response.status(Response.Status.CREATED).entity(registry.get(UUID.fromString(created.id())).orElseThrow()).build();
     }
 
     @PUT
     @RolesAllowed("spire-admin")
     @Path("/{id}")
     public ProviderView update(@PathParam("id") String id, ProviderInput in) {
+        ProviderView stored = registry.get(uuid(id)).orElseThrow(() -> new NotFoundException("No provider " + id));
+        in = normalize(in, stored.role());
+        if (!stored.role().equalsIgnoreCase(in.role())) throw conflict("The role is fixed at registration. Register a new account for that role.");
         validate(in, false);
         ProviderView updated;
         try {
             updated = registry.update(uuid(id), resolveIdentity(in))
                     .orElseThrow(() -> new NotFoundException("No provider " + id));
-        } catch (ProviderRegistry.RoleIsFixedAtRegistration e) {
+        } catch (ProviderRegistry.RoleIsFixedAtRegistration | ProviderRegistry.AccountConflict e) {
             throw conflict(e.getMessage());
         }
         // Only record when a secret was actually supplied: that's the only case resolveIdentity(...)
@@ -109,8 +119,9 @@ public class ProviderResource {
         // the credential at all.
         if (in.secret() != null && !in.secret().isBlank()) {
             registry.recordCheck(uuid(id), true, null);
+            recordScopes(uuid(id), in);
         }
-        return updated;
+        return registry.get(uuid(id)).orElseThrow();
     }
 
     /**
@@ -172,7 +183,7 @@ public class ProviderResource {
     public ServingAccounts serving(@QueryParam("type") String type, @QueryParam("workspace") String workspace) {
         requireField(type, "type");
         requireField(workspace, "workspace");
-        if (!TYPES.contains(type)) {
+        if (!ProviderClients.SUPPORTED_TYPES.contains(type)) {
             throw new BadRequestException("Unsupported provider type '" + type
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
@@ -206,10 +217,12 @@ public class ProviderResource {
     public CheckResult check(@PathParam("id") String id) {
         ScmProvider provider = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
+        registry.recordScopes(provider.id(), clients.reportedScopes(provider.type(), provider.baseUrl(), provider.authKind(),
+                provider.authUsername(), provider.secret(), provider.workspace()));
         try {
             Author owner = identity.resolveForCheck(provider);
             registry.recordCheck(provider.id(), true, null);
-            return new CheckResult(true, owner.username(), null);
+            return checkResult(provider.id(), true, owner.username(), null);
         } catch (RuntimeException e) {
             LOG.warnf(e, "Provider connectivity check failed for %s (type %s)", id, provider.type());
             String detail = reason(e);
@@ -221,12 +234,17 @@ public class ProviderResource {
             if (e instanceof ScmApiException api && api.isUnauthorized()) {
                 registry.recordCheck(provider.id(), false, detail);
             }
-            return new CheckResult(false, null, detail);
+            return checkResult(provider.id(), false, null, detail);
         }
     }
 
     /** Result of {@link #check}: {@code account} on success, a safe {@code detail} on failure. */
-    public record CheckResult(boolean ok, String account, String detail) {
+    public record CheckResult(boolean ok, String account, String detail, String reportedScopes, java.time.Instant scopesCheckedAt) {
+    }
+
+    private CheckResult checkResult(UUID id, boolean ok, String account, String detail) {
+        var view = registry.get(id).orElseThrow();
+        return new CheckResult(ok, account, detail, view.reportedScopes(), view.scopesCheckedAt());
     }
 
     /**
@@ -294,10 +312,27 @@ public class ProviderResource {
     @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
-        if (!registry.delete(uuid(id))) {
-            throw new NotFoundException("No provider " + id);
+        try {
+            if (!registry.delete(uuid(id))) throw new NotFoundException("No provider " + id);
+        } catch (ProviderRegistry.AccountConflict e) {
+            throw conflict(e.getMessage());
         }
         return Response.noContent().build();
+    }
+
+    private ProviderInput normalize(ProviderInput in, String storedRole) {
+        if (in == null) throw new BadRequestException("Provider body is required");
+        String role = in.role();
+        if (isBlank(role)) role = storedRole != null ? storedRole
+                : ProviderClients.SUPPORTED_TYPES.contains(in.type() == null ? "" : in.type()) ? "REVIEWER" : "CONTEXT";
+        String workspace = isBlank(in.workspace()) ? null : in.workspace();
+        return new ProviderInput(in.name(), in.type(), in.baseUrl(), workspace, in.authKind(), in.authUsername(),
+                in.secret(), in.botAccountId(), in.enabled(), in.authors(), in.botUsername(), in.conversationLevel(), role);
+    }
+
+    private void recordScopes(UUID id, ProviderInput in) {
+        registry.recordScopes(id, clients.reportedScopes(in.type(), in.baseUrl(), in.authKind(), in.authUsername(),
+                in.secret(), in.workspace()));
     }
 
     private void validate(ProviderInput in, boolean creating) {
@@ -307,7 +342,7 @@ public class ProviderResource {
         requireField(in.name(), "name");
         requireField(in.type(), "type");
         requireField(in.baseUrl(), "baseUrl");
-        requireField(in.workspace(), "workspace");
+
         if (in.role() != null && !in.role().isBlank()) {
             // Checked here as well as in the registry, so a closed-set value the client got wrong is
             // a 400 naming the set rather than the registry's IllegalArgumentException as a 500 —
@@ -316,12 +351,19 @@ public class ProviderResource {
                 ProviderRole.of(in.role());
             } catch (IllegalArgumentException e) {
                 throw new BadRequestException("Unsupported provider role '" + in.role()
-                        + "' (expected one of: FACTORY, REVIEWER)");
+                        + "' (expected one of: CONTEXT, FACTORY, REVIEWER)");
             }
         }
         if (!TYPES.contains(in.type())) {
             throw new BadRequestException("Unsupported provider type '" + in.type()
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
+        }
+        ProviderRole role = ProviderRole.of(in.role());
+        if (role == ProviderRole.CONTEXT) {
+            if (in.workspace() != null && !in.workspace().isBlank()) throw new BadRequestException("A context-only account has no workspace");
+        } else {
+            if (!ProviderClients.SUPPORTED_TYPES.contains(in.type())) throw new BadRequestException("This kind supports only the CONTEXT role");
+            requireField(in.workspace(), "workspace");
         }
         validateBaseUrl(in.baseUrl());
         if (in.authKind() == null || !AUTH_KINDS.contains(in.authKind())) {

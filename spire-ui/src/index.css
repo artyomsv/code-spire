@@ -1628,3 +1628,6 @@
 .run-event-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 11px; }
 .run-event pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
 .run-event-error { color: var(--crit); }
+
+.account-uses { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-scopes { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-3); }

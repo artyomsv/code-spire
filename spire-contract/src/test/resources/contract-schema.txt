@@ -49,3 +49,6 @@ SteerRun(runId: java.lang.String, instruction: java.lang.String)
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
+
+# ContextCredential
+ContextCredential(type: java.lang.String, platform: java.lang.String, baseUrl: java.lang.String, authKind: java.lang.String, username: java.lang.String, secret: java.lang.String, projectKeys: java.lang.String)

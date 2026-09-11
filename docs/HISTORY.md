@@ -1756,3 +1756,30 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Tracker accounts are listed read-only on Accounts; Context shows *Used by*. The allowlist field
   asks for the stable user id, which is what `/fix` accepts. No new tables. Design:
   `docs/superpowers/specs/2026-09-07-accounts-and-roles-design.md`; out of scope, with reasons, in its §11.
+
+- **Accounts normalization (2026-09-12, #148; ADR-041).** Machine credentials now live on accounts;
+  context sources hold references plus their source-specific URL, keys and path allowlists. V59
+  preserves legacy ciphertext while a startup reconciler re-encrypts under the account AAD,
+  atomically per source. Identical credentials at the same origin/authentication identity share a
+  migrated account; failures remain recoverable and do not stop other rows. Six forge accounts
+  and five legacy source types were exercised in a PostgreSQL/Flyway upgrade fixture. Disabling
+  an account stops its sources, rotation is shared, and deletion names the referring sources.
+  Atlassian joins the account registry with CONTEXT role and no workspace. The account screen
+  manages every kind, shows derived usage and advisory scopes, and the source form selects a
+  compatible account. Code-reader platform travels explicitly in the encrypted wire contract.
+  - REVIEWER/FACTORY separation is unchanged (ADR-038); gateway and both role resolvers stay as
+    they were. M3 retains workspace remodeling, per-repository push checks and handle resolution.
+  - Seven mutations were caught by their intended assertions: unconditional credential collapse,
+    removing the migration transaction, ignoring disabled accounts, restoring host guessing,
+    provider literals outside the composition root, refusing unknown scopes, and an unfiltered
+    account picker. Each mutation was restored before the final gate.
+  - Local verification exposed two environment requirements: Quarkus packaging needs the Gradle
+    JVM itself on JDK 25, and publisher tests need Git's shell on Windows PATH. The account-table
+    browser rendering also exposed excess metadata width; compact ellipsis cells retain complete
+    values on hover. 2952 Java tests / 335 suites (one skip), 611 UI tests / 75 files, and TypeScript
+    validation establish the automated coverage. The container deadline test waits for its real
+    publisher drain; the nightly E2E tier is separate.
+  - Live scope-family claims and scoped Atlassian gateway limits are in UNVERIFIED. The GitHub
+    header observation used OAuth, not a classic PAT; synthetic fixtures are not presented as live
+    credential evidence. No production token migration or deployment was performed. PR review
+    findings will be registered as GitHub reviews by the software-factory analyst.

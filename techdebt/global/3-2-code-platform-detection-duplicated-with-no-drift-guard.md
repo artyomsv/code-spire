@@ -1,5 +1,11 @@
 # The `code` provider's platform-from-host heuristic is duplicated with no build guard
 
+**Closed 2026-09-12 (#148, ADR-041).** Code credentials now carry the referenced account's
+explicit platform through the encrypted wire record, validator and worker. Tests use misleading
+hostnames, and restoring host guessing fails the worker test. Only startup reconciliation guesses
+for legacy rows; its custom-host and Bitbucket limits are tracked in `docs/UNVERIFIED.md`.
+The original diagnosis below is retained as history.
+
 | Field | Value |
 |-------|-------|
 | Criticality | Medium |
