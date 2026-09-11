@@ -19,6 +19,7 @@ import PromptDetail from './components/PromptDetail';
 import RequireRole from './components/RequireRole';
 import RedirectKeepingQuery from './components/RedirectKeepingQuery';
 import Runs from './components/Runs';
+import RunDetail from './components/RunDetail';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
@@ -45,6 +46,8 @@ function toggleTheme() {
  * <p>Order is significant: `/analytics/me` must precede `/analytics`.
  */
 const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ['/runs/', 'Run detail'],
+  ['/runs', 'Runs'],
   ['/r/', 'Review detail'],
   ['/analytics/me', 'My activity'],
   ['/analytics', 'Analytics'],
@@ -365,6 +368,7 @@ export default function App() {
           />
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/runs" element={<Runs />} />
+          <Route path="/runs/*" element={<RunDetail />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />
           {/* Before the :workspace/:slug route, or "me" would be read as a workspace. */}
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />

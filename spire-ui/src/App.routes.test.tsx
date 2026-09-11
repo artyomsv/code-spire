@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
 import { RETURN_ROUTE_KEY } from './auth';
+import { runView } from './test/liveRuns';
 
 /**
  * `App` is composition — a rail, a topbar and a `Routes` table — so this covers the one piece of
@@ -90,6 +91,7 @@ const VIEWER_SESSION = { authEnabled: true, authenticated: true, user: 'dev-view
 let session: unknown = ADMIN_SESSION;
 
 function payloadFor(url: string): unknown {
+  if (url === `/api/runs/${encodeURIComponent(runView().runId)}`) return runView();
   if (/\/api\/me$/.test(url)) return session;
   // The worker owns /wk — its own prefix, so its session cookie never reaches the other services.
   if (/\/wk\/review-context\//.test(url)) {
@@ -162,6 +164,8 @@ const renderAtWithProbe = (path: string) =>
  * `<Route>` and adding a row here as one action.
  */
 const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
+  { path: '/runs', title: 'Runs', nav: 'Runs' },
+  { path: `/runs/${runView().runId}`, title: 'Run detail', nav: 'Runs' },
   { path: '/', title: 'Reviews', nav: 'Reviews' },
   { path: '/analytics', title: 'Analytics', nav: 'Analytics' },
   { path: '/analytics/me', title: 'My activity', nav: 'My activity' },

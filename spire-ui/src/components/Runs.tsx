@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
-import { getRuns, type RunListEntry, type RunStatus } from '../api';
+import type { RunListEntry, RunStatus } from '../api';
+import { MAX_LIVE_RUNS, useLiveRuns } from '../useLiveRuns';
 import { formatCost } from '../money';
+import { formatEventTime } from '../format';
 
 /**
  * The factory's first screen.
@@ -104,7 +106,7 @@ export function reviewPath(reviewId: string): string | null {
  * <p>A fix run proposes nothing and shows a dash, not an error: its change is already on a pull
  * request's own branch (ADR-040), so there is nothing missing to report.
  */
-function ProposalCell({ run }: { run: RunListEntry }) {
+export function ProposalCell({ run }: { run: RunListEntry }) {
   if (run.prUrl) {
     return (
       <a className="mono" href={run.prUrl} target="_blank" rel="noreferrer">
@@ -138,30 +140,11 @@ function ReviewCell({ reviewId }: { reviewId: string | null }) {
   return path ? <Link to={path}>{reviewId}</Link> : <span className="mono">{reviewId}</span>;
 }
 export default function Runs() {
-  const [runs, setRuns] = useState<RunListEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { runs: liveRuns, loading, error } = useLiveRuns();
   const [kind, setKind] = useState('');
   const [status, setStatus] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getRuns({ kind: kind || undefined, status: status || undefined })
-      .then((rows) => {
-        if (!cancelled) setRuns(rows);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [kind, status]);
+  const runs = liveRuns.filter((run) => (!kind || run.kind === kind) && (!status || run.status === status));
 
   return (
     <div className="content">
@@ -169,6 +152,7 @@ export default function Runs() {
         <div className="prov-head">
           <h2 className="prov-title">Runs</h2>
           <div className="prov-actions">
+            <span className="prov-sub">Filters apply to the newest {MAX_LIVE_RUNS} runs.</span>
             <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind">
               <option value="">All kinds</option>
               <option value="FIX">Fix</option>
@@ -197,7 +181,7 @@ export default function Runs() {
 
         {!loading && !error && runs.length === 0 && (
           <div className="wh-empty">
-            <div className="wh-empty-title">No runs yet</div>
+            <div className="wh-empty-title">{kind || status ? `No matching runs in the newest ${MAX_LIVE_RUNS}` : 'No runs yet'}</div>
             <p className="wh-empty-text">
               A run appears here once one is dispatched — from a <code>/fix</code> comment on a
               review, or from the runs API.
@@ -215,6 +199,8 @@ export default function Runs() {
                 <th>For</th>
                 <th>Branch</th>
                 <th>Proposed</th>
+                <th>Queued</th>
+                <th>Duration</th>
                 <th className="cell-r">Cost</th>
               </tr>
             </thead>
@@ -222,9 +208,9 @@ export default function Runs() {
               {runs.map((run) => (
                 <tr key={run.runId}>
                   <td>
-                    <span className="mono" title={run.runId}>
+                    <Link to={`/runs/${encodeURIComponent(run.runId)}`} className="mono" title={run.runId}>
                       {shortRunId(run.runId)}
-                    </span>
+                    </Link>
                   </td>
                   <td>{run.kind}</td>
                   <td>
@@ -241,6 +227,10 @@ export default function Runs() {
                   <td>
                     <ProposalCell run={run} />
                   </td>
+                  <td title={run.startedAt ?? undefined}>
+                    {run.startedAt ? formatEventTime(run.startedAt) : '—'}
+                  </td>
+                  <td>{runDuration(run)}</td>
                   {/*
                     formatCost renders null as an em dash, which is the whole point: unknown is not
                     zero, and a run still going has no charge yet. ADR-023 reaching the screen.
@@ -254,4 +244,12 @@ export default function Runs() {
       </div>
     </div>
   );
+}
+
+/** Total time from queue to end; an unfinished run has no final duration yet. */
+export function runDuration(run: RunListEntry): string {
+  if (!run.startedAt || !run.endedAt) return '—';
+  const seconds = Math.floor((Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000);
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }

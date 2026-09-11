@@ -958,6 +958,7 @@ export interface RunListEntry {
   findingRef: string | null;
   failureCause: string | null;
   startedAt: string | null;
+  agentStartedAt: string | null;
   endedAt: string | null;
   cost: RunCost;
   prUrl: string | null;
@@ -969,6 +970,52 @@ export interface RunFilter {
   kind?: string;
   reviewId?: string;
   limit?: number;
+}
+
+export interface RunSpend {
+  priced: number;
+  unpricedLines: number;
+  tokensByType: Record<string, number>;
+}
+
+/** Rich detail read model; the list's common fields retain the same names and meaning. */
+export interface RunView extends RunListEntry {
+  providerType: string;
+  workspace: string;
+  slug: string;
+  subject: string;
+  attempt: number;
+  baseBranch: string;
+  baseCommit: string;
+  pushedAs: string | null;
+  unitId: string | null;
+  taskSummary: string | null;
+  blocked: { path: string; kind: string }[];
+  failureDetail: string | null;
+  spend: RunSpend;
+}
+
+export async function getRun(runId: string): Promise<RunView | null> {
+  const res = await apiFetch(`/api/runs/${encodeURIComponent(runId)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) return throwResponse(res, 'Failed to load run');
+  return res.json();
+}
+
+export interface RunEvent {
+  runId: string;
+  sequence: number;
+  at: string;
+  kind: string;
+  text: string;
+  error: boolean;
+}
+
+export async function getRunTranscript(runId: string): Promise<RunEvent[]> {
+  const res = await apiFetch(`/api/runs/${encodeURIComponent(runId)}/transcript`);
+  if (res.status === 404) throw new Error('No such run');
+  if (!res.ok) return throwResponse(res, 'Failed to load transcript');
+  return res.json();
 }
 
 /**

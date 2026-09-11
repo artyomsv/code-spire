@@ -171,7 +171,12 @@ public class FactoryRunProjection {
     public record RunView(String runId, String status, String pushedRef,
                           List<RunResult.BlockedChange> blocked,
                           String failureCause, String failureDetail, String unitId,
-                          String prUrl, String prError) {
+                          String prUrl, String prError, Instant agentStartedAt,
+                          String kind, String harness, String model, String providerType,
+                          String workspace, String slug, String subject, int attempt,
+                          String baseBranch, String baseCommit, String branch, String pushedAs,
+                          String reviewId, String findingRef, String taskSummary,
+                          Instant startedAt, Instant endedAt, RunCost cost, RunSpend spend) {
     }
 
     /**
@@ -196,7 +201,8 @@ public class FactoryRunProjection {
     public record RunListEntry(String runId, String status, String kind, String harness,
                                String model, String branch, String pushedRef, String reviewId,
                                String findingRef, String failureCause, Instant startedAt,
-                               Instant endedAt, RunCost cost, String prUrl, String prError) {
+                               Instant endedAt, RunCost cost, String prUrl, String prError,
+                               Instant agentStartedAt) {
     }
 
     /**
@@ -233,10 +239,19 @@ public class FactoryRunProjection {
      * the same millisecond order deterministically rather than arbitrarily.
      */
     public List<RunListEntry> list(RunFilter filter) {
+        return list(filter, null);
+    }
+
+    /** The push and the snapshot share one query and mapper, including unknown-aware cost. */
+    public Optional<RunListEntry> listOne(String runId) {
+        return list(new RunFilter(null, null, null, 1), runId).stream().findFirst();
+    }
+
+    private List<RunListEntry> list(RunFilter filter, String runId) {
         StringBuilder sql = new StringBuilder("""
                 SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch,
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
-                       r.started_at, r.ended_at, r.pr_url, r.pr_error,
+                       r.started_at, r.ended_at, r.pr_url, r.pr_error, r.agent_started_at,
                        c.priced_millicents, c.unpriced_lines, c.line_count
                   FROM factory_run r
                   LEFT JOIN (
@@ -257,6 +272,10 @@ public class FactoryRunProjection {
                  WHERE 1 = 1
                 """);
         List<String> bound = new ArrayList<>();
+        if (runId != null) {
+            sql.append(" AND r.run_id = ?");
+            bound.add(runId);
+        }
         if (filter.status() != null) {
             sql.append(" AND r.status = ?");
             bound.add(filter.status());
@@ -286,7 +305,7 @@ public class FactoryRunProjection {
                             rs.getString("review_id"), rs.getString("finding_ref"),
                             rs.getString("failure_cause"), instant(rs, "started_at"),
                             instant(rs, "ended_at"), costOf(rs), rs.getString("pr_url"),
-                            rs.getString("pr_error")));
+                            rs.getString("pr_error"), instant(rs, "agent_started_at")));
                 }
                 return List.copyOf(rows);
             }
@@ -446,6 +465,7 @@ public class FactoryRunProjection {
      *     a wire field at every rebuild site. A missing argument is a compile error instead.
      */
     public boolean queued(QueuedRun row, String taskSummary) {
+        boolean changed;
         String runId = row.runId();
         String harness = row.harness();
         String model = row.model();
@@ -531,10 +551,12 @@ public class FactoryRunProjection {
             ps.setString(21, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
-            return ps.executeUpdate() == 1;
+            changed = ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + runId, e);
         }
+        if (changed) push(runId);
+        return changed;
     }
 
     /**
@@ -606,6 +628,7 @@ public class FactoryRunProjection {
                     ps.setString(2, url);
                     ps.setString(3, runId);
                 }, runId, "record the pull request for");
+        push(runId);
     }
 
     /**
@@ -619,6 +642,7 @@ public class FactoryRunProjection {
             ps.setString(1, detail);
             ps.setString(2, runId);
         }, runId, "record the pull-request failure for");
+        push(runId);
     }
 
     /** One small write, with the same failure wording as every other. */
@@ -692,6 +716,7 @@ public class FactoryRunProjection {
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
+        push(result.runId());
     }
 
     private void started(String runId, String unitId) {
@@ -708,7 +733,10 @@ public class FactoryRunProjection {
         // fact rather than as somebody's decision. The failed/DISPATCH_UNCERTAIN shape is included
         // for the same reason it is in LIVE -- an operator who answered "it did start" must not
         // thereby stop the row hearing the start.
+        // Keep the first observed start, including when recovering a dispatch state. A late start
+        // must not invent a timestamp on a terminal run, so it belongs in this guarded update.
         update("UPDATE factory_run SET status = ?, failure_cause = NULL, failure_detail = NULL, ended_at = NULL"
+                        + ", agent_started_at = COALESCE(agent_started_at, now())"
                         + " WHERE run_id = ? AND (status IN (?, ?) OR (status = ? AND failure_cause IN (?, ?)))",
                 runId, RUNNING, runId, QUEUED, DISPATCH_UNCERTAIN, FAILED, DISPATCH_FAILED,
                 RunFailureCause.DISPATCH_UNCERTAIN.name());
@@ -790,6 +818,7 @@ public class FactoryRunProjection {
                 UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
                  WHERE run_id = ? AND status = ?
                 """, runId, FAILED, RunFailureCause.DISPATCH_FAILED.name(), detail, runId, QUEUED);
+        push(runId);
     }
 
     /**
@@ -812,6 +841,7 @@ public class FactoryRunProjection {
                  WHERE run_id = ? AND status = ?
                 """, runId, DISPATCH_UNCERTAIN, RunFailureCause.DISPATCH_UNCERTAIN.name(), detail,
                 runId, QUEUED);
+        push(runId);
     }
 
     /**
@@ -855,10 +885,12 @@ public class FactoryRunProjection {
      * redelivery.
      */
     private boolean resolve(String runId, String cause, String detail) {
-        return update("""
+        boolean changed = update("""
                 UPDATE factory_run SET status = ?, failure_cause = ?, failure_detail = ?, ended_at = now()
                  WHERE run_id = ? AND status = ?
                 """, runId, FAILED, cause, detail, runId, DISPATCH_UNCERTAIN) == 1;
+        if (changed) push(runId);
+        return changed;
     }
 
     /**
@@ -868,12 +900,28 @@ public class FactoryRunProjection {
      * @return false when no such run exists
      */
     public boolean acknowledgeAttention(String runId) {
+        boolean changed;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "UPDATE factory_run SET attention_ack_at = now() WHERE run_id = ?")) {
             ps.setString(1, runId);
-            return ps.executeUpdate() == 1;
+            changed = ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to acknowledge attention for run " + runId, e);
+        }
+        if (changed) push(runId);
+        return changed;
+    }
+
+    @Inject
+    RunsBroadcaster broadcaster;
+
+    /** Called only after the write completes and its connection is released. */
+    protected void push(String runId) {
+        try {
+            broadcaster.push(runId);
+        } catch (RuntimeException failure) {
+            // The write already committed. A live-feed fault must never turn it into a failed write.
+            LOG.debugf(failure, "run %s: live update dropped", runId);
         }
     }
 
@@ -905,10 +953,25 @@ public class FactoryRunProjection {
         }
     }
 
+    /** Existence alone, without reading the definition or aggregating the charge ledger. */
+    public boolean exists(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT 1 FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to check run " + runId, e);
+        }
+    }
+
     public Optional<RunView> find(String runId) {
         String sql = """
                 SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id,
-                       pr_url, pr_error
+                       pr_url, pr_error, agent_started_at, kind, harness, model, provider_type,
+                       workspace, slug, subject, attempt, base_branch, base_commit, branch, pushed_as,
+                       review_id, finding_ref, task_summary, started_at, ended_at
                   FROM factory_run WHERE run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -917,13 +980,28 @@ public class FactoryRunProjection {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
-                return Optional.of(new RunView(runId, rs.getString("status"), rs.getString("pushed_ref"),
-                        BlockedChanges.fromJson(rs.getString("blocked_changes")),
-                        rs.getString("failure_cause"), rs.getString("failure_detail"),
-                        rs.getString("unit_id"), rs.getString("pr_url"), rs.getString("pr_error")));
+                // PgJDBC keeps each PreparedStatement's ResultSet independent. The spend query
+                // deliberately shares this connection without advancing or replacing rs.
+                RunSpend spend = RunSpendReader.read(c, runId);
+                return Optional.of(readView(runId, rs, spend));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read run " + runId, e);
         }
+    }
+
+    /** One canonical construction site: no shorter constructor can silently drop detail fields. */
+    private static RunView readView(String runId, ResultSet rs, RunSpend spend) throws SQLException {
+        return new RunView(runId, rs.getString("status"), rs.getString("pushed_ref"),
+                BlockedChanges.fromJson(rs.getString("blocked_changes")),
+                rs.getString("failure_cause"), rs.getString("failure_detail"),
+                rs.getString("unit_id"), rs.getString("pr_url"), rs.getString("pr_error"),
+                instant(rs, "agent_started_at"), rs.getString("kind"), rs.getString("harness"),
+                rs.getString("model"), rs.getString("provider_type"), rs.getString("workspace"),
+                rs.getString("slug"), rs.getString("subject"), rs.getInt("attempt"),
+                rs.getString("base_branch"), rs.getString("base_commit"), rs.getString("branch"),
+                rs.getString("pushed_as"), rs.getString("review_id"), rs.getString("finding_ref"),
+                rs.getString("task_summary"), instant(rs, "started_at"), instant(rs, "ended_at"),
+                spend.cost(), spend);
     }
 }

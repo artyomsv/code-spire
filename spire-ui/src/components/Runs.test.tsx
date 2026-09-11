@@ -1,9 +1,20 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Runs, { isRunUnfinished, runStatusLabel, runStatusPill } from './Runs';
 import * as api from '../api';
 import type { RunListEntry } from '../api';
+import { RunSocket } from '../test/liveRuns';
+
+beforeEach(() => {
+  RunSocket.sockets = [];
+  vi.stubGlobal('WebSocket', RunSocket);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 /**
  * The factory's first screen.
@@ -27,6 +38,7 @@ function run(overrides: Partial<RunListEntry> = {}): RunListEntry {
     findingRef: null,
     failureCause: null,
     startedAt: '2026-09-04T10:00:00Z',
+    agentStartedAt: '2026-09-04T10:01:00Z',
     endedAt: '2026-09-04T10:05:00Z',
     cost: { millicents: 4600 },
     prUrl: null,
@@ -78,6 +90,87 @@ function show(rows: RunListEntry[]) {
 }
 
 describe('the runs screen', () => {
+  it('discloses the filter window when the only matching run is older than the newest 200', async () => {
+    const allRuns = Array.from({ length: 300 }, (_, index) => run({
+      runId: `TEST-run-${index}`, status: index === 249 ? 'cancelled' : 'succeeded',
+      startedAt: new Date(Date.UTC(2026, 8, 11, 0, 0, 300 - index)).toISOString(),
+    }));
+    show(allRuns.slice(0, 200)); // The unfiltered REST/socket window excludes the cancelled run.
+    await screen.findByTitle('TEST-run-0');
+    expect(screen.getByText('Filters apply to the newest 200 runs.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'cancelled' } });
+    expect(screen.getByText('No matching runs in the newest 200')).toBeInTheDocument();
+    expect(screen.queryByText('No matching runs', { exact: true })).toBeNull();
+    RunSocket.push(allRuns[249]);
+    expect(screen.queryByTitle('TEST-run-249')).toBeNull();
+    RunSocket.push({ ...allRuns[0], status: 'cancelled' });
+    expect(screen.getByTitle('TEST-run-0')).toBeInTheDocument();
+    expect(api.getRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a run that changes into the selected status without another fetch', async () => {
+    const queued = run({ status: 'queued', agentStartedAt: null, endedAt: null });
+    show([queued]);
+    await screen.findByTitle(queued.runId);
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'running' } });
+    expect(screen.queryByTitle(queued.runId)).toBeNull();
+    RunSocket.push({ ...queued, status: 'running' });
+    const row = screen.getByTitle(queued.runId).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Running')).toBeInTheDocument();
+    expect(api.getRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps nonmatching pushed kinds and statuses hidden', async () => {
+    show([run()]);
+    await screen.findByTitle(run().runId);
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'FIX' } });
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'running' } });
+    RunSocket.push(run({ runId: 'build', status: 'running' }));
+    RunSocket.push(run({ runId: 'fix', kind: 'FIX', status: 'queued' }));
+    expect(screen.queryByRole('table')).toBeNull();
+    RunSocket.push(run({ runId: 'fix', kind: 'FIX', status: 'running' }));
+    expect(screen.getByTitle('fix')).toBeInTheDocument();
+    expect(screen.queryByTitle('build')).toBeNull();
+    RunSocket.push(run({ runId: 'fix', kind: 'FIX', status: 'succeeded' }));
+    expect(screen.queryByTitle('fix')).toBeNull();
+    expect(api.getRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates a visible runs status, spend and proposal from pushes', async () => {
+    const queued = run({ status: 'queued', endedAt: null, cost: { millicents: null } });
+    show([queued]);
+    await screen.findByTitle(queued.runId);
+    RunSocket.push({ ...queued, status: 'succeeded', cost: { millicents: 7000 }, prUrl: 'https://example.invalid/pr/42' });
+    const row = screen.getByTitle(queued.runId).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Succeeded')).toBeInTheDocument();
+    expect(within(row).getByText('$0.070')).toBeInTheDocument();
+    expect(within(row).getByRole('link', { name: '#42' })).toHaveAttribute('href', 'https://example.invalid/pr/42');
+    expect(api.getRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels queue time honestly and includes queue wait in duration', async () => {
+    show([run()]);
+
+    const headers = await screen.findAllByRole('columnheader');
+    const queued = headers.findIndex((header) => header.textContent === 'Queued');
+    const duration = headers.findIndex((header) => header.textContent === 'Duration');
+    expect(queued).toBeGreaterThanOrEqual(0);
+    expect(duration).toBeGreaterThanOrEqual(0);
+    expect(screen.queryByRole('columnheader', { name: 'Started' })).toBeNull();
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[queued]).toHaveAttribute('title', '2026-09-04T10:00:00Z');
+    expect(cells[duration]).toHaveTextContent(/^5m 0s$/);
+  });
+
+  it('leaves final duration unknown until the run ends', async () => {
+    show([run({ status: 'queued', agentStartedAt: null, endedAt: null })]);
+
+    const headers = await screen.findAllByRole('columnheader');
+    const duration = headers.findIndex((header) => header.textContent === 'Duration');
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[duration]).toHaveTextContent(/^—$/);
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });

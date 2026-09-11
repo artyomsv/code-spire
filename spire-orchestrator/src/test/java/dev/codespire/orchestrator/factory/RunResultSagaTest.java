@@ -15,6 +15,12 @@ class RunResultSagaTest {
     private static final String RUN_ID = "run::github:TEST-acme/app:s:1";
 
     private static class RecordingProjection extends FactoryRunProjection {
+        @Override
+        protected void push(String runId) {
+            // apply is recorded below; the fake must never open a live-feed database read.
+            throw new AssertionError("unexpected live broadcast");
+        }
+
         final List<RunResult> applied = new ArrayList<>();
 
         @Override

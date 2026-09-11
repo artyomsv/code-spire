@@ -297,8 +297,19 @@ New tables, in the schema of the service that owns them (schema-per-service, ADR
 |---|---|---|
 | `work_item` | run bookkeeping per `(work_source, repo, issue_id)` | **not** an issues mirror — no title, no body, no status of the ticket itself |
 | `work_item_gate` | one row per open or resolved approval | expiry timestamp, resolver, channel |
-| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, timings, failure cause + detail, and what the run is FOR (kind, review_id, finding_ref — V54, which FR-F32 counts) | **delivered** (V43 + V45/V47/V49–V54). No `phase` and no `runtime` column — both were sketched here and neither was built; phases arrive with M4 |
+| `factory_run` | read model: status, harness, model, base/branch, `pushed_as`/`pushed_ref`, blocked changes, queue/agent-start/end timestamps, failure cause + detail, and what the run is FOR (kind, review_id, finding_ref — V54, which FR-F32 counts) | **delivered** (V43 + V45/V47/V49–V54 + V58). V58 records the first observed agent start; historic starts stay null. No `phase` and no `runtime` column — both were sketched here and neither was built; workflow phases arrive with M4 |
 | `run_event` | bounded transcript | TTL'd; encrypted where it may quote source (ADR-011 boundary) |
+
+The dashboard's `#/runs` list follows `/api/ws/runs` (newest 200 snapshot, then individual rows).
+The client retains the newest 200 after each update and labels its filters and empty state with
+that limit; the filters search this window rather than the entire run history.
+Detail reads combine the run definition with active RUN charge lines; missing or partly unpriced
+usage stays unknown. The detail's three displayed phases are recorded timestamps, not inferred
+workflow phases. Its transcript uses `/api/ws/runs/transcript?runId=…`, sorts by sequence and retains
+at most 2000 events. `GET /api/runs/{runId}/transcript?before={sequence}&limit=2000` reads the
+preceding bounded page when earlier events leave the live view; omission of `before` reads the newest
+page. Both read endpoints preserve viewer access. See the [live-runs implementation and verification
+record](../superpowers/plans/2026-09-11-live-runs.md).
 
 **`runworker` schema** — its own, NOT the review worker's `worker` schema (schema-per-service,
 ADR-011). The two are different services with different database roles.

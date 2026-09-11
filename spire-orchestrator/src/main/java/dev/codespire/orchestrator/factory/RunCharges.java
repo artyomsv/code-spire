@@ -105,6 +105,9 @@ public class RunCharges {
             String credentialRef = runs.harnessCredentialOf(runId).map(UUID::toString).orElse(null);
             ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model,
                     lines, credentialRef));
+            // The terminal-status push precedes charging. FIX runs and runs that delivered nothing
+            // have no later PR write to refresh their spend, so notify after the ledger commits too.
+            runs.push(runId);
         } catch (RuntimeException e) {
             // The projection has already written this run's terminal status by the time we get here.
             // Throwing would dead-letter the result and replay it, re-applying the projection — so a
