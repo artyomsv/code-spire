@@ -243,6 +243,12 @@ mp:
 
 # Dev: the single repo-root .env supplies POSTGRES_*; the broker is the compose Redpanda.
 "%dev":
+  # Without this the Kafka Dev Service starts a broker of its own, and this worker then listens for
+  # run commands on a bus the rest of the dev stack never writes to -- a run is dispatched, nothing
+  # answers, and nothing fails either. The other three deployables carry the same line.
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:34092}
   quarkus:
     oidc:
       # No IdP in plain dev; OperatorAuthorization permits an unauthenticated surface in DEVELOPMENT

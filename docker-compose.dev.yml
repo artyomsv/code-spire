@@ -68,6 +68,9 @@ services:
       # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
       # published host port reaches the app inside the container.
       QUARKUS_HTTP_HOST: 0.0.0.0
+      # Quarkus asks its analytics question on the first build in a fresh image, and a container
+      # has no terminal to answer it -- the build stops on the prompt. Decline it up front.
+      QUARKUS_ANALYTICS_DISABLED: "true"
     ports:
       - "39280:39280"   # HTTP: dashboard + REST + WebSocket timeline
       - "39290:39290"   # JDWP debug (attach your IDE here)
@@ -99,6 +102,9 @@ services:
       # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
       # published host port reaches the app inside the container.
       QUARKUS_HTTP_HOST: 0.0.0.0
+      # Quarkus asks its analytics question on the first build in a fresh image, and a container
+      # has no terminal to answer it -- the build stops on the prompt. Decline it up front.
+      QUARKUS_ANALYTICS_DISABLED: "true"
     ports:
       - "39281:39281"   # HTTP: webhook edge + webhook-repo registry API
       - "39291:39291"   # JDWP debug
@@ -130,6 +136,9 @@ services:
       # quarkusDev binds HTTP to localhost by default; bind all interfaces so the
       # published host port reaches the app inside the container.
       QUARKUS_HTTP_HOST: 0.0.0.0
+      # Quarkus asks its analytics question on the first build in a fresh image, and a container
+      # has no terminal to answer it -- the build stops on the prompt. Decline it up front.
+      QUARKUS_ANALYTICS_DISABLED: "true"
     ports:
       - "39282:39282"   # HTTP: health + review-context endpoints
       - "39292:39292"   # JDWP debug

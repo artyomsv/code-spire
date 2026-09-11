@@ -54,6 +54,12 @@ dependencies {
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
 }
 
+// quarkusDev runs with the module dir as CWD, but the single dev-env .env lives
+// at the repo root -- point dev mode there so ${POSTGRES_*} et al. resolve.
+tasks.named<io.quarkus.gradle.tasks.QuarkusDev>("quarkusDev") {
+    workingDirectory.set(rootProject.projectDir)
+}
+
 tasks.test {
     useJUnitPlatform()
     // M0WalkingSkeletonTest builds spire-publisher:latest from the installed distribution and the
