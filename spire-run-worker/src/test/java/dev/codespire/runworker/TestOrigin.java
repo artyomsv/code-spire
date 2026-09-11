@@ -81,6 +81,11 @@ final class TestOrigin implements AutoCloseable {
         return git("log", "-1", "--format=%an", "refs/heads/" + branch);
     }
 
+    /** The newest commit's SUBJECT, which is what a person reading the branch sees first. */
+    String messageOf(String branch) {
+        return git("log", "-1", "--format=%s", "refs/heads/" + branch);
+    }
+
     List<String> filesOf(String branch) {
         return List.of(git("ls-tree", "-r", "--name-only", "refs/heads/" + branch).split("\n"));
     }

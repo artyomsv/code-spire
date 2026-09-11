@@ -318,8 +318,11 @@ class RunUnitBuilderTest {
     void thePromptReachesTheAgentThroughItsEntrypointContract() {
         RunUnitSpec unit = unit();
 
-        assertEquals("fix the typo", unit.agent().environment().get("SPIRE_PROMPT"),
+        String prompt = unit.agent().environment().get("SPIRE_PROMPT");
+        assertTrue(prompt.startsWith("fix the typo"),
                 "a STDIN harness receives the prompt through SPIRE_PROMPT, the entrypoint's contract");
+        assertTrue(prompt.contains("SPIRE_SUMMARY"),
+                "with the commit instruction appended, which is the only layer that asks for a commit");
         assertFalse(unit.publisher().environment().containsKey("SPIRE_PROMPT"),
                 "the publisher never sees the work item; it has no use for it and no business with it");
     }

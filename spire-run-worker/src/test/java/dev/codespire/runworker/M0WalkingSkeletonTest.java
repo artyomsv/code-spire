@@ -62,6 +62,10 @@ class M0WalkingSkeletonTest {
 
     /** The harness registry answers this script for every name; the command's harness is a label. */
     private RunCommand.ExecuteRun run(String subject, String script) throws Exception {
+        return run(subject, script, origin.baseCommit());
+    }
+
+    private RunCommand.ExecuteRun run(String subject, String script, String baseCommit) throws Exception {
         QuarkusMock.installMockForType(new HarnessRegistry() {
             @Override
             public HarnessAdapter forName(String harness) {
@@ -75,13 +79,95 @@ class M0WalkingSkeletonTest {
                 mapper.writeValueAsString(new MachineAccountCredential(TestOrigin.USER, TestOrigin.SECRET)),
                 RunCommand.scmCredentialAad(runId));
         return new RunCommand.ExecuteRun(runId,
-                new RepoRef(WORKSPACE, "app"), origin.remoteUri(), "main", origin.baseCommit(),
+                new RepoRef(WORKSPACE, "app"), origin.remoteUri(), "main", baseCommit,
                 "spire/" + subject, "the prompt, on stdin", "script", "script", TestImages.AGENT,
                 List.of(), 300, packed, null);
     }
 
     private static String commitAll(String prepare) {
         return prepare + " && git add -A && git commit -q -m agent";
+    }
+
+    /**
+     * The harness says what it did, and that reaches the branch as the commit subject.
+     *
+     * <p>The script deliberately does NOT commit: this is the path that actually runs today. No
+     * prompt had ever told an agent to commit, so the autosave was the only thing committing and
+     * every branch the factory has ever pushed reads {@code autosave: work in progress} — four
+     * commits on one branch and one on another, all identical and all describing nothing.
+     */
+    @Test
+    void theHarnessesOwnSummaryBecomesTheCommitSubject() throws Exception {
+        RunCommand.ExecuteRun command = run("summary",
+                "echo new > NEW.md && printf 'Return an empty list instead of null' > \"$SPIRE_SUMMARY\"");
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
+        assertEquals("Return an empty list instead of null", origin.messageOf("spire/summary"));
+    }
+
+    /** No summary is the ordinary case for a harness that knows nothing about this file. */
+    @Test
+    void aHarnessThatWritesNoSummaryStillCommits() throws Exception {
+        RunCommand.ExecuteRun command = run("nosummary", "echo new > NEW.md");
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
+        assertEquals("autosave: work in progress", origin.messageOf("spire/nosummary"));
+    }
+
+    /**
+     * The summary is MODEL OUTPUT, so it is bounded before it becomes a commit message.
+     *
+     * <p>One line, control characters gone, cut to 72. A second line would silently become a commit
+     * BODY, and a carriage return renders as a stray glyph on every forge that shows the subject.
+     */
+    @Test
+    void aSummaryIsBoundedToOneShortLine() throws Exception {
+        // A first line longer than the 72-char subject cap, a carriage return, and a second line —
+        // all three bounds in one run, because they are one expression in the entrypoint.
+        String longFirstLine = "y".repeat(80);
+        RunCommand.ExecuteRun command = run("bounded", "echo new > NEW.md && printf '"
+                + longFirstLine + "\\r\\nsecond line\\n' > \"$SPIRE_SUMMARY\"");
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
+        assertEquals("y".repeat(72), origin.messageOf("spire/bounded"),
+                "the first line only, carriage return removed, cut to the subject cap");
+    }
+
+    /**
+     * When the init container fails, the row says WHY — not just that it exited 1.
+     *
+     * <p>{@code CloneMain} has always written one JSON line naming the cause, already scrubbed of
+     * the git credential. Nothing read it. Every init failure reached the operator as
+     * {@code init container failed with exit 1} and the reason stayed in a container log on
+     * whichever host ran it — so diagnosing one meant {@code docker logs}, on a product whose run
+     * screen exists to answer exactly that question.
+     *
+     * <p>An unreachable base commit is the deterministic way in: {@code WorkspaceClone} refuses it
+     * by name, before any network work, so this asserts the channel rather than a transport mood.
+     */
+    @Test
+    void anInitFailureCarriesTheContainersOwnCause() throws Exception {
+        RunCommand.ExecuteRun command = run("badbase", commitAll("echo new > NEW.md"),
+                "0123456789abcdef0123456789abcdef01234567");
+        TestImages.clearUnit(command.runId());
+
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, result, result.toString());
+        assertTrue(failed.detail().contains("exit 1"),
+                "the exit code is the fact and must survive: " + failed.detail());
+        assertTrue(failed.detail().contains("CLONE_FAILED"),
+                "the container's own cause must reach the row: " + failed.detail());
+        assertTrue(failed.detail().contains("not reachable"),
+                "including its detail, which is what names the actual problem: " + failed.detail());
+        assertFalse(failed.detail().contains(TestOrigin.SECRET),
+                "a failure detail is rendered on a screen; the git credential must never be in it");
     }
 
     @Test
@@ -113,7 +199,11 @@ class M0WalkingSkeletonTest {
         RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         assertInstanceOf(RunResult.RunFinished.class, result, result.toString());
-        assertEquals("the prompt, on stdin", origin.contentOf("spire/prompt", "SEEN.txt"));
+        String delivered = origin.contentOf("spire/prompt", "SEEN.txt");
+        assertTrue(delivered.startsWith("the prompt, on stdin"),
+                "the dispatched prompt arrives first and unaltered: " + delivered);
+        assertTrue(delivered.contains("SPIRE_SUMMARY"),
+                "and the commit instruction rides with it, for a BUILD run as much as a fix");
     }
 
     @Test

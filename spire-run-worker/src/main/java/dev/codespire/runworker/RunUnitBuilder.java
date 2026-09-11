@@ -130,7 +130,8 @@ public class RunUnitBuilder {
                         "SPIRE_CLONE_SECRET", scm.readSecret()),
                 List.of(Mount.writable(WORKSPACE, "/workspace")));
 
-        HarnessInvocation invocation = new HarnessInvocation(command.runId(), command.prompt(),
+        HarnessInvocation invocation = new HarnessInvocation(command.runId(),
+                withCommitInstruction(command.prompt()),
                 "/workspace", command.model(), harnessEnv,
                 Duration.ofSeconds(command.maxWallClockSeconds()));
 
@@ -144,7 +145,10 @@ public class RunUnitBuilder {
             // this line a STDIN arm reads an empty prompt, produces nothing, exits 0 -- and the run
             // is reported as finished having done nothing, which is exactly what the harness SPI's
             // own javadoc warns about. It is never on argv (see thePromptIsNeverInTheAgentsArgv).
-            agentEnv.put("SPIRE_PROMPT", command.prompt());
+            // The invocation's prompt, not the command's: the commit instruction is appended once,
+            // and a STDIN arm reading the raw one would be the only delivery that never asks for a
+            // commit — the difference invisible until a branch came back saying "work in progress".
+            agentEnv.put("SPIRE_PROMPT", invocation.prompt());
         }
         ContainerSpec agent = new ContainerSpec(
                 command.agentImage(),
@@ -164,6 +168,44 @@ public class RunUnitBuilder {
                 enterprise.environment(),
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
+
+    /**
+     * The dispatched prompt, plus the one thing every run needs the agent to do with its work.
+     *
+     * <p><b>RUN-TOPOLOGY §"Two layers make the commits happen" describes a layer that did not
+     * exist.</b> It says the prompt instructs the agent to commit and the autosave backstops it;
+     * nothing anywhere told an agent to commit. So the autosave was the only writer, and every
+     * branch the factory has ever pushed carries its constant message — {@code autosave: work in
+     * progress} — describing nothing, on work a human is asked to review.
+     *
+     * <p><b>Appended HERE rather than in the prompt builders</b>, for three reasons. A fix run's
+     * prompt is built by {@code FixPrompt}, but a BUILD run's is the caller's text verbatim, so
+     * there is no second place to put it that covers both. It is delivery-agnostic: it rides
+     * {@code command.prompt()} whether the arm takes stdin or argv. And it lands AFTER the Kafka
+     * hop, so it cannot push a dispatch past {@code MAX_PROMPT_CHARS} and make a record unroutable.
+     *
+     * <p>The summary is the belt to the commit's braces: an agent that commits properly never needs
+     * it, and one that forgets still leaves a sentence behind instead of a constant.
+     */
+    static String withCommitInstruction(String prompt) {
+        return prompt + COMMIT_INSTRUCTION;
+    }
+
+    /**
+     * Deliberately does not name a path. {@code SPIRE_SUMMARY} is exported by the agent image's
+     * entrypoint, which owns where the file lives; naming the path here would put the same literal
+     * in two repositories' worth of places, free to disagree.
+     */
+    private static final String COMMIT_INSTRUCTION = """
+
+
+            ---
+            Commit your work as you go. Give each commit a message that says what changed and why.
+
+            When you have finished, write ONE line describing what you changed to the file named by
+            the SPIRE_SUMMARY environment variable. Anything you leave uncommitted is committed for
+            you, and that line becomes its message — without it the commit says only "work in
+            progress", which tells a reviewer nothing.""";
 
     /**
      * What the publisher is told, including where ADR-040 lets it push.

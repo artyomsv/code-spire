@@ -36,6 +36,11 @@ to explain why. A contract that is not sufficient to build against is not doing 
 | `SPIRE_HANDOFF` | Where bundles and `DONE` are written. `/handoff` unless set. |
 | `SPIRE_BASE_COMMIT` | The commit the workspace starts at. **Required** — a bundle is `$SPIRE_BASE_COMMIT..HEAD` and there is no safe guess, so the reference entrypoint refuses to start without it. |
 | `SPIRE_AUTOSAVE_SECONDS` | How often to checkpoint while the harness runs. A default is fine. |
+| `SPIRE_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace that the harness may write one line to: what it changed, in its own words. Your final checkpoint uses that line as its commit message; a mid-run one must not, because nothing has been summarised yet. Absent or blank falls back to a generic message. |
+
+Everything the dispatched prompt says about `SPIRE_SUMMARY` is written against this contract, so an
+image that does not export it simply gets the fallback message — no run fails over it. Keep the file
+out of the working tree for the same reason the prompt is kept out: an autosave must never commit it.
 
 The harness argv arrives as the container **command**, so your entrypoint receives it as
 `$@` and runs it. Everything else — committing, bundling, writing `DONE` —

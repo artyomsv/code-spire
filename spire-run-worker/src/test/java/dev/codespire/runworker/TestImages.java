@@ -71,6 +71,37 @@ final class TestImages {
     }
 
     /** Runs the docker CLI; returns trimmed stdout; throws with stderr on a non-zero exit. */
+    /**
+     * Removes any unit left from a previous execution of a test whose run is MEANT to fail.
+     *
+     * <p>A failed unit stays behind on purpose — its containers and volumes carry the run id so the
+     * orphan watchdog can reach them and an operator can read the log. The workspace volume
+     * therefore survives into the next execution, where the clone meets a directory that is not
+     * empty and the run fails for a reason that has nothing to do with the test.
+     *
+     * <p>Measured twice. A new failure-detail test passed on its first run and failed on the next
+     * with {@code JGitInternalException: Destination path "workspace" already exists}. And
+     * {@code aRunNamingTheTrunkNeverMovesIt} had been passing on exactly that artefact — the trunk
+     * really was untouched, but because a dirty workspace stopped the clone, not because any guard
+     * fired.
+     *
+     * <p>Call it BEFORE the run, never after: a failing assertion must not be able to skip it and
+     * leave the next execution to inherit the same problem.
+     */
+    static void clearUnit(String runId) {
+        String filter = "label=dev.codespire.runId=" + runId;
+        for (String container : docker("ps", "-aq", "--filter", filter).split("\\s+")) {
+            if (!container.isBlank()) {
+                docker("rm", "-f", container);
+            }
+        }
+        for (String volume : docker("volume", "ls", "-q", "--filter", filter).split("\\s+")) {
+            if (!volume.isBlank()) {
+                docker("volume", "rm", "-f", volume);
+            }
+        }
+    }
+
     static String docker(String... args) {
         List<String> argv = new ArrayList<>();
         argv.add("docker");

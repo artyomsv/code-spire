@@ -238,17 +238,17 @@ Not work. Written down because each has been rediscovered at least once.
   `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
   security control in `compose.e2e.yml`, so it is not the answer.
   — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
-- **The publisher's trunk floor is not exercised end to end, and a container test cannot reach it.**
-  `Adr040ExistingBranchTest` drives a run naming `main` as its branch and proves the trunk is
-  untouched — but deleting `PublisherConfig.looksLikeATrunk` leaves that test GREEN. A control probe
-  confirmed mutations reach the container, so the survival is real: the run dies as
-  `RUNTIME_UNAVAILABLE, init container failed with exit 1` before the publisher is consulted, because
-  `WorkspaceClone.populate` calls `checkout().setCreateBranch(true)` and a clone has already
-  materialised the remote's default branch locally. Two independent guards, the outer firing first —
-  defence in depth working, and simultaneously a claim ("the floor stops this") that nothing at the
-  container level establishes. The floor is unit-tested in `PublisherConfigTest` where it is
-  reachable. Anyone about to lean on "the trunk cannot be pushed, we tested it end to end" should
-  read this first.
+- **~~The publisher's trunk floor is not exercised end to end~~ — CLOSED 2026-09-11.**
+  It now is. This entry said the run died as `RUNTIME_UNAVAILABLE, init container failed with exit 1`
+  before the publisher was consulted, because `WorkspaceClone.populate` called
+  `checkout().setCreateBranch(true)` and a clone has already materialised the remote's default
+  branch locally — so deleting `PublisherConfig.looksLikeATrunk` left `Adr040ExistingBranchTest`
+  green. The clone fix (#150) replaced that checkout with a branch create and a reset for an
+  unrelated reason, and the side effect is that the clone succeeds and the run reaches the publisher.
+  Measured: the refusal is `PUBLISHER_MISCONFIGURED`, naming the trunk, and the test now asserts that
+  cause by name. Two things made this visible and are worth carrying: the entry was only true while
+  an OUTER guard fired first, and the test had also been passing on a leftover workspace volume from
+  its own previous run — see `TestImages.clearUnit`.
 - **`/fix` trusts the pull-request state the deployment last saw, not the one that is true now.**
   `pr_state` is set to `OPEN` by every pull-request event, so a redelivery after a merge flips a
   closed pull request back to pushable in `FixTargets` — the row is the KEY to the target, never

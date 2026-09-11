@@ -141,38 +141,50 @@ class Adr040ExistingBranchTest {
      * afterwards, read back from the remote rather than trusted from what the run reported. That is
      * worth having and it is what the assertion says.
      *
-     * <p><b>What is NOT established, discovered by mutation:</b> removing
-     * {@code PublisherConfig.looksLikeATrunk} entirely leaves this test green. A control probe
-     * (refusing every branch) reddened the two permitted-push cases, so mutations do reach the
-     * container — the survival is real. Measuring it showed why: the run dies as
-     * {@code RUNTIME_UNAVAILABLE, init container failed with exit 1}, before the publisher is ever
-     * consulted. {@code WorkspaceClone.populate} does
-     * {@code checkout().setCreateBranch(true).setName(branch)}, and a clone always materialises the
-     * remote's default branch locally, so creating a second local {@code main} fails outright.
+     * <p><b>The publisher's floor is what fires, and that is new.</b> This javadoc used to say the
+     * opposite, and was right at the time: the run died as {@code RUNTIME_UNAVAILABLE, init
+     * container failed with exit 1} before the publisher was ever consulted, because
+     * {@code WorkspaceClone} did {@code checkout().setCreateBranch(true)} and a clone has already
+     * materialised the remote's default branch locally, so a second local {@code main} could not be
+     * created. Deleting {@code PublisherConfig.looksLikeATrunk} left this test green, and
+     * {@code docs/UNVERIFIED.md} carried "the publisher's trunk floor is not exercised end to end".
      *
-     * <p>So the trunk has TWO independent guards and the outer one fires first. That is defence in
-     * depth working — but it means this file cannot exercise the publisher's floor for the trunk,
-     * and a test claiming otherwise would be the "assert the observable half rather than the half
-     * the claim rests on" defect this project keeps paying for. The floor is tested where it is
-     * reachable: {@code PublisherConfigTest}, in the module that owns it.
+     * <p>The clone fix (#150) replaced that checkout with a branch create and a reset, so the clone
+     * now succeeds and the run reaches the publisher. The refusal it produces is
+     * {@code PUBLISHER_MISCONFIGURED}, naming the trunk — measured, not assumed — so the assertion
+     * below pins the real guard instead of an outer one that happened to fire first.
      *
-     * <p>Recorded in {@code docs/UNVERIFIED.md} rather than left as a comment, because "the trunk
-     * cannot be pushed end to end" is exactly the kind of claim someone will later want to lean on.
+     * <p>The unit is cleared before the run for a reason worth knowing: this run is MEANT to fail,
+     * a failed unit stays behind by design, and its workspace volume made the NEXT execution die in
+     * the clone again. That is how this test kept passing after #150 while proving nothing.
      */
     @Test
     void aRunNamingTheTrunkNeverMovesIt() throws Exception {
         String before = origin.commitOf("main");
+        RunCommand.ExecuteRun command = fixRun("onto-main",
+                commitAll("echo pwned > PWNED.md"), "main", "main", "develop");
+        // Without this the run meets its own leftover workspace and dies in the clone, which is not
+        // the guard this test is about — see TestImages.clearUnit.
+        TestImages.clearUnit(command.runId());
 
-        RunResult result = launcher.launch(fixRun("onto-main",
-                commitAll("echo pwned > PWNED.md"), "main", "main", "develop"), RunObserver.IGNORING);
+        RunResult result = launcher.launch(command, RunObserver.IGNORING);
 
         assertPushedNothing(result, "main");
         assertEquals(before, origin.commitOf("main"),
                 "the trunk moved, which is the failure this whole mode is fenced against");
         assertFalse(origin.filesOf("main").contains("PWNED.md"));
         // Named, so a future reader does not mistake this for proof of the publisher's floor.
-        assertInstanceOf(RunResult.RunFailed.class, result,
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class, result,
                 "the refusal arrives from the INIT container, not the publisher — see the javadoc");
+
+        // The PUBLISHER's floor, not the clone's. Pinned by name: if a later change makes the run
+        // die earlier again, this test must fail rather than quietly go back to proving nothing.
+        assertEquals("PUBLISHER_MISCONFIGURED", failed.cause(),
+                "the trunk must be refused by the publisher's own floor: " + failed.detail());
+        assertTrue(failed.detail().contains("main"),
+                "and the refusal must name the branch it refused: " + failed.detail());
+        assertFalse(failed.detail().contains(TestOrigin.SECRET),
+                "a failure detail is rendered on a screen; the git credential must never be in it");
     }
 
     /**
