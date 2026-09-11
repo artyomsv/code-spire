@@ -78,8 +78,8 @@ class ProviderCheckRecordTest {
         resource.registry = registry;
         resource.identity = identity;
         resource.clients = new ProviderClients() {
-            @Override public String reportedScopes(String type, String url, String kind, String user, String secret, String workspace) {
-                return null; // This fixture isolates identity outcomes without a live scope probe.
+            @Override public ScopeReport probeScopes(String type, String url, String kind, String user, String secret, String workspace) {
+                return new ScopeReport(true, "fixture-scopes"); // Distinguishable fixture result; no outbound probe.
             }
         };
         // scm.example.invalid deliberately never resolves via DNS; skip the SSRF host check
@@ -127,6 +127,7 @@ class ProviderCheckRecordTest {
         resource.update(view.id(), githubInput(workspace, "TEST-NEW-SECRET", "TEST-provider"));
 
         ProviderView reread = registry.get(id).orElseThrow();
+        assertEquals("fixture-scopes", reread.reportedScopes(), "scope calls must reach the fixture, not the network");
         assertTrue(reread.lastCheckOk(), "a genuine re-validation must clear the prior rejection");
         assertNull(reread.lastCheckError());
     }

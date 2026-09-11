@@ -398,14 +398,10 @@ public class ProviderRegistry {
 
     @Transactional
     public void recordScopes(UUID id, ProviderClients.ScopeReport report) {
-        if (report.observed()) recordScopes(id, report.scopes());
-    }
-
-    @Transactional
-    public void recordScopes(UUID id, String scopes) {
+        if (!report.observed()) return;
         try (var c = dataSource.getConnection(); var ps = c.prepareStatement(
                 "UPDATE scm_provider SET reported_scopes = ?, scopes_checked_at = now() WHERE id = ?")) {
-            ps.setString(1, scopes);
+            ps.setString(1, report.scopes());
             ps.setObject(2, id);
             ps.executeUpdate();
         } catch (SQLException e) {

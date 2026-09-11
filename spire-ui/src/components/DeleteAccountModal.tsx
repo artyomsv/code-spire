@@ -39,7 +39,7 @@ export function DeleteConfirmModal({
             Delete <strong>{provider.name}</strong>? This removes its stored token and cannot be undone.
           </p>
           <p className="prov-sub">Used by: {provider.usedBy?.join(', ') || (provider.usedBy ? 'No roles or sources' : 'Usage unavailable')}
-            {!!provider.usedBy?.length && '. Referencing sources must be reassigned or removed before deletion.'}
+            . If a context source references this account, reassign or remove that source first.
           </p>
           {error && <div className="modal-msg modal-error">{error}</div>}
           <div className="modal-actions">

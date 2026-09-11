@@ -109,16 +109,16 @@ class AccountNormalizationTest {
         server.stubFor(get(urlEqualTo("/api/v4/personal_access_tokens/self"))
                 .willReturn(okJson("{\"scopes\":[\"read_api\",\"read_repository\"]}")));
         for (String base : java.util.List.of(server.baseUrl(), server.baseUrl() + "/api/v4")) {
-            assertEquals("read_api, read_repository", clients.reportedScopes("gitlab", base, "bearer", null, "token", "ws"));
+            assertEquals("read_api, read_repository", clients.probeScopes("gitlab", base, "bearer", null, "token", "ws").scopes());
         }
         server.stubFor(get(urlEqualTo("/api/v4/personal_access_tokens/self")).willReturn(forbidden()));
-        assertNull(clients.reportedScopes("gitlab", server.baseUrl(), "bearer", null, "token", "ws"));
+        assertNull(clients.probeScopes("gitlab", server.baseUrl(), "bearer", null, "token", "ws").scopes());
     }
 
     @Test void bitbucketFallbackReadsOnlyReportedScopeHeader() {
         server.stubFor(get(urlEqualTo("/user")).willReturn(unauthorized()));
         server.stubFor(get(urlEqualTo("/repositories/ws")).willReturn(okJson("{}").withHeader("x-oauth-scopes", "repository")));
-        assertEquals("repository", clients.reportedScopes("bitbucket-cloud", server.baseUrl(), "basic", "bot", "token", "ws"));
+        assertEquals("repository", clients.probeScopes("bitbucket-cloud", server.baseUrl(), "basic", "bot", "token", "ws").scopes());
         assertTrue(ProviderClients.scopesNeedAttention("bitbucket-cloud", ProviderRole.FACTORY, "repository"));
         assertTrue(ProviderClients.scopesNeedAttention("gitlab", ProviderRole.REVIEWER, ""));
     }

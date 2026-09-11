@@ -167,6 +167,7 @@ public class AttentionQueries {
     }
 
     private void contextMigrationRows(Connection c, List<AttentionView> rows) throws SQLException {
+        // Disabled sources also need recovery before a later release removes the legacy columns.
         try (var ps = c.prepareStatement("SELECT id, name FROM context_provider WHERE account_id IS NULL");
              var rs = ps.executeQuery()) {
             while (rs.next()) {

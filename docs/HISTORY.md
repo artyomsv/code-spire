@@ -1800,3 +1800,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   - Final review-fix verification: testFast, testServices and build passed; 2954 Java tests
     across 336 suites, zero failures and one skip; 613 UI tests and TypeScript passed.
     Nine intentional mutations were caught across the implementation and review fixes.
+  - **Review round 2:** the analyst's [follow-up review](https://github.com/artyomsv/code-spire/pull/152#pullrequestreview-5183972084)
+    confirmed both high findings resolved and accepted the public_repo disposition. Its two
+    non-blocking notes were addressed: the renamed scope-probe fixture now returns an asserted
+    marker instead of accidentally reaching the network, and the delete dialog explains source
+    references conditionally without inferring source names from role labels. The obsolete
+    scope-query wrapper and unconditional scope-write overload were removed so future call sites
+    cannot silently choose the old path. Disabled migration rows intentionally remain in Attention
+    because their legacy credential columns must be retired too; that intent is now commented.

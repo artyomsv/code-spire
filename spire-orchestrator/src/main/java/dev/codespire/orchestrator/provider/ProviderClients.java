@@ -131,12 +131,6 @@ public class ProviderClients {
         throw failure;
     }
 
-    /** Advisory: missing headers or a failed introspection never invalidate an account. */
-    public String reportedScopes(String type, String baseUrl, String authKind, String username,
-                                 String secret, String workspace) {
-        return probeScopes(type, baseUrl, authKind, username, secret, workspace).scopes();
-    }
-
     /** observed=false means the request failed, not that a token reported no scopes. */
     public record ScopeReport(boolean observed, String scopes) {
         static ScopeReport failed() { return new ScopeReport(false, null); }
