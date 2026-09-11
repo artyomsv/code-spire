@@ -24,8 +24,16 @@ final class ScriptHarness implements HarnessAdapter {
 
     private final String script;
 
+    private final Map<String, String> environment;
+
     ScriptHarness(String script) {
+        this(script, Map.of());
+    }
+
+    /** Lets a test set entrypoint variables — the autosave interval, so its race is reachable. */
+    ScriptHarness(String script, Map<String, String> environment) {
         this.script = script;
+        this.environment = Map.copyOf(environment);
     }
 
     @Override
@@ -51,7 +59,7 @@ final class ScriptHarness implements HarnessAdapter {
 
     @Override
     public Map<String, String> environment(HarnessInvocation invocation) {
-        return Map.of();
+        return environment;
     }
 
     @Override

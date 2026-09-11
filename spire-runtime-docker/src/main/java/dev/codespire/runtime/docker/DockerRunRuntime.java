@@ -34,11 +34,15 @@ import dev.codespire.runtime.RuntimeType;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -197,6 +201,18 @@ public final class DockerRunRuntime implements RunRuntime {
         return new RuntimeCapabilities(false, true, false, true, true, false);
     }
 
+    /** Reads the init container's own failure line; never writes, so one instance is enough. */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** A failure_detail is read in a table cell, not scrolled. */
+    private static final int MAX_INIT_REPORT_CHARS = 500;
+
+    /**
+     * The init container is ours and writes one line, but it is still a container log: bounded so a
+     * pathological image cannot make reading its failure an allocation on the worker.
+     */
+    private static final int MAX_INIT_LOG_CHARS = 64 * 1024;
+
     @Override
     public RunHandle create(RunUnitSpec spec) {
         for (String volume : volumeNamesOf(spec)) {
@@ -224,7 +240,7 @@ public final class DockerRunRuntime implements RunRuntime {
             // The unit stays behind on purpose: its containers and volumes carry the run id, so the
             // orphan watchdog can reach them, and an operator can read why the clone failed.
             throw new IllegalStateException("init container failed with exit " + initExit
-                    + " for run " + spec.runId());
+                    + " for run " + spec.runId() + initReport(initId));
         }
 
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER);
@@ -562,6 +578,87 @@ public final class DockerRunRuntime implements RunRuntime {
         } catch (IOException e) {
             throw new UncheckedIOException("closing the log stream of " + containerId, e);
         }
+    }
+
+    /**
+     * What the init container said about its own failure, as {@code ": CAUSE: detail"}, or empty.
+     *
+     * <p>{@code CloneMain} writes one JSON line on stdout — {@code {"event":"failed","cause":…,
+     * "detail":…}} — already scrubbed of the git credential by {@code OutcomeWriter}. <b>Nothing
+     * read it.</b> Every init failure reached the run row as "exit 1", and the cause lived only in
+     * {@code docker logs} on the host that ran it: a checkout conflict on a pull request's own
+     * branch took a container log to diagnose, on a screen built to answer exactly that question.
+     *
+     * <p>Best effort by construction. The exit code is the fact; this is the explanation, and a
+     * failure to read it must never replace a real failure with a reading error — so everything
+     * here is caught and the caller still gets "exit N".
+     */
+    private String initReport(String containerId) {
+        try {
+            List<String> log = logLinesOf(containerId);
+            String failure = lastFailureLine(log);
+            if (failure.isEmpty()) {
+                // No structured line: the process died before it could write one. Measured, not
+                // hypothetical — a JGitInternalException escaped CloneMain's catch list and the
+                // whole report was a stack trace on stderr. Its FIRST line carries the exception
+                // and its message; every line after it is a stack frame.
+                return log.isEmpty() ? "" : clipToOneLine(log.getFirst());
+            }
+            JsonNode node = JSON.readTree(failure);
+            String cause = node.path("cause").asText("");
+            String detail = node.path("detail").asText("");
+            if (cause.isEmpty() && detail.isEmpty()) {
+                return "";
+            }
+            return clipToOneLine(cause + (detail.isEmpty() ? "" : ": " + detail));
+        } catch (RuntimeException | IOException unreadable) {
+            LOG.log(System.Logger.Level.DEBUG,
+                    "could not read why the init container " + containerId + " failed", unreadable);
+            return "";
+        }
+    }
+
+    /** One line, bounded: this becomes a run's failure_detail and is rendered in a table cell. */
+    private static String clipToOneLine(String report) {
+        String line = report.replaceAll("\\R", " ").strip();
+        return line.isEmpty() ? ""
+                : ": " + line.substring(0, Math.min(line.length(), MAX_INIT_REPORT_CHARS));
+    }
+
+    /** The structured report, or empty when the process died before writing one. */
+    private static String lastFailureLine(List<String> log) {
+        String last = "";
+        for (String line : log) {
+            if (line.startsWith("{") && line.contains("\"failed\"")) {
+                last = line;
+            }
+        }
+        return last;
+    }
+
+    /** The container has exited, so the log is finite. */
+    private List<String> logLinesOf(String containerId) throws IOException {
+        StringBuilder log = new StringBuilder();
+        ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
+            @Override
+            public void onNext(Frame frame) {
+                if (log.length() < MAX_INIT_LOG_CHARS) {
+                    log.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+                }
+            }
+        };
+        try (ResultCallback.Adapter<Frame> stream = client.logContainerCmd(containerId)
+                .withStdOut(true).withStdErr(true).withTailAll()
+                .exec(callback)) {
+            stream.awaitCompletion();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        }
+        return Arrays.stream(log.toString().split("\\R"))
+                .map(String::strip)
+                .filter(line -> !line.isEmpty())
+                .toList();
     }
 
     /** An operator's cancel ends the whole unit; the salvage path's overrun ends the agent alone. */

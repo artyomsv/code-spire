@@ -21,6 +21,12 @@ dependencies {
     // RunRuntimeContract: the rules every arm must obey, extended by DockerRunRuntimeIT. Test
     // scope only -- an SPI contract is not something a production consumer links against.
     testImplementation(testFixtures(project(":spire-runtime")))
+    // For the one JSON line the init container writes about its own failure. Declared rather
+    // than inherited through docker-java, which uses Jackson internally at implementation scope:
+    // a transitive runtime dependency is not a compile classpath, and relying on one is how a
+    // library upgrade becomes an unrelated compile break.
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+
     // Newest published 3.5.x as of 2026-09-01, verified resolvable on Maven Central. The plan
     // pinned 3.4.1, which also resolves; this arm talks to the daemon that runs untrusted agent
     // code, so it is not a place to carry an avoidable lag.

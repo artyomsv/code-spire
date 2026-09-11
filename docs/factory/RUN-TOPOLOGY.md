@@ -217,9 +217,18 @@ agent commits  →  bundle appears  →  publisher gates  →  push  →  the fo
 
 Two layers make the commits happen, because relying on a model to remember is not a mechanism:
 
-1. **The prompt** instructs the agent to commit after each logical step.
+1. **The prompt** instructs the agent to commit after each logical step, and to write one line
+   describing what it changed to the file named by `SPIRE_SUMMARY`. `RunUnitBuilder` appends this to
+   every dispatched prompt — a fix run's and a build run's alike, whatever the harness's delivery.
 2. **An autosave loop in the agent container** commits anything dirty every N minutes. This is safe
-   precisely because it runs in the container that holds **no token**.
+   precisely because it runs in the container that holds **no token**. The FINAL autosave uses the
+   summary as its commit message; a mid-run one cannot, because nothing has been summarised yet.
+
+> **Layer 1 did not exist until 2026-09-11, and this section claimed it did.** No prompt anywhere
+> told an agent to commit, so the autosave was the only writer and every branch the factory had ever
+> pushed carried its constant message — `autosave: work in progress` — on work a human was asked to
+> review. The mechanism half is what makes the instruction half safe to rely on: an agent that
+> forgets still leaves a sentence behind instead of a constant.
 
 ### What this buys
 

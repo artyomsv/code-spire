@@ -3,6 +3,7 @@ package dev.codespire.publisher;
 import dev.codespire.workspace.GitCredential;
 import dev.codespire.workspace.WorkspaceClone;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.JGitInternalException;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -54,9 +55,16 @@ public final class CloneMain {
 
             WorkspaceClone.populate(remote, base, branch, workspace, new GitCredential(username, secret),
                     username, username + "@" + IDENTITY_DOMAIN);
-        } catch (IllegalStateException | IllegalArgumentException | IOException | GitAPIException e) {
+        } catch (IllegalStateException | IllegalArgumentException | IOException | GitAPIException
+                 | JGitInternalException e) {
             // Configuration refusals, an unreachable base commit, the filesystem, and the transport:
             // each named, so a new failure mode surfaces as a crash to be classified.
+            //
+            // JGitInternalException is the classification of one that did. It extends
+            // RuntimeException, NOT GitAPIException, so a dirty workspace directory escaped this
+            // list entirely: the report was a stack trace on stderr, no JSON line was written, and
+            // the run recorded "exit 1" with nothing to say. That is the failure this writer exists
+            // to prevent, reached by the one JGit exception that is not part of its API surface.
             outcome.failed("CLONE_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
             System.exit(1);
         }
