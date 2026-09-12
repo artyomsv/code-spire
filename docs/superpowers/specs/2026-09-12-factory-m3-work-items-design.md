@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-12
 
-**Status:** Round 1 proposal for analyst review; no implementation or test results claimed.
+**Status:** Accepted with amendments in [Round 2 review](https://github.com/artyomsv/code-spire/pull/153#pullrequestreview-5188278775). Implementation and test evidence remain per-slice obligations.
 
 **Issue:** [#114](https://github.com/artyomsv/code-spire/issues/114), re-read from GitHub,
 updated `2026-09-12T21:47:45Z`.
@@ -20,7 +20,7 @@ The ticket records the live M2 loop on `artyomsv/spire-test#31`, runs `398768268
 `3987682176:1`: command, dispatch, push to the existing source branch, another review, resolved
 thread and persisted verdict. That is the issue's reported evidence, not a measurement made in
 this planning round. M3 is unblocked. The older contrary statements in `CLAUDE.md` and
-`docs/UNVERIFIED.md` need reconciliation during implementation; the automated GitLab run-unit
+`docs/UNVERIFIED.md` are reconciled in slice 1; the automated GitLab run-unit
 network gap remains a separate claim and must not be deleted on the strength of a live GitHub run.
 
 Read alongside [AUTONOMY](../../factory/AUTONOMY.md), [factory PRD](../../factory/PRD.md),
@@ -50,7 +50,8 @@ The implementation plan names exact source roots for new files.
 
 ## 2. Decisions and ADRs
 
-These are proposed decisions, not already accepted ADRs. Reserve the next available numbers at
+These decisions are accepted by the review; ADR records land with the implementing slices.
+Reserve the next available numbers at
 implementation time; `042`–`045` are the expected sequence after ADR-041.
 
 | ADR | Decision to record | Existing decisions affected |
@@ -174,13 +175,17 @@ Flyway files (next orchestrator number is expected to be V60; verify before allo
 3. Preserve org webhook coverage during the bridge. A verified event for a previously unseen
    repository may materialize a real repository using the snapshotted legacy assignment, with
    origin supplied by its registration. It must not inherit a different host or newer account by
-   workspace alone. An existing org scope is an explicit migration exception, not a new model
-   where an account owns every future repository. Whether to retain that convenience after the
-   bridge is an analyst question (§11).
+   workspace alone. Org auto-enrollment ends at cutover. Afterwards a verified event naming an
+   unregistered repository raises an attention row naming repository, forge origin and incoming
+   registration id, with a Register action pre-filled from those three. No silent drop and no
+   automatic inheritance of workspace accounts. One source/ISSUE hook per repository and the
+   REVIEWER/FACTORY/ISSUE kinds are confirmed.
 4. Cut over every runtime resolver and the repository screen together after mapping checks pass.
    Unresolved repositories fail closed for action with a named repair path. Remove account
-   workspace input and validation, drop the old UNIQUE and workspace-by-role CHECK, then drop
-   the workspace column when the bridge no longer needs it. The migration-only snapshot is
+   workspace input and validation, drop the old UNIQUE and workspace-by-role CHECK, but keep
+   `scm_provider.workspace` populated with its existing values until slice 10 as rollback evidence.
+   No production code may read it after slice 2; a build guard enforces that rule. Slice 10 owns
+   the explicit column-drop migration. The migration-only snapshot is
    explicitly excluded from account selection after cutover. Preserve source credential recovery
    columns from V59; their removal is unrelated to this migration.
 5. Update both packaged compositions, local dev configuration and upgrade instructions for the
@@ -193,6 +198,13 @@ multiple roles, disabled accounts, context references, an org registration and a
 snapshot exchange. Prove identical credential decryption before and after, exact row mappings,
 idempotent restart and refusal of ambiguous mappings. Do not exercise this on the running dev DB
 in a test. The bridge must preserve its existing webhook keys and encrypted secrets.
+
+Before any new migration can reach the real dev stack, slice 1 takes and validates a full
+`pg_dump` into the session scratchpad. The plan includes the exact binary-safe command. Preserve
+the matching existing keyset outside git and capture a credential-continuity proof using real
+rows and their actual Tink AADs. Slice 2 compares decrypted credentials against that baseline on
+the real dev rows after cutover; matching fixture data or matching ciphertext alone is insufficient.
+Only counts/ids and comparison outcomes are reported, never plaintext credentials or keysets.
 
 ### 3.3 Repository screen and webhook model
 
@@ -300,7 +312,7 @@ particular protected branch accepts a push. The existing target and publisher gu
 grant the command. A 404 is not automatically proof that a person has no rights: adapters must
 distinguish an unreadable repository from a known absent member where the API permits it. Both
 refuse; the displayed reason differs. For Bitbucket a reviewer lacking the documented admin access
-will report unknown; the analyst must settle whether that credential prerequisite is acceptable.
+will report unknown; the accepted design requires an explicit capability error and an operator-facing credential prerequisite.
 Do not increase any live account's rights as part of implementation.
 
 ## 5. Work sources and label evidence
@@ -394,7 +406,10 @@ take the minimum; protected paths take the union plus the immutable CI floor. No
 solver is required. Where the result is a composite vector, display the selected profile and the
 limiting ceiling plus actual phase modes, not a claim that it equals an unmodified named profile.
 Reject duplicate precedence, missing versions and invalid modes; accept cross-cutting vectors only
-with this meet. Analyst acceptance of the ordering/composition rule is needed (§11).
+with this meet. The review accepted this ordering/composition rule. **The effective vector is
+never above any applied label in any component.** Here applied means current mapped labels with
+proven, allowed appliers; ignored labels have no authority. Meet every eligible label's vector,
+not just the lowest-precedence display selection, plus the pinned admission vector and ceiling.
 
 Initial examples explicitly declare `intake: auto`; copying the abbreviated AUTONOMY YAML without
 that field would correctly default intake to off and admit nothing. Use these complete vectors:
@@ -441,11 +456,11 @@ step verification. Budget limits narrow existing SpendGate/FR-F32 checks and inc
 on unmetered deployments. Reserve a dispatch slot atomically and release it on refusal/expiry;
 do not claim hard monetary reservations eliminate the documented in-flight spend softness.
 
-### 6.3 M3 journeys versus M4 execution — analyst decision required
+### 6.3 M3 journeys versus M4 execution — accepted boundary
 
 FR-F17 spans M3/M4. M4 explicitly owns generating specifications/plans, multi-step execution and
 verification. M3 cannot label no-op phase handlers “complete” to manufacture three green journeys.
-Proposed M3 boundary: implement the real phase state machine and manual tracker-artifact handoff,
+Accepted M3 boundary: implement the real phase state machine and manual tracker-artifact handoff,
 then reuse M2 for **one already specified build task**. Humans can register references/digests to
 a specification and a single-step plan actually present in the tracker. Those artifacts are fetched
 and validated; they are not copied into `work_item`. Missing execution capabilities show
@@ -464,15 +479,16 @@ Criterion 1 is proved at the real plan/build boundary: suggest stops, assisted w
 autonomous builds. After approval, assisted's history still records its distinct human decision.
 Draft/regular delivery tests use an explicitly identified test phase driver to supply verification
 evidence; this is adapter/control-plane coverage, not proof of a shipped M4 verifier. Production
-with no verifier remains waiting. If the analyst interprets criterion 1 as generated
-specification through automatic merge, that moves named M4 work into M3 and must amend the plan
-before slice 8. The proposal above is conditional, not an assertion that the ticket chose it.
+with no verifier remains waiting. The review accepted this plan/build-boundary proof; generated
+specification, multi-step planning and verification executors remain M4 work.
 
-Delivery/review ordering also needs explicit correction: the published eight-phase diagram places
+Delivery/review ordering is corrected by the review: the published eight-phase diagram places
 review before deliver, but the existing reviewer requires a pushed PR. Proposed execution records
 PR opening as the delivery effect, then observes the existing reviewer before any land decision;
 it does not report a review that could not have run. Preserve phase identifiers in the policy
-vector, but settle execution order in ADR-045 rather than hiding the mismatch in a handler.
+vector; record `intake → spec → plan → build → verify → deliver → review → land` in ADR-045 and
+fix the eight-phase diagram in `docs/factory/AUTONOMY.md` in slice 8a, together with affected
+architecture/PRD diagrams. The diagram is wrong; the implemented reviewer is not changed to fit it.
 
 **Publication is part of that decision too.** M2 builds already push before `RunFinished`; merely
 gating the later PR API call cannot enforce a deliver mode of off. Proposed item-linked execution
@@ -484,8 +500,10 @@ Standalone M2 runs retain their existing automatic push. Expiry/retirement/takeo
 preserved without publishing, and orphan recovery honors the hold. This introduces a run state
 and control/result messages, not a run aggregate. The design must establish charge reporting at
 work-ready/final completion without double counting, and the artifact/verification boundary before
-granting delivery. It is explicit additional work in slice 8, conditional on the analyst accepting
-this execution boundary; the current M2 worker cannot be described as already supporting it.
+granting delivery. This is its own slice **8b**, following 8a; slices 9 and 10 keep their numbers.
+Its two-part exit requires item-linked publication hold through restart **and** a standalone
+`/fix` still pushing automatically, re-proved live on `artyomsv/spire-test`. Unit tests cannot
+replace that second proof. The current M2 worker does not already support the hold.
 
 ## 7. Durable approvals
 
@@ -522,7 +540,7 @@ does not count as a person, even after an account has been renamed.
 
 Gate answers and authorized `/fix` commands are deliberate workflow actions; classify and
 deduplicate them before generic comment takeover. This is a proposed precedence rule resolving
-FR-F22's literal “commenting” against FR-F25's tracker/PR answer channels; record it in ADR-045.
+FR-F22's literal “commenting” against FR-F25's tracker/PR answer channels; record it in ADR-045 with the FR-F22/FR-F25 conflict named.
 Normal human comments and pushes take over. A PR approval is processed as a gate response only
 when it actually matches an open gate; it cannot accidentally resume a suspended item.
 
@@ -576,29 +594,30 @@ unavailable states needed so those features can arrive without bypassing policy.
 No production code, migrations, dev data, Gradle execution or runtime restarts belong to Round 1.
 Commit only this design and its plan, push the existing branch, open the requested draft PR.
 
-## 11. Questions the analyst must settle
+## 11. Review decisions — settled in Round 2
 
-These do not block publishing a reviewable design. They do block silently choosing product
-behavior in the dependent implementation slice.
+The [review summary and six inline comments](https://github.com/artyomsv/code-spire/pull/153#pullrequestreview-5188278775)
+settled all five questions. These are requirements for implementation, not pending approvals.
 
-1. **Three journeys and phase ordering:** accept the prepared single-task/manual-artifact M3
-   boundary in §6.3, or move named M4 capabilities into M3? Also reconcile review-before-deliver
-   with the existing PR-triggered reviewer. Fake completions are not an option.
-2. **Profile ordering:** accept explicit operator-owned precedence plus a component-wise meet, or
-   specify another rule for incomparable vectors. Even suggest/assisted cross at the plan phase;
-   the ticket's “lowest” is undefined without a separate precedence rule today.
-3. **Identity/permission portability:** Bitbucket's effective permission read requires an admin
-   caller; exact handles are not a universal Jira/Bitbucket identity primitive. Accept explicit
-   capability errors/disambiguated selection and that credential prerequisite, or narrow the
-   acceptance wording. Do not grant access by guessing or silently raise a token's authority.
-4. **Repository registration compatibility:** confirm one source/ISSUE hook per repository and
-   REVIEWER/FACTORY/ISSUE as product event kinds. Decide whether legacy org auto-enrollment is
-   retained beyond migration; otherwise existing installations lose that convenience at cutover.
-5. **Drafts and takeover:** require provider-native drafts wherever available and visibly refuse
-   unsupported `draft_pr` (never substitute a title prefix), and accept explicit command/approval
-   precedence over generic human-comment takeover. Native draft support and publication-hold
-   mechanics, including the proposed work-ready/delivery handshake in §6.3, must be established
-   in the relevant provider/runtime slices before claiming parity.
-
-The decisions above make the proposal concrete for review; unresolved alternatives are recorded
-here instead of being disguised as ticket requirements.
+1. **Journeys/order:** accepted real state machine, manual tracker-artifact handoff and one
+   prepared M2 build, proved at plan/build. Missing later capabilities wait honestly. Correct
+   delivery-before-review in ADR-045 and the eight-phase diagram in slice 8a.
+2. **Profiles:** accepted operator precedence plus the meet of every eligible applied label,
+   pinned vector and ceiling. ADR-045 states: **the effective vector is never above any applied
+   label in any component.** Precedence selects display/clamp wording, never authority by itself.
+3. **Identity/permission:** explicit capability errors and disambiguated selection are accepted;
+   do not guess or raise token authority. State credential prerequisites in operator-facing text.
+   Add each per-forge identity behavior as its own UNVERIFIED entry in its introducing slice,
+   identifying the forge, measurement and remaining proof. This includes Bitbucket's admin-only
+   effective-permission query and provider-specific handle resolution behavior.
+4. **Repositories:** one source/ISSUE hook per repository, with REVIEWER/FACTORY/ISSUE kinds.
+   Org auto-enrollment exists only during the bridge. At cutover an unregistered repository event
+   raises attention naming repo, origin and incoming registration, with all three pre-filled in
+   the Register action. Retain populated account workspace evidence, unused after slice 2, until
+   slice 10. Back up the actual dev database before migrations and compare actual credential
+   decryption after slice 2, using the exact commands in the plan.
+5. **Drafts/takeover:** native drafts or explicit refusal, never a title prefix. Commands and
+   gate answers precede generic comment takeover; ADR-045 names the FR-F22/FR-F25 conflict.
+   Slice 8b separately owns publication hold and draft delivery after 8a. Its exit also requires
+   a live standalone `/fix` on `artyomsv/spire-test` still pushing automatically. Slices 9 and 10
+   retain their numbers.

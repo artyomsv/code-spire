@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-12
 
-**Status:** Round 1, plan only. All implementation checkboxes and test outcomes below are pending.
+**Status:** Accepted with Round 2 amendments; implementation checkboxes and test outcomes remain pending until measured.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -75,9 +75,12 @@ or interface-only commit can exist inside a slice, but is not its review exit.
 | 5 — First ticket, durable intake and suggest policy | 2, 3 | A signed issue label or rescan admits one durable item, visible on Work items; unknown/unlisted actors select nothing. | GitHub source, minimal profile registry, lifecycle/store/outbox and UI. |
 | 6 — GitLab/Jira sources and recovery | 5 | Each source can admit a real fetched ticket through webhook or polling with the same actor rule. | Adapter parity, safe tracker writes and restart-safe scanning. |
 | 7 — Full policy and dashboard approvals | 5 | Label changes and ceiling edits affect the next phase; a dashboard gate survives restart, resolves or expires. | Complete profile vector, transition checks, gates, Approvals and attention. |
-| 8 — Prepared task to policy-controlled build/delivery | 4, 6, 7; design §11.1 resolved | Three labelled prepared tasks stop, await approval or build; missing later capabilities stay visibly waiting. | Artifact handoff, dispatch/result join and draft/regular delivery support. |
-| 9 — External answers and human takeover | 8 | Tracker/PR answers resolve the same gate; human activity suspends automation and holds publication through restart. | Authenticated ingress, gate channel adapters, run control/publisher hold and resume. |
+| 8a — Prepared task to policy-controlled build | 4, 6, 7 | Three labelled prepared tasks stop, await approval or build; missing later capabilities stay visibly waiting. | Artifact handoff and dispatch/result join. |
+| 8b — Publication hold and draft delivery | 8a | Item-linked runs await a current delivery permit; standalone `/fix` still pushes automatically, re-proved live. | Worker/publisher/watchdog hold, native draft delivery and standalone regression proof. |
+| 9 — External answers and human takeover | 8b | Tracker/PR answers resolve the same gate; human activity suspends automation and holds publication through restart. | Authenticated ingress, gate channel adapters, run control/publisher hold and resume. |
 | 10 — Integrated evidence and release documentation | 1–9 | Acceptance proofs and mutation evidence are recorded; supported journeys demonstrated and remaining limitations named. | Final integration tests, runbook and measured status updates. |
+
+The §11.1 review dependency is discharged. Slices 9 and 10 retain their numbers; 8b sits between 8a and 9.
 
 Slices are sequential review boundaries, not a request to launch parallel test runs or delegated
 work. Some dependencies are independent for scheduling, but this plan requires no additional pane.
@@ -139,7 +142,50 @@ outbox; first repository UI; ADR-042 draft in `docs/DECISIONS.md`.
 **Produces:** `RepositoryAccounts.resolve(repositoryId, role)` and a non-secret serving view;
 `POST/GET /api/repositories`; versioned metadata-only registration snapshots.
 
-- [ ] Settle the org-migration choice in design §11.4. Write failing migration/service tests:
+- [ ] **Before any new migration reaches dev:** take a full `pg_dump`, validate the archive and
+  record its path/hash. Use the exact PowerShell commands below; the binary dump never passes
+  through PowerShell text redirection. The running stack holds real accounts, encrypted source
+  credentials and review/run history. Preserve its existing matching keyset securely outside git.
+
+```powershell
+$m3Scratch = 'C:\Users\artjo\AppData\Local\Temp\claude\E--Projects-Stukans-code-spire-worktrees-feat-software-factory\5f317e7d-1b64-4305-bf1c-e3a370b07eb1\scratchpad'
+$m3Dump = Join-Path $m3Scratch ('m3-before-slice1-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
+$m3Process = [Diagnostics.Process]::new()
+$m3Process.StartInfo = [Diagnostics.ProcessStartInfo]::new('docker')
+$m3Process.StartInfo.UseShellExecute = $false
+$m3Process.StartInfo.RedirectStandardOutput = $true
+@('exec','spire-postgres','sh','-c','exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc') | ForEach-Object { $m3Process.StartInfo.ArgumentList.Add($_) }
+$m3File = [IO.File]::Create($m3Dump)
+try { [void]$m3Process.Start(); $m3Process.StandardOutput.BaseStream.CopyTo($m3File); $m3Process.WaitForExit(); if ($m3Process.ExitCode -ne 0) { throw 'pg_dump failed' } } finally { $m3File.Dispose(); $m3Process.Dispose() }
+Get-FileHash -LiteralPath $m3Dump -Algorithm SHA256
+```
+
+Validate archive listing with `pg_restore --list` using a one-shot container with only this
+scratchpad mounted read-only, without changing the running stack:
+
+```powershell
+docker run --rm --mount "type=bind,source=$m3Scratch,target=/backup,readonly" postgres:18.4-alpine pg_restore --list "/backup/$([IO.Path]::GetFileName($m3Dump))"
+if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed' }
+```
+
+- [ ] Add `scripts/verify-dev-credential-continuity.ps1` as the read-only local operational probe.
+  It uses the actual dev keyset and `EncryptionService`, with `provider:<id>` for account secrets
+  and `context-provider:<id>` for remaining legacy context secrets. Capture encrypted baseline
+  evidence (including source→account references) into scratch; Compare re-decrypts actual rows
+  and checks equality in memory. Never write/log plaintext, keysets or unkeyed secret hashes.
+  Execute Capture before migration; slice 2 must execute Compare on the real dev rows:
+
+```powershell
+.\scripts\verify-dev-credential-continuity.ps1 -Mode Capture -Snapshot (Join-Path $m3Scratch 'm3-real-credentials.bin')
+.\scripts\verify-dev-credential-continuity.ps1 -Mode Compare -Snapshot (Join-Path $m3Scratch 'm3-real-credentials.bin')
+```
+
+- [ ] Reconcile `CLAUDE.md` and `docs/UNVERIFIED.md` **in this slice**: the live M2 chain on
+  `artyomsv/spire-test#31`, runs `3987682681:1` and `3987682176:1`, resolved threads and persisted
+  verdicts was measured on 2026-09-12. Keep the automated GitLab gap as its own open entry:
+  `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab.
+
+- [ ] Apply the accepted bridge-only org enrollment decision. Write failing migration/service tests:
   `RepositorySchemaMigrationTest.preservesAccountIdsCredentialsAndContextReferences`,
   `RepositoryMigrationBridgeTest.replaysGatewaySnapshotWithoutDuplicateBindings`,
   `RepositoryMigrationBridgeTest.leavesConflictingOriginsPending`, and
@@ -180,11 +226,15 @@ new API/form; gateway key plus scope plus event-kind validation.
   `providers.resolve`, `MachineAccounts.resolve` and serving API usages. Include manual/rerun,
   prompt, fix and result-time PR proposal paths, not only the HTTP run endpoint.
 - [ ] Drop the old UNIQUE and workspace-by-role CHECK; finish migration mappings, remove active
-  account workspace access and then its column per the accepted bridge schedule. Retain scalar
+  account workspace reads. Keep the populated column as rollback evidence until slice 10. Retain scalar
   role checks. Refuse origin/type edits on referenced accounts. Do not add global role uniqueness.
 - [ ] Upgrade all three keyed SCM edges to product event-kind filtering. Preserve keys, secrets,
   scope and rejection history during migration. Wire FACTORY activity separately from REVIEWER
-  commands; reserve ISSUE scope for source registration. Unknown kinds fail closed.
+  commands; reserve ISSUE scope for source registration. Unknown kinds fail closed. End org
+  auto-enrollment. Add `UnregisteredRepositoryAttentionTest.namesRepositoryOriginAndRegistration`:
+  a verified event for an unregistered repo raises attention and a Register action pre-filled
+  with repo, origin and incoming registration. Mutate its attention write, isolate the test,
+  expect exactly one failure, restore; a silent drop does not satisfy cutover.
 - [ ] Replace the webhook-row screen with repository detail and one hook control per kind. Support
   registration without hooks, retries after partial save and legacy org/deep-link navigation.
   Remove workspace from `ProviderInput`/`View` and `AccountCredentialFields`, not merely hide CSS.
@@ -193,6 +243,12 @@ new API/form; gateway key plus scope plus event-kind validation.
   the same provider and a valid signature so a different guard cannot mask the mutation.
 - [ ] Run migration, gateway, orchestrator and UI verification in sequence. Search for remaining
   active workspace-only lookups; historical docs/bridge mappings are the only permitted matches.
+  Add `spire-arch/AccountWorkspaceIsUnusedTest.noProductionCodeReadsLegacyAccountWorkspace`:
+  inspect production source/SQL including SELECT-star mappings so retained workspace cannot silently
+  re-enter resolution. Mutation: restore a workspace read in the repository resolver; exactly that
+  targeted test fails. Restore from scratch. Confirm real dev-row credential continuity with the
+  Compare command below after cutover; compare all baseline account ids and context references,
+  report added/removed rows separately, and never accept fixture-only evidence.
   Update serving API/upgrade contracts and commit the runnable cutover.
 
 ## Slice 3 — resolve a person with the selected account
@@ -203,7 +259,7 @@ override registry, person controls; ADR-044 identity half.
 **Produces:** exact identity resolution with typed errors; stable-id persisted allowlists and
 `ALLOW|DENY` repository fix overrides with readable display metadata.
 
-- [ ] Settle capability wording for Bitbucket/Jira person lookup before claiming universal handles.
+- [ ] Apply accepted capability errors and disambiguated selection for Bitbucket/Jira person lookup.
   Write criterion 6 tests and `ActorResolutionResourceTest.usesOnlyTheSelectedAccountsCredential`,
   `ActorResolutionResourceTest.refusesAnAmbiguousMatch`,
   `ActorResolutionResourceTest.rechecksSubmittedIdentityOnSave`,
@@ -219,7 +275,7 @@ override registry, person controls; ADR-044 identity half.
 - [ ] Kill criterion 6 mutations, then separately kill account credential selection and returned-id
   verification with the corresponding targeted tests. Restore and rerun each case green.
 - [ ] Run adapter unit tests, resource persistence test and UI form round-trip; update SCM-MAPPING
-  identity capability notes and commit. At this exit overrides are editable; slice 4 activates
+  identity capability notes and per-forge UNVERIFIED entries (what was measured, which forge, and remaining proof), then commit. At this exit overrides are editable; slice 4 activates
   their new permission fallback without changing unrelated review policy.
 
 ## Slice 4 — measure repository push access for `/fix`
@@ -246,7 +302,7 @@ target, identity, observe-mode, spending and fix-chain guards.
   validation. Known stale PR-state/shared-branch debt stays documented unless explicitly fixed.
 - [ ] Kill each criterion 5 mutation in its isolated method, then run the class green. Exercise all
   three adapter contracts and inherited-access cases; record live-token limitations without
-  changing the operator's account privileges. Commit the authorization slice.
+  changing the operator's account privileges. Add each per-forge permission behavior as its own UNVERIFIED entry with measurement and forge. Commit the authorization slice.
 
 ## Slice 5 — admit the first ticket and display durable bookkeeping
 
@@ -317,7 +373,7 @@ Approvals screen; ADR-045 policy decision.
 **Produces:** checked profile vectors, visible clamps, current-policy phase decisions, durable gates,
 expiry and operator answers.
 
-- [ ] Resolve the profile ordering choice with the analyst. Write criterion 2 and 4 tests plus
+- [ ] Apply the accepted profile precedence and meet rule. Write criterion 2 and 4 tests plus
   `AutonomyProfileTest.requiresDistinctProfilePrecedence`,
   `AutonomyProfileTest.incomparableVectorsMeetWithoutWideningEither`,
   `AutonomyProfileTest.omittedPhaseIsOff`,
@@ -325,7 +381,7 @@ expiry and operator answers.
   `WorkItemPolicyIT.profileEditCannotWidenAnAdmittedVersion`,
   `WorkItemPolicyIT.removedLabelStopsTheNextTransition`.
 - [ ] Implement versioned vector/precedence validation, current allowed label selection, pinned
-  admission version and component-wise restriction. Record selection/clamp/reason with policy revision.
+  admission version and component-wise restriction across EVERY eligible label, not only the lowest-precedence label. Record selection/clamp/reason with policy revision.
   Include source disabled/allowlist removed, stricter caps and protected-path floor cases.
 - [ ] Call the transition service from every entry point named in design §6.2. Re-read evidence
   outside the transaction and compare registry revision inside it; stale external data must not
@@ -343,7 +399,7 @@ expiry and operator answers.
 - [ ] Run contract, orchestrator, UI tests sequentially; demonstrate restart and ceiling downgrade
   through real APIs in the test stack; update ADR-045 and commit.
 
-## Slice 8 — connect policy-controlled work to the delivered run path
+## Slice 8a — prepared task to policy-controlled build
 
 **Files:** artifact reference handoff, dispatcher, run-result bridge, item/run FK metadata,
 `FactoryPullRequests`, `PullRequestSink` and all three arms, work-item UI.
@@ -351,9 +407,10 @@ expiry and operator answers.
 **Produces:** criterion 1's accepted M3 journeys; actual one-task build and policy-aware delivery
 boundaries. No production verifier is invented to reach the delivery test cases.
 
-- [ ] **Before coding, resolve design §11.1/§11.5.** Confirm prepared manual artifacts versus M4
-  scope, execution ordering of review/deliver, and draft capability behavior. Update this task's
-  exact journey expectations if the analyst changes the boundary; never use no-op phase success.
+- [ ] Apply the accepted manual-artifact/plan-build proof boundary. Missing capabilities remain
+  waiting. Correct the eight-phase diagram in `docs/factory/AUTONOMY.md` and affected PRD/
+  architecture diagrams in this slice: `intake → spec → plan → build → verify → deliver → review
+  → land`. Record the order in ADR-045; its acceptance dependency is discharged.
 - [ ] Write `WorkItemJourneyIT.threeProfilesProduceDifferentVisibleJourneys` and UI journey test
   from the acceptance matrix. Use real persisted policy/source/item data; scripted execution is
   permitted only in tests and identified as such. Also write
@@ -366,6 +423,22 @@ boundaries. No production verifier is invented to reach the delivery test cases.
 - [ ] Persist an effect claim before dispatch, recheck current policy before publishing and make
   run/result association recoverable after crash. Do not reset attempts on re-admission or charge
   the same run result twice. Existing standalone runs remain outside work-item gates.
+- [ ] Commit the artifact handoff and dispatch/result join for review. Before 8b provides a
+  trustworthy publication hold, item-linked real execution stays capability-unavailable; the
+  runnable 8a policy proof uses the explicit test execution boundary, never an auto-pushing M2
+  run advertised as held. Slice 8b closes the real-container execution proof.
+
+## Slice 8b — publication hold and draft delivery
+
+**Depends on:** 8a. Slices 9 and 10 keep their numbers.
+
+**Two-part exit:** item-linked runs hold publication until a current delivery permit, through
+restart and orphan recovery; **standalone `/fix` still pushes automatically**, re-proved live on
+`artyomsv/spire-test`. Unit/fixture tests do not discharge the second half.
+
+**Files:** work-ready/control/results, worker durable state, publisher/runtime finalization,
+orphan salvage, item delivery orchestration, sink draft support and UI states.
+
 - [ ] Implement the accepted work-ready/delivery-permit handshake from design §6.3. An item-linked
   run starts with publication held, checkpoints without pushing, persists awaiting-delivery and
   releases active compute. Resume only the trusted publisher on a current delivery permit; keep
@@ -390,7 +463,13 @@ boundaries. No production verifier is invented to reach the delivery test cases.
 - [ ] Kill criterion 1 mutations and the standalone-proposal bypass separately. Run relevant run,
   orchestrator, sink adapter and UI suites sequentially. Also remove the initial publication hold
   and isolate `WorkItemDeliveryIT.deliverOffNeverPushesTheBuiltBranch`: exactly one test must fail
-  on the real remote's changed head. Restore and rerun green. Commit the complete runnable journey.
+  on the real remote's changed head. Restore and rerun green.
+- [ ] Re-prove a standalone `/fix` live on `artyomsv/spire-test`, using an actual open finding and
+  the same command → worker → publisher → next review → resolved thread/persisted verdict chain
+  proved by runs `3987682681:1` and `3987682176:1`. Record actual new run/PR ids, source head before/
+  after and verdict observations. A synthetic fixture or unit test is not this proof. Announce
+  any TEST-/CANARY-prefixed setup and its exact cleanup first. Do not close 8b without this result.
+- [ ] Commit 8b independently after both exit obligations pass.
 
 ## Slice 9 — answer outside the dashboard and take over safely
 
@@ -438,7 +517,7 @@ Every integration proof has a visible UI assertion or a matching component test 
 
 | # | Ticket exit criterion and exact proof | Production mutation and isolated expected failure |
 |---|---|---|
-| 1 | **Three visibly different journeys.** `O-test/workitem/WorkItemJourneyIT.java#threeProfilesProduceDifferentVisibleJourneys`: label three otherwise identical `TEST-` prepared tasks under suggest/assisted/autonomous with ceiling autonomous, inspect persisted timeline/API: suggest stops before build; assisted waits at plan approval with zero runs; autonomous starts one build without approval. Then approve assisted and assert its recorded human decision and single dispatch. Assert exact phase/gate/effect fields; missing verify remains waiting. `U/components/workItems/WorkItemJourney.test.tsx` → `renders distinct suggest assisted and autonomous journeys` proves visible differences. Draft/regular PRs are separate delivery tests with a test-only prior-phase driver. Scope conditional on slice 8's explicit analyst decision. | First mutant: in the real transition policy branch change `approve` to proceed without opening its gate; run only the Java method, expect exactly one failed test. Restore. Second mutant: render all journey status labels as the same label; run only the named vitest case, expect one failure. Restore. A test that only compares three profile names is insufficient. |
+| 1 | **Three visibly different journeys.** `O-test/workitem/WorkItemJourneyIT.java#threeProfilesProduceDifferentVisibleJourneys`: label three otherwise identical `TEST-` prepared tasks under suggest/assisted/autonomous with ceiling autonomous, inspect persisted timeline/API: suggest stops before build; assisted waits at plan approval with zero runs; autonomous starts one build without approval. Then approve assisted and assert its recorded human decision and single dispatch. Assert exact phase/gate/effect fields; missing verify remains waiting. `U/components/workItems/WorkItemJourney.test.tsx` → `renders distinct suggest assisted and autonomous journeys` proves visible differences. Draft/regular PRs are separate delivery tests with a test-only prior-phase driver. Scope accepted in Round 2; runtime publication proof belongs to 8b. | First mutant: in the real transition policy branch change `approve` to proceed without opening its gate; run only the Java method, expect exactly one failed test. Restore. Second mutant: render all journey status labels as the same label; run only the named vitest case, expect one failure. Restore. A test that only compares three profile names is insufficient. |
 | 2 | **Above-ceiling label clamped and says so.** `O-test/workitem/WorkItemPolicyIT.java#aboveCeilingLabelRecordsAndDisplaysClamp`: request autonomous at assisted ceiling; assert effective vector, durable clamp event after reload, attention API row and detail reason. `U/components/workItems/WorkItemPolicy.test.tsx` → `shows requested and effective profiles with the clamp reason`. | Mutate the effective-profile meet to retain requested authority; isolate Java method, one failure. Restore. Separately omit the clamp event/attention projection write; same isolated method must fail once. Restore. Mutate the UI clamp message to empty and run the named UI case for one failure. Each proves a different half of “and says so.” |
 | 3 | **Unlisted and unattributable appliers ignored.** `O-test/workitem/WorkItemIntakeIT.java#unlistedLabellerSelectsNoProfile` and `#unattributedCurrentLabelSelectsNoProfile`, each using a mapped label that would otherwise dispatch, valid source/account/ceiling and assertions of ignored reason plus no run effect. Add `#allowedAttributedLabellerCanSelect` as positive control. | Delete the actor-membership check; run only `unlistedLabellerSelectsNoProfile`, one failure. Restore. Delete the attribution check; run only `unattributedCurrentLabelSelectsNoProfile`, one failure. Fixture for the latter has an actor hint that would pass membership but origin UNATTRIBUTED, so the origin guard alone distinguishes it. Use additional no-id test for real missing actor. Never combine both negative cases into one count. |
 | 4 | **Lowering ceiling stops an in-flight item at next phase.** `O-test/workitem/WorkItemPolicyIT.java#loweredCeilingStopsAnInFlightItemAtTheNextPhase`: admit and start under higher policy, commit a lower ceiling with next phase off, then send the prior phase's result. Assert no next effect/PR and persisted stop/reason on detail. `#ceilingChangeBeforeGateAnswerRequiresANewDecision` covers waiting items. | Replace the transition's current ceiling lookup with admission-time ceiling, preserving all other checks; run only the first method, one failure. Restore. Separately bypass policy recheck in gate resolution and isolate the second method, one failure. The mutation must not be masked by also removing a label or disabling an account in the fixture. |
@@ -507,6 +586,10 @@ this table with its discriminating witness before that slice is called complete.
 
 ## Slice 10 — integrated proof and handoff
 
+- [ ] Only now drop `scm_provider.workspace` in an explicit Flyway migration. Confirm its
+  populated evidence survived slices 2–9 and the no-production-read guard remained green.
+  Retain the validated pre-migration dump/credential proof as rollback evidence outside git.
+
 - [ ] Run `testFast --rerun-tasks` and, after it exits, `testServices --rerun-tasks`. Verify every new
   module is included in its proper tier. No parallel second Gradle invocation.
 - [ ] From `spire-ui`, run `npm test` and `npx tsc --noEmit`. Check CSS contracts, routes/deep links,
@@ -527,7 +610,7 @@ this table with its discriminating witness before that slice is called complete.
   credentials and exact remaining proof gaps. Do not mark acceptance complete if a required
   criterion lacks evidence; bring that gap to the analyst.
 - [ ] Update `docs/DECISIONS.md` with accepted ADRs; reconcile factory architecture/topic/data
-  catalogues and M2 live-proof statements; update smoke-test instructions, registry upgrade steps,
+  catalogues; M2 live-proof reconciliation already landed in slice 1; update smoke-test instructions, registry upgrade steps,
   security/SCM mapping, factory roadmap and `docs/HISTORY.md`. Rewrite `CLAUDE.md` status/measured
   counts from actual results, preserving unrelated UNVERIFIED entries.
 - [ ] Submit each slice for analyst review and resolve findings with their tests/docs. The PR
