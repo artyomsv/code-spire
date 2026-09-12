@@ -208,6 +208,57 @@ class FindingProjectionTest {
     }
 
     /**
+     * <b>A finding judged open in one round and fixed in a later one must record the fix.</b>
+     *
+     * <p>This is the case rules 2 and 3 blocked. Both asked only whether a verdict EXISTED, so the
+     * round-2 {@code UNCHANGED} made the row permanently unjudgeable and the round-3 {@code RESOLVED}
+     * was dropped. Nothing failed: a missed UPDATE touches zero rows and throws nothing, and the two
+     * user-visible paths -- resolving the thread on the forge, and the reconciliation summary -- are
+     * fed by the same verdict list and were both correct. Only the stored verdict was stale, which is
+     * the number every rounds-to-resolved and dismissal-rate figure is computed from.
+     *
+     * <p>Observed live on a real pull request before it was written down: a /fix run pushed, the
+     * thread went resolved, the summary read "1 closed", and review_finding still read UNCHANGED.
+     */
+    @Test
+    void aVerdictFromALaterRoundReplacesAnOpenJudgmentFromAnEarlierOne() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 7, Severity.MAJOR, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-fix", "src/A.java", 7)));
+        findings.recordVerdicts(REVIEW, 2, List.of(new FindingVerdict(
+                "thread-fix", "src/A.java", 7, FindingVerdict.Status.UNCHANGED, "still there")));
+        assertEquals("UNCHANGED", verdictForRound(1), "round 2 judges it still open");
+
+        // Round 3 runs on the commit a fix pushed. The row it judges is still at round 1.
+        findings.recordVerdicts(REVIEW, 3, List.of(new FindingVerdict(
+                "thread-fix", "src/A.java", 7, FindingVerdict.Status.RESOLVED, "fixed")));
+
+        assertEquals("RESOLVED", verdictForRound(1), "a later round must be able to close it");
+        assertEquals(3, verdictRoundForRound(1), "and must record the round that closed it");
+    }
+
+    /**
+     * <b>Reaffirming the same status in a later round must not move the round it was recorded with.</b>
+     *
+     * <p>The discriminating half of rule 4. Allowing a later round through on the round number alone
+     * would re-stamp every still-open finding on every round, so {@code verdict_round} would track the
+     * LAST time a finding was judged rather than the round it reached its verdict -- and
+     * rounds-to-resolved, computed from exactly that column, would climb on its own.
+     */
+    @Test
+    void alaterRoundRepeatingTheSameStatusLeavesTheRecordedRoundAlone() {
+        findings.recordGenerated(REVIEW, 1, COMMIT, List.of(finding("src/A.java", 8, Severity.MAJOR, null)));
+        findings.recordThreadRefs(REVIEW, List.of(new PostedInline("thread-same", "src/A.java", 8)));
+        var stillOpen = new FindingVerdict("thread-same", "src/A.java", 8, FindingVerdict.Status.UNCHANGED, null);
+        findings.recordVerdicts(REVIEW, 2, List.of(stillOpen));
+
+        findings.recordVerdicts(REVIEW, 3, List.of(stillOpen));
+        findings.recordVerdicts(REVIEW, 4, List.of(stillOpen));
+
+        assertEquals("UNCHANGED", verdictForRound(1));
+        assertEquals(2, verdictRoundForRound(1), "the round it was first judged, not the latest");
+    }
+
+    /**
      * <b>A redelivered verdict must not land on the round it arrived with.</b>
      *
      * <p>Verdicts judge findings from EARLIER rounds. Without that bound, a redelivered
@@ -392,6 +443,14 @@ class FindingProjectionTest {
             ps.setString(1, REVIEW);
             ps.setInt(2, round);
         });
+    }
+
+    private int verdictRoundForRound(int round) {
+        return Integer.parseInt(queryOne("SELECT verdict_round FROM review_finding"
+                + " WHERE review_id = ? AND round = ? ORDER BY id DESC LIMIT 1", ps -> {
+            ps.setString(1, REVIEW);
+            ps.setInt(2, round);
+        }));
     }
 
     private String verdictForRound(int round) {

@@ -27,6 +27,18 @@ import java.util.List;
  * with the old verdict. A stray {@code ACKNOWLEDGED} then counts as a dismissal in the proposal scan,
  * which is the number deciding whether the reviewer starts hiding findings.
  *
+ * <p><b>4. A later round may change a judgment; the same round may not.</b> Rules 2 and 3 block a
+ * REDELIVERY, and for a while they blocked progress with it: a finding judged {@code UNCHANGED} in
+ * round 2 and fixed in round 4 kept the round-2 verdict, because both rules asked only whether a
+ * verdict existed. Observed live — a {@code /fix} run pushed, the thread was resolved on the forge
+ * and the summary counted it closed, while {@code review_finding} still read {@code UNCHANGED} a day
+ * later. One verdict list drives the forge, the reconciliation summary and this table, so the two
+ * user-visible paths were right and only the stored verdict was stale. The discriminator is the
+ * round a judgment was STORED with: a redelivery carries the round already recorded, progress
+ * carries a later one. A reaffirmation (same status, later round) is also refused, so
+ * {@code verdict_round} keeps the round a finding actually reached its verdict and
+ * rounds-to-resolved cannot drift upward each time a still-open finding is judged again.
+ *
  * <p><b>3. A settled thread stops the search.</b> The thread ref is the finding's own identity. Once
  * it names a judged row there is nothing left to look for, so the location rule must not run as a
  * fallback — which is why this probes and reads the verdict rather than firing a conditional UPDATE
@@ -37,7 +49,7 @@ final class FindingVerdicts {
 
     /** Newest candidate for a thread, restricted to rounds that existed before this one. */
     private static final String PROBE_THREAD = """
-            SELECT id, verdict FROM review_finding
+            SELECT id, verdict, verdict_round FROM review_finding
              WHERE review_id = ? AND thread_ref = ? AND round < ?
              ORDER BY id DESC LIMIT 1
             """;
@@ -55,7 +67,9 @@ final class FindingVerdicts {
             UPDATE review_finding SET verdict = ?, verdict_at = now(), verdict_round = ?
              WHERE id = (SELECT id FROM review_finding
                           WHERE review_id = ? AND path = ? AND start_line = ?
-                            AND round < ? AND verdict IS NULL
+                            AND round < ?
+                            AND (verdict IS NULL
+                                 OR (COALESCE(verdict_round, 0) < ? AND verdict IS DISTINCT FROM ?))
                           ORDER BY id DESC LIMIT 1)
             """;
 
@@ -94,7 +108,9 @@ final class FindingVerdicts {
             if (!rs.next()) {
                 return false;
             }
-            if (rs.getString("verdict") != null) {
+            if (rs.getString("verdict") != null
+                    && !supersedes(round, rs.getObject("verdict_round", Integer.class),
+                            rs.getString("verdict"), verdict)) {
                 return true;
             }
             id = rs.getLong("id");
@@ -104,6 +120,18 @@ final class FindingVerdicts {
         byId.setLong(3, id);
         byId.executeUpdate();
         return true;
+    }
+
+    /**
+     * Whether this verdict is allowed to replace one already stored (rule 4).
+     *
+     * <p>A judged round of {@code null} predates the column and reads as 0, so the next real round
+     * supersedes it once and then stamps its own round -- self-healing rather than frozen.
+     */
+    private static boolean supersedes(int round, Integer judgedRound, String storedStatus,
+                                      FindingVerdict verdict) {
+        return round > (judgedRound == null ? 0 : judgedRound)
+                && !verdict.status().name().equals(storedStatus);
     }
 
     /**
@@ -121,6 +149,8 @@ final class FindingVerdicts {
         ps.setString(4, verdict.path());
         ps.setInt(5, verdict.line());
         ps.setInt(6, round);
+        ps.setInt(7, round);
+        ps.setString(8, verdict.status().name());
         ps.executeUpdate();
     }
 }
