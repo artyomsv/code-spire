@@ -38,3 +38,15 @@ export function scopeLabel(scopes: string | null | undefined): string {
   return scopes == null ? 'This token kind does not report its scopes'
     : scopes.trim() ? 'Token reports: ' + scopes : 'Token reports no scopes';
 }
+
+/**
+ * How an account reads in the source form's picker. Name alone was ambiguous: one host can hold
+ * several accounts, and after the V59 migration the same name legitimately exists as REVIEWER,
+ * FACTORY and a migrated CONTEXT row. The kind and role are what tell them apart.
+ */
+export function accountOptionLabel(
+  account: { name: string; type: string; role: string; enabled: boolean },
+): string {
+  return `${account.name} · ${account.type} · ${roleLabel(account.role)}`
+    + (account.enabled ? '' : ' (disabled)');
+}

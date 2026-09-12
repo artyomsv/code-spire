@@ -375,7 +375,7 @@ public class RunResource {
             case HarnessCredentialPool.Selection.Resting resting -> throw conflict(
                     "No harness credential is available. Capacity returns at "
                             + resting.capacityReturnsAt() + "; the pool recovers on its own, so retry"
-                            + " then or add another credential under Settings -> Harness credentials."
+                            + " then or add another credential with POST /api/harness-credentials."
                             + (resting.rejected() == 0 ? ""
                                     : " " + resting.rejected() + " of them were refused outright and"
                                             + " will NOT come back without a new key."));
@@ -383,10 +383,10 @@ public class RunResource {
                     "All " + rejected.count() + " harness credential(s) were refused by their provider. "
                             + "Nothing recovers on its own: rotating onto a refused key spends a request "
                             + "per run to rediscover it is dead. Replace the keys, or clear one you have "
-                            + "fixed, under Settings -> Harness credentials.");
+                            + "fixed, with POST /api/harness-credentials.");
             case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(
                     "No harness credential is configured, so there is no key for this run to call the"
-                            + " model with. Add one under Settings -> Harness credentials. The factory"
+                            + " model with. Add one with POST /api/harness-credentials. The factory"
                             + " deliberately does NOT borrow the reviewer's key: it goes into a sandbox"
                             + " that runs an untrusted work item at full access.");
         };
@@ -403,7 +403,7 @@ public class RunResource {
     private static void refusePinnedProvider(String llmProviderId) {
         if (llmProviderId != null && !llmProviderId.isBlank()) {
             throw DispatchRequestParser.badRequest("llmProviderId is no longer accepted: the harness "
-                    + "credential comes from the rotating pool under Settings -> Harness credentials, "
+                    + "credential comes from the rotating pool at /api/harness-credentials, "
                     + "never from an LLM provider the reviewer also uses.");
         }
     }

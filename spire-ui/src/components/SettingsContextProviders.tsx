@@ -18,6 +18,7 @@ import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Tooltip from './Tooltip';
 import Select from './Select';
+import { accountOptionLabel } from './accounts';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 
 export const compatibleAccountKinds: Record<ContextType, string[]> = {
@@ -467,7 +468,7 @@ function ContextProviderForm({
             : <label className="field">
                 <span>Account</span>
                 <Select ariaLabel="Account" value={accountId}
-                  options={[{ value: '', label: 'Select an account' }, ...compatible.map((a) => ({ value: a.id, label: a.name + (a.enabled ? '' : ' (disabled)') }))]}
+                  options={[{ value: '', label: 'Select an account' }, ...compatible.map((a) => ({ value: a.id, label: accountOptionLabel(a) }))]}
                   onChange={(id) => {
                     setAccountId(id);
                     const account = compatible.find((a) => a.id === id);

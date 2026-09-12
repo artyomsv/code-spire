@@ -36,8 +36,8 @@ describe('Context sources select accounts', () => {
     await open();
     await select('Type', 'github-issues');
     fireEvent.click(await screen.findByRole('combobox', { name: 'Account' }));
-    expect(await screen.findByRole('option', { name: 'forge-account' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'site-account' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'forge-account · github · Context' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'site-account · atlassian · Context' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: /auth/i })).not.toBeInTheDocument();
     expect(document.querySelector('input[type=password]')).toBeNull();
     expect(screen.queryByText('Account email')).not.toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('Context sources select accounts', () => {
     const save = vi.spyOn(api, 'createContextProvider').mockResolvedValue(source);
     await open();
     fireEvent.change(screen.getByPlaceholderText('Acme Jira'), { target: { value: 'Project source' } });
-    await select('Account', 'site-account');
+    await select('Account', 'site-account · atlassian · Context');
     fireEvent.change(screen.getByPlaceholderText('ACME, PROJ'), { target: { value: 'ONE' } });
     fireEvent.submit(screen.getByPlaceholderText('Acme Jira').closest('form')!);
     await waitFor(() => expect(save).toHaveBeenCalled());
@@ -85,9 +85,9 @@ describe('Context sources select accounts', () => {
     await open();
     await select('Type', 'Repository code');
     fireEvent.click(await screen.findByRole('combobox', { name: 'Account' }));
-    expect(await screen.findByRole('option', { name: 'forge-account' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'lab-account' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'site-account' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'forge-account · github · Context' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lab-account · gitlab · Context' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'site-account · atlassian · Context' })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('src/main/, src/allowed/')).toBeInTheDocument();
   });
 });

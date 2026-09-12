@@ -908,10 +908,12 @@
   .serving-cell { display: inline-flex; align-items: center; white-space: nowrap; }
   /* Both roles share one Accounts column: each chip names its role, so two columns of anonymous
      chips are one column of labelled ones, and the table fits the card. */
-  .serving-pair { display: inline-flex; gap: 6px; white-space: nowrap; }
+  /* Stacked, not side by side: two "Role · label" badges in one row set the column width,
+     and this table already runs wide. Vertical keeps each badge on one line in half the space. */
+  .serving-pair { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: nowrap; }
   /* The payload path is bounded so it ellipses (.copyval-text) rather than taking the row's width.
      The full path stays in CopyableValue's own title and in what the copy button copies. */
-  .wh-url { max-width: 280px; }
+  .wh-url { max-width: 180px; }
   /* A registration with no secret, said under the target. There is no Secret column any more: it
      read "secret set" on every healthy row, and a missing one already raises WEBHOOK_SECRET_MISSING. */
   .wh-nosecret { color: var(--crit); }

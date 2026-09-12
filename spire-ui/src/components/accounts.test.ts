@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountKind, hostOf, roleLabel } from './accounts';
+import { accountKind, accountOptionLabel, hostOf, roleLabel } from './accounts';
 
 describe('roleLabel', () => {
   it('names the two roles the server knows', () => {
@@ -32,5 +32,22 @@ describe('hostOf', () => {
 
   it('falls back to the raw value when it is not a URL', () => {
     expect(hostOf('not a url')).toBe('not a url');
+  });
+});
+
+describe('accountOptionLabel', () => {
+  // The discriminating case, not the obvious one: after V59 the same NAME legitimately exists
+  // three times on one host, so a label that drops kind or role makes them indistinguishable.
+  it('separates same-named accounts by kind and role', () => {
+    const reviewer = accountOptionLabel({ name: 'public-github', type: 'github', role: 'REVIEWER', enabled: true });
+    const factory = accountOptionLabel({ name: 'public-github', type: 'github', role: 'FACTORY', enabled: true });
+    const context = accountOptionLabel({ name: 'public-github', type: 'github', role: 'CONTEXT', enabled: true });
+    expect(new Set([reviewer, factory, context]).size).toBe(3);
+    expect(reviewer).toBe('public-github · github · Reviewer');
+  });
+
+  it('marks a disabled account without hiding its kind or role', () => {
+    expect(accountOptionLabel({ name: 'jira', type: 'atlassian', role: 'CONTEXT', enabled: false }))
+      .toBe('jira · atlassian · Context (disabled)');
   });
 });

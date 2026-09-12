@@ -138,7 +138,7 @@ export default function SettingsWebhookRepos() {
                   <th>Target</th>
                   <th>Forge</th>
                   <th>Accounts</th>
-                  <th>Payload URL (path)</th>
+                  <th>Webhook path</th>
                   <th>Enabled</th>
                   <th></th>
                 </tr>

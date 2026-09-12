@@ -63,6 +63,10 @@ jobs:
           SPIRE_OIDC_ORCHESTRATOR_SECRET=dev-only-orchestrator-secret
           SPIRE_OIDC_GATEWAY_SECRET=dev-only-gateway-secret
           SPIRE_OIDC_WORKER_SECRET=dev-only-worker-secret
+          # compose.yml interpolates every service before it filters by profile, so the
+          # factory's two required variables must exist even though e2e never starts it.
+          SPIRE_OIDC_RUN_WORKER_SECRET=dev-only-run-worker-secret
+          SPIRE_PUBLISHER_IMAGE=spire-publisher:latest
           KEYCLOAK_ADMIN_USER=dev-admin
           KEYCLOAK_ADMIN_PASSWORD=TEST-keycloak-admin
           SPIRE_TRUSTED_PROXIES=172.16.0.0/12
@@ -149,6 +153,10 @@ jobs:
           SPIRE_OIDC_ORCHESTRATOR_SECRET=dev-only-orchestrator-secret
           SPIRE_OIDC_GATEWAY_SECRET=dev-only-gateway-secret
           SPIRE_OIDC_WORKER_SECRET=dev-only-worker-secret
+          # compose.yml interpolates every service before it filters by profile, so the
+          # factory's two required variables must exist even though e2e never starts it.
+          SPIRE_OIDC_RUN_WORKER_SECRET=dev-only-run-worker-secret
+          SPIRE_PUBLISHER_IMAGE=spire-publisher:latest
           KEYCLOAK_ADMIN_USER=admin
           KEYCLOAK_ADMIN_PASSWORD=TEST-keycloak-admin-password
           SPIRE_TRUSTED_PROXIES=172.16.0.0/12
