@@ -11,11 +11,11 @@ public record ContextProviderConfig(
         UUID id,
         String name,
         String type,
+        String platform,
         String baseUrl,
         String authKind,
         String username,
         String secret,
         String projectKeys,
-        boolean enabled,
-        boolean isDefault) {
+        boolean enabled) {
 }

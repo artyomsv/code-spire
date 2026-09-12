@@ -3,20 +3,18 @@ package dev.codespire.orchestrator.context;
 import java.time.Instant;
 
 /**
- * A registered context provider as the API returns it — the stored secret is
- * NEVER included; {@code hasSecret} only reports whether one is set.
+ * Source settings and the referenced account's status; no credential material.
  */
 public record ContextProviderView(
         String id,
         String name,
         String type,
         String baseUrl,
-        String authKind,
-        String username,
+        String accountId,
+        String accountName,
+        Boolean accountEnabled,
         String projectKeys,
-        boolean hasSecret,
         boolean enabled,
-        boolean isDefault,
         Instant createdAt,
         Instant lastCheckAt,
         Boolean lastCheckOk,

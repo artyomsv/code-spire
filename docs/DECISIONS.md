@@ -4,6 +4,62 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-041 — Credentials live on accounts; context sources reference an account
+
+**Context.** `context_provider` copied the credential shape of `llm_provider`: a key without
+an identity, workspace, role, or reference to the forge account representing the same bot. No ADR
+chose that separation. It made rotating one bot's token a change to several unrelated rows.
+ADR-035 already calls for one account whose rights are narrowed by the adapter receiving it.
+
+**Decision (2026-09-12, #148).** `scm_provider` is the machine-account credential registry,
+including Atlassian accounts. Context sources retain their own URL, project keys and path
+allowlists, and reference it through `account_id`. One token rotation reaches every referring
+source; disabling an account stops resolution of all its sources. Referenced accounts cannot be
+deleted until those sources are reassigned or removed. Sources and accounts must share an origin
+and use compatible kinds and authentication, so selecting an account cannot send its secret to
+an unrelated host.
+
+**Role remains a non-null scalar.** REVIEWER and FACTORY never share a row. **ADR-038 is
+unamended.** CONTEXT is an explicit third role, with NULL workspace; reviewer and factory rows
+still require workspace. A nullable role would reopen the accidental role-loss bug recorded in
+HISTORY. Atlassian accounts have CONTEXT role, with no role selector in the form. Forge accounts
+of any role may supply compatible context readers. ADR-035 is satisfied rather than changed:
+the adapter determines the operation it performs with the account's credential.
+
+**Migration crosses the encryption boundary in application code.** V59 changes the schema;
+after CDI initializes Tink, a startup reconciler decrypts each legacy row with
+`context-provider:<source-id>` and encrypts it with `provider:<account-id>`. Account insertion
+and source reassignment commit in one transaction per row. Equal plaintext credentials at the
+same origin, with the same kind and authentication identity, can share a migrated account;
+different credentials stay separate. Failures leave the original ciphertext for the next startup,
+log only the row id, and do not stop other rows. Legacy columns remain for one release under an
+XOR constraint; removal waits until reconciliation has succeeded everywhere. No SQL ciphertext
+copy can substitute for re-encryption with the new AAD. Retaining those columns supports retry
+of failed rows, not application downgrade: successful rows have cleared their old credentials.
+Unrecognized legacy code hosts remain unmigrated for explicit account selection, with a named
+Attention entry linking to the source.
+
+**Scope detection is advisory.** Missing introspection means unknown, distinct from an empty
+reported scope list. Fine-grained GitHub and classic Atlassian tokens offer no usable scope report
+here, and scopes alone never prove access to a repository. Registration and manual account Check
+attempt to read scopes each time. A successful response records the report and observation time;
+a failed probe preserves the previous report and its timestamp, so a transient outage cannot
+erase standing advice or pretend it re-observed the scopes. Insufficient reported scopes produce advice,
+never a refusal or a green authorization claim. Introspection currently makes a separate bounded
+HTTP request; live credential-family gaps are recorded in UNVERIFIED. Kind dispatch stays in
+`ProviderClients`, the ADR-020 composition root. Code readers consume the account's explicit
+platform on the encrypted `ContextCredential` wire record instead of guessing from its hostname.
+
+**Deliberately deferred.** Workspace remains on the forge account: moving it to repositories is
+M3, as are per-repository push-rights verification and resolving typed `@handle` allowlists to
+stable ids. Multiple accounts per `(forge, workspace, role)` remain unavailable. Nothing checks
+credentials on a schedule. This migration does not alter `ProviderRegistry.resolve`,
+`MachineAccounts.resolve`, or gateway behavior. Deploy orchestrator and worker together for the
+new platform field; old queued code credentials without it skip only code context, preserving
+other sources and repository rules. Fresh dispatch restores code context with an explicit platform.
+
+---
+
 ## ADR-040 — A fix run may push to the branch it forked from, but only an open pull request's own source branch
 
 **Context.** M2's premise is that a fix for a review finding lands where the finding lives, so

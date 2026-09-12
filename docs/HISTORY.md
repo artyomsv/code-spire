@@ -1756,3 +1756,55 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Tracker accounts are listed read-only on Accounts; Context shows *Used by*. The allowlist field
   asks for the stable user id, which is what `/fix` accepts. No new tables. Design:
   `docs/superpowers/specs/2026-09-07-accounts-and-roles-design.md`; out of scope, with reasons, in its §11.
+
+- **Accounts normalization (2026-09-12, #148; ADR-041).** Machine credentials now live on accounts;
+  context sources hold references plus their source-specific URL, keys and path allowlists. V59
+  preserves legacy ciphertext while a startup reconciler re-encrypts under the account AAD,
+  atomically per source. Identical credentials at the same origin/authentication identity share a
+  migrated account; failures remain recoverable and do not stop other rows. Six forge accounts
+  and five legacy source types were exercised in a PostgreSQL/Flyway upgrade fixture. Disabling
+  an account stops its sources, rotation is shared, and deletion names the referring sources.
+  Atlassian joins the account registry with CONTEXT role and no workspace. The account screen
+  manages every kind, shows derived usage and advisory scopes, and the source form selects a
+  compatible account. Code-reader platform travels explicitly in the encrypted wire contract.
+  - REVIEWER/FACTORY separation is unchanged (ADR-038); gateway and both role resolvers stay as
+    they were. M3 retains workspace remodeling, per-repository push checks and handle resolution.
+  - Seven mutations were caught by their intended assertions: unconditional credential collapse,
+    removing the migration transaction, ignoring disabled accounts, restoring host guessing,
+    provider literals outside the composition root, refusing unknown scopes, and an unfiltered
+    account picker. Each mutation was restored before the final gate.
+  - Local verification exposed two environment requirements: Quarkus packaging needs the Gradle
+    JVM itself on JDK 25, and publisher tests need Git's shell on Windows PATH. The account-table
+    browser rendering also exposed excess metadata width; compact ellipsis cells retain complete
+    values on hover. 2952 Java tests / 335 suites (one skip), 611 UI tests / 75 files, and TypeScript
+    validation establish the automated coverage. The container deadline test waits for its real
+    publisher drain; the nightly E2E tier is separate.
+  - Live scope-family claims and scoped Atlassian gateway limits are in UNVERIFIED. The GitHub
+    header observation used OAuth, not a classic PAT; synthetic fixtures are not presented as live
+    credential evidence. No production token migration or deployment was performed. The software-factory analyst submitted
+    [a formal review with twelve inline findings](https://github.com/artyomsv/code-spire/pull/152#pullrequestreview-5183868619).
+  - **Review round 1:** two high findings were confirmed and fixed. A queued code credential with no
+    platform now skips only code context, preserving other sources and repository rules. A failed
+    scope probe retains its last observed report and timestamp, so an outage cannot erase advice.
+    Both regression tests were mutation-verified by removing their respective guards. Unrecognized
+    legacy hosts now remain recoverable instead of being persisted as GitHub, and remaining rows
+    have named Attention entries. A Java/TypeScript compatibility check guards picker drift; the
+    delete dialog shows usage, missing usage is explicitly unknown, and Preview explains disabled
+    accounts. Dead save-time ping code and its redundant tests were removed.
+  - The proposed GitHub scope-policy change was declined with the vendor contract: public_repo
+    includes writes to public repositories, so the account-level rule cannot call it read-only.
+    Per-repository private access remains outside this epic. The redundant conditional was removed
+    and the public-repository case now has an explicit assertion. Migration docs now explicitly say
+    retained columns permit retry of failed rows, not downgrade after successful re-encryption.
+
+  - Final review-fix verification: testFast, testServices and build passed; 2954 Java tests
+    across 336 suites, zero failures and one skip; 613 UI tests and TypeScript passed.
+    Nine intentional mutations were caught across the implementation and review fixes.
+  - **Review round 2:** the analyst's [follow-up review](https://github.com/artyomsv/code-spire/pull/152#pullrequestreview-5183972084)
+    confirmed both high findings resolved and accepted the public_repo disposition. Its two
+    non-blocking notes were addressed: the renamed scope-probe fixture now returns an asserted
+    marker instead of accidentally reaching the network, and the delete dialog explains source
+    references conditionally without inferring source names from role labels. The obsolete
+    scope-query wrapper and unconditional scope-write overload were removed so future call sites
+    cannot silently choose the old path. Disabled migration rows intentionally remain in Attention
+    because their legacy credential columns must be retired too; that intent is now commented.

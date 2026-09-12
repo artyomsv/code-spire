@@ -32,25 +32,9 @@ const forge = (over: Partial<api.ProviderView>): api.ProviderView => ({
   lastCheckAt: '2026-07-27T10:00:00Z',
   lastCheckOk: true,
   lastCheckError: null,
+  usedBy: [over.role === 'FACTORY' ? 'Factory' : 'Reviewer'],
   ...over,
 });
-
-const tracker: api.ContextProviderView = {
-  id: 'TEST-c1',
-  name: 'TEST Jira',
-  type: 'jira',
-  baseUrl: 'https://test-acme.atlassian.net',
-  authKind: 'basic',
-  username: 'jira-bot@example.invalid',
-  projectKeys: null,
-  hasSecret: true,
-  enabled: true,
-  isDefault: false,
-  createdAt: '2026-09-07T00:00:00Z',
-  lastCheckAt: null,
-  lastCheckOk: null,
-  lastCheckError: null,
-};
 
 /** Wait for the named cell, then hand back the row it sits in. */
 const rowNamed = async (name: string) => (await screen.findByText(name)).closest('tr') as HTMLElement;
@@ -61,6 +45,38 @@ describe('SettingsProviders — the Machine accounts list', () => {
     // authenticated as, and the Identity column reports the login the registry stored. They are
     // deliberately different strings here so an assertion on one cannot be satisfied by the other.
     vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null });
+  });
+
+  it('manages Atlassian accounts here and derives usage and scope text from the account', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ name: 'Site account', type: 'atlassian', role: 'CONTEXT', workspace: null, usedBy: ['Project tickets', 'Wiki pages'], reportedScopes: null })]);
+    renderPage();
+    const row = await rowNamed('Site account');
+    expect(within(row).getByText('Project tickets, Wiki pages')).toBeInTheDocument();
+    expect(within(row).getByText('This token kind does not report its scopes')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Manage on Context' })).not.toBeInTheDocument();
+  });
+
+  it('shows reported scopes as neutral text and unused accounts with an empty usage cell', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ role: 'CONTEXT', usedBy: [], reportedScopes: 'repo, read:org' })]);
+    renderPage();
+    const row = await rowNamed('TEST reviewer');
+    expect(within(row).getByText('Token reports: repo, read:org')).toHaveClass('account-scopes');
+    expect(row.querySelector('.account-uses')).toHaveTextContent('—');
+  });
+
+  it('distinguishes missing usage data from an unused account', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ usedBy: undefined })]);
+    renderPage();
+    expect(within(await rowNamed('TEST reviewer')).getByText('Usage unavailable')).toBeInTheDocument();
+  });
+
+  it('shows referring source names before attempting account deletion', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ usedBy: ['Reviewer', 'Engineering tickets'] })]);
+    renderPage();
+    fireEvent.click(within(await rowNamed('TEST reviewer')).getByRole('button', { name: 'Delete' }));
+    expect(within(screen.getByRole('dialog')).getByText(/Used by: Reviewer, Engineering tickets/)).toBeInTheDocument();
   });
 
   it('is titled Accounts and shows a forge row with its kind, role, identity and scope', async () => {
@@ -211,17 +227,6 @@ describe('SettingsProviders — the Machine accounts list', () => {
   });
 
   /** A tracker that answered is the state no fixture covered — only its refusal and its silence were. */
-  it('shows a tracker whose last check passed as an OK badge', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      { ...tracker, lastCheckAt: '2026-09-07T09:00:00Z', lastCheckOk: true },
-    ]);
-    renderPage();
-
-    const row = await rowNamed('TEST Jira');
-    expect(within(row).getByLabelText('OK')).toBeInTheDocument();
-    expect(within(row).queryByRole('button', { name: /OK/ })).not.toBeInTheDocument();
-  });
 
   /**
    * The connection is one badge in four states. Who the token authenticated as is variable-length
@@ -252,62 +257,10 @@ describe('SettingsProviders — the Machine accounts list', () => {
    * A tracker is registered and checked on Context, so its badge reports the stored standing and
    * is not a control. A refusal can be a paragraph, and it is the tooltip that carries it.
    */
-  it('shows a refused tracker as a Failed badge that cannot be clicked, with the reason on the hover', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      {
-        ...tracker,
-        lastCheckAt: '2026-09-07T09:00:00Z',
-        lastCheckOk: false,
-        lastCheckError: 'Authentication failed (HTTP 401)',
-      },
-    ]);
-    renderPage();
-
-    const row = await rowNamed('TEST Jira');
-    // The state is an icon. Its word is the accessible name — which is what makes dropping the
-    // visible label safe — and the provider's own message is on the tooltip behind it.
-    const badge = within(row).getByLabelText('Failed');
-    expect(badge.getAttribute('title')).toContain('Authentication failed (HTTP 401)');
-    expect(within(row).queryByRole('button', { name: 'Failed' })).not.toBeInTheDocument();
-  });
 
   /** Tracker accounts are listed so one screen answers "who acts as what"; they are edited on Context. */
-  it('lists tracker accounts read-only, after the forge rows, with a link to manage them on Context', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({})]);
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([tracker]);
-    renderPage();
-
-    const row = await rowNamed('TEST Jira');
-    expect(within(row).getByLabelText('Tracker account')).toBeInTheDocument();
-    expect(within(row).getByText('jira')).toBeInTheDocument();
-    expect(within(row).getByText('Read')).toBeInTheDocument();
-    expect(within(row).getByText('jira-bot@example.invalid')).toBeInTheDocument();
-    expect(within(row).getByText('test-acme.atlassian.net')).toBeInTheDocument();
-    // Never checked is information, not a problem — the fourth state of the same badge.
-    expect(within(row).getByLabelText('Not checked')).toBeInTheDocument();
-    expect(within(row).getByText('—')).toBeInTheDocument(); // Policy: a tracker commands nothing
-    expect(within(row).getByRole('link', { name: 'Manage on Context' })).toHaveAttribute(
-      'href',
-      '#/settings/context?edit=TEST-c1',
-    );
-    expect(within(row).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-    expect(within(row).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-
-    const rows = screen.getAllByRole('row').slice(1); // drop the header
-    expect(rows[0]).toHaveTextContent('TEST reviewer');
-    expect(rows[1]).toHaveTextContent('TEST Jira');
-  });
 
   /** The forge list is the one that matters; a tracker fetch failing must not blank it. */
-  it('keeps the forge rows when the tracker list cannot be loaded, and says so', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({})]);
-    vi.spyOn(api, 'fetchContextProviders').mockRejectedValue(new Error('Failed to load context providers'));
-    renderPage();
-
-    expect(await screen.findByText('TEST reviewer')).toBeInTheDocument();
-    expect(await screen.findByText(/tracker accounts could not be loaded/i)).toBeInTheDocument();
-  });
 
   it('shows the empty state only when there is nothing of either kind, and offers Add account', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
@@ -324,14 +277,6 @@ describe('SettingsProviders — the Machine accounts list', () => {
    * no forge account yet has something to show, and an empty state over a populated table would
    * hide it — so the count of BOTH kinds decides, not the forge count alone.
    */
-  it('does not show the empty state when only tracker accounts exist', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([tracker]);
-    renderPage();
-
-    expect(await screen.findByText('TEST Jira')).toBeInTheDocument();
-    expect(screen.queryByText(/no machine accounts yet/i)).not.toBeInTheDocument();
-  });
 
   /**
    * The same rule in the gap between the two fetches. Clearing the loading flag when the forge list
@@ -339,17 +284,4 @@ describe('SettingsProviders — the Machine accounts list', () => {
    * neither — so a deployment holding only tracker accounts flashed the empty state for one render.
    * The tracker fetch is left unresolved here, which IS that gap, held open.
    */
-  it('keeps showing Loading until the tracker list answers too', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-    vi.spyOn(api, 'fetchContextProviders').mockReturnValue(new Promise<api.ContextProviderView[]>(() => {}));
-    renderPage();
-
-    // The forge fetch has answered by the time the tracker fetch is issued, so this is the gap —
-    // asserted rather than slept for, since "Loading…" is also the state before anything resolved.
-    await waitFor(() => expect(api.fetchContextProviders).toHaveBeenCalled());
-    await act(async () => {});
-
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
-    expect(screen.queryByText(/no machine accounts yet/i)).not.toBeInTheDocument();
-  });
 });

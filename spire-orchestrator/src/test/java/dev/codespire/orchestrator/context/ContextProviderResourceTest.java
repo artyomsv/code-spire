@@ -43,6 +43,22 @@ class ContextProviderResourceTest {
     @Inject
     ContextProviderRegistry registry;
 
+    @Inject dev.codespire.orchestrator.provider.ProviderRegistry accounts;
+    @Inject javax.sql.DataSource dataSource;
+
+    @Test
+    void disabledAccountPreviewExplainsTheExistingSourcesState() throws Exception {
+        var input = body("preview-disabled-token");
+        String id = given().contentType("application/json").body(input).post("/api/context-providers")
+                .then().statusCode(201).extract().path("id");
+        try (var c = dataSource.getConnection(); var ps = c.prepareStatement("UPDATE scm_provider SET enabled = FALSE WHERE id = ?")) {
+            ps.setObject(1, UUID.fromString((String) input.get("accountId"))); ps.executeUpdate();
+        }
+        given().contentType("application/json").body(Map.of("text", "TEST-1"))
+                .post("/api/context-providers/" + id + "/preview").then().statusCode(200)
+                .body("status", is("ERROR")).body("detail", containsString("Account disabled"));
+    }
+
     @BeforeAll
     static void startJira() {
         jira = new WireMockServer(WireMockConfiguration.options().dynamicPort());
@@ -77,16 +93,12 @@ class ContextProviderResourceTest {
                         .withBody("{ \"id\": 1, \"username\": \"spire-bot\", \"name\": \"Spire Bot\" }")));
     }
 
-    private static Map<String, Object> body(Object secret) {
+    private Map<String, Object> body(Object secret) {
         var m = new java.util.HashMap<String, Object>();
         m.put("name", "Acme Jira");
         m.put("type", "jira");
         m.put("baseUrl", jira.baseUrl()); // validator appends /rest/api/2/myself -> hits the stub
-        m.put("authKind", "basic");
-        m.put("username", "bot@acme.com");
-        if (secret != null) {
-            m.put("secret", secret);
-        }
+        if (secret != null) m.put("accountId", account("atlassian", jira.baseUrl(), secret.toString()));
         return m;
     }
 
@@ -95,18 +107,12 @@ class ContextProviderResourceTest {
         given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers")
                 .then().statusCode(201)
-                .body("hasSecret", is(true))
+                .body("accountId", notNullValue())
                 .body("enabled", is(true))        // every enabled provider participates — no default concept
                 .body("secret", nullValue())      // secret never returned
                 .body("id", notNullValue());
     }
 
-    @Test
-    void rejectsACredentialTheProviderDoesNotAccept() {
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
-        given().contentType("application/json").body(body("bad-token"))
-                .when().post("/api/context-providers").then().statusCode(400);
-    }
 
     @Test
     void rejectsAnUnsupportedType() {
@@ -122,23 +128,7 @@ class ContextProviderResourceTest {
                 .when().post("/api/context-providers").then().statusCode(400);
     }
 
-    @Test
-    void basicAuthRequiresAUsername() {
-        var b = body("jira-token");
-        b.remove("username");
-        given().contentType("application/json").body(b)
-                .when().post("/api/context-providers").then().statusCode(400);
-    }
 
-    @Test
-    void acceptsABearerProviderWithoutUsername() {
-        var b = body("pat-token");
-        b.put("authKind", "bearer");
-        b.remove("username");
-        given().contentType("application/json").body(b)
-                .when().post("/api/context-providers")
-                .then().statusCode(201).body("authKind", is("bearer")).body("hasSecret", is(true));
-    }
 
     @Test
     void listNeverReturnsTheSecret() {
@@ -146,7 +136,7 @@ class ContextProviderResourceTest {
                 .when().post("/api/context-providers").then().statusCode(201);
         when().get("/api/context-providers")
                 .then().statusCode(200)
-                .body("[0].hasSecret", is(true))
+                .body("[0].accountId", notNullValue())
                 .body("[0].secret", nullValue());
     }
 
@@ -161,7 +151,6 @@ class ContextProviderResourceTest {
         when().get("/api/context-providers")
                 .then().statusCode(200)
                 .body("size()", is(2))
-                .body("isDefault", org.hamcrest.Matchers.everyItem(is(false)))
                 .body("enabled", org.hamcrest.Matchers.everyItem(is(true)));
     }
 
@@ -169,9 +158,9 @@ class ContextProviderResourceTest {
     void updateWithoutASecretKeepsTheStoredOne() {
         String id = given().contentType("application/json").body(body("keep-me"))
                 .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
-        given().contentType("application/json").body(body(null)) // no secret -> no re-validation
+        given().contentType("application/json").body(body("keep-me"))
                 .when().put("/api/context-providers/" + id)
-                .then().statusCode(200).body("hasSecret", is(true));
+                .then().statusCode(200).body("accountId", notNullValue());
     }
 
     @Test
@@ -205,15 +194,6 @@ class ContextProviderResourceTest {
                 .body("detail", notNullValue());
     }
 
-    @Test
-    void createIsRejectedWhenValidationHitsASignInPage() {
-        // A 200 that is HTML (an SSO/login redirect) must NOT pass validation.
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse()
-                .withHeader("Content-Type", "text/html")
-                .withBody("<!DOCTYPE html><html><head><title>Log in</title></head></html>")));
-        given().contentType("application/json").body(body("jira-token"))
-                .when().post("/api/context-providers").then().statusCode(400);
-    }
 
     @Test
     void checkReportsFailureWhenJiraReturnsASignInPage() {
@@ -237,51 +217,16 @@ class ContextProviderResourceTest {
     // after the operator pasted a working one and saved successfully.
 
     @Test
-    void createRecordsAPassingCheck() {
+    void savingAReferenceDoesNotClaimACheck() {
         String id = given().contentType("application/json").body(body("jira-token"))
                 .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
         given().when().get("/api/context-providers/" + id)
-                .then().statusCode(200).body("lastCheckOk", is(true)).body("lastCheckError", nullValue());
+                .then().statusCode(200).body("lastCheckOk", nullValue()).body("lastCheckError", nullValue());
     }
 
     /** The negative case that protects the decision: silence must not read as success. */
-    @Test
-    void anUpdateWithNoNewSecretDoesNotClearARejectedCredential() {
-        String id = given().contentType("application/json").body(body("jira-token"))
-                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
-        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
-
-        // Re-stub success so an accidental re-validation on update would clear the rejection
-        // (this is exactly the branch that must NOT run without a new secret).
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself"))
-                .willReturn(aResponse().withHeader("Content-Type", "application/json")
-                        .withBody("{ \"accountId\": \"abc\", \"emailAddress\": \"bot@acme.com\" }")));
-        given().contentType("application/json").body(body(null)) // no secret -> keeps the stored one
-                .when().put("/api/context-providers/" + id).then().statusCode(200);
-
-        // An update that never touched the credential must not clear its rejection.
-        given().when().get("/api/context-providers/" + id)
-                .then().statusCode(200).body("lastCheckOk", is(false));
-    }
 
     /** The positive counterpart: a genuine re-validation does clear the rejection. */
-    @Test
-    void anUpdateWithANewSecretClearsARejectedCredential() {
-        String id = given().contentType("application/json").body(body("jira-token"))
-                .when().post("/api/context-providers").then().statusCode(201).extract().path("id");
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself")).willReturn(aResponse().withStatus(401)));
-        given().when().post("/api/context-providers/" + id + "/check").then().statusCode(200).body("ok", is(false));
-
-        jira.stubFor(get(urlEqualTo("/rest/api/2/myself"))
-                .willReturn(aResponse().withHeader("Content-Type", "application/json")
-                        .withBody("{ \"accountId\": \"abc\", \"emailAddress\": \"bot@acme.com\" }")));
-        given().contentType("application/json").body(body("new-secret"))
-                .when().put("/api/context-providers/" + id).then().statusCode(200);
-
-        given().when().get("/api/context-providers/" + id)
-                .then().statusCode(200).body("lastCheckOk", is(true)).body("lastCheckError", nullValue());
-    }
 
     // ---- check: only a genuine auth rejection may write FALSE ---------------------------------
     //
@@ -300,7 +245,7 @@ class ContextProviderResourceTest {
         temp.stop(); // unreachable from the very first check
 
         ContextProviderView view = registry.create(new ContextProviderInput("Acme Jira Temp", "jira",
-                baseUrl, "basic", "bot@acme.com", "jira-token", null, true, false));
+                baseUrl, account("atlassian", baseUrl, "jira-token"), null, true));
 
         given().when().post("/api/context-providers/" + view.id() + "/check")
                 .then().statusCode(200).body("ok", is(false));
@@ -336,7 +281,7 @@ class ContextProviderResourceTest {
 
     /**
      * A sign-in page is also a genuine rejection, just expressed as 200-HTML instead of a status
-     * code: {@code ping()} already blocks the save for exactly this response, so {@code check()}
+     * code: {@code check()}
      * must record it as a rejection the same way, not leave it inconclusive like a 5xx.
      */
     @Test
@@ -384,16 +329,12 @@ class ContextProviderResourceTest {
     }
 
     /** A Confluence provider body pointing at the same WireMock (validator appends /rest/api/user/current). */
-    private static Map<String, Object> confluenceBody(Object secret) {
+    private Map<String, Object> confluenceBody(Object secret) {
         var m = new java.util.HashMap<String, Object>();
         m.put("name", "Acme Confluence");
         m.put("type", "confluence");
         m.put("baseUrl", jira.baseUrl());
-        m.put("authKind", "basic");
-        m.put("username", "bot@acme.com");
-        if (secret != null) {
-            m.put("secret", secret);
-        }
+        if (secret != null) m.put("accountId", account("atlassian", jira.baseUrl(), secret.toString()));
         return m;
     }
 
@@ -406,7 +347,7 @@ class ContextProviderResourceTest {
                 .when().post("/api/context-providers")
                 .then().statusCode(201)
                 .body("type", is("confluence"))
-                .body("hasSecret", is(true))
+                .body("accountId", notNullValue())
                 .body("secret", nullValue());
     }
 
@@ -454,27 +395,21 @@ class ContextProviderResourceTest {
 
     // ---- github-issues / gitlab-issues: bearer-only, and preview through the real REST surface ----
 
-    private static Map<String, Object> githubBody(Object secret) {
+    private Map<String, Object> githubBody(Object secret) {
         var m = new java.util.HashMap<String, Object>();
         m.put("name", "Acme GitHub Issues");
         m.put("type", "github-issues");
         m.put("baseUrl", github.baseUrl());
-        m.put("authKind", "bearer");
-        if (secret != null) {
-            m.put("secret", secret);
-        }
+        if (secret != null) m.put("accountId", account("github", github.baseUrl(), secret.toString()));
         return m;
     }
 
-    private static Map<String, Object> gitlabBody(Object secret) {
+    private Map<String, Object> gitlabBody(Object secret) {
         var m = new java.util.HashMap<String, Object>();
         m.put("name", "Acme GitLab Issues");
         m.put("type", "gitlab-issues");
         m.put("baseUrl", gitlab.baseUrl());
-        m.put("authKind", "bearer");
-        if (secret != null) {
-            m.put("secret", secret);
-        }
+        if (secret != null) m.put("accountId", account("gitlab", gitlab.baseUrl(), secret.toString()));
         return m;
     }
 
@@ -488,20 +423,6 @@ class ContextProviderResourceTest {
      * validation passes) — pointing both at one shared stubless server would 400 from an unrelated
      * 404 in {@code ping()} regardless of whether this guard exists, proving nothing.
      */
-    @Test
-    void refusesBasicAuthForTheIssueTypes() {
-        var githubBasic = githubBody("TEST-token");
-        githubBasic.put("authKind", "basic");
-        githubBasic.put("username", "bot@acme.com");
-        given().contentType("application/json").body(githubBasic)
-                .when().post("/api/context-providers").then().statusCode(400);
-
-        var gitlabBasic = gitlabBody("TEST-token");
-        gitlabBasic.put("authKind", "basic");
-        gitlabBasic.put("username", "bot@acme.com");
-        given().contentType("application/json").body(gitlabBasic)
-                .when().post("/api/context-providers").then().statusCode(400);
-    }
 
     @Test
     void gitHubPreviewOfABareReferenceReturnsTheGuidance() {
@@ -613,4 +534,10 @@ class ContextProviderResourceTest {
                 .body("items[0].kind", is("ISSUE"))
                 .body("items[0].title", containsString("Widget crashes on save"));
     }
+    private String account(String type, String url, String secret) {
+        return accounts.create(new dev.codespire.orchestrator.provider.ProviderInput("Source account", type, url,
+                null, "basic".equals(type) ? "basic" : "bearer", null, secret, "", true,
+                java.util.List.of(), null, null, "CONTEXT")).id();
+    }
+
 }

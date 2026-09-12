@@ -26,5 +26,8 @@ public record ProviderView(
         Boolean lastCheckOk,
         String lastCheckError,
         /** REVIEWER or FACTORY (ADR-038): which identity this registration is. */
-        String role) {
+        String role,
+        String reportedScopes,
+        Instant scopesCheckedAt,
+        List<String> usedBy) {
 }

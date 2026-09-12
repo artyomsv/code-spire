@@ -16,7 +16,8 @@ import java.util.Locale;
  */
 public enum ProviderRole {
     REVIEWER,
-    FACTORY;
+    FACTORY,
+    CONTEXT;
 
     /** Null and blank mean REVIEWER, so every caller that predates the role is unchanged. */
     public static ProviderRole of(String raw) {
@@ -27,7 +28,7 @@ public enum ProviderRole {
             return valueOf(raw.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("unknown provider role: " + raw
-                    + " (expected REVIEWER or FACTORY)", e);
+                    + " (expected REVIEWER, FACTORY or CONTEXT)", e);
         }
     }
 }

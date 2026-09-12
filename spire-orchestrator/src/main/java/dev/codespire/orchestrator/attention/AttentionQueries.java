@@ -77,6 +77,8 @@ public class AttentionQueries {
         try (Connection c = dataSource.getConnection()) {
             llmProviderRows(c, rows);
             scmProviderRows(c, rows);
+            accountScopeRows(c, rows);
+            contextMigrationRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);
@@ -145,6 +147,34 @@ public class AttentionQueries {
                 "SELECT model FROM llm_provider WHERE enabled = TRUE AND is_default = TRUE");
              ResultSet rs = ps.executeQuery()) {
             return rs.next() ? rs.getString("model") : null;
+        }
+    }
+
+    private void accountScopeRows(Connection c, List<AttentionView> rows) throws SQLException {
+        try (var ps = c.prepareStatement("SELECT id, name, type, role, reported_scopes FROM scm_provider "
+                + "WHERE enabled = TRUE AND reported_scopes IS NOT NULL"); var rs = ps.executeQuery()) {
+            while (rs.next()) {
+                if (dev.codespire.orchestrator.provider.ProviderClients.scopesNeedAttention(rs.getString("type"),
+                        dev.codespire.orchestrator.provider.ProviderRole.valueOf(rs.getString("role")), rs.getString("reported_scopes"))) {
+                    rows.add(new AttentionView("ACCOUNT_SCOPE_ADVICE", Severity.WARNING, rs.getString("name"),
+                            "The token's reported scopes do not include the expected "
+                                    + ("FACTORY".equals(rs.getString("role")) ? "write" : "read")
+                                    + " scope. Check the account's permissions; reported scopes alone cannot establish access.",
+                            editLink("/settings/accounts", rs.getObject("id", UUID.class))));
+                }
+            }
+        }
+    }
+
+    private void contextMigrationRows(Connection c, List<AttentionView> rows) throws SQLException {
+        // Disabled sources also need recovery before a later release removes the legacy columns.
+        try (var ps = c.prepareStatement("SELECT id, name FROM context_provider WHERE account_id IS NULL");
+             var rs = ps.executeQuery()) {
+            while (rs.next()) {
+                rows.add(new AttentionView("CONTEXT_ACCOUNT_MIGRATION_REQUIRED", Severity.WARNING, rs.getString("name"),
+                        "This source still holds a legacy credential and cannot resolve. Select a compatible account to restore it.",
+                        editLink("/settings/context", rs.getObject("id", UUID.class))));
+            }
         }
     }
 

@@ -4,189 +4,90 @@ import { MemoryRouter } from 'react-router';
 import SettingsContextProviders from './SettingsContextProviders';
 import * as api from '../api';
 
+const account = (id: string, type: string, enabled = true): api.ProviderView => ({
+  id, name: id, type, enabled, baseUrl: 'https://source.example.test', workspace: null,
+  authKind: 'bearer', authUsername: null, hasSecret: true, botAccountId: 'bot', botUsername: null,
+  authors: [], conversationLevel: null, role: 'CONTEXT', createdAt: '', lastCheckAt: null,
+  lastCheckOk: null, lastCheckError: null,
+});
+const source: api.ContextProviderView = {
+  id: 'source', name: 'Project source', type: 'jira', baseUrl: 'https://source.example.test',
+  accountId: 'site-account', accountName: 'site-account', accountEnabled: true,
+  projectKeys: 'ONE', enabled: true, createdAt: '', lastCheckAt: null, lastCheckOk: null, lastCheckError: null,
+};
 const renderPage = () => render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>);
+async function select(name: string, option: string) {
+  fireEvent.click(await screen.findByRole('combobox', { name }));
+  fireEvent.click(await screen.findByRole('option', { name: option }));
+}
+async function open() {
+  renderPage();
+  fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
+}
 
-/**
- * The Auth select must never be left holding a value the new type rejects. Jira/Confluence permit
- * `basic` (the form's default) but GitHub/GitLab issue providers are bearer-only, so switching the
- * Type select has to coerce Auth as a direct consequence — not leave it to a later effect.
- */
-describe('SettingsContextProviders — add-provider form', () => {
+describe('Context sources select accounts', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([account('site-account', 'atlassian'), account('forge-account', 'github')]);
+    vi.spyOn(api, 'checkContextProvider').mockResolvedValue({ ok: true, account: 'bot', detail: null });
   });
 
-  it('coerces auth to bearer when switching to a bearer-only type', async () => {
-    renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
-
-    expect(await screen.findByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
-
-    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
-    fireEvent.click(await screen.findByRole('option', { name: 'github-issues' }));
-
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/bearer/i),
-    );
-    expect(screen.getByRole('combobox', { name: /^auth$/i })).not.toHaveTextContent(/basic/i);
+  it('offers only compatible accounts and has no credential fields', async () => {
+    await open();
+    await select('Type', 'github-issues');
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Account' }));
+    expect(await screen.findByRole('option', { name: 'forge-account' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'site-account' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /auth/i })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type=password]')).toBeNull();
+    expect(screen.queryByText('Account email')).not.toBeInTheDocument();
   });
 
-  it('leaves auth at bearer-only and does not offer basic for gitlab-issues', async () => {
-    renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
-
-    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
-    fireEvent.click(await screen.findByRole('option', { name: 'gitlab-issues' }));
-
-    fireEvent.click(await screen.findByRole('combobox', { name: /^auth$/i }));
-    expect(screen.getByRole('listbox')).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /^basic/i })).not.toBeInTheDocument();
+  it('explains an empty picker and links to registration', async () => {
+    vi.mocked(api.fetchProviders).mockResolvedValue([]);
+    await open();
+    expect(await screen.findByText(/Register an account first/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Accounts' })).toHaveAttribute('href', '#/settings/accounts');
+    expect(screen.queryByRole('combobox', { name: 'Account' })).not.toBeInTheDocument();
   });
 
-  /**
-   * The row rendered an Enabled/Disabled pill while the form posted `initial.enabled` straight back,
-   * so the state was visible but unreachable — a provider could only be disabled through the API.
-   */
-  it('sends enabled=false when the Enabled box is unchecked on an existing provider', async () => {
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      {
-        id: 'ctx-1',
-        name: 'Acme Jira',
-        type: 'jira',
-        baseUrl: 'https://acme.example.invalid',
-        authKind: 'basic',
-        username: 'bot@example.invalid',
-        projectKeys: 'ACME',
-        enabled: true,
-        isDefault: false,
-        hasSecret: true,
-        createdAt: '2026-07-31T00:00:00Z',
-        lastCheckAt: null,
-        lastCheckOk: null,
-        lastCheckError: null,
-      },
-    ] as never);
-    const update = vi.spyOn(api, 'updateContextProvider').mockResolvedValue(undefined as never);
-
-    renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
-
-    const box = await screen.findByRole('checkbox', { name: /enabled/i });
-    expect(box).toBeChecked();
-    fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
-
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1]).toMatchObject({ enabled: false });
+  it('saves an account reference and source-specific keys without credentials', async () => {
+    const save = vi.spyOn(api, 'createContextProvider').mockResolvedValue(source);
+    await open();
+    fireEvent.change(screen.getByPlaceholderText('Acme Jira'), { target: { value: 'Project source' } });
+    await select('Account', 'site-account');
+    fireEvent.change(screen.getByPlaceholderText('ACME, PROJ'), { target: { value: 'ONE' } });
+    fireEvent.submit(screen.getByPlaceholderText('Acme Jira').closest('form')!);
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0][0]).toEqual({ name: 'Project source', type: 'jira', baseUrl: 'https://source.example.test', accountId: 'site-account', projectKeys: 'ONE', enabled: true });
   });
 
-  it('leaves auth alone when switching between types that permit the same kinds', async () => {
-    // Jira and Confluence both allow basic and bearer, so a switch between them must not coerce.
+  it('opens a migrated source with its account selected and can disable the source', async () => {
+    vi.mocked(api.fetchContextProviders).mockResolvedValue([source]);
+    const save = vi.spyOn(api, 'updateContextProvider').mockResolvedValue(source);
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
-
-    expect(await screen.findByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
-
-    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
-    fireEvent.click(await screen.findByRole('option', { name: 'confluence' }));
-
-    expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/basic/i);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(await screen.findByRole('combobox', { name: 'Account' })).toHaveTextContent('site-account');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Enabled' }));
+    fireEvent.submit(screen.getByDisplayValue('Project source').closest('form')!);
+    await waitFor(() => expect(save).toHaveBeenCalledWith('source', expect.objectContaining({ accountId: 'site-account', enabled: false })));
   });
 
-  it('offers the repository code provider type and forces bearer auth', async () => {
+  it('warns when an account is disabled', async () => {
+    vi.mocked(api.fetchContextProviders).mockResolvedValue([{ ...source, accountEnabled: false }]);
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /add provider/i }));
-
-    fireEvent.click(screen.getByRole('combobox', { name: /^type$/i }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Repository code' }));
-
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: /^auth$/i })).toHaveTextContent(/bearer/i),
-    );
-    // Bearer-only types must not offer the account-email field — sending one would be silently
-    // ignored by the API and mislead the operator into thinking it mattered.
-    expect(screen.queryByLabelText(/account email/i)).not.toBeInTheDocument();
+    expect(await screen.findByText('Account disabled')).toBeInTheDocument();
+    expect(api.checkContextProvider).not.toHaveBeenCalled();
   });
 
-  /**
-   * The blank-secret-on-edit rule: sending secret: '' on save would wipe the stored token. This must
-   * hold for every type, including a brand-new one — confirm 'code' goes through the same path rather
-   * than around it.
-   */
-  it('does not send an empty secret when editing an existing code provider', async () => {
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      {
-        id: 'ctx-code-1',
-        name: 'Acme repository code',
-        type: 'code',
-        baseUrl: 'https://api.github.com',
-        authKind: 'bearer',
-        username: null,
-        projectKeys: 'src/main/',
-        enabled: true,
-        isDefault: false,
-        hasSecret: true,
-        createdAt: '2026-08-01T00:00:00Z',
-        lastCheckAt: null,
-        lastCheckOk: null,
-        lastCheckError: null,
-      },
-    ] as never);
-    const update = vi.spyOn(api, 'updateContextProvider').mockResolvedValue(undefined as never);
-
-    renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
-
-    const baseUrl = await screen.findByDisplayValue('https://api.github.com');
-    fireEvent.change(baseUrl, { target: { value: 'https://github.example.invalid' } });
-    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
-
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].secret).toBeUndefined();
-    expect(update.mock.calls[0][1]).toMatchObject({ baseUrl: 'https://github.example.invalid' });
-  });
-
-  /**
-   * The backend refuses a preview for the code type with a 400, so the control could only ever
-   * produce a raw error message. Check is the verification this type has.
-   */
-  it('does not offer the preview control for a code provider', async () => {
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      codeProvider('ctx-code-1', 'Acme repository code'),
-    ] as never);
-
-    renderPage();
-
-    await screen.findByRole('button', { name: /edit/i });
-    expect(screen.queryByRole('button', { name: /^test$/i })).not.toBeInTheDocument();
-  });
-
-  it('still offers it for a type the backend can preview', async () => {
-    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([
-      { ...codeProvider('ctx-jira-1', 'Acme Jira'), type: 'jira', authKind: 'basic' },
-    ] as never);
-
-    renderPage();
-
-    expect(await screen.findByRole('button', { name: /^test$/i })).toBeInTheDocument();
+  it('code offers both supported platforms and preserves the path allowlist', async () => {
+    vi.mocked(api.fetchProviders).mockResolvedValue([account('site-account', 'atlassian'), account('forge-account', 'github'), account('lab-account', 'gitlab')]);
+    await open();
+    await select('Type', 'Repository code');
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Account' }));
+    expect(await screen.findByRole('option', { name: 'forge-account' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'lab-account' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'site-account' })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('src/main/, src/allowed/')).toBeInTheDocument();
   });
 });
-
-function codeProvider(id: string, name: string) {
-  return {
-    id,
-    name,
-    type: 'code',
-    baseUrl: 'https://api.github.com',
-    authKind: 'bearer',
-    username: null,
-    projectKeys: 'src/main/',
-    enabled: true,
-    isDefault: false,
-    hasSecret: true,
-    createdAt: '2026-08-01T00:00:00Z',
-    lastCheckAt: null,
-    lastCheckOk: null,
-    lastCheckError: null,
-  };
-}

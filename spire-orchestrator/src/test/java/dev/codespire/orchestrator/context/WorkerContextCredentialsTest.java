@@ -38,13 +38,13 @@ class WorkerContextCredentialsTest {
     }
 
     private static ContextProviderConfig jira() {
-        return new ContextProviderConfig(UUID.randomUUID(), "Acme Jira", "jira",
-                "https://acme.atlassian.net", "basic", "bot@acme.com", "jira-api-token", "ACME", true, false);
+        return new ContextProviderConfig(UUID.randomUUID(), "Acme Jira", "jira", "atlassian",
+                "https://acme.atlassian.net", "basic", "bot@acme.com", "jira-api-token", "ACME", true);
     }
 
     private static ContextProviderConfig confluence() {
-        return new ContextProviderConfig(UUID.randomUUID(), "Acme Confluence", "confluence",
-                "https://acme.atlassian.net/wiki", "bearer", null, "conf-pat", "ENG", true, false);
+        return new ContextProviderConfig(UUID.randomUUID(), "Acme Confluence", "confluence", "atlassian",
+                "https://acme.atlassian.net/wiki", "bearer", null, "conf-pat", "ENG", true);
     }
 
     @Test
@@ -58,6 +58,8 @@ class WorkerContextCredentialsTest {
         });
         assertEquals(2, back.size(), "both enabled providers are packed");
         assertEquals("jira", back.get(0).type());
+        assertEquals("atlassian", back.get(0).platform());
+        assertEquals(back.get(0).platform(), back.get(0).withProjectKeys("OTHER").platform());
         assertEquals("jira-api-token", back.get(0).secret());
         assertEquals("ACME", back.get(0).projectKeys());
         assertEquals("confluence", back.get(1).type());

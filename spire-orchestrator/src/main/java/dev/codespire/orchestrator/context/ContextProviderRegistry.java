@@ -16,11 +16,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The context-provider registry (CONTRACT §7) — CRUD over {@code context_provider},
- * the single owner of context-source secrets. Secrets are Tink-encrypted at rest
- * (AAD bound to the row id) and are NEVER returned by the API — only resolved
- * internally to broker a credential to the worker. Mirrors
- * {@link dev.codespire.orchestrator.llm.LlmProviderRegistry}.
+ * Sources own configuration and reference the account that owns their credential.
  */
 @ApplicationScoped
 public class ContextProviderRegistry {
@@ -35,12 +31,19 @@ public class ContextProviderRegistry {
     @Inject
     dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
 
+    private static final String VIEW = "SELECT s.*, a.name AS account_name, a.enabled AS account_enabled "
+            + "FROM context_provider s LEFT JOIN scm_provider a ON a.id = s.account_id ";
+    private static final String RESOLVED = "SELECT s.*, a.type AS account_type, "
+            + "a.auth_kind AS account_auth_kind, a.auth_username AS account_auth_username, "
+            + "a.auth_secret AS account_auth_secret FROM context_provider s "
+            + "JOIN scm_provider a ON a.id = s.account_id ";
+
     // ---- reads (API) -------------------------------------------------------
 
     public List<ContextProviderView> list() {
         List<ContextProviderView> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT * FROM context_provider ORDER BY created_at");
+             PreparedStatement ps = c.prepareStatement(VIEW + "ORDER BY s.created_at");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 out.add(toView(rs));
@@ -53,7 +56,7 @@ public class ContextProviderRegistry {
 
     public Optional<ContextProviderView> get(UUID id) {
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT * FROM context_provider WHERE id = ?")) {
+             PreparedStatement ps = c.prepareStatement(VIEW + "WHERE s.id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(toView(rs)) : Optional.empty();
@@ -68,24 +71,22 @@ public class ContextProviderRegistry {
     @Transactional
     public ContextProviderView create(ContextProviderInput in) {
         UUID id = UUID.randomUUID();
-        String secret = require(in.secret(), "secret");
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO context_provider (id, name, type, base_url, auth_kind, auth_username,
-                            auth_secret, project_keys, enabled, is_default)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
+        try (Connection c = dataSource.getConnection()) {
+            validateAccount(c, in);
+            try (PreparedStatement ps = c.prepareStatement("""
+                    INSERT INTO context_provider (id, name, type, base_url, account_id, project_keys, enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """)) {
             // No default concept for context: every enabled provider participates, matched per reference.
             ps.setObject(1, id);
             ps.setString(2, in.name());
             ps.setString(3, in.type());
             ps.setString(4, in.baseUrl());
-            ps.setString(5, in.authKind());
-            ps.setString(6, in.username());
-            ps.setString(7, encryption.encryptString(secret, aad(id)));
-            ps.setString(8, blankToNull(in.projectKeys()));
-            ps.setBoolean(9, in.enabled() == null || in.enabled());
+            ps.setObject(5, UUID.fromString(in.accountId()));
+            ps.setString(6, blankToNull(in.projectKeys()));
+            ps.setBoolean(7, in.enabled() == null || in.enabled());
             ps.executeUpdate();
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create context provider", e);
         }
@@ -98,23 +99,18 @@ public class ContextProviderRegistry {
             if (!exists(c, id)) {
                 return Optional.empty();
             }
-            boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
-            String sql = "UPDATE context_provider SET name=?, type=?, base_url=?, auth_kind=?, "
-                    + "auth_username=?, project_keys=?, enabled=?, updated_at=now()"
-                    + (rotateSecret ? ", auth_secret=?" : "") + " WHERE id=?";
+            validateAccount(c, in);
+            String sql = "UPDATE context_provider SET name=?, type=?, base_url=?, account_id=?, "
+                    + "project_keys=?, enabled=?, auth_kind=NULL, auth_username=NULL, auth_secret=NULL, "
+                    + "last_check_at=NULL, last_check_ok=NULL, last_check_error=NULL, updated_at=now() WHERE id=?";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, in.name());
                 ps.setString(2, in.type());
                 ps.setString(3, in.baseUrl());
-                ps.setString(4, in.authKind());
-                ps.setString(5, in.username());
-                ps.setString(6, blankToNull(in.projectKeys()));
-                ps.setBoolean(7, in.enabled() == null || in.enabled());
-                int idx = 8;
-                if (rotateSecret) {
-                    ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
-                }
-                ps.setObject(idx, id);
+                ps.setObject(4, UUID.fromString(in.accountId()));
+                ps.setString(5, blankToNull(in.projectKeys()));
+                ps.setBoolean(6, in.enabled() == null || in.enabled());
+                ps.setObject(7, id);
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
@@ -167,7 +163,7 @@ public class ContextProviderRegistry {
         List<ContextProviderConfig> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM context_provider WHERE enabled = TRUE ORDER BY created_at");
+                     RESOLVED + "WHERE s.enabled = TRUE AND a.enabled = TRUE ORDER BY s.created_at");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 out.add(decrypted(rs));
@@ -181,7 +177,7 @@ public class ContextProviderRegistry {
     /** A single provider by id with its secret decrypted (for the connectivity check); empty when absent. */
     public Optional<ContextProviderConfig> resolveById(UUID id) {
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT * FROM context_provider WHERE id = ?")) {
+             PreparedStatement ps = c.prepareStatement(RESOLVED + "WHERE s.id = ? AND a.enabled = TRUE")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
@@ -196,20 +192,18 @@ public class ContextProviderRegistry {
     private ContextProviderConfig decrypted(ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         return new ContextProviderConfig(id, rs.getString("name"), rs.getString("type"),
-                rs.getString("base_url"), rs.getString("auth_kind"), rs.getString("auth_username"),
-                encryption.decryptString(rs.getString("auth_secret"), aad(id)),
+                rs.getString("account_type"), rs.getString("base_url"), rs.getString("account_auth_kind"), rs.getString("account_auth_username"),
+                encryption.decryptString(rs.getString("account_auth_secret"), "provider:" + rs.getObject("account_id", UUID.class)),
                 rs.getString("project_keys"),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"));
+                rs.getBoolean("enabled"));
     }
 
     private ContextProviderView toView(ResultSet rs) throws SQLException {
-        String secret = rs.getString("auth_secret");
         return new ContextProviderView(
                 rs.getObject("id", UUID.class).toString(),
                 rs.getString("name"), rs.getString("type"), rs.getString("base_url"),
-                rs.getString("auth_kind"), rs.getString("auth_username"), rs.getString("project_keys"),
-                secret != null && !secret.isBlank(),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"),
+                rs.getString("account_id"), rs.getString("account_name"), rs.getObject("account_enabled", Boolean.class),
+                rs.getString("project_keys"), rs.getBoolean("enabled"),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("last_check_at") == null
                         ? null : rs.getTimestamp("last_check_at").toInstant(),
@@ -230,14 +224,39 @@ public class ContextProviderRegistry {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private static String aad(UUID id) {
-        return "context-provider:" + id;
+    private void validateAccount(Connection c, ContextProviderInput in) throws SQLException {
+        UUID account;
+        try {
+            account = UUID.fromString(in.accountId());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new jakarta.ws.rs.BadRequestException("A valid accountId is required");
+        }
+        // Keep the referenced kind/host stable until this source write commits.
+        try (var ps = c.prepareStatement("SELECT type, base_url, auth_kind FROM scm_provider WHERE id = ? FOR SHARE")) {
+            ps.setObject(1, account);
+            try (var rs = ps.executeQuery()) {
+                if (!rs.next()) throw new jakarta.ws.rs.BadRequestException("Selected account does not exist");
+                if (!dev.codespire.orchestrator.provider.ProviderClients.supportsContext(in.type(), rs.getString("type"))) {
+                    throw new jakarta.ws.rs.BadRequestException("Selected account kind cannot serve this source type");
+                }
+                if (!dev.codespire.orchestrator.provider.ProviderClients.supportsContextAuth(in.type(), rs.getString("auth_kind"))) {
+                    throw new jakarta.ws.rs.BadRequestException("Selected account authentication cannot serve this source type");
+                }
+                if (!sameOrigin(in.baseUrl(), rs.getString("base_url"))) {
+                    throw new jakarta.ws.rs.BadRequestException("Source URL must use the selected account's origin");
+                }
+            }
+        }
     }
 
-    private static String require(String value, String field) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException("Context provider '" + field + "' is required");
-        }
-        return value;
+    public static boolean sameOrigin(String first, String second) {
+        java.net.URI a = java.net.URI.create(first);
+        java.net.URI b = java.net.URI.create(second);
+        return a.getScheme().equalsIgnoreCase(b.getScheme()) && a.getHost() != null
+                && a.getHost().equalsIgnoreCase(b.getHost()) && effectivePort(a) == effectivePort(b);
+    }
+
+    private static int effectivePort(java.net.URI uri) {
+        return uri.getPort() != -1 ? uri.getPort() : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
     }
 }

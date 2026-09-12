@@ -48,7 +48,7 @@ public class ProviderRegistry {
             try (PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider ORDER BY created_at");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(toView(rs, authors.getOrDefault(rs.getObject("id", UUID.class), List.of())));
+                    out.add(toView(c, rs, authors.getOrDefault(rs.getObject("id", UUID.class), List.of())));
                 }
             }
             return out;
@@ -95,6 +95,7 @@ public class ProviderRegistry {
             }
             replaceAuthors(c, id, in.authors());
         } catch (SQLException e) {
+            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account already exists for this kind, workspace and role.");
             throw new IllegalStateException("Failed to create provider", e);
         }
         return get(id).orElseThrow();
@@ -113,6 +114,7 @@ public class ProviderRegistry {
                     throw new RoleIsFixedAtRegistration(stored.get(), requested);
                 }
             }
+            validateSourceReferences(c, id, in);
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
@@ -120,7 +122,7 @@ public class ProviderRegistry {
             String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, workspace=?, auth_kind=?, "
                     + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, "
                     + "role=COALESCE(?, role), updated_at=now()"
-                    + (rotateSecret ? ", auth_secret=?" : "")
+                    + (rotateSecret ? ", auth_secret=?, reported_scopes=NULL, scopes_checked_at=NULL" : "")
                     + (updateBotUsername ? ", bot_username=?" : "")
                     + " WHERE id=?";
             try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -149,6 +151,7 @@ public class ProviderRegistry {
             }
             replaceAuthors(c, id, in.authors());
         } catch (SQLException e) {
+            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account already exists for this kind, workspace and role.");
             throw new IllegalStateException("Failed to update provider " + id, e);
         }
         return get(id);
@@ -156,10 +159,14 @@ public class ProviderRegistry {
 
     @Transactional
     public boolean delete(UUID id) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("DELETE FROM scm_provider WHERE id = ?")) {
+        try (Connection c = dataSource.getConnection()) {
+            storedRole(c, id); // excludes a concurrent source attach until deletion commits
+            List<String> sources = usedBy(c, id, "CONTEXT");
+            if (!sources.isEmpty()) throw new AccountConflict("Repoint or remove these sources first: " + String.join(", ", sources));
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM scm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             return ps.executeUpdate() > 0;
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to delete provider " + id, e);
         }
@@ -279,7 +286,7 @@ public class ProviderRegistry {
                     return Optional.empty();
                 }
                 UUID id = rs.getObject("id", UUID.class);
-                return Optional.of(toView(rs, authorsOf(c, id)));
+                return Optional.of(toView(c, rs, authorsOf(c, id)));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read the " + role + " registration for "
@@ -307,14 +314,14 @@ public class ProviderRegistry {
         try (PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(toView(rs, authorsOf(c, id))) : Optional.empty();
+                return rs.next() ? Optional.of(toView(c, rs, authorsOf(c, id))) : Optional.empty();
             }
         }
     }
 
     /** The stored role, or empty when no such provider — one read serves both the 404 and the guard. */
     private Optional<ProviderRole> storedRole(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT role FROM scm_provider WHERE id = ?")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT role FROM scm_provider WHERE id = ? FOR UPDATE")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(ProviderRole.valueOf(rs.getString("role"))) : Optional.empty();
@@ -322,7 +329,7 @@ public class ProviderRegistry {
         }
     }
 
-    private ProviderView toView(ResultSet rs, List<String> authors) throws SQLException {
+    private ProviderView toView(Connection c, ResultSet rs, List<String> authors) throws SQLException {
         String secret = rs.getString("auth_secret");
         return new ProviderView(
                 rs.getObject("id", UUID.class).toString(),
@@ -336,7 +343,9 @@ public class ProviderRegistry {
                         ? null : rs.getTimestamp("last_check_at").toInstant(),
                 rs.getObject("last_check_ok", Boolean.class),
                 rs.getString("last_check_error"),
-                rs.getString("role"));
+                rs.getString("role"), rs.getString("reported_scopes"),
+                rs.getTimestamp("scopes_checked_at") == null ? null : rs.getTimestamp("scopes_checked_at").toInstant(),
+                usedBy(c, rs.getObject("id", UUID.class), rs.getString("role")));
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {
@@ -385,6 +394,53 @@ public class ProviderRegistry {
             }
             ins.executeBatch();
         }
+    }
+
+    @Transactional
+    public void recordScopes(UUID id, ProviderClients.ScopeReport report) {
+        if (!report.observed()) return;
+        try (var c = dataSource.getConnection(); var ps = c.prepareStatement(
+                "UPDATE scm_provider SET reported_scopes = ?, scopes_checked_at = now() WHERE id = ?")) {
+            ps.setString(1, report.scopes());
+            ps.setObject(2, id);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record account scopes", e);
+        }
+        attention.refresh();
+    }
+
+    private List<String> usedBy(Connection c, UUID id, String role) throws SQLException {
+        List<String> uses = new ArrayList<>();
+        if ("REVIEWER".equals(role)) uses.add("Reviewer");
+        if ("FACTORY".equals(role)) uses.add("Factory");
+        try (var ps = c.prepareStatement("SELECT name FROM context_provider WHERE account_id = ? ORDER BY name, id")) {
+            ps.setObject(1, id);
+            try (var rs = ps.executeQuery()) { while (rs.next()) uses.add(rs.getString(1)); }
+        }
+        return uses;
+    }
+
+    private void validateSourceReferences(Connection c, UUID id, ProviderInput in) throws SQLException {
+        try (var ps = c.prepareStatement("SELECT name, type, base_url FROM context_provider WHERE account_id = ?")) {
+            ps.setObject(1, id);
+            try (var rs = ps.executeQuery()) {
+                List<String> invalid = new ArrayList<>();
+                while (rs.next()) {
+                    if (!ProviderClients.supportsContext(rs.getString("type"), in.type())
+                            || !ProviderClients.supportsContextAuth(rs.getString("type"), in.authKind())
+                            || !dev.codespire.orchestrator.context.ContextProviderRegistry.sameOrigin(rs.getString("base_url"), in.baseUrl())) {
+                        invalid.add(rs.getString("name"));
+                    }
+                }
+                if (!invalid.isEmpty()) throw new AccountConflict("Repoint these sources before changing account kind or origin: "
+                        + String.join(", ", invalid));
+            }
+        }
+    }
+
+    public static final class AccountConflict extends RuntimeException {
+        public AccountConflict(String message) { super(message); }
     }
 
     /**

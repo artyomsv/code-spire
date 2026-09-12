@@ -1,5 +1,10 @@
 # The account form holds thirteen state hooks against a cap of eight
 
+**Closed 2026-09-12 (#148).** Scalar fields are grouped in `AccountFields`; reviewer fields,
+credential controls and deletion live in focused components. `ProviderFormModal` has five state
+hooks and its component body is below 250 lines. Existing form behavior and Atlassian registration
+are covered by the UI suite. The original diagnosis below is retained as history.
+
 | Field | Value |
 |-------|-------|
 | Criticality | Low |

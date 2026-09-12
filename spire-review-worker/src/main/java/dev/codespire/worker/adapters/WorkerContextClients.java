@@ -6,7 +6,6 @@ import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.context.ContextCredential;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.port.ContextProvider;
-import dev.codespire.context.code.BitbucketSourceFileReader;
 import dev.codespire.context.code.CodeContextConfig;
 import dev.codespire.context.code.CodeContextProvider;
 import dev.codespire.context.code.GitHubSourceFileReader;
@@ -29,9 +28,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-import java.net.URI;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Per-command context-provider factory — the context analog of
@@ -85,6 +82,13 @@ public class WorkerContextClients {
     public List<ContextProvider> forCommand(GatherContext command) {
         List<ContextProvider> providers = new java.util.ArrayList<>();
         for (ContextCredential cred : unpack(command)) {
+            // Old queued commands have no platform. Omit only that optional source; never guess
+            // a forge or discard the other sources and credential-free repository rules.
+            if ("code".equals(cred.type()) && !"github".equals(cred.platform()) && !"gitlab".equals(cred.platform())) {
+                org.jboss.logging.Logger.getLogger(WorkerContextClients.class)
+                        .warn("Skipping code context without a supported account platform; dispatch fresh credentials to restore it");
+                continue;
+            }
             switch (cred.type()) {
                 case "jira" -> providers.add(new JiraContextProvider(jiraConfig(cred), mapper));
                 case "confluence" -> providers.add(new ConfluenceContextProvider(confluenceConfig(cred), mapper));
@@ -141,40 +145,16 @@ public class WorkerContextClients {
                 GitLabIssueRefs.parseProjectAllowList(cred.projectKeys()));
     }
 
-    /**
-     * Picks the platform reader by the credential's {@code baseUrl} host. Unlike Jira/Confluence
-     * (one platform each) or GitHub/GitLab issues (one registry type per platform), a single generic
-     * {@code code} registry type covers all three raw-content APIs — task-13's Settings UI offers one
-     * "Repository code" option, not three — so the host is the only signal available to tell them
-     * apart; the orchestrator's {@code ContextKeyValidator} connectivity check for this same type has
-     * to infer it independently, on the other side of the module boundary.
-     *
-     * <p>GitLab and Bitbucket both conventionally publish a host containing their own name; a
-     * self-managed GitLab whose host does not (e.g. {@code git.acme.com}) falls through to the GitHub
-     * reader instead, since a GitHub Enterprise Server hostname is the least predictable of the
-     * three. This is a known limitation of having one generic type rather than an oversight.
-     */
+    /** Select the reader explicitly from the account platform carried on the wire. */
     private SourceFileReader readerFor(ContextCredential cred) {
         CodeContextConfig config = new CodeContextConfig(cred.baseUrl(), cred.authKind(), cred.secret(),
                 CodeContextConfig.parsePathAllowList(cred.projectKeys()));
-        String host = hostOf(cred.baseUrl());
-        SourceFileReader reader;
-        if (host.contains("gitlab")) {
-            reader = new GitLabSourceFileReader(config);
-        } else if (host.contains("bitbucket")) {
-            reader = new BitbucketSourceFileReader(config);
-        } else {
-            reader = new GitHubSourceFileReader(config);
-        }
+        SourceFileReader reader = switch (cred.platform() == null ? "" : cred.platform()) {
+            case "gitlab" -> new GitLabSourceFileReader(config);
+            case "github" -> new GitHubSourceFileReader(config);
+            default -> throw new IllegalArgumentException("Code source has no supported account platform");
+        };
         return new CircuitBreakingSourceFileReader(reader);
     }
 
-    private static String hostOf(String baseUrl) {
-        try {
-            String host = URI.create(baseUrl.trim()).getHost();
-            return host == null ? "" : host.toLowerCase(Locale.ROOT);
-        } catch (IllegalArgumentException e) {
-            return "";
-        }
-    }
 }

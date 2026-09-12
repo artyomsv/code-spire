@@ -36,13 +36,11 @@ public class ProviderIdentityResolver {
 
     /** Validate + identify a pending provider input, tolerating tokens that can't name a user. */
     public Author resolveForRegistration(ProviderInput in) {
-        return clients.identitySource(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret())
-                .whoamiOrValidate(in.workspace());
+        return clients.accountIdentity(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret(), in.workspace());
     }
 
     /** Connectivity check for a stored provider, tolerating tokens that can't name a user. */
     public Author resolveForCheck(ScmProvider p) {
-        return clients.identitySource(p.type(), p.baseUrl(), p.authKind(), p.authUsername(), p.secret())
-                .whoamiOrValidate(p.workspace());
+        return clients.accountIdentity(p.type(), p.baseUrl(), p.authKind(), p.authUsername(), p.secret(), p.workspace());
     }
 }

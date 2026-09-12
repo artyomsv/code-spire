@@ -4,9 +4,10 @@ import {
   createContextProvider,
   deleteContextProvider,
   fetchContextProviders,
+  fetchProviders,
+  type ProviderView,
   previewContextProvider,
   updateContextProvider,
-  type ContextAuthKind,
   type ContextPreviewResult,
   type ContextProviderInput,
   type ContextProviderView,
@@ -18,6 +19,11 @@ import LastChecked from './LastCheckedBadge';
 import Tooltip from './Tooltip';
 import Select from './Select';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
+
+export const compatibleAccountKinds: Record<ContextType, string[]> = {
+  jira: ['atlassian'], confluence: ['atlassian'], 'github-issues': ['github'],
+  'gitlab-issues': ['gitlab'], code: ['github', 'gitlab'],
+};
 
 export const CONTEXT_TYPES: ContextType[] = ['jira', 'confluence', 'github-issues', 'gitlab-issues', 'code'];
 
@@ -35,9 +41,6 @@ interface TypeCopy {
   previewLabel: string;
   previewPlaceholder: (projectKeys: string | null) => string;
   previewHint: string;
-  // Auth kinds the backend accepts for this type — GitHub's basic auth is deprecated and a
-  // GitLab PAT is bearer-only, so those two types permit only 'bearer'.
-  authKinds: ContextAuthKind[];
 }
 
 export const TYPE_COPY: Record<ContextType, TypeCopy> = {
@@ -58,7 +61,6 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
         : 'a full ticket key (PROJ-123) or a PR title',
     previewHint:
       'Resolves the key with this provider’s pattern, fetches it live, and shows exactly what a review would inject.',
-    authKinds: ['basic', 'bearer'],
   },
   confluence: {
     label: 'confluence',
@@ -73,7 +75,6 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewLabel: 'Page URL or id',
     previewPlaceholder: () => 'a page URL (…/pages/12345/…) or a bare page id',
     previewHint: 'Fetches the linked page live and shows exactly what a review would inject.',
-    authKinds: ['basic', 'bearer'],
   },
   'github-issues': {
     label: 'github-issues',
@@ -92,7 +93,6 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewHint:
       'A bare #123 only means something inside a pull request, so the test box needs the repository ' +
       'named — in the reference or in a pasted URL.',
-    authKinds: ['bearer'],
   },
   'gitlab-issues': {
     label: 'gitlab-issues',
@@ -111,18 +111,13 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewHint:
       'Resolves issues (#12), merge requests (!34) and epics (&7). A bare reference needs the project ' +
       'named here, since the test box has no merge request behind it.',
-    authKinds: ['bearer'],
   },
   code: {
     label: 'Repository code',
     namePlaceholder: 'Acme repository code',
     baseUrlPlaceholder: 'https://api.github.com',
     baseUrlHint:
-      'The API root of the platform hosting the repository — https://api.github.com for GitHub ' +
-      '(…/api/v3 on Enterprise Server), https://gitlab.com for GitLab (no /api/v4 suffix), or ' +
-      'https://api.bitbucket.org/2.0 for Bitbucket Cloud. The platform is inferred from this host, so ' +
-      'a self-managed GitLab whose hostname does not contain "gitlab" is read as GitHub. Needs a token ' +
-      'that can read repository contents.',
+      'The API root for repository contents. The selected account determines the platform.',
     narrowLabel: 'Path allow-list',
     narrowPlaceholder: 'src/main/, src/allowed/',
     narrowHint:
@@ -132,7 +127,6 @@ export const TYPE_COPY: Record<ContextType, TypeCopy> = {
     previewLabel: 'Preview',
     previewPlaceholder: () => '',
     previewHint: 'Live preview is not available for this type yet — use Check above to verify connectivity.',
-    authKinds: ['bearer'],
   },
 };
 
@@ -178,7 +172,7 @@ export default function SettingsContextProviders() {
       const list = await fetchContextProviders();
       setProviders(list);
       // Check connectivity once on load — no continuous polling.
-      list.forEach((p) => void checkOne(p.id));
+      list.filter((p) => p.accountEnabled !== false && p.accountId).forEach((p) => void checkOne(p.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -231,7 +225,7 @@ export default function SettingsContextProviders() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Used by</th>
+                <th>Account</th>
                 <th>Base URL</th>
                 <th>Connection</th>
                 <th>Status</th>
@@ -246,11 +240,14 @@ export default function SettingsContextProviders() {
                   {/* One consumer today: the review worker's context aggregator, reading. Becomes data
                       when M3 registers a write-capable account against the same host (ADR-035). */}
                   <td>
-                    <span className="prov-sub">Reviewer · read</span>
+                    <span className="prov-sub">{p.accountName ?? 'Migration pending'}</span>
+                    {p.accountEnabled === false && <div className="prov-note">Account disabled</div>}
                   </td>
                   <td className="mono">{p.baseUrl}</td>
                   <td>
-                    <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
+                    {p.accountId && p.accountEnabled !== false
+                      ? <ConnCell conn={conns[p.id]} onRecheck={() => void checkOne(p.id)} />
+                      : <span className="prov-sub">Inactive</span>}
                     <LastChecked item={p} />
                   </td>
                   <td>
@@ -372,14 +369,21 @@ function ContextProviderForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [type, setType] = useState<ContextType>(initial?.type ?? 'jira');
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '');
-  const [authKind, setAuthKind] = useState<ContextAuthKind>(initial?.authKind ?? 'basic');
-  const [username, setUsername] = useState(initial?.username ?? '');
+  const [accountId, setAccountId] = useState(initial?.accountId ?? '');
+  const [accounts, setAccounts] = useState<ProviderView[] | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetchProviders().then((list) => { if (active) setAccounts(list); })
+      .catch((err) => { if (active) setAccountError(String(err)); });
+    return () => { active = false; };
+  }, []);
   const [projectKeys, setProjectKeys] = useState(initial?.projectKeys ?? '');
-  const [secret, setSecret] = useState('');
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const copy = TYPE_COPY[type];
+  const compatible = (accounts ?? []).filter((a) => compatibleAccountKinds[type].includes(a.type));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -389,9 +393,7 @@ function ContextProviderForm({
       name: name.trim(),
       type,
       baseUrl: baseUrl.trim(),
-      authKind,
-      username: authKind === 'basic' ? username.trim() : undefined,
-      secret: secret.trim() || undefined,
+      accountId,
       projectKeys: projectKeys.trim() || undefined,
       enabled,
     };
@@ -429,24 +431,8 @@ function ContextProviderForm({
                 onChange={(v) => {
                   const nextType = v as ContextType;
                   setType(nextType);
-                  // The new type may not permit the currently-selected auth kind (e.g. GitHub
-                  // Issues is bearer-only) — coerce it rather than let the form offer a save the
-                  // backend will reject.
-                  const permitted = TYPE_COPY[nextType].authKinds;
-                  if (!permitted.includes(authKind)) setAuthKind(permitted[0]);
+                  if (!compatibleAccountKinds[nextType].includes(accounts?.find((a) => a.id === accountId)?.type ?? '')) setAccountId('');
                 }}
-              />
-            </label>
-            <label className="field">
-              <span>Auth</span>
-              <Select
-                ariaLabel="Auth"
-                value={authKind}
-                options={[
-                  { value: 'basic', label: 'basic · email + API token (Cloud)' },
-                  { value: 'bearer', label: 'bearer · personal access token' },
-                ].filter((o) => copy.authKinds.includes(o.value as ContextAuthKind))}
-                onChange={(v) => setAuthKind(v as ContextAuthKind)}
               />
             </label>
           </div>
@@ -475,28 +461,26 @@ function ContextProviderForm({
             <small className="field-hint">{copy.narrowHint}</small>
           </label>
 
-          {authKind === 'basic' && (
-            <label className="field">
-              <span>Account email</span>
-              <input placeholder="bot@acme.com" value={username} onChange={(e) => setUsername(e.target.value)} />
-            </label>
-          )}
-
-          <label className="field">
-            <span>{authKind === 'basic' ? 'API token' : 'Personal access token'}</span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder={editing ? 'leave blank to keep current' : '••••••••'}
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-            />
-            {editing && (
-              <small className="field-hint">
-                {initial?.hasSecret ? 'A secret is stored — leave blank to keep it.' : 'No secret stored yet.'}
-              </small>
-            )}
-          </label>
+          {accountError ? <p className="modal-msg modal-error">Accounts could not be loaded: {accountError}</p>
+            : accounts === null ? <p>Loading accounts…</p>
+            : compatible.length === 0 ? <p>Register an account first: <a href="#/settings/accounts">Accounts</a></p>
+            : <label className="field">
+                <span>Account</span>
+                <Select ariaLabel="Account" value={accountId}
+                  options={[{ value: '', label: 'Select an account' }, ...compatible.map((a) => ({ value: a.id, label: a.name + (a.enabled ? '' : ' (disabled)') }))]}
+                  onChange={(id) => {
+                    setAccountId(id);
+                    const account = compatible.find((a) => a.id === id);
+                    if (account) {
+                      let url = account.baseUrl.replace(/\/+$/, '');
+                      if (account.type === 'gitlab') url = url.replace(/\/api\/v4$/, '');
+                      if (type === 'jira') url = url.replace(/\/wiki$/, '');
+                      if (type === 'confluence' && !url.endsWith('/wiki')) url += '/wiki';
+                      setBaseUrl(url);
+                    }
+                  }} />
+                {compatible.find((a) => a.id === accountId)?.enabled === false && <small className="field-hint">Account disabled — this source will not resolve.</small>}
+              </label>}
 
           <label className="field-check">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -509,7 +493,7 @@ function ContextProviderForm({
             <button type="button" className="btn-ghost" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn" disabled={busy}>
+            <button type="submit" className="btn" disabled={busy || !compatible.some((a) => a.id === accountId)}>
               {busy ? 'Saving…' : editing ? 'Save changes' : 'Add provider'}
             </button>
           </div>

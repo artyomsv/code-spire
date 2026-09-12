@@ -309,14 +309,14 @@ export async function resolvePrUrl(url: string): Promise<ResolvedUrl> {
 export type AuthKind = 'bearer' | 'basic';
 
 /** REVIEWER posts comments and is the subject of the author allowlist; FACTORY pushes (ADR-038). */
-export type ProviderRole = 'REVIEWER' | 'FACTORY';
+export type ProviderRole = 'REVIEWER' | 'FACTORY' | 'CONTEXT';
 
 export interface ProviderView {
   id: string;
   name: string;
   type: string; // 'bitbucket-cloud' | 'github'
   baseUrl: string;
-  workspace: string;
+  workspace: string | null;
   authKind: AuthKind;
   authUsername: string | null;
   hasSecret: boolean; // whether a token is stored (the token itself is never returned)
@@ -334,13 +334,16 @@ export interface ProviderView {
   lastCheckAt: string | null;
   lastCheckOk: boolean | null;
   lastCheckError: string | null;
+  reportedScopes?: string | null;
+  scopesCheckedAt?: string | null;
+  usedBy?: string[];
 }
 
 export interface ProviderInput {
   name: string;
   type: string;
   baseUrl: string;
-  workspace: string;
+  workspace: string | null;
   authKind: AuthKind;
   authUsername?: string | null;
   secret?: string; // omit/empty on edit = keep the stored token
@@ -408,6 +411,8 @@ export async function deleteProvider(id: string): Promise<void> {
 }
 
 export interface ProviderCheck {
+  reportedScopes?: string | null;
+  scopesCheckedAt?: string | null;
   ok: boolean;
   account: string | null; // token owner's username when ok
   detail: string | null; // safe failure reason when not ok
@@ -730,12 +735,11 @@ export interface ContextProviderView {
   name: string;
   type: ContextType;
   baseUrl: string;
-  authKind: ContextAuthKind;
-  username: string | null;
-  projectKeys: string | null; // e.g. "ACME" — narrows candidate issue keys; null = accept all
-  hasSecret: boolean; // the secret is never returned
+  accountId: string | null;
+  accountName: string | null;
+  accountEnabled: boolean | null;
+  projectKeys: string | null;
   enabled: boolean;
-  isDefault: boolean;
   createdAt: string;
   lastCheckAt: string | null;
   lastCheckOk: boolean | null;
@@ -746,12 +750,9 @@ export interface ContextProviderInput {
   name: string;
   type: ContextType;
   baseUrl: string;
-  authKind: ContextAuthKind;
-  username?: string; // required for basic (account email); unused for bearer
-  secret?: string; // omit/empty on edit = keep the stored secret
-  projectKeys?: string; // space/comma-separated project keys; blank = accept every well-formed key
+  accountId: string;
+  projectKeys?: string;
   enabled?: boolean;
-  isDefault?: boolean;
 }
 
 export interface ContextPreviewItem {

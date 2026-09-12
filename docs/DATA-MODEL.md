@@ -190,6 +190,31 @@ Operational state (not projections — ADR-013 guards):
   scheduled job emits `ContextAssembled` for rows past `deadline_at`; survives rebalance/restart
   (no in-memory timers).
 
+### Machine accounts and context sources (V59, ADR-041)
+
+`scm_provider` owns machine credentials for GitHub, GitLab, Bitbucket Cloud and Atlassian.
+`role` is non-null (`REVIEWER | FACTORY | CONTEXT`); `workspace` is NULL exactly for CONTEXT.
+The existing `(type, workspace, role)` uniqueness still limits forge workspace roles to one
+account; PostgreSQL's distinct NULLs permit multiple context accounts, including Atlassian.
+`reported_scopes TEXT NULL` distinguishes unknown from an empty report; `scopes_checked_at
+TIMESTAMPTZ NULL` records the last completed registration/Check scope observation. Failed probes
+preserve both values; they do not replace a prior report with NULL. Both are advisory metadata.
+
+`context_provider.account_id UUID` references `scm_provider.id` with an index and restricted
+deletion. Source URL, project keys and code path allowlists stay on the source. Runtime reads
+join the account's current credential and require an enabled account; batch resolution also
+requires an enabled source. Views expose account id/name/enabled state, never credentials.
+The unused `is_default` column and its index are removed.
+
+Machine-account encryption has one AAD prefix: **`provider:<account-id>`**. The retired
+`context-provider:<source-id>` prefix is used only to read legacy ciphertext during startup
+reconciliation. V59 retains nullable legacy `auth_*` columns for one release, with exactly one
+of `account_id` and `auth_secret` present. A failed migration preserves the old row for retry;
+it is not a runtime credential fallback. Successful rows clear their legacy authentication
+columns in the same transaction as account insertion; retaining the columns does not permit
+downgrading the application after successful migration. The worker's encrypted credential bundle
+includes the account platform separately from the source type.
+
 ## 6. Relationships (logical ERD)
 
 ```
@@ -231,4 +256,7 @@ Operational state (not projections — ADR-013 guards):
 - **Encrypted:** `event_log.payload`, `snapshot.state` (Tink AES-GCM envelope, `key_id`, rotation);
   **MinIO/S3 objects** (client-side Tink before upload); `review_finding.message`/`suggestion` (may quote source).
 - **Cleartext (queryable):** read-model status/counts/ids/branch names, severities, timeline summaries.
-- **Never stored:** diffs/source (re-fetched by commit); secrets/tokens (secret store only).
+- **Encrypted credentials:** machine accounts in `scm_provider.auth_secret` (AAD
+  `provider:<id>`); LLM and harness credentials retain their separate registries and boundaries.
+- **Never stored:** diffs/source (re-fetched by commit). Bootstrap encryption and service secrets
+  come from the deployment secret store; registered account tokens are encrypted in PostgreSQL.

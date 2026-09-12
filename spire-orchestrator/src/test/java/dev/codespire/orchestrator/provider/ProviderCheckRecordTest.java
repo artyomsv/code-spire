@@ -77,6 +77,11 @@ class ProviderCheckRecordTest {
         ProviderResource resource = new ProviderResource();
         resource.registry = registry;
         resource.identity = identity;
+        resource.clients = new ProviderClients() {
+            @Override public ScopeReport probeScopes(String type, String url, String kind, String user, String secret, String workspace) {
+                return new ScopeReport(true, "fixture-scopes"); // Distinguishable fixture result; no outbound probe.
+            }
+        };
         // scm.example.invalid deliberately never resolves via DNS; skip the SSRF host check
         // (the real https+public-address enforcement is exercised elsewhere, not by this test).
         resource.allowInsecureProviderUrls = true;
@@ -122,6 +127,7 @@ class ProviderCheckRecordTest {
         resource.update(view.id(), githubInput(workspace, "TEST-NEW-SECRET", "TEST-provider"));
 
         ProviderView reread = registry.get(id).orElseThrow();
+        assertEquals("fixture-scopes", reread.reportedScopes(), "scope calls must reach the fixture, not the network");
         assertTrue(reread.lastCheckOk(), "a genuine re-validation must clear the prior rejection");
         assertNull(reread.lastCheckError());
     }
@@ -150,6 +156,7 @@ class ProviderCheckRecordTest {
     private ProviderResource resourceThatFailsCheckWith(RuntimeException toThrow) {
         ProviderResource resource = new ProviderResource();
         resource.registry = registry;
+        resource.clients = new ProviderClients(); // Stub kind has no scope endpoint.
         resource.identity = new ProviderIdentityResolver() {
             @Override
             public Author resolveForCheck(ScmProvider p) {

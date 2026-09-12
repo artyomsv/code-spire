@@ -143,7 +143,16 @@ Trust boundaries, authn/authz, encryption, and secrets.
 
 - **Tink** AES-GCM **envelope encryption**: a KEK (from KMS/keystore) wraps per-record DEKs; ciphertext
   carries a **key id** so **rotation** is non-breaking.
-- **Field-level** via a JPA `AttributeConverter` for sensitive columns (SCM/Jira tokens, provider keys).
+- **Field-level** through `EncryptionService` at registry reads/writes for sensitive credentials.
+  Machine-account tokens, including Jira/Confluence, now live in `scm_provider.auth_secret` under
+  AAD `provider:<account-id>` (V59, ADR-041). Sources reference accounts and retain no credential
+  after reconciliation. Legacy `context-provider:<source-id>` ciphertext is decrypted and
+  re-encrypted after Tink initialization, atomically per row; failed rows retain their ciphertext
+  for retry and diagnostics log only row ids. Legacy auth columns remain for one release.
+  Compatible account/source kinds and equal origins are enforced before a credential is shared;
+  disabled accounts resolve no context credentials. Account deletion is refused while sources
+  refer to it. Scope reports are advisory metadata and confer no authorization. LLM/harness
+  credential registries and deployment bootstrap secrets keep their existing boundaries.
 - **Event payloads are encrypted** in the event log — events don't carry diffs (ADR-011: metadata
   only, diffs re-fetched), but **findings and context items may quote source code**, which must not
   sit in the DB in cleartext. Randomized (AES-GCM) by default; where an encrypted value must
