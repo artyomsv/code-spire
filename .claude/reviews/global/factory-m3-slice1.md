@@ -173,3 +173,17 @@ run-worker (266), plus agent-image/runtime-docker (85 combined). All report file
 forced tiers, excluding the separate nightly E2E tier. No live run worker was started and no
 missing-container failure occurred. A read-only thread capture confirmed the long Docker test
 was waiting in its existing publisher drain; no runtime code or timing was changed for this fix.
+
+## Round 4 — literal history-link SQL
+
+The reviewed dynamic table-name concatenation had only two private literal callers and bound all
+values, but it failed Semgrep. `LINK_REVIEW_STATUS` and `LINK_FACTORY_RUN` now contain complete
+literal SQL statements; the helper receives either constant and binds the same four values.
+No suppression was added. The forced `RepositoryMigrationBridgeTest` run passed all 11 tests
+after this change, including review and run history linking.
+
+The failing workflow's full scan reported exactly one finding across 1081 files. Its PR gate
+reported the same rule, `java.lang.security.audit.formatted-sql-string.formatted-sql-string`.
+The separate `Semgrep OSS` check contained exactly one annotation on the same history-bridge line;
+there was no second finding hidden behind the gate failure. New-head CI checks are required before
+the account resolver cutover proceeds.

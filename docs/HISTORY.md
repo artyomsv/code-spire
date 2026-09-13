@@ -1843,3 +1843,12 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     retry fixture now uses a future test clock to prevent its background scheduler stealing the
     live-row precondition; production timing is unchanged. Dev Services startup timeouts on a
     parallel retry were cleared by the final invocation's `--no-parallel --max-workers=2`.
+  - **CI correction:** replace the private history-link table-name concatenation with two complete
+    literal SQL constants, preserving the four bound values without suppressing Semgrep. The
+    existing history-bridge suite passed all 11 tests. The failed full scan and separate OSS check
+    each named the same single finding.
+  - **Reviewed bridge rollout:** orchestrator V60 and gateway V3 from `a956532` reached dev before
+    the new CI hold. All 37 reviews and 14 runs mapped to six repositories with eight bindings;
+    all three existing gateway snapshots were acknowledged and remain origin-unknown repair rows.
+    The real encrypted baseline comparison passed all 9 entries after V60. Runtime account
+    resolution remains on the legacy path; slice 2's later cutover comparison is still required.

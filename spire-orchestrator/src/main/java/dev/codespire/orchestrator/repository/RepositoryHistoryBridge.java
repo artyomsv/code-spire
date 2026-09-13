@@ -18,6 +18,17 @@ import javax.sql.DataSource;
 /** Bounded bridge sweep for actual history, including repositories first seen under a legacy org hook. */
 @ApplicationScoped
 public class RepositoryHistoryBridge {
+    private static final String LINK_REVIEW_STATUS = """
+            UPDATE review_status SET repository_id=
+              (SELECT repository_id FROM repository_registration_bridge WHERE registration_id=?)
+            WHERE repository_id IS NULL AND provider_type=? AND workspace=? AND slug=?
+            """;
+    private static final String LINK_FACTORY_RUN = """
+            UPDATE factory_run SET repository_id=
+              (SELECT repository_id FROM repository_registration_bridge WHERE registration_id=?)
+            WHERE repository_id IS NULL AND provider_type=? AND workspace=? AND slug=?
+            """;
+
     @Inject DataSource dataSource;
     @Inject RepositoryMigrationBridge bridge;
 
@@ -49,8 +60,8 @@ public class RepositoryHistoryBridge {
         bridge.apply(new RepositoryRegistration(id, 1, history.type(), origin(history), "repo",
                 history.workspace() + "/" + history.slug(), true, false));
         try (Connection connection = dataSource.getConnection()) {
-            link(connection, "review_status", new HistoryLink(id, history));
-            link(connection, "factory_run", new HistoryLink(id, history));
+            link(connection, LINK_REVIEW_STATUS, new HistoryLink(id, history));
+            link(connection, LINK_FACTORY_RUN, new HistoryLink(id, history));
         } catch (SQLException failure) { throw new IllegalStateException("Cannot link repository history", failure); }
     }
 
@@ -72,11 +83,8 @@ public class RepositoryHistoryBridge {
         catch (SQLException failure) { throw new IllegalStateException("Cannot read repository origin evidence", failure); }
     }
 
-    private void link(Connection connection, String table, HistoryLink link) throws SQLException {
-        // Table comes only from the two literals above, never from registry or webhook input.
-        try (PreparedStatement statement = connection.prepareStatement("UPDATE " + table + " SET repository_id="
-                + "(SELECT repository_id FROM repository_registration_bridge WHERE registration_id=?) "
-                + "WHERE repository_id IS NULL AND provider_type=? AND workspace=? AND slug=?")) {
+    private void link(Connection connection, String sql, HistoryLink link) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setObject(1, link.registrationId()); statement.setString(2, link.history().type());
             statement.setString(3, link.history().workspace()); statement.setString(4, link.history().slug());
             statement.executeUpdate();

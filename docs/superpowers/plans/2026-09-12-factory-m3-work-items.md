@@ -2,8 +2,9 @@
 
 **Date:** 2026-09-12
 
-**Status:** Planning accepted; slice 1 review correction implemented and verified. Slice 2 is next;
-slices 3–10 remain planned.
+**Status:** Slice 1's blank-origin fix is accepted. The literal-SQL CI correction is implemented;
+new-head checks gate further cutover work. The bridge rollout prerequisite is measured below.
+Slices 2–10 are not complete.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -242,6 +243,13 @@ used `--no-parallel --max-workers=2` after Dev Services startup timeouts. The un
 its slice 1 proof (620 tests and successful build).
 
 ## Slice 2 — cut over to repository ownership and per-kind hooks
+
+Bridge rollout prerequisite measured 2026-09-13, before the round 4 CI hold: orchestrator V60 and
+gateway V3 are live from reviewed commit `a956532`. All 37 reviews and 14 runs mapped to six
+repositories/eight role bindings, with zero coordinate or role/type mismatches. All three gateway
+snapshots were acknowledged; their missing origins remain explicit repair mappings. The encrypted
+post-bridge Compare matched all 9 real entries. This is not the resolver cutover or its required
+post-cutover Compare. No UI rebuild or live run-worker start was performed during this rollout.
 
 **Files:** all active account consumers, gateway registry/edge/resources, account DTOs/forms,
 repository UI and migrations; ADR-042 final decision text.

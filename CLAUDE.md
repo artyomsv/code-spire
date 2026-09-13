@@ -100,8 +100,10 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   symlink test skips because this Windows session lacks symlink privileges. Slice 1's 44 distinct
   mutations each failed one targeted test and passed after scratch-snapshot restoration; see
   `.claude/reviews/global/factory-m3-slice1.md`. The read-only encrypted probe matched 9 real
-  credential/reference entries before upgrade. The nightly testE2e tier and a live dev migration
-  were not run; no live run worker was started.
+  credential/reference entries before upgrade and after the reviewed bridge rollout. Live V60/V3
+  mapped all 37 reviews and 14 runs to six repositories; three origin-less webhook registrations
+  remain pending explicit repair. The resolver cutover and its post-cutover comparison are still
+  pending. The nightly testE2e tier was not run; no live run worker was started.
 
 ## Build & run
 

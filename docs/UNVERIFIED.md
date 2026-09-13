@@ -35,13 +35,15 @@ evidence would settle it**.
 
 ## Repository bridge — rollout evidence still needed (ADR-042, 2026-09-13)
 
-- **The actual dev upgrade is not yet measured.** Slice 1 tests upgrade populated private
-  PostgreSQL schemas, exercise the gateway outbox and real broker consumer, and compare legacy
-  and explicit role resolution with distinct encrypted credentials. The running dev services have
-  not been rebuilt for slice 1. The existing `.handoff/spire-dev-pre-m3-2026-09-13.dump` is the
-  verified backup (182 objects; 492,480 bytes). The read-only continuity probe captured and compared
-  9 real credential/reference entries successfully before upgrade; that does not prove post-upgrade
-  continuity. Slice 2 must compare the same encrypted baseline after its migration on the real rows.
+- **The resolver cutover is not yet measured.** The reviewed bridge was deployed to the actual dev
+  stack on 2026-09-13: orchestrator V60 mapped all 37 reviews and 14 runs to six repositories with
+  eight role bindings; gateway V3 published and acknowledged its three existing registrations.
+  All three lack origin metadata and remain `registration_origin_unknown` for explicit repair.
+  The read-only continuity probe compared all 9 real credential/reference entries successfully
+  after the bridge migration. The existing `.handoff/spire-dev-pre-m3-2026-09-13.dump` remains the
+  verified backup (182 objects; 492,480 bytes); no second dump was taken. Runtime resolution still
+  uses the legacy path. Slice 2 must compare the same baseline again after its resolver cutover;
+  post-bridge continuity does not establish that later post-condition.
 - **Historical forge origin can be unknowable.** Legacy history and gateway registrations do not
   always record a host. The bridge uses the immutable legacy account snapshot only when there is
   one matching origin backed by registration metadata or persisted review URLs; unknown origins,
