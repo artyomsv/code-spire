@@ -276,7 +276,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void authorNotInProviderAllowlist_skipped() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-9", "bob"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertFalse(reviewRegistered);
         assertTrue(emitted.isEmpty());
@@ -294,10 +294,20 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void active_allowlistedAuthor_emitsFetchDiff() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(1, emitted.size());
         assertInstanceOf(ActionCommand.FetchDiff.class, emitted.get(0));
+    }
+
+    @Test
+    void numericUsernameCannotImpersonateAnotherActorsStoredId() {
+        var saga = sagaWith(policyMode(false), provider(List.of("3218389")));
+        saga.onRepository(pr("900123", "3218389"),
+                dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        assertTrue(emitted.isEmpty(), "a numeric username is not the allowlisted stable identity");
+        assertFalse(reviewRegistered);
+        assertTrue(notes.contains("PullRequestSkipped"));
     }
 
     @Test
@@ -309,7 +319,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void registerHeader_carriesTheResolvedProviderType() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("bitbucket-cloud"), headerProviderTypes,
                 "the registered provider's type is projected onto the review row (C7)");
@@ -357,7 +367,7 @@ class IntegrationSagaPolicyTest {
      */
     @Test
     void reviewCommandFromAnAuthorOutsideTheAllowlistNeverReachesTheRerunService() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("acc-9", "bob", "Bob")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(rerunInvocations.isEmpty(), "an unlisted author's /review must not spend an LLM call");
@@ -367,7 +377,7 @@ class IntegrationSagaPolicyTest {
     /** The other half: the gate must refuse the unlisted author, not close the path for everyone. */
     @Test
     void reviewCommandFromAnAllowlistedAuthorStillRuns() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("acc-1", "alice", "Alice")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("acme/web#412"), rerunInvocations, "a listed author's /review still re-runs");
@@ -447,7 +457,7 @@ class IntegrationSagaPolicyTest {
      */
     @Test
     void anAllowlistedAuthorIsStillRefusedInObserveMode() {
-        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(true), provider(List.of("acc-1")));
         saga.onRepository(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("acc-1", "alice", "Alice")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(rerunInvocations.isEmpty(), "a listed author's /review is still refused in observe mode");
@@ -516,7 +526,7 @@ class IntegrationSagaPolicyTest {
      */
     @Test
     void anUnlistedAuthorInObserveModeIsRefusedByTheAllowlistNotTheModeGate() {
-        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(true), provider(List.of("acc-1")));
         saga.onRepository(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "review", "",
                 Author.of("acc-9", "bob", "Bob")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("ManualCommandSkipped"), notes.toString());
@@ -661,7 +671,7 @@ class IntegrationSagaPolicyTest {
         // The decider no-ops a same-commit re-delivery (proven in ReviewLifecycleTest), so no run starts.
         // Claiming "reviewing" here overwrote a COMPLETED review and, with nothing dispatched, left it
         // stuck in "reviewing" forever — observed live after a provider's webhook "test" delivery.
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")), List.of());
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")), List.of());
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         assertTrue(headerProviderTypes.isEmpty(), "must not re-claim status/stage for a review already done");
@@ -674,7 +684,7 @@ class IntegrationSagaPolicyTest {
     void firstDeliveryClaimsTheRunAndDispatchesWork() {
         // The contrast to the re-delivery above: a decider that DOES emit ReviewRequested means a run is
         // genuinely starting, so claiming "reviewing" on the row is correct and FetchDiff goes out.
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("bitbucket-cloud"), headerProviderTypes, "status/stage claimed for a real run");
         assertTrue(refreshedProviderTypes.isEmpty(), "no metadata-only refresh when a run starts");
@@ -684,7 +694,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void observeMode_registersHeaderButDoesNotStartTheReview() {
-        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(true), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         // Observe registers the dashboard header but MUST NOT advance the aggregate —
         // otherwise a later active registration of the same commit stays stuck in DIFF.
@@ -761,7 +771,7 @@ class IntegrationSagaPolicyTest {
 
     @Test
     void acceptedPullRequestEvent_setsPrStateOpen() {
-        var saga = sagaWith(policyMode(false), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("review::acme/web#412:OPEN"), prStateCalls,
                 "an accepted PR event stamps the PR state OPEN on the registered review");
@@ -771,7 +781,7 @@ class IntegrationSagaPolicyTest {
     void observedPullRequestEvent_stillSetsPrStateOpen() {
         // Observe-only still registers the dashboard header — the PR is genuinely open,
         // independent of whether the review pipeline runs (fix: PR-state badge).
-        var saga = sagaWith(policyMode(true), provider(List.of("alice")));
+        var saga = sagaWith(policyMode(true), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("review::acme/web#412:OPEN"), prStateCalls);
     }

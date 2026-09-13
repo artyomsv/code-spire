@@ -4,8 +4,8 @@
 
 **Status:** Slice 1 is closed on fully green `363b13d`. Slice 2 implements the runtime cutover
 and proves criterion 7, with real-row post-cutover continuity. It was accepted and criterion 7 independently verified on 716dc75 in round 5.
-Slice 3 completes automated criterion 6 proof, resolved person entry and editable repository overrides.
-Slices 4–10 and criteria 1–5 remain pending. Detailed evidence is in the slice 2 and slice 3 review notes.
+Slice 3 completes resolved person entry and editable repository overrides; criterion 6 was independently verified in round 6.
+Slice 4 implements effective push permission with automated criterion 5 proof. Slices 5–10 and criteria 1–4 remain pending. Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -330,21 +330,21 @@ override registry, person controls; ADR-044 identity half.
 **Produces:** explicit deny → grant → fresh effective push permission, still subject to existing
 target, identity, observe-mode, spending and fix-chain guards.
 
-- [ ] Write the six distinct criterion 5 cases, plus inherited-rights/unknown-response adapter
+- [x] Write the six distinct criterion 5 cases, plus inherited-rights/unknown-response adapter
   tests. Read the official endpoint contracts linked by design §4.3 before writing fixtures.
   Test Bitbucket's effective endpoint and pagination, not its explicit-grant endpoint.
-- [ ] Implement adapters returning `CAN_PUSH|CANNOT_PUSH|UNKNOWN`, binding repository and stable
+- [x] Implement adapters returning `CAN_PUSH|CANNOT_PUSH|UNKNOWN`, binding repository and stable
   user. Enforce timeout/rate limits and origin-pinned requests; do not fall back to another token
   when the assigned reviewer cannot inspect permission. No stale positive permission cache.
-- [ ] Route `/fix` around the old common author-list guard into `FixAuthorization`. Keep self-loop,
+- [x] Route `/fix` around the old common author-list guard into `FixAuthorization`. Keep self-loop,
   observe-only and registration/target checks. Do not change `/review` or `/finding` semantics.
-- [ ] Test through `IntegrationSaga.on` using the actual normalized command so a private
+- [x] Test through `IntegrationSaga.on` using the actual normalized command so a private
   `FixAuthorization` unit test cannot conceal the outer guard. Assert dispatch count and the
   refusal reason, with legitimate thread/finding/account prerequisites in every permission case.
-- [ ] Prove override grant still cannot push a fork/trunk or exceed either FR-F32 cap. Retain
+- [x] Prove override grant still cannot push a fork/trunk or exceed either FR-F32 cap. Retain
   corresponding M2 regression suites; live-author permissions never substitute for push target
   validation. Known stale PR-state/shared-branch debt stays documented unless explicitly fixed.
-- [ ] Kill each criterion 5 mutation in its isolated method, then run the class green. Exercise all
+- [x] Kill each criterion 5 mutation in its isolated method, then run the class green. Exercise all
   three adapter contracts and inherited-access cases; record live-token limitations without
   changing the operator's account privileges. Add each per-forge permission behavior as its own UNVERIFIED entry with measurement and forge. Commit the authorization slice.
 
@@ -554,7 +554,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-Criterion 7 is proved by slice 2 and its mutation ledger. Criteria 1–6 remain **tests to add**, not claimed existing coverage. `O-test`
+Criteria 7 and 6 are independently verified, with the slice 2 and 3 mutation ledgers. Criterion 5 has its slice 4 automated proof; criteria 1–4 remain tests to add. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

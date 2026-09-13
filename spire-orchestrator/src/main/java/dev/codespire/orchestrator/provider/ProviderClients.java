@@ -233,6 +233,15 @@ public class ProviderClients {
         };
     }
 
+    public dev.codespire.contract.port.RepositoryPermissionSource repositoryPermissionSource(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubRepositoryPermissionSource(new GitHubClient(githubConfig(provider), mapper));
+            case "gitlab" -> new dev.codespire.scm.gitlab.GitLabRepositoryPermissionSource(new GitLabClient(gitlabConfig(provider), mapper));
+            case "bitbucket-cloud" -> new dev.codespire.scm.bitbucket.BitbucketRepositoryPermissionSource(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            default -> throw new IllegalStateException("Unsupported repository permission source");
+        };
+    }
+
     public dev.codespire.contract.port.ActorDirectory actorDirectory(ScmProvider provider) {
         return switch (provider.type()) {
             case "github" -> new dev.codespire.scm.github.GitHubActorDirectory(new GitHubClient(githubConfig(provider), mapper));

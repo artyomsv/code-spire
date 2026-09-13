@@ -167,7 +167,7 @@ class ArchivedEventGateTest {
     @Test
     void anUnlistedAuthorGetsNoNoticeWhileAnAllowlistedOneStillDoes() {
         long pr = seedArchived();
-        IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.username())));
+        IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.providerUserId())));
 
         saga.onRepository(replyBy(pr, HUMAN), ReviewFixtures.repositoryId());
         assertEquals(1, emitted.size(), "an allowlisted author is answered");

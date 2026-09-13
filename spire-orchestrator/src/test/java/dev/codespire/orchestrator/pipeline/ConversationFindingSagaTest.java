@@ -302,7 +302,7 @@ class ConversationFindingSagaTest {
     void anAuthorOutsideTheAllowlistFilesNothingAndIsNotRepliedTo() {
         long pr = liveReview();
         String reviewId = reviewIdFor(pr);
-        IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.username())));
+        IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.providerUserId())));
 
         saga.onRepository(finding(pr, "blocker anything", STRANGER, new ThreadRef(rootRefOf(pr)),
                 new ThreadLocation(PATH, LINE), "TEST-COMMENT-STRANGER-" + pr), ReviewFixtures.repositoryId());

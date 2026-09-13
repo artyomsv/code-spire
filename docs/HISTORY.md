@@ -1885,3 +1885,18 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   have selected failures and scratch-restored passes. See the slice 3 review notes for boundaries
   and the exact ledger. Live V62 preserves the approved row and credential baselines; the existing
   GitHub person resolves by stable ID and keeps its observed handle across a full service restart.
+
+- **Factory M3 slice 4 — effective push authorization (PR #153, 2026-09-13).**
+  /fix applies repository DENY, ALLOW, then a fresh effective permission read through the selected
+  reviewer. Unknown refuses with a named capability error. GitHub effective collaborator roles,
+  GitLab inherited active membership and Bitbucket effective paginated rights have fixture proofs;
+  live token limits remain explicit. The total read budget is 20 seconds and cancels unfinished
+  work. Repository/account locks prevent a credential edit or rebind from splitting a decision.
+  Self-loop, observe/archive, finding, target, spending and both fix-cap guards remain in force.
+  Account review policy now matches only stable IDs: a numeric username cannot impersonate another
+  actor's stored ID. 64 compiling production mutations have exactly one selected assertion
+  failure each and byte-identical scratch restoration with a passing baseline. A malformed-user
+  fixture initially masked its guard with a second missing field; the repaired fixture preserves
+  valid repository metadata and kills exactly the intended identity mutant. 3186 Java tests,
+  packaging and pinned Semgrep passed. Criteria 6 and 7 were independently accepted; criterion 5
+  has automated proof. No production migration, live credential elevation or second dump was needed.

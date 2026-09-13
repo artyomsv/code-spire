@@ -68,6 +68,9 @@ public class IntegrationSaga {
     FixRunDispatcher fixRuns;
 
     @Inject
+    dev.codespire.orchestrator.factory.FixPermissionService fixPermissions;
+
+    @Inject
     dev.codespire.orchestrator.llm.ReviewRuns runs;
 
     @Inject
@@ -296,22 +299,9 @@ public class IntegrationSaga {
     }
 
     /**
-     * A {@code /command} PR comment: our own bot's is dropped as a self-loop, then the SAME
-     * per-provider allowlist that gates a PR event applies. It has to, because a command spends real
-     * money — {@link ReviewRerunService} clears the worker's LLM idempotency claim on purpose, so the
-     * model genuinely runs again — and nothing else bounds this path: {@code SPIRE_REVIEW_MAX_ATTEMPTS}
-     * bounds auto-retry and the turn cap bounds follow-ups, neither covers a comment command. Without
-     * the gate, anyone who can comment on the PR can bill the operator once per comment.
-     *
-     * <p>The gate sits ahead of the command switch rather than inside the {@code /review} branch, so a
-     * future command cannot be added below it and arrive ungated — which is exactly how this one got in.
-     *
-     * <p><b>The refused author is not replied to</b>, unlike the turn cap (whose silence was a real
-     * defect, because a missing ANSWER is indistinguishable from a lost webhook). An authorization
-     * refusal is the opposite case: a reply confirms to a prober that the command exists and is wired,
-     * and makes each probe cost an outbound comment. Timeline note plus a log line, as the PR-open path
-     * records an unlisted author — and deliberately not a durable review-history row, which a prober
-     * could otherwise grow without bound.
+     * Manual commands retain the account's stable-ID policy, except /fix, whose repository override
+     * and effective push decision is made in requestFix. Self-loop and observe-mode checks cover all
+     * commands. In particular /review still needs its account policy because each rerun spends anew.
      */
     private void onManualCommand(ManualCommandReceived e) {
         String reviewId = reviewIdOf(e);
@@ -319,30 +309,19 @@ public class IntegrationSaga {
             dropSelfLoop(reviewId, "/" + e.command());
             return;
         }
-        // Resolved by the review's stored SCM type, the way the credential this command would broker
-        // already is — a workspace name registered on two SCMs must check the right provider's list.
-        // An unresolvable provider is left to the command itself, which refuses for want of a
-        // credential (NotFoundException below); calling that an authorization failure would misreport it.
-        if (!authorAllowed(allowlistFor(reviewId), e.author())) {
+        // /fix has a separate repository policy; other commands keep the selected account list.
+        if (!CommentCommands.FIX.equals(e.command()) && !authorAllowed(allowlistFor(reviewId), e.author())) {
             timeline.record("integration", "ManualCommandSkipped", reviewId,
                     "author not in the provider's allowlist: @" + username(e.author()));
             LOG.infof("Skipping /%s on %s — author @%s not in the provider allowlist",
                     e.command(), reviewId, username(e.author()));
             return;
         }
-        // Observe mode, checked AFTER the allowlist and BEFORE the switch. Both positions are load-
-        // bearing. After the allowlist, because that gate answers whether this person's command counts
-        // at all, and telling an operator "the deployment is passive" about someone who was never
-        // authorized reports the wrong cause. Before the switch, because a command added below it would
-        // otherwise arrive ungated — which is exactly how /review and then /finding got in.
+        // Keep observe mode ahead of command work, including remote permission reads for /fix.
         if (policy.observeOnly()) {
             timeline.record("integration", "ManualCommandObserveOnly", reviewId,
                     "/" + e.command() + " refused: the deployment is in observe-only mode");
-            // A DURABLE row too, unlike the authorization refusal above. That one stays in-memory
-            // because a prober could grow the history without bound — an argument that cannot reach
-            // here, since this gate is downstream of the allowlist and only a listed colleague
-            // arrives. The timeline is a 500-entry in-memory ring lost on restart, so without this
-            // an operator asking "why did nothing happen" after a restart has no record at all.
+            // The durable refusal remains inspectable after the in-memory timeline is lost.
             projection.appendEvent(reviewId, "integration", "ManualCommandObserveOnly",
                     "/" + e.command() + " refused — observe-only mode");
             LOG.infof("Refusing /%s on %s — observe-only mode", e.command(), reviewId);
@@ -384,12 +363,8 @@ public class IntegrationSaga {
      * a precondition means the command could not be evaluated at all, {@code refused:} when it was
      * understood and declined.
      *
-     * <p><b>Ordering is the same lesson {@code /finding} learned.</b> The registration check comes
-     * first because an unregistered pull request clears every gate ahead of it — {@code archived}
-     * answers false for a row that does not exist, and the provider resolves by workspace when the
-     * review carries no stored type. Then the thread is null-checked BEFORE normalization, because
-     * {@link ReviewThreadView#rootOf} binds its argument into a statement immediately and a null
-     * throws an NPE inside a {@code catch (SQLException)} that cannot see it.
+     * <p>A registered review is required. Check the thread value before normalization because
+     * ReviewThreadView binds it into its lookup immediately; missing input must be a refusal.
      *
      * <p><b>Dispatch itself is {@link FixRunDispatcher}'s, and the split is where the question
      * changes.</b> This method decides whether the command is ADMISSIBLE — who asked, is the review
@@ -399,32 +374,6 @@ public class IntegrationSaga {
      * and the spend guard, the idempotency claim and the credential all belong beside the spend.
      */
     private void requestFix(String reviewId, ManualCommandReceived e) {
-        // DENY BY DEFAULT, and only for this command. An empty provider allowlist means "review
-        // everyone" by deliberate design, which is the right default for one spend-capped model call
-        // and the wrong one for a command whose output is a branch pushed as the machine account.
-        // AUTONOMY.md Rule 3 already names this threat in as many words -- "a drive-by contributor
-        // ... the factory writes and merges their code using the operator's credentials" -- and rules
-        // that the factory's actor list must be its own rather than the SCM review allowlist. This is
-        // the minimum shape of that rule; the separate per-provider list is the fuller one. It also
-        // closes allowlistFor's other everyone-answer: an unresolvable provider yields List.of().
-        List<String> allowlist = allowlistFor(reviewId);
-        if (allowlist.isEmpty()) {
-            refuse(reviewId, "/fix needs an explicit author allowlist on the provider — an empty list "
-                    + "means review everyone, which is not the same as letting everyone push code");
-            return;
-        }
-        // AND on the STABLE ID, not on a username. onManualCommand has already run authorAllowed,
-        // which accepts either -- correct for a command whose blast radius is one paid model call.
-        // This one authorises a commit pushed as the FACTORY machine account, and a forge handle
-        // can be released and re-registered by somebody else, so an operator who listed "alice"
-        // has listed whoever holds that handle next. CLAUDE.md states the rule by name: author
-        // identity is data (stable providerUserId), never a gate.
-        if (!allowedById(allowlist, e.author())) {
-            refuse(reviewId, "/fix matches the allowlist on your provider user id, not on your "
-                    + "username — a handle can change hands and this command pushes code as the "
-                    + "machine account. An operator must list the stable id");
-            return;
-        }
         if (!projection.registered(reviewId)) {
             skip(reviewId, "no registered review for this PR — open or update the pull request first");
             return;
@@ -466,6 +415,13 @@ public class IntegrationSaga {
             // for a run on an empty spec or retracting an acceptance.
             refuse(reviewId, "that finding was filed from a discussion, so it carries no description a "
                     + "fix run could work from — describe it in a review comment instead");
+            return;
+        }
+        dev.codespire.orchestrator.factory.FixAuthorization.Decision authorization = fixPermissions.authorize(
+                projection.repositoryIdOf(reviewId).orElse(null), e.author() == null ? null : e.author().providerUserId());
+        timeline.record("integration", "FixAuthorization", reviewId, authorization.reason().name());
+        if (!authorization.allowed()) {
+            refuse(reviewId, authorization.reason().name() + ": " + authorization.detail());
             return;
         }
         String what = describe(finding);
@@ -808,21 +764,7 @@ public class IntegrationSaga {
                 workerCredentials.pack(provider.get(), e.repo().workspace())));
     }
 
-    /**
-     * The stable id only — the narrower gate {@code /fix} uses.
-     *
-     * <p>{@link #authorAllowed} accepts a username too, which is right for a command that costs one
-     * model call. This guards a push made as the machine account, and a username is not an identity
-     * over time. An empty allowlist is refused before this is reached, so it needs no everyone-arm.
-     */
-    private static boolean allowedById(List<String> allowlist, Author author) {
-        if (author == null || author.providerUserId() == null || author.providerUserId().isBlank()) {
-            return false;
-        }
-        return allowlist.stream().anyMatch(a -> a.equals(author.providerUserId()));
-    }
-
-    /** An empty provider allowlist reviews everyone; else match by account id or username. */
+    /** An empty provider allowlist reviews everyone; else match only the stable account id. */
     private static boolean authorAllowed(List<String> allowlist, Author author) {
         if (allowlist == null || allowlist.isEmpty()) {
             return true;
@@ -831,7 +773,7 @@ public class IntegrationSaga {
             return false;
         }
         return allowlist.stream().anyMatch(a ->
-                a.equalsIgnoreCase(author.providerUserId()) || a.equalsIgnoreCase(author.username()));
+                a.equalsIgnoreCase(author.providerUserId()));
     }
 
     private static String username(PullRequestEventReceived e) {

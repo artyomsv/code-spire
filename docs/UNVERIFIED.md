@@ -33,6 +33,40 @@ evidence would settle it**.
 
 ---
 
+## Repository push permission — GitHub (2026-09-13)
+
+Measured against a local WireMock GitHub API: by-ID handle refresh followed by effective
+collaborator permission, matching returned user ID, inherited write access, reader refusal,
+unknown/custom base-role refusal, and 403/404/429/503 after a prior success. The real service
+uses its repository's selected reviewer credential; a stronger factory token is never tried.
+The [effective permission API](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user)
+reports the base role; custom role names do not establish write capability. A real token's
+metadata visibility, inherited organizational roles and Enterprise variants still need live
+permission measurements. Slice 3's live identity refresh establishes identity only.
+
+## Repository push permission — GitLab (2026-09-13)
+
+Measured against a local WireMock GitLab API: the all-members endpoint (including inherited
+membership), matching stable ID, active known Developer/Maintainer/Owner levels, reader refusal,
+expired membership, integer overflow, unknown roles, malformed responses and failed reads.
+[Project members](https://docs.gitlab.com/api/project_members/#retrieve-a-member-of-a-project)
+is the endpoint contract; [membership expiration](https://docs.gitlab.com/user/project/members/)
+removes access from the expiry date. The adapter compares that date in UTC. No live permission
+measurement on gitlab.com, git.epam.com or gitbud.epam.com is claimed; installation-specific
+custom roles, invited/private-group visibility and expiration timezone behavior need proof.
+
+## Repository push permission — Bitbucket Cloud (2026-09-13)
+
+Measured against a local WireMock Bitbucket Cloud API: account_id-to-UUID identity binding,
+effective repository rights across server-provided pagination cursors, inherited write access,
+reader refusal, foreign-origin page rejection, contradictory/malformed/incomplete pages and
+403/404/429/503 after a prior success. The [effective repository permission endpoint](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-workspace-permissions-repositories-repo-slug-get)
+requires a repository-admin caller. A failure reports that capability requirement explicitly;
+no factory-token fallback or token authority change occurs. Ten pages and the service's
+20-second total lookup budget are hard limits: reaching either without a complete answer is
+UNKNOWN and refuses. Live token families, group inheritance and account_id/UUID visibility
+remain unmeasured. An explicit override still cannot bypass target or spending guards.
+
 ## People directory — GitHub identity behavior (2026-09-13)
 
 Measured against a local WireMock GitHub API with TEST-prefixed people and credentials:

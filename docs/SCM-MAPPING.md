@@ -186,6 +186,20 @@ ID, and stores observed labels separately. Identity reads reject redirects to an
 Per-forge documentation links and measured-versus-live limits are recorded separately in
 UNVERIFIED. No source allowlist inheritance is implied by reusable account person controls.
 
+## Effective repository push permission (M3 slice 4)
+
+| Forge | Read | Binding and interpretation |
+|---|---|---|
+| GitHub | GET /repos/{owner}/{repo}/collaborators/{username}/permission | Resolve username afresh by stable ID; verify response user.id. Base write/admin allows; read/none refuses; other base roles are unknown. |
+| GitLab | GET /projects/{encoded namespace/repo}/members/all/{id} | Verify returned ID and active state. Known 30/40/50 allows; known read levels refuse. Expired membership refuses; unfamiliar shapes/levels are unknown. |
+| Bitbucket Cloud | GET /workspaces/{workspace}/permissions/repositories/{slug} | Verify account_id via user read, match UUID and repository full_name across all pages. write/admin allows, read refuses. Caller requires repository-admin access. |
+
+Permission reads pin the configured origin and never try another credential. Unknown, forbidden,
+rate-limited, timed-out or incomplete reads refuse; a 404 is not treated as known absence. A
+complete Bitbucket list without the actor is known no-write. The permission says general code
+write, not that a protected target branch will accept a push. Per-forge live limitations are in
+UNVERIFIED; fixture measurements do not establish live token capability.
+
 ## Sources
 Bitbucket Cloud: developer.atlassian.com/cloud/bitbucket/rest + support.atlassian.com event-payloads ·
 GitHub: docs.github.com/rest/pulls · GitLab: docs.gitlab.com/api/merge_requests, /discussions ·

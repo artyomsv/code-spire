@@ -6,12 +6,10 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.factory.FixRunDispatcher;
 import dev.codespire.orchestrator.policy.ReviewPolicy;
-import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.provider.ReviewProviderResolver;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.readmodel.FindingProjection;
-import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
@@ -28,10 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@code /fix} resolves the finding the thread belongs to, or refuses in a way the author can act on.
  *
- * <p><b>Its refusals SPEAK</b>, like {@code /finding}'s and unlike the authorization refusal. The
- * distinction is who is being answered: an unlisted author is a possible prober, and a reply tells
- * them the command is wired and costs an API call per probe. An author who cleared the allowlist and
- * used the command in the wrong place is a colleague, and silence sends them to hunt a lost webhook.
+ * <p>Refusals are recorded in the timeline and durable review history; outbound refusal replies
+ * remain the dispatch slice's documented gap.
  *
  * <p>Fakes are hand-written and every method the path reaches is overridden. That is not politeness:
  * an un-overridden method on a saga fake opens a real {@code DataSource} from a plain unit test, and
@@ -57,14 +53,6 @@ class FixCommandSagaTest {
     /** What the finding lookup answers; null means "no finding on that thread". */
     private FindingProjection.TargetFinding target;
     private boolean registered = true;
-    /**
-     * Configured by default, because /fix now DENIES when it is empty.
-     *
-     * <p>An empty list is the deployment default and means "review everyone", which is why the two
-     * cases that exercise the gate set it explicitly rather than relying on this.
-     */
-    // The ACCOUNT ID, not the handle. /fix matches on providerUserId alone: a forge handle can be
-    // released and re-registered, and this command pushes code as the machine account.
     private List<String> allowlist = List.of("acc-1");
     /** Thread refs the lookup was asked about — proves the saga normalized before querying. */
     private final List<String> lookedUpRefs = new ArrayList<>();
@@ -148,6 +136,13 @@ class FixCommandSagaTest {
             @Override
             public boolean observeOnly() {
                 return false;
+            }
+        };
+        // Authorization is independently exercised through real decisions in FixPermissionSagaTest.
+        saga.fixPermissions = new dev.codespire.orchestrator.factory.FixPermissionService() {
+            @Override public dev.codespire.orchestrator.factory.FixAuthorization.Decision authorize(UUID repositoryId, String actorId) {
+                return dev.codespire.orchestrator.factory.FixAuthorization.decide(actorId, null,
+                        new dev.codespire.contract.scm.RepositoryPermission(dev.codespire.contract.scm.RepositoryPermission.State.CAN_PUSH, "TEST-write"));
             }
         };
         saga.fixRuns = new FixRunDispatcher() {
@@ -259,11 +254,7 @@ class FixCommandSagaTest {
         // Null means the fake throws if it is reached at all.
         dispatchResult = null;
 
-        allowlist = List.of();
         target = finding(null);
-        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-
-        allowlist = List.of("alice");
         registered = false;
         saga().onRepository(fix("t-2"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
@@ -380,55 +371,6 @@ class FixCommandSagaTest {
         assertFalse(notes.contains("FixRequested"), notes.toString());
         assertTrue(noteDetails.stream().anyMatch(d -> d.contains("no description")),
                 noteDetails.toString());
-    }
-
-    /**
-     * Deny by default, for this command only.
-     *
-     * <p>An empty provider allowlist means "review everyone" deliberately, which is right for one
-     * spend-capped model call and wrong for a command that pushes code as the machine account.
-     * {@code AUTONOMY.md} Rule 3 names the threat directly. The sibling case below is the half
-     * that keeps this from being a blanket refusal.
-     */
-    @Test
-    void refusesFixWhenTheProviderAllowlistIsEmpty() {
-        allowlist = List.of();
-        target = finding(null);
-        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-        assertTrue(notes.contains("refused:/fix"), notes.toString());
-        assertTrue(lookedUpRefs.isEmpty(), "an unlisted deployment must not even be queried");
-    }
-
-    /** The other half: a configured allowlist still admits the command. */
-    @Test
-    void allowsFixWhenTheProviderAllowlistIsConfigured() {
-        allowlist = List.of("acc-1");
-        target = finding(null);
-        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-        assertTrue(notes.contains("FixRequested"), notes.toString());
-    }
-
-    /**
-     * <b>A handle in the allowlist authorises a review, not a push.</b>
-     *
-     * <p>{@code authorAllowed} — the gate every manual command passes — accepts a username as well
-     * as a provider user id, and for {@code /review} that is right: the blast radius is one paid
-     * model call. {@code /fix} authorises a commit pushed as the FACTORY machine account onto a
-     * human's branch. A forge handle can be released and re-registered by somebody else, so an
-     * operator who listed "alice" has listed whoever holds that handle next — and CLAUDE.md states
-     * the rule by name: author identity is data (stable providerUserId), never a gate.
-     *
-     * <p>The author is the SAME person every other test here uses, and only the allowlist's
-     * spelling differs. That is what makes the case discriminating: widen the gate back to
-     * {@code authorAllowed} and this is the one test that reddens.
-     */
-    @Test
-    void refusesFixWhenTheAllowlistNamesOnlyTheHandle() {
-        allowlist = List.of("alice");
-        target = finding(null);
-        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-        assertTrue(notes.contains("refused:/fix"), notes.toString());
-        assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
     }
 
     /**

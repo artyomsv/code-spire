@@ -82,8 +82,18 @@ public class BitbucketCloudClient {
         return parse(send("GET", path, null, true));
     }
 
+    /** Follow the server's pagination cursor, keeping the initial page and every redirect on this origin. */
+    public JsonNode getIdentityPage(String next) {
+        URI target = URI.create(next);
+        if (!sameOrigin(target)) throw new BitbucketApiException(400, "GET", "permission page", "page left configured origin");
+        return parse(send("GET", "permission page", null, true, target));
+    }
+
     private String send(String method, String path, String jsonBody, boolean originRequired) {
-        URI target = URI.create(baseUri + path);
+        return send(method, path, jsonBody, originRequired, URI.create(baseUri + path));
+    }
+
+    private String send(String method, String path, String jsonBody, boolean originRequired, URI target) {
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             HttpResponse<String> response = execute(method, path, target, jsonBody);
             int status = response.statusCode();

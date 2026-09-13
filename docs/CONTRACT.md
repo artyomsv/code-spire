@@ -373,4 +373,14 @@ current list under the account lock. A policy edit during token validation makes
 return 409 and rolls back its credential/configuration changes. It cannot replace the list with
 unresolved text. Account views include `actorDisplays` for cached labels and stale states. Legacy
 unresolved entries are labelled for repair. Repository fix overrides are separate from account
-review/conversation policy; slice 4 activates the permission fallback without changing those rules.
+review/conversation policy; /fix uses explicit overrides and measured push access.
+
+## Effective repository permission (M3 slice 4)
+
+RepositoryPermissionSource.permission(RepoRef, providerUserId) returns CAN_PUSH, CANNOT_PUSH or
+UNKNOWN with a safe explanation. It reads through the repository's selected reviewer account.
+FixAuthorization evaluates unknown identity, DENY, ALLOW, then measured permission. UNKNOWN
+records PERMISSION_UNAVAILABLE and refuses dispatch; a prior successful read gives no authority.
+The saga records the exact reason as FixAuthorization in the timeline, with the reason and safe
+capability detail in the durable refusal. Allowed commands still pass the existing dispatch guards.
+The full lookup, including identity, redirects and pagination, is bounded to 20 seconds.

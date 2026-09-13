@@ -7,7 +7,7 @@ Architecture decision records for Code Spire. Newest first.
 ## ADR-044 — Stable identities for person policy and repository fix overrides
 
 **Status:** identity and override editing implemented in M3 slice 3; effective push authorization
-lands in slice 4. Criterion 7 was independently verified on 716dc75.
+implemented in slice 4. Criteria 7 and 6 are independently verified.
 
 **Decision.** Resolve people with the selected account's credential. GitHub/GitLab handle lookup
 must match exactly; Bitbucket/Jira use explicit selection where their API exposes candidates.
@@ -21,6 +21,15 @@ numeric GitHub/GitLab IDs, or stable IDs observed on that repository's actual re
 become grants. Other strings need repair. These grants never replace target, branch, observe-mode
 or spending checks. The shared person control is reusable by work-source registration, which
 is introduced in slice 5; source authority must remain scoped to that source.
+
+For /fix, reject an unknown actor or unusable repository/reviewer first. Then apply an explicit
+deny, an explicit grant, or a fresh effective push measurement, in that order. Unknown permission
+refuses. The reviewer account and repository rows stay locked through the bounded read, so a
+credential rotation or repository rebind cannot split the decision. The total identity/redirect/
+pagination budget is 20 seconds and cancellation stops unfinished work; successes are not cached.
+Only /fix leaves the legacy common author-list gate. Review, finding and conversation eligibility
+continue to use that account list, matching stable IDs only. A numeric username cannot impersonate
+a different actor's stored ID. Target/finding, self-loop, observe/archive, spend and fix caps remain.
 
 No credential elevation or secret response is introduced. Capability prerequisites are visible
 in the person control, with separate per-forge evidence limits in UNVERIFIED.

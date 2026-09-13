@@ -77,9 +77,9 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–3 (PR #153) add repository ownership, explicit role bindings and resolved person entry.**
-  Criterion 7 is independently verified; criterion 6 has its automated persistence/UI proof.
-  Repository ALLOW/DENY overrides are editable; slice 4 activates effective push authorization.
+  (`docs/UNVERIFIED.md`). **M3 slices 1–4 (PR #153) add repository ownership, explicit role bindings, resolved person entry and effective /fix push authorization.**
+  Criteria 7 and 6 are independently verified.
+  Repository DENY/ALLOW overrides take precedence over a fresh effective push measurement; unknown permission refuses. Criterion 5 has automated saga and adapter proof.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -91,17 +91,16 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   explicit platform through the worker contract. Repositories show the selected serving
   identities through explicit role bindings. Live token-family and rollout gaps are recorded in
   UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 slice 2 removes account workspace from forms and runtime reads while retaining the populated
-  database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks follow in slice 4.
+  database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3118 Java tests across 365 suites, zero failures
-  and 1 existing Windows symlink privilege skip; 636 UI tests across 78 files. Forced testFast
-  and testServices ran sequentially; packaging and the UI build passed. Slice 3 has 92
-  verified production mutations and a clean pinned Semgrep scan. Evidence and exact mutation
-  selectors/hashes are in .claude/reviews/global/factory-m3-slice3.md. Live V62/V4 preserves the
-  6/37/85/14/3 row baseline and all encrypted credentials. The existing GitHub person's observed
-  handle and stable ID survive a full orchestrator restart without refresh. Three origin-less hooks
-  remain pending explicit repair. No live run worker or nightly testE2e tier was started.
+- **Measured, not estimated (2026-09-13):** 3186 Java tests across 372 suites,
+  zero failures and 1 existing Windows symlink privilege skip. Forced testFast and
+  testServices ran sequentially, and packaging passed. Slice 4 has 64 isolated production
+  mutations and a clean pinned Semgrep scan; its exact ledger is in
+  .claude/reviews/global/factory-m3-slice4.md. Slice 3's 636 UI tests and live V62/V4 continuity
+  evidence remain in its review notes. Criteria 6 and 7 are independently verified. Live permission
+  behavior has separate per-forge UNVERIFIED entries. No live run worker was started.
 
 ## Build & run
 
