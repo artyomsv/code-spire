@@ -170,7 +170,7 @@ class RunDetailReadTest {
         var row = new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-detail-model", "main",
                 "TEST-base-sha", "feature/test", "TEST-bot", null)
                 .asFixFor("review::TEST-spend/group/app#42", "TEST-finding", "comment-" + UUID.randomUUID());
-        assertTrue(runs.queued(row, "TEST-task summary"));
+        assertTrue(runs.queued(row, "TEST-task summary", null));
         return runId;
     }
 

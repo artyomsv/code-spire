@@ -100,7 +100,7 @@ class ResultSagaRetryTest {
             public void record(String lane, String type, String reviewId, String detail) {
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail) {
             }
@@ -282,7 +282,7 @@ class ResultSagaRetryTest {
             public void markSummaryThread(String reviewId, ThreadRef thread) {
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail) {
             }
@@ -451,7 +451,7 @@ class ResultSagaRetryTest {
             public void record(String lane, String type, String reviewId, String detail) {
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail) {
             }
@@ -545,7 +545,7 @@ class ResultSagaRetryTest {
             public void record(String lane, String type, String reviewId, String detail) {
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
             }
@@ -607,7 +607,7 @@ class ResultSagaRetryTest {
             public void markAnswerThread(String reviewId, ThreadRef answer, ThreadRef root) {
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.of("summary-1");
@@ -668,7 +668,7 @@ class ResultSagaRetryTest {
                 return List.of();
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.empty(); // not the summary thread — see the sibling test for that case

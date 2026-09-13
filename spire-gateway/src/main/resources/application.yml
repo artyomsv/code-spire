@@ -120,13 +120,22 @@ spire:
 mp:
   messaging:
     outgoing:
-      integration-out:
+      registry-out:
         connector: smallrye-kafka
-        topic: cs.integration
+        topic: cs.registry-integration
+        acks: all
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
-          serializer: dev.codespire.gateway.IntegrationEventSerializer
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+      repository-out:
+        connector: smallrye-kafka
+        topic: cs.repository-integration
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
 
 # Prod: the packaged deployment runs behind the dashboard image's nginx, which is the ONLY ingress
 # and puts all four services on one origin so ADR-022's cookie-path scoping actually isolates them.
@@ -212,6 +221,8 @@ mp:
         json:
           enabled: false   # plain console keeps test output readable
   spire:
+    # The snapshot scheduler is exercised explicitly by its outbox tests.
+    repository-publish-interval: "off"
     encryption:
       # Test-only webhook keyset (not a secret) — matches the orchestrator's so a
       # secret encrypted there decrypts here. Prod/dev read SPIRE_ENCRYPTION_WEBHOOK_KEYSET.

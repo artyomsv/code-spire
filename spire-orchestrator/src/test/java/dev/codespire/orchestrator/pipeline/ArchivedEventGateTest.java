@@ -105,7 +105,7 @@ class ArchivedEventGateTest {
         long pr = seedArchived();
         String before = snapshotOf(pr);
 
-        sagaAnsweringEveryone().on(eventFor.apply(pr));
+        sagaAnsweringEveryone().onRepository(eventFor.apply(pr), ReviewFixtures.repositoryId());
 
         assertEquals(before, snapshotOf(pr), label + " must leave an archived review frozen");
         assertEquals(1, emitted.size(), () -> "expected exactly the notice, got " + emitted);
@@ -123,7 +123,7 @@ class ArchivedEventGateTest {
         long pr = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
 
-        sagaAnsweringEveryone().on(reviewCommand(pr));
+        sagaAnsweringEveryone().onRepository(reviewCommand(pr), ReviewFixtures.repositoryId());
 
         assertEquals(List.of(WS + "/" + REPO + "#" + pr), rerunsRequested);
         assertTrue(emitted.isEmpty(), "a live review's /review posts no archived notice");
@@ -141,10 +141,10 @@ class ArchivedEventGateTest {
         // assertion below is about the gate and not about a close that never worked.
         long live = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, live);
-        sagaAnsweringEveryone().on(closed(live));
+        sagaAnsweringEveryone().onRepository(closed(live), ReviewFixtures.repositoryId());
         assertEquals("MERGED", prStateOf(live));
 
-        sagaAnsweringEveryone().on(closed(pr));
+        sagaAnsweringEveryone().onRepository(closed(pr), ReviewFixtures.repositoryId());
 
         assertEquals("OPEN", prStateOf(pr), "an archived review's PR-state badge is frozen at archival");
         assertTrue(emitted.isEmpty(), "a close must leave the once-ever notice unspent");
@@ -155,7 +155,7 @@ class ArchivedEventGateTest {
     void theBotsOwnNoticeDoesNotRetriggerTheGate() {
         long pr = seedArchived();
 
-        sagaAnsweringEveryone().on(replyBy(pr, BOT));
+        sagaAnsweringEveryone().onRepository(replyBy(pr, BOT), ReviewFixtures.repositoryId());
 
         assertTrue(emitted.isEmpty(), "the bot's own comment is not a human asking a question");
     }
@@ -169,10 +169,10 @@ class ArchivedEventGateTest {
         long pr = seedArchived();
         IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.username())));
 
-        saga.on(replyBy(pr, HUMAN));
+        saga.onRepository(replyBy(pr, HUMAN), ReviewFixtures.repositoryId());
         assertEquals(1, emitted.size(), "an allowlisted author is answered");
 
-        saga.on(replyBy(pr, Author.of("TEST-MALLORY-ID", "TEST-MALLORY", "Test Mallory")));
+        saga.onRepository(replyBy(pr, Author.of("TEST-MALLORY-ID", "TEST-MALLORY", "Test Mallory")), ReviewFixtures.repositoryId());
         assertEquals(1, emitted.size(), "an unlisted author adds nothing");
     }
 
@@ -185,7 +185,7 @@ class ArchivedEventGateTest {
     void anUnresolvableProviderEmitsNothingRatherThanACredentiallessNotice() {
         long pr = seedArchived();
 
-        sagaFor(Optional.empty()).on(reply(pr));
+        sagaFor(Optional.empty()).onRepository(reply(pr), ReviewFixtures.repositoryId());
 
         assertTrue(emitted.isEmpty(), "no provider, no credential, no notice");
     }
@@ -196,12 +196,12 @@ class ArchivedEventGateTest {
     void aReplyToAnArchivedReviewNeverRecordsItsThreadLocation() throws SQLException {
         long live = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, live);
-        sagaAnsweringEveryone().on(reply(live));
+        sagaAnsweringEveryone().onRepository(reply(live), ReviewFixtures.repositoryId());
         assertTrue(threadRowExists(reviewIdFor(live), threadRefOf(live)),
                 "a live reply records where its thread sits");
 
         long pr = seedArchived();
-        sagaAnsweringEveryone().on(reply(pr));
+        sagaAnsweringEveryone().onRepository(reply(pr), ReviewFixtures.repositoryId());
 
         assertFalse(threadRowExists(reviewIdFor(pr), threadRefOf(pr)),
                 "the gate must run before markThreadLocation");
@@ -269,7 +269,7 @@ class ArchivedEventGateTest {
 
     private static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "TEST-PROVIDER", "github",
-                "https://example.invalid", WS, "bearer", null, "TEST-SECRET", BOT_ACCOUNT_ID, true,
+                "https://example.invalid", "bearer", null, "TEST-SECRET", BOT_ACCOUNT_ID, true,
                 authors, null, null, ProviderRole.REVIEWER));
     }
 
@@ -307,14 +307,9 @@ class ArchivedEventGateTest {
                 return List.of(new DomainEvent.ReviewRequested("TESTSHA", "UPDATED"));
             }
         };
-        saga.providers = new ProviderRegistry() {
+        saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override
-            public Optional<ScmProvider> resolve(String type, String workspace) {
-                return provider;
-            }
-
-            @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolve(java.util.UUID repositoryId, ProviderRole role) {
                 return provider;
             }
         };
@@ -326,7 +321,7 @@ class ArchivedEventGateTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
+            public String pack(ScmProvider p, String repositoryWorkspace) {
                 return "TEST-PACKED-CREDENTIAL";
             }
         };

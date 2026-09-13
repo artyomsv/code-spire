@@ -42,14 +42,16 @@ public class WebhookRepoRegistry {
     dev.codespire.gateway.attention.WebhookAttentionBroadcaster attention;
 
     /** A resolved registration carrying the DECRYPTED secret — for edge verification. */
-    public record Resolved(String providerType, String scope, String target, String secret) {
+    public record Resolved(String providerType, String scope, String target, String secret,
+                           UUID registrationId, long revision, UUID repositoryId, String forgeOrigin,
+                           dev.codespire.contract.event.RepositoryEventKind eventKind, UUID sourceId) {
     }
 
     /** Hot path: resolve an enabled registration by its routing key, decrypting the secret. */
     public Optional<Resolved> findByKey(String webhookKey) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, provider_type, scope, target, webhook_secret "
+                     "SELECT id, provider_type, scope, target, webhook_secret, revision, repository_id, forge_origin, event_kind, source_id "
                              + "FROM webhook_repo WHERE webhook_key = ? AND enabled = TRUE")) {
             ps.setString(1, webhookKey);
             try (ResultSet rs = ps.executeQuery()) {
@@ -59,7 +61,10 @@ public class WebhookRepoRegistry {
                 UUID id = rs.getObject("id", UUID.class);
                 String secret = encryption.decryptString(rs.getString("webhook_secret"), aad(id));
                 return Optional.of(new Resolved(
-                        rs.getString("provider_type"), rs.getString("scope"), rs.getString("target"), secret));
+                        rs.getString("provider_type"), rs.getString("scope"), rs.getString("target"), secret,
+                        id, rs.getLong("revision"), rs.getObject("repository_id", UUID.class), rs.getString("forge_origin"),
+                        dev.codespire.contract.event.RepositoryEventKind.valueOf(rs.getString("event_kind")),
+                        rs.getObject("source_id", UUID.class)));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve webhook repo", e);
@@ -101,8 +106,9 @@ public class WebhookRepoRegistry {
         String key = newWebhookKey();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
-                     INSERT INTO webhook_repo (id, provider_type, scope, target, webhook_key, webhook_secret, enabled)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     INSERT INTO webhook_repo (id, provider_type, scope, target, webhook_key, webhook_secret, enabled, forge_origin,
+                                               repository_id,event_kind,source_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?,'REVIEWER'), ?)
                      """)) {
             ps.setObject(1, id);
             ps.setString(2, in.providerType());
@@ -111,6 +117,10 @@ public class WebhookRepoRegistry {
             ps.setString(5, key);
             ps.setString(6, encryption.encryptString(secret, aad(id)));
             ps.setBoolean(7, in.enabled() == null || in.enabled());
+            ps.setString(8, in.forgeOrigin());
+            ps.setObject(9, in.repositoryId());
+            ps.setString(10, in.eventKind() == null ? null : in.eventKind().name());
+            ps.setObject(11, in.sourceId());
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create webhook repo", e);
@@ -126,13 +136,18 @@ public class WebhookRepoRegistry {
                 return Optional.empty();
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, updated_at=now() "
+                    "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, forge_origin=COALESCE(?,forge_origin), "
+                            + "repository_id=COALESCE(?,repository_id),event_kind=COALESCE(?,event_kind),source_id=COALESCE(?,source_id),updated_at=now() "
                             + "WHERE id=?")) {
                 ps.setString(1, in.providerType());
                 ps.setString(2, in.scope());
                 ps.setString(3, in.target().trim());
                 ps.setBoolean(4, in.enabled() == null || in.enabled());
-                ps.setObject(5, id);
+                ps.setString(5, in.forgeOrigin());
+                ps.setObject(6, in.repositoryId());
+                ps.setString(7, in.eventKind() == null ? null : in.eventKind().name());
+                ps.setObject(8, in.sourceId());
+                ps.setObject(9, id);
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
@@ -283,7 +298,10 @@ public class WebhookRepoRegistry {
                 rs.getString("webhook_key"),
                 secret != null && !secret.isBlank(),
                 rs.getBoolean("enabled"),
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getString("forge_origin"), rs.getObject("repository_id", UUID.class),
+                dev.codespire.contract.event.RepositoryEventKind.valueOf(rs.getString("event_kind")),
+                rs.getObject("source_id", UUID.class), rs.getLong("revision"));
     }
 
     private boolean exists(Connection c, UUID id) throws SQLException {

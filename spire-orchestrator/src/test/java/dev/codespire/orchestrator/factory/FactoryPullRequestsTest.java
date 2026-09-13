@@ -173,6 +173,9 @@ class FactoryPullRequestsTest {
     private FactoryPullRequests subject() {
         FactoryPullRequests pullRequests = new FactoryPullRequests();
         pullRequests.projection = new FactoryRunProjection() {
+            @Override public Optional<java.util.UUID> repositoryIdOf(String runId) {
+                return Optional.of(dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+            }
             @Override
             protected void push(String runId) {
                 // All writes are recorded below; reaching the real broadcaster is a fake defect.
@@ -196,7 +199,7 @@ class FactoryPullRequestsTest {
         };
         pullRequests.machineAccounts = new MachineAccounts() {
             @Override
-            public Optional<ScmProvider> resolve(ScmType scmType, String workspace) {
+            public Optional<ScmProvider> resolve(java.util.UUID repositoryId) {
                 return account;
             }
         };
@@ -235,8 +238,7 @@ class FactoryPullRequestsTest {
     }
 
     private static ScmProvider machineAccount() {
-        return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com",
-                "acme", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
+        return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
                 null, null, ProviderRole.FACTORY);
     }
 }

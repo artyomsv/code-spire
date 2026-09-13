@@ -84,6 +84,34 @@ public class ReviewProjection {
     @Inject
     AttentionBroadcaster attention;
 
+    public Optional<java.util.UUID> repositoryIdOf(String reviewId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT repository_id FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getObject(1, java.util.UUID.class)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Cannot read review repository", e);
+        }
+    }
+
+    /** Claim a new legacy review key, or verify its existing owner; never relink an unmapped row. */
+    public boolean claimRepository(String reviewId, java.util.UUID repositoryId, RepoRef repo, long prId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO review_status(review_id,repository_id,workspace,slug,pr_id,status)
+                VALUES (?,?,?,?,?,'received') ON CONFLICT (review_id) DO UPDATE
+                SET repository_id=EXCLUDED.repository_id
+                WHERE review_status.repository_id=EXCLUDED.repository_id
+                """)) {
+            ps.setString(1, reviewId); ps.setObject(2, repositoryId);
+            ps.setString(3, repo.workspace()); ps.setString(4, repo.slug()); ps.setLong(5, prId);
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Cannot claim review repository", e);
+        }
+    }
+
     // ---- writes (called by the sagas) --------------------------------------
 
     /**

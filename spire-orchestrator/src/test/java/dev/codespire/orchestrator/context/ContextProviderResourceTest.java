@@ -535,8 +535,7 @@ class ContextProviderResourceTest {
                 .body("items[0].title", containsString("Widget crashes on save"));
     }
     private String account(String type, String url, String secret) {
-        return accounts.create(new dev.codespire.orchestrator.provider.ProviderInput("Source account", type, url,
-                null, "basic".equals(type) ? "basic" : "bearer", null, secret, "", true,
+        return accounts.create(new dev.codespire.orchestrator.provider.ProviderInput("Source account", type, url, "basic".equals(type) ? "basic" : "bearer", null, secret, "", true,
                 java.util.List.of(), null, null, "CONTEXT")).id();
     }
 

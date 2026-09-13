@@ -55,6 +55,8 @@ class PromptSampleRendererTest {
     @Inject
     ReviewProjection projection;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    private static java.util.UUID repositoryId;
     private static WireMockServer scm;
     private static boolean providerRegistered;
     private final AtomicLong prCounter = new AtomicLong(1);
@@ -77,8 +79,11 @@ class PromptSampleRendererTest {
         if (providerRegistered) {
             return;
         }
-        providers.create(new ProviderInput("PSR", "bitbucket-cloud", scm.baseUrl(), REPO.workspace(),
+        var account = providers.create(new ProviderInput("PSR", "bitbucket-cloud", scm.baseUrl(),
                 "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
+        repositoryId = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                "bitbucket-cloud", scm.baseUrl(), REPO.workspace(), REPO.slug(), true,
+                java.util.UUID.fromString(account.id()), null)).id();
         providerRegistered = true;
     }
 
@@ -164,10 +169,13 @@ class PromptSampleRendererTest {
      */
     @Test
     void aGenuineBugPropagatesRatherThanBeingReportedAsUnavailable() {
-        providers.create(new ProviderInput("PSR-DOWN", "bitbucket-cloud", "http://127.0.0.1:1",
-                "psr-unreachable", "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
+        var account = providers.create(new ProviderInput("PSR-DOWN", "bitbucket-cloud", "http://127.0.0.1:1", "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
         RepoRef repo = new RepoRef("psr-unreachable", "repo");
         String reviewId = ReviewIds.reviewId(repo, 1);
+        var selected = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                "bitbucket-cloud", "http://127.0.0.1:1", repo.workspace(), repo.slug(), true,
+                java.util.UUID.fromString(account.id()), null));
+        projection.claimRepository(reviewId, selected.id(), repo, 1);
         projection.registerHeader(reviewId, repo, 1, "Sample", "alice", "a1",
                 "feature", "main", "abc", "https://scm.example/x", "bitbucket-cloud", "reviewing",
                 ReviewProjection.STAGE_DIFF);
@@ -278,6 +286,7 @@ class PromptSampleRendererTest {
 
     private String registerReview(long pr) {
         String reviewId = ReviewIds.reviewId(REPO, pr);
+        projection.claimRepository(reviewId, repositoryId, REPO, pr);
         projection.registerHeader(reviewId, REPO, pr, "Sample PR " + pr, "alice", "a1",
                 "feature", "main", "commit" + pr, "https://scm.example/" + REPO.full() + "/pull/" + pr,
                 "bitbucket-cloud", "reviewing", ReviewProjection.STAGE_DIFF);

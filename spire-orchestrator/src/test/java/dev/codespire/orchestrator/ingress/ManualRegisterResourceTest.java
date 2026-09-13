@@ -33,7 +33,14 @@ class ManualRegisterResourceTest {
     @Inject
     ProviderRegistry providers;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    private java.util.UUID repositoryId;
     private WireMockServer wm;
+    private void register(String workspace, String slug, ProviderInput input) {
+        var account = providers.create(input);
+        repositoryId = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                input.type(), wm.baseUrl(), workspace, slug, true, java.util.UUID.fromString(account.id()), null)).id();
+    }
 
     @BeforeEach
     void start() {
@@ -66,13 +73,13 @@ class ManualRegisterResourceTest {
 
     @Test
     void noProviderRegistered_isNotFound() {
-        given().contentType("application/json").body(Map.of("workspace", "unregistered-ws", "slug", "web", "pr", 5))
+        given().contentType("application/json").body(Map.of("repositoryId", java.util.UUID.randomUUID(), "pr", 5))
                 .when().post("/api/reviews/register").then().statusCode(404);
     }
 
     @Test
     void registersUsingTheProvidersToken() {
-        providers.create(new ProviderInput("CF", "bitbucket-cloud", wm.baseUrl(), "mrx-ws",
+        register("mrx-ws", "repo", new ProviderInput("CF", "bitbucket-cloud", wm.baseUrl(),
                 "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
         wm.stubFor(get(urlEqualTo("/repositories/mrx-ws/repo/pullrequests/5"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
@@ -83,7 +90,7 @@ class ManualRegisterResourceTest {
                           "links": { "html": {"href": "http://x"} } }
                         """)));
 
-        given().contentType("application/json").body(Map.of("workspace", "mrx-ws", "slug", "repo", "pr", 5))
+        given().contentType("application/json").body(Map.of("repositoryId", repositoryId, "workspace", "mrx-ws", "slug", "repo", "pr", 5))
                 .when().post("/api/reviews/register")
                 .then().statusCode(200).body("reviewId", equalTo("review::mrx-ws/repo#5"));
 
@@ -95,7 +102,7 @@ class ManualRegisterResourceTest {
     @Test
     void registersGitLabMergeRequestByUrlWithNestedGroup() {
         // workspace = top group; slug = the rest of the nested namespace + project.
-        providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp",
+        register("grp/sub", "proj", new ProviderInput("GL", "gitlab", wm.baseUrl(),
                 "bearer", null, "gl-tok", "botid", true, List.of(), null, null));
         // The project path is addressed URL-encoded (group/subgroup/project -> one segment).
         wm.stubFor(get(urlEqualTo("/projects/grp%2Fsub%2Fproj/merge_requests/9"))
@@ -123,31 +130,31 @@ class ManualRegisterResourceTest {
         // 404 mapped to 404 — a GitHub or GitLab PR that was gone escaped as a 500, telling
         // the operator "server error" instead of "no such PR". It now classifies on the
         // provider-neutral ScmApiException, so every adapter gets the same answer.
-        providers.create(new ProviderInput("GH", "github", wm.baseUrl(), "gh-ws",
+        register("gh-ws", "repo", new ProviderInput("GH", "github", wm.baseUrl(),
                 "bearer", null, "gh-tok", "botid", true, List.of(), null, null));
         wm.stubFor(get(urlEqualTo("/repos/gh-ws/repo/pulls/7")).willReturn(aResponse().withStatus(404)));
 
-        given().contentType("application/json").body(Map.of("workspace", "gh-ws", "slug", "repo", "pr", 7))
+        given().contentType("application/json").body(Map.of("repositoryId", repositoryId, "workspace", "gh-ws", "slug", "repo", "pr", 7))
                 .when().post("/api/reviews/register").then().statusCode(404);
     }
 
     @Test
     void aGitHubUpstreamFailureIsABadGateway_notAnInternalError() {
-        providers.create(new ProviderInput("GH2", "github", wm.baseUrl(), "gh-ws2",
+        register("gh-ws2", "repo", new ProviderInput("GH2", "github", wm.baseUrl(),
                 "bearer", null, "gh-tok", "botid", true, List.of(), null, null));
         wm.stubFor(get(urlEqualTo("/repos/gh-ws2/repo/pulls/8")).willReturn(aResponse().withStatus(503)));
 
-        given().contentType("application/json").body(Map.of("workspace", "gh-ws2", "slug", "repo", "pr", 8))
+        given().contentType("application/json").body(Map.of("repositoryId", repositoryId, "workspace", "gh-ws2", "slug", "repo", "pr", 8))
                 .when().post("/api/reviews/register").then().statusCode(502);
     }
 
     @Test
     void resolveParsesGitLabUrlAndReportsTheRegisteredProvider() {
-        providers.create(new ProviderInput("GL", "gitlab", wm.baseUrl(), "grp2",
+        register("grp2/sub", "proj", new ProviderInput("GL", "gitlab", wm.baseUrl(),
                 "bearer", null, "gl-tok", "botid", true, List.of(), null, null));
         // No SCM call — the resolve endpoint only parses + looks up the provider.
         given().contentType("application/json")
-                .body(Map.of("url", "https://gitlab.com/grp2/sub/proj/-/merge_requests/9"))
+                .body(Map.of("url", wm.baseUrl() + "/grp2/sub/proj/-/merge_requests/9"))
                 .when().post("/api/reviews/register/resolve")
                 .then().statusCode(200)
                 .body("workspace", equalTo("grp2"))

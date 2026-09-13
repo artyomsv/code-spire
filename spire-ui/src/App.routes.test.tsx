@@ -232,12 +232,13 @@ describe('App — routing shell', () => {
   it('navigates to the reviews list when a PR is registered from a settings screen', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
+      vi.fn((url: string) => Promise.resolve({
         ok: true,
         status: 200,
-        json: async () => ({ reviewId: 'TEST-review-1', workspace: 'TEST-WS', slug: 'TEST-REPO', pr: 1 }),
+        json: async () => url === '/api/repositories' ? [{ id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://api.github.com', workspace: 'TEST-WS', slug: 'TEST-REPO', enabled: true, revision: 1, reviewer: null, factory: null }]
+          : url === '/api/reviews/register' ? { reviewId: 'TEST-review-1', workspace: 'TEST-WS', slug: 'TEST-REPO', pr: 1 } : payloadFor(url),
         text: async () => '{}',
-      }),
+      })),
     );
     renderAt('/settings/accounts');
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Accounts');
@@ -245,8 +246,8 @@ describe('App — routing shell', () => {
     fireEvent.click(screen.getByRole('button', { name: /register pr/i }));
     const dialog = await screen.findByRole('dialog');
     const form = within(dialog);
-    fireEvent.change(form.getByLabelText('Workspace'), { target: { value: 'TEST-WS' } });
-    fireEvent.change(form.getByLabelText('Repository'), { target: { value: 'TEST-REPO' } });
+    await form.findByRole('option', { name: /TEST-WS\/TEST-REPO/ });
+    fireEvent.change(form.getByLabelText('Registered repository'), { target: { value: 'TEST-repository' } });
     fireEvent.change(form.getByLabelText(/pr #/i), { target: { value: '1' } });
     fireEvent.click(form.getByRole('button', { name: /^register$/i }));
 
@@ -280,7 +281,7 @@ describe('App — old settings routes redirect', () => {
   it.each([
     ['/settings/providers?edit=TEST-id-1', '/settings/accounts?edit=TEST-id-1', 'Accounts'],
     ['/settings/operators', '/settings/accounts/people', 'Accounts'],
-    ['/settings/webhooks?edit=TEST-id-2', '/settings/repositories?edit=TEST-id-2', 'Repositories'],
+    ['/settings/webhooks?edit=TEST-id-2', '/settings/webhooks?edit=TEST-id-2', 'Webhooks'],
   ])('sends %s to %s', async (from, to, title) => {
     renderAtWithProbe(from);
 

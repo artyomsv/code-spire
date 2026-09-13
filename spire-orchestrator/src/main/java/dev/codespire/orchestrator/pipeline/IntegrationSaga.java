@@ -74,7 +74,7 @@ public class IntegrationSaga {
     ReviewThreadView threads;
 
     @Inject
-    ProviderRegistry providers;
+    dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
 
     @Inject
     ReviewProviderResolver reviewProviders;
@@ -98,10 +98,34 @@ public class IntegrationSaga {
         // put/remove happen on the same worker thread.
         MDC.put("reviewId", reviewIdOf(event));
         try {
-            handle(event);
+            timeline.record("integration", "RepositoryProvenanceMissing", reviewIdOf(event),
+                    "Legacy ingress has no verified repository identity; redeliver through its registered webhook");
+            // The legacy channel uses the dead-letter strategy: retain the accepted record for an
+            // operator to redeliver through a verified edge, instead of acknowledging a silent loss.
+            throw new IllegalStateException("Legacy ingress has no verified repository identity; redeliver through its registered webhook");
         } finally {
             MDC.remove("reviewId");
         }
+    }
+
+    public void onRepository(IntegrationEvent event, java.util.UUID repositoryId) {
+        String reviewId = reviewIdOf(event);
+        if (event instanceof PullRequestEventReceived e) {
+            Optional<ScmProvider> provider = repositoryAccounts.resolve(repositoryId,
+                    dev.codespire.orchestrator.provider.ProviderRole.REVIEWER);
+            if (provider.isEmpty() || !authorAllowed(provider.get().authors(), e.author())) {
+                timeline.record("integration", "PullRequestSkipped", reviewId,
+                        provider.isEmpty() ? "No usable reviewer account selected for repository " + repositoryId
+                                : "Author is not in the selected account's allowlist");
+                return;
+            }
+            if (!projection.claimRepository(reviewId, repositoryId, e.repo(), e.prId())) return;
+        } else if (!projection.repositoryIdOf(reviewId).filter(repositoryId::equals).isPresent()) {
+            timeline.record("integration", "RepositoryMappingMissing", reviewId,
+                    "Pull request is not registered to this repository; register or repair its mapping first");
+            return;
+        }
+        handle(event);
     }
 
     private void handle(IntegrationEvent event) {
@@ -268,7 +292,7 @@ public class IntegrationSaga {
             return Optional.empty();
         }
         return Optional.of(new ActionCommand.NotifyArchived(reviewId, trigger.repo(), trigger.prId(),
-                trigger.threadRef(), workerCredentials.pack(provider.get())));
+                trigger.threadRef(), workerCredentials.pack(provider.get(), trigger.repo().workspace())));
     }
 
     /**
@@ -568,7 +592,7 @@ public class IntegrationSaga {
             return;
         }
         commands.emit(new ActionCommand.RefuseFinding(reviewId, e.repo(), e.prId(), target,
-                workerCredentials.pack(provider.get())));
+                workerCredentials.pack(provider.get(), e.repo().workspace())));
     }
 
     /** The review's posted summary comment, as a {@link ThreadRef} — the same fallback target
@@ -665,7 +689,7 @@ public class IntegrationSaga {
         }
         commands.emit(new ActionCommand.ConfirmFinding(reviewId, e.repo(), e.prId(), root,
                 e.commentId(), f.severity(), f.path(), f.line(),
-                workerCredentials.pack(provider.get())));
+                workerCredentials.pack(provider.get(), e.repo().workspace())));
     }
 
     private List<String> allowlistFor(String reviewId) {
@@ -715,9 +739,7 @@ public class IntegrationSaga {
         // workspace) when the event names its SCM — a GitHub org and a Bitbucket
         // workspace can share a name; fall back to workspace alone for events
         // serialized before providerType existed (or the dev simulator).
-        Optional<ScmProvider> provider = e.providerType() == null
-                ? providers.resolveByWorkspace(e.repo().workspace())
-                : providers.resolve(e.providerType(), e.repo().workspace());
+        Optional<ScmProvider> provider = reviewProviders.resolveForReview(reviewId);
         if (provider.isEmpty()) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
                     "no provider registered for workspace " + e.repo().workspace());
@@ -783,7 +805,7 @@ public class IntegrationSaga {
         }
 
         commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
-                workerCredentials.pack(provider.get())));
+                workerCredentials.pack(provider.get(), e.repo().workspace())));
     }
 
     /**

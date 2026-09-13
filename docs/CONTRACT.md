@@ -1,5 +1,56 @@
 # Domain Contract (`spire-contract`)
 
+## Repository metadata and ingress channels (M3 slices 1–2, ADR-042)
+
+`cs.registry-integration` carries `RepositoryRegistration`, keyed by registration UUID (not a
+review id). Its `type` discriminator is `RepositoryRegistration`; fields are `registrationId`,
+positive monotonic `revision`, `providerType`, nullable `forgeOrigin`, `scope` (`repo`/`org`),
+`target`, `enabled`, `deleted`, nullable `repositoryId`, `eventKind` (legacy default REVIEWER),
+and nullable `sourceId`. The gateway outbox publishes only after its SQL transaction
+commits and marks sent only after broker acknowledgement. The orchestrator accepts newer
+revisions transactionally. New records reject blank origins while allowing null. At legacy
+ingress the bridge converts blank origins to null before strict record decoding, then records
+`registration_origin_unknown` and acknowledges the snapshot. Missing origins are never inferred
+from account workspace equality; they remain operator-visible pending mappings for repair.
+
+This is an integration snapshot, not a domain event or a new aggregate. Webhook keys and secrets
+never cross the channel. Failed processing uses `cs.dlq`; the discriminator routes manual replay
+back to cs.registry-integration.
+
+Slice 2 sends signed SCM ingress on cs.repository-integration as RepositoryDelivery, with the
+RepositoryDelivery discriminator, repositoryId (nullable for legacy/org hooks), registrationId,
+registrationRevision, providerType, forgeOrigin, eventKind, deliveryId and the existing typed
+IntegrationEvent. Gateway deliveryId is the SHA-256 of the signed request bytes. A manual review
+uses its explicit repository UUID. The consumer resolves full forge identity, verifies any
+explicit UUID and repository state, then applies REVIEWER lifecycle handling or forwards FACTORY
+activity to cs.repository-activity. The latter has no work-item consumer until the later factory
+slice. ISSUE has no SCM ingress acceptance; it is reserved for source registration.
+
+New deliveries for unknown repositories produce Attention with their incoming registration and
+prefilled coordinates. Unknown origins remain repairable, never inferred from namespace equality.
+Old raw SCM messages on cs.integration fail with a provenance reason and enter cs.dlq; operators
+must redeliver through a verified webhook. DLQ replay of RepositoryDelivery returns to its new
+topic with provenance intact. Worker integration-result channels and old review IDs stay intact.
+
+**Upgrade order:** provision cs.registry-integration, cs.repository-integration and
+cs.repository-activity and their producer/consumer ACLs when auto-creation is disabled. Upgrade
+gateway first: new ingress can wait durably on its new topic while the old orchestrator runs.
+Then upgrade orchestrator (the new input begins at earliest), then the UI. Upgrading orchestrator
+first would dead-letter still-legacy gateway deliveries. Retain database/keyset backups; an
+application-only downgrade is not an ingress rollback because the wire topic changed.
+
+**API cutover:** account ProviderInput/ProviderView have no workspace. Account create/update
+accept an optional validationRepositoryId query parameter for account-less token validation;
+it must name the same forge kind and origin and creates no binding. Stored account checks may
+use one of that account's explicit repository bindings as validation scope. Scope introspection
+remains advisory; an unobserved report never establishes permission.
+
+Manual registration without a URL and POST /api/runs require repositoryId. Supplied coordinates
+must agree with it; URL preview resolves complete forge identity. Serving views take repositoryId
+and read the selected REVIEWER/FACTORY accounts. Missing, disabled and unmapped configurations
+cannot dispatch. The repository screen owns coordinates, role bindings and optional per-kind
+hooks; legacy organization hooks and origin repair remain at /settings/webhooks.
+
 > The shared kernel every service depends on: identifiers, the event envelope, the event & command
 > catalog, the `ReviewLifecycle` decider, the SPI ports, the context-aggregation policy, topics, and
 > the Bitbucket **Cloud** mapping. Companion to [EVENT-MODEL.md](EVENT-MODEL.md) (the narrative slices)
@@ -251,14 +302,17 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 
 | Topic | Carries |
 |---|---|
-| `cs.integration` | ingress events (`PullRequestEventReceived`, `PullRequestClosed`, `ManualCommandReceived`, `AuthorReplied`, `PushReceived`) |
+| `cs.registry-integration` | Revisioned registration metadata; keyed by registration UUID |
+| `cs.repository-integration` | Verified `RepositoryDelivery` envelopes around SCM ingress; keyed by the existing event key |
+| `cs.repository-activity` | FACTORY deliveries, keyed by repository UUID; reserved for later work-item consumers |
+| `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
 | `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
-All keyed by `reviewId` so a PR's messages are strictly ordered within a partition. (Topic split is a
-starting point; can be refined — the keying discipline is the important invariant.)
+Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and
+factory activity use the explicit UUID keys shown above.
 
 ## 10. Bitbucket **Cloud** mapping
 

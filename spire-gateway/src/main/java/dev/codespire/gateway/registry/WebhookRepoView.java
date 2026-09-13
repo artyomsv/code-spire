@@ -17,5 +17,10 @@ public record WebhookRepoView(
         String webhookKey,
         boolean hasSecret,
         boolean enabled,
-        Instant createdAt) {
+        Instant createdAt,
+        String forgeOrigin,
+        java.util.UUID repositoryId,
+        dev.codespire.contract.event.RepositoryEventKind eventKind,
+        java.util.UUID sourceId,
+        long revision) {
 }

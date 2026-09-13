@@ -464,7 +464,19 @@ public class FactoryRunProjection {
      *     sites while silently arriving null — the exact shape CLAUDE.md records as having dropped
      *     a wire field at every rebuild site. A missing argument is a compile error instead.
      */
-    public boolean queued(QueuedRun row, String taskSummary) {
+    public Optional<UUID> repositoryIdOf(String runId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT repository_id FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getObject(1, UUID.class)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Cannot read run repository", e);
+        }
+    }
+
+    public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
         boolean changed;
         String runId = row.runId();
         String harness = row.harness();
@@ -478,8 +490,8 @@ public class FactoryRunProjection {
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
-                                         comment_id, task_summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         comment_id, task_summary, repository_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -515,6 +527,7 @@ public class FactoryRunProjection {
                    -- silently false for them: a BUILD row re-armed as FIX would stay BUILD, so
                    -- NEITHER cap would count it, which is the cap failing open in the direction
                    -- V54 exists to prevent.
+                   AND factory_run.repository_id IS NOT DISTINCT FROM EXCLUDED.repository_id
                    AND factory_run.kind = EXCLUDED.kind
                    AND factory_run.review_id IS NOT DISTINCT FROM EXCLUDED.review_id
                    AND factory_run.finding_ref IS NOT DISTINCT FROM EXCLUDED.finding_ref
@@ -547,8 +560,9 @@ public class FactoryRunProjection {
             // Kept from the dispatch because nothing later can reconstruct it: the prompt is not a
             // column, and a finished run knows only a branch name and a list of paths.
             ps.setString(19, taskSummary);
-            ps.setString(20, FAILED);
-            ps.setString(21, DISPATCH_FAILED);
+            ps.setObject(20, repositoryId);
+            ps.setString(21, FAILED);
+            ps.setString(22, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             changed = ps.executeUpdate() == 1;

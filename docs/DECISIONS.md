@@ -4,6 +4,62 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-042 — Repositories own coordinates and explicitly bind role accounts
+
+**Status:** implemented through M3 slice 2. Runtime resolution uses explicit repository bindings.
+The old account key and workspace-by-role check are removed; the populated workspace column
+remains rollback evidence until slice 10.
+
+**Decision.** A repository is identified by `(scm_type, forge_origin, workspace, slug)` and has
+its own UUID. Forge origin is the canonical HTTP(S) scheme, host and non-default port, with no
+API path suffix. Nested namespaces stay in workspace. `repository_account` binds at most one
+REVIEWER and one FACTORY account. Configuration may leave either role empty or select a disabled
+account; resolution requires an enabled repository and enabled account of the matching kind,
+origin and role. Known reviewer/factory identities must differ at binding time and at resolution,
+including after credential rotation. Account UUIDs,
+ciphertexts, `provider:<id>` AADs and context source references are preserved.
+
+**Why.** The former `(type, workspace, role)` account key conflates credentials with repository
+selection and cannot distinguish hosts. Explicit references support credential rotation without
+reassigning repositories. Repository edits use revision checks; account deletion names its
+referencing repositories, and changing a referenced account's kind/origin is refused.
+
+**Bridge.** V60 snapshots legacy account assignments without changing existing serving resolvers.
+The gateway retains ownership of webhooks and credentials. Its V3 transactional outbox publishes
+typed, revisioned `RepositoryRegistration` metadata on `cs.registry-integration`, keyed by
+registration UUID. Broker acknowledgement marks an outbox row sent; duplicate delivery and stale
+revisions are harmless. Consumer failures use the existing DLQ with a registry-specific replay
+route. No webhook secret or routing key appears in this event.
+
+An unambiguous legacy match with an evidenced origin creates bindings once; subsequent snapshots
+preserve operator edits. A workspace alone never establishes a host. Conflicting or missing origins
+become attention rows with explicit mapping repair. A bounded history sweep uses persisted review
+URLs as origin evidence and links reviews/runs, including repositories observed through legacy org hooks. Org
+auto-enrollment ends at cutover: verified unregistered deliveries create attention naming the
+repository, origin and source registration, with a prefilled Register action. Registration
+snapshots alone do not create repositories after cutover.
+
+**Rollback evidence.** Keep the old account key and populated workspace in slice 1. Slice 2 drops
+the key/checks and all runtime reads, but retains workspace untouched until slice 10. Before any
+dev upgrade, preserve a verified full database dump and the matching keysets. The repeatable
+commands and real credential continuity probe are in the M3 plan; `.handoff/` survives sessions.
+
+**Cutover.** Signed gateway deliveries carry kind/origin/registration provenance on the new
+`cs.repository-integration` topic. REVIEWER deliveries enter the review lifecycle; FACTORY
+activity is forwarded separately; ISSUE requires a work source and is reserved for its later
+slice. A repository has at most one webhook per kind. Gateway V4 preserves existing keys,
+ciphertexts and rejection history. Raw legacy SCM deliveries are dead-lettered with a repair
+reason, never assigned credentials by a workspace match. Existing review IDs and credential
+transport AADs retain their original namespace split, including nested GitLab paths.
+
+**Proof.** Criterion 7 uses the named resource, fresh-schema gateway and UI tests in the M3
+plan. `RepositoryResolverCutoverTest` observes each dispatch entry at the actual database-backed
+credential boundary; separate choreography suites exercise subsequent commands.
+`AccountWorkspaceIsUnusedTest` scans runtime SQL, including SELECT-star mappings. The mutation
+ledger and real-row rollout measurements are in `.claude/reviews/global/factory-m3-slice2.md`.
+
+---
+
 ## ADR-041 — Credentials live on accounts; context sources reference an account
 
 **Context.** `context_provider` copied the credential shape of `llm_provider`: a key without

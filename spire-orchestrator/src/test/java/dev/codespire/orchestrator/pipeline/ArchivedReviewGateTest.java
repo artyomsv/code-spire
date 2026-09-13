@@ -98,8 +98,7 @@ class ArchivedReviewGateTest {
         long pr = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
         assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
-        providers.create(new ProviderInput("TEST-CANARY-PROVIDER", "bitbucket-cloud", wm.baseUrl(),
-                WS, "bearer", null, "TEST-TOKEN", "acct", true, List.of(), null, null));
+        providers.create(new ProviderInput("TEST-CANARY-PROVIDER", "bitbucket-cloud", wm.baseUrl(), "bearer", null, "TEST-TOKEN", "acct", true, List.of(), null, null));
         wm.stubFor(get(urlEqualTo("/repositories/" + WS + "/" + REPO + "/pullrequests/" + pr))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("""
                         { "id": %d, "title": "T", "description": "",
@@ -110,13 +109,13 @@ class ArchivedReviewGateTest {
                         """.formatted(pr))));
 
         given().contentType("application/json")
-                .body(Map.of("workspace", WS, "slug", REPO, "pr", pr, "providerType", "bitbucket-cloud"))
+                .body(Map.of("repositoryId", ReviewFixtures.repositoryId(), "pr", pr))
                 .when().post("/api/reviews/register")
                 .then().statusCode(409).body(containsString("archived"));
     }
 
     private static ReviewProjection fakeArchivedProjection(List<String> clearedClaims) {
-        return new ReviewProjection() {
+        return new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public boolean archived(String reviewId) {
                 return true;

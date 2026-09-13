@@ -85,7 +85,7 @@ public class FactoryPullRequests {
                       RunResult.RunFinished finished) {
         RunIds.Parsed parsed = RunIds.parse(runId);
         RepoRef repo = new RepoRef(parsed.workspace(), parsed.slug());
-        ScmProvider account = machineAccounts.resolve(parsed.scmType(), parsed.workspace())
+        ScmProvider account = projection.repositoryIdOf(runId).flatMap(machineAccounts::resolve)
                 .orElseThrow(() -> new IllegalStateException(
                         "no usable FACTORY account for " + parsed.scmType().providerType()
                                 + "/" + parsed.workspace() + "; the branch is pushed and unproposed"));

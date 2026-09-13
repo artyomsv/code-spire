@@ -43,6 +43,21 @@ class RunResourceTest {
     @Inject
     ProviderRegistry providers;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    private final java.util.Map<String, UUID> repositoryIds = new java.util.HashMap<>();
+    private UUID repository(String workspace) {
+        return repositoryIds.computeIfAbsent(workspace, ws -> repositories.create(
+                new dev.codespire.orchestrator.repository.RepositoryInput("github", "https://api.github.com", ws,
+                        "app", true, null, null)).id());
+    }
+    private void register(String workspace, ProviderInput input) {
+        var account = providers.create(input);
+        boolean factory = "FACTORY".equals(input.role());
+        repositoryIds.put(workspace, repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                input.type(), input.baseUrl(), workspace, "app", true,
+                factory ? null : UUID.fromString(account.id()), factory ? UUID.fromString(account.id()) : null)).id());
+    }
+
     @Inject
     FactoryRunProjection projection;
 
@@ -54,7 +69,7 @@ class RunResourceTest {
         return '"' + value + '"';
     }
 
-    private static String body(String workspace) {
+    private String body(String workspace) {
         return bodyWithModel(workspace, MODEL);
     }
 
@@ -66,12 +81,12 @@ class RunResourceTest {
      * refused before it spends -- so a fixture naming an unknown model would make every dispatch
      * test assert the refusal rather than the path it was written for.
      */
-    private static String bodyWithModel(String workspace, String model) {
+    private String bodyWithModel(String workspace, String model) {
         return """
-                {"workspace":"%s","slug":"app","providerType":"github",
+                {"repositoryId":"%s","workspace":"%s","slug":"app","providerType":"github",
                  "baseCommit":"0123456789abcdef0123456789abcdef01234567","prompt":"fix the typo",
                  "harness":"codex","model":"%s"}
-                """.formatted(workspace, model);
+                """.formatted(repository(workspace), workspace, model);
     }
 
     @Inject
@@ -126,7 +141,7 @@ class RunResourceTest {
         defaultLlmProvider();
         aHarnessCredential();
         String workspace = "TEST-ws-" + UUID.randomUUID().toString().substring(0, 8);
-        providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
+        register(workspace, new ProviderInput("factory-bot", "github", "https://api.github.com",
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
         return workspace;
     }
@@ -137,7 +152,7 @@ class RunResourceTest {
         String runId = "run::github:TEST-acme/app:" + subject + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
                 "abc1234", "feature/login", "spire-bot", null)
-                .asFixFor(reviewId, "thread-" + subject, "comment-" + subject), null);
+                .asFixFor(reviewId, "thread-" + subject, "comment-" + subject), null, null);
         return runId;
     }
 
@@ -271,7 +286,7 @@ class RunResourceTest {
     private String registeredRun() {
         String runId = "run::github:TEST-acme/app:transcript-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", MODEL, "main",
-                "abc1234", "spire/x", "spire-bot", null), null);
+                "abc1234", "spire/x", "spire-bot", null), null, null);
         return runId;
     }
 
@@ -667,7 +682,7 @@ class RunResourceTest {
         // while the GET route's own comment said they were supported.
         defaultLlmProvider();
         String workspace = "TEST-grp-" + UUID.randomUUID().toString().substring(0, 8) + "/team";
-        providers.create(new ProviderInput("factory-bot", "gitlab", "https://gitlab.com", workspace,
+        register(workspace, new ProviderInput("factory-bot", "gitlab", "https://gitlab.com",
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "factory-bot", null, "FACTORY"));
         String request = body(workspace).replace("\"providerType\":\"github\"", "\"providerType\":\"gitlab\"");
 
@@ -692,7 +707,7 @@ class RunResourceTest {
         // produces a branch the reviewer's own author allowlist skips: work nobody reviews and
         // nobody is told about.
         String workspace = "TEST-rev-" + UUID.randomUUID().toString().substring(0, 8);
-        providers.create(new ProviderInput("reviewer-bot", "github", "https://api.github.com", workspace,
+        register(workspace, new ProviderInput("reviewer-bot", "github", "https://api.github.com",
                 "bearer", null, "TEST-reviewer-token", "", true, List.of(), "reviewer-bot", null));
 
         given().contentType("application/json").body(body(workspace))
@@ -924,7 +939,7 @@ class RunResourceTest {
         // row was written: a 500, and a subject the 409-on-existing-row guard then refused for ever.
         defaultLlmProvider();
         String workspace = "TEST-nologin-" + UUID.randomUUID().toString().substring(0, 8);
-        providers.create(new ProviderInput("factory-bot", "github", "https://api.github.com", workspace,
+        register(workspace, new ProviderInput("factory-bot", "github", "https://api.github.com",
                 "bearer", null, "TEST-factory-token", "", true, List.of(), "", null, "FACTORY"));
         String request = body(workspace).replace("\"harness\"", "\"subject\":\"no-login\",\"harness\"");
 
@@ -939,7 +954,7 @@ class RunResourceTest {
     @Test
     @TestSecurity(user = "viewer", roles = "spire-viewer")
     void aViewerCannotSpendMoney() {
-        given().contentType("application/json").body(body("acme"))
+        given().contentType("application/json").body(body("TEST-viewer-" + UUID.randomUUID()))
                 .when().post("/api/runs")
                 .then().statusCode(403);
     }
@@ -966,7 +981,7 @@ class RunResourceTest {
 
     @Test
     void anAnonymousCallerIsRefused() {
-        given().contentType("application/json").body(body("acme"))
+        given().contentType("application/json").body(body("TEST-anonymous-" + UUID.randomUUID()))
                 .when().post("/api/runs")
                 .then().statusCode(401);
     }

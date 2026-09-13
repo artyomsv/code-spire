@@ -79,6 +79,7 @@ public class AttentionQueries {
             scmProviderRows(c, rows);
             accountScopeRows(c, rows);
             contextMigrationRows(c, rows);
+            dev.codespire.orchestrator.repository.RepositoryAttentionRows.collect(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);

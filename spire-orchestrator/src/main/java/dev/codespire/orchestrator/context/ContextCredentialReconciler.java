@@ -99,7 +99,7 @@ public class ContextCredentialReconciler {
     }
 
     private UUID matchingAccount(Connection c, ResultSet source, String type, String secret) throws SQLException {
-        try (var ps = c.prepareStatement("SELECT a.* FROM scm_provider a WHERE a.type = ? "
+        try (var ps = c.prepareStatement("SELECT a.id,a.base_url,a.auth_kind,a.auth_username,a.auth_secret FROM scm_provider a WHERE a.type = ? "
                 + "AND a.role = 'CONTEXT' AND a.enabled = TRUE "
                 + "AND EXISTS (SELECT 1 FROM context_provider s WHERE s.account_id = a.id) ORDER BY a.created_at, a.id")) {
             ps.setString(1, type);

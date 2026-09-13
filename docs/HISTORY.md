@@ -1808,3 +1808,61 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     scope-query wrapper and unconditional scope-write overload were removed so future call sites
     cannot silently choose the old path. Disabled migration rows intentionally remain in Attention
     because their legacy credential columns must be retired too; that intent is now commented.
+
+- **Factory M3 slice 1 (2026-09-13, PR #153; ADR-042) — repository registration before resolver cutover.**
+  Repositories own explicit forge origin, workspace and slug plus reviewer/factory account bindings.
+  The settings view and admin API expose those choices, disabled or missing accounts, identity
+  conflicts and stale edits. Existing review/run callers retain their legacy resolution until
+  slice 2; the account workspace and its constraints remain intact.
+  - V60 expands the orchestrator schema without changing account ids, ciphertext or context
+    references. Gateway V3 queues versioned metadata snapshots in a transactional outbox; broker
+    acknowledgement precedes completion, and failed snapshots have a registry DLQ replay route.
+    Replays preserve operator rebindings. Automatic migration requires explicit registration
+    origin or stored PR URL evidence; unknown/mismatched origins produce named attention rows
+    and explicit mapping repair. Historical review and run coordinates are linked together.
+  - The reviewed backup command now targets persistent, git-ignored `.handoff/` in the worktree.
+    The existing 182-object, 492,480-byte archive was reused; no second dump was taken for the
+    review correction. A read-only encrypted continuity probe matched 9 real credential/reference
+    entries. This remains pre-upgrade evidence: no dev deployment or live migration was performed.
+  - M2's live proof is recorded for `artyomsv/spire-test#31`, runs `3987682681:1` and
+    `3987682176:1`, resolved threads and persisted verdicts. The automated GitLab networking gap
+    remains separate. Slice 8b retains the standalone live `/fix` publication regression proof.
+  - Review evidence and the per-guard mutation ledger are in
+    `.claude/reviews/global/factory-m3-slice1.md`.
+  - Final sequential forced gates: 3005 Java tests across 348 suites, zero failures and one
+    existing Windows symlink privilege skip; 620 UI tests across 76 files and the UI build passed.
+    Forty distinct mutations each failed one targeted test and passed after scratch restoration.
+    Docker-driving tests passed with the live run workers stopped; none was started for this slice.
+  - **Slice 1 review correction:** reject blank origins in the wire record while preserving null;
+    constrain the gateway and repository columns; normalize legacy blank payloads to unknown at
+    the bridge boundary. The broker test requires both the durable `registration_origin_unknown`
+    mapping/revision and a committed consumer offset. Removing the blank-safe check failed the
+    mapping assertion after the offset committed, so DLQ delivery cannot stand in for repair.
+    Four additional isolated mutations bring the total to 44. Final forced gates passed 3009 Java
+    tests across 348 suites, zero failures and the same Windows symlink skip. The archived-review
+    retry fixture now uses a future test clock to prevent its background scheduler stealing the
+    live-row precondition; production timing is unchanged. Dev Services startup timeouts on a
+    parallel retry were cleared by the final invocation's `--no-parallel --max-workers=2`.
+  - **CI correction:** replace the private history-link table-name concatenation with two complete
+    literal SQL constants, preserving the four bound values without suppressing Semgrep. The
+    existing history-bridge suite passed all 11 tests. The failed full scan and separate OSS check
+    each named the same single finding.
+  - **Reviewed bridge rollout:** orchestrator V60 and gateway V3 from `a956532` reached dev before
+    the new CI hold. All 37 reviews and 14 runs mapped to six repositories with eight bindings;
+    all three existing gateway snapshots were acknowledged and remain origin-unknown repair rows.
+    The real encrypted baseline comparison passed all 9 entries after V60. Runtime account
+    resolution remains on the legacy path; slice 2's later cutover comparison is still required.
+
+- **M3 slice 2 — repository cutover (PR #153, 2026-09-13; awaiting review):** all active SCM
+  dispatch uses explicit repository/role bindings. Account workspace leaves DTOs, forms and
+  runtime SQL; V61 drops its old constraints while retaining populated rollback evidence.
+  Gateway V4 preserves hook keys/secrets/rejection history and adds one hook per kind. Verified
+  provenance uses a new topic, FACTORY activity is separate, and unknown repositories produce
+  Attention instead of auto-enrollment. The repository screen supports optional hooks, missing
+  roles, partial-save retry and legacy repair at the gateway owner. Nested GitLab paths preserve
+  old review IDs and transport AADs. Criterion 7 has its exact named tests and production-schema
+  mutation; 62 distinct mutations are recorded. 3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip; 630 UI tests and packaging passed.
+  The real gateway-first V4/V61 rollout preserved 6/37/85/14/3 rows, all retained workspaces and
+  hook rejection metadata; 9 account/context and 12 webhook entries matched after decryption.
+  The three missing origins remain explicit repairs, not inferred mappings. No live run worker,
+  new spend, synthetic live row or second dump was used. Later M3 criteria remain pending.

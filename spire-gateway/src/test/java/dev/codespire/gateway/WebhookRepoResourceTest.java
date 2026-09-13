@@ -26,12 +26,56 @@ import static org.hamcrest.Matchers.nullValue;
 @TestSecurity(user = "test-admin", roles = "spire-admin")
 class WebhookRepoResourceTest {
 
+    @Test
+    void duplicateKindReturnsARepairableConflict() {
+        Map<String, Object> input = body("github", "repo", "TEST-conflict/repo", null);
+        String id = given().contentType("application/json").body(input).post("/gw/webhook-repos")
+                .then().statusCode(201).extract().path("repo.id");
+        try {
+            given().contentType("application/json").body(input).post("/gw/webhook-repos")
+                    .then().statusCode(409).body(org.hamcrest.Matchers.containsString("already exists"));
+        } finally { given().delete("/gw/webhook-repos/" + id).then().statusCode(204); }
+    }
+
+    @Test
+    void issueKindRequiresASourceOnCreate() {
+        Map<String, Object> input = body("github", "repo", "TEST-issue-create/repo", null);
+        input.put("eventKind", "ISSUE");
+        given().contentType("application/json").body(input).post("/gw/webhook-repos").then().statusCode(400);
+        input.put("sourceId", java.util.UUID.randomUUID().toString());
+        String id = given().contentType("application/json").body(input).post("/gw/webhook-repos")
+                .then().statusCode(201).extract().path("repo.id");
+        given().delete("/gw/webhook-repos/" + id).then().statusCode(204);
+    }
+
+    @Test
+    void issueKindRequiresASourceOnUpdateAndPreservesAnExistingSource() {
+        Map<String, Object> input = body("github", "repo", "TEST-issue-update/repo", null);
+        String id = given().contentType("application/json").body(input).post("/gw/webhook-repos")
+                .then().statusCode(201).extract().path("repo.id");
+        try {
+            input.put("eventKind", "ISSUE");
+            given().contentType("application/json").body(input).put("/gw/webhook-repos/" + id).then().statusCode(400);
+            String source = java.util.UUID.randomUUID().toString();
+            input.put("sourceId", source);
+            given().contentType("application/json").body(input).put("/gw/webhook-repos/" + id)
+                    .then().statusCode(200).body("sourceId", equalTo(source));
+            input.remove("sourceId");
+            input.put("enabled", false);
+            given().contentType("application/json").body(input).put("/gw/webhook-repos/" + id)
+                    .then().statusCode(200).body("sourceId", equalTo(source)).body("enabled", equalTo(false));
+        } finally { given().delete("/gw/webhook-repos/" + id).then().statusCode(204); }
+    }
+
     private static Map<String, Object> body(String providerType, String scope, String target, Object secret) {
         var m = new HashMap<String, Object>();
         m.put("providerType", providerType);
         m.put("scope", scope);
         m.put("target", target);
         m.put("enabled", true);
+        m.put("repositoryId", "repo".equals(scope) ? java.util.UUID.randomUUID().toString() : null);
+        m.put("forgeOrigin", "https://TEST-forge.example.test");
+        m.put("eventKind", "REVIEWER");
         if (secret != null) {
             m.put("secret", secret);
         }

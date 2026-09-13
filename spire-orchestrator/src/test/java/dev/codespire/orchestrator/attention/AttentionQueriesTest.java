@@ -64,6 +64,7 @@ class AttentionQueriesTest {
         sql("DELETE FROM llm_model_rate");
         sql("DELETE FROM llm_model");
         sql("DELETE FROM provider_author");
+        sql("DELETE FROM repository_account");
         sql("DELETE FROM scm_provider");
         sql("DELETE FROM context_provider");
         sql("DELETE FROM dlq_entry");

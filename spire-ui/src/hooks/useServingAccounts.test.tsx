@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import * as api from '../api';
-import { ownerOf, servingKey, useServingAccounts } from './useServingAccounts';
+import { ownerOf, useServingAccounts } from './useServingAccounts';
 
 const repo = (over: Partial<api.WebhookRepoView>): api.WebhookRepoView => ({
   id: 'TEST-w1',
@@ -12,6 +12,7 @@ const repo = (over: Partial<api.WebhookRepoView>): api.WebhookRepoView => ({
   hasSecret: true,
   enabled: true,
   createdAt: '2026-09-07T00:00:00Z',
+  repositoryId: over.target ?? 'TEST-acme',
   ...over,
 });
 
@@ -38,21 +39,21 @@ describe('useServingAccounts', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   /** Two rows in one workspace ask once: the answer is per (forge, workspace), not per repository. */
-  it('asks once per distinct forge and owner', async () => {
-    const fetch = vi.spyOn(api, 'fetchServingAccounts').mockImplementation(async (_t, ws) => serving(ws));
+  it('asks once per distinct repository even with multiple webhook kinds', async () => {
+    const fetch = vi.spyOn(api, 'fetchServingAccounts').mockImplementation(async id => serving(id));
     const repos = [
-      repo({ id: 'TEST-w1', target: 'TEST-acme/widgets' }),
-      repo({ id: 'TEST-w2', target: 'TEST-acme/gadgets' }),
+      repo({ id: 'TEST-w1', target: 'TEST-acme/widgets', repositoryId: 'TEST-acme' }),
+      repo({ id: 'TEST-w2', target: 'TEST-acme/widgets', repositoryId: 'TEST-acme' }),
       repo({ id: 'TEST-w3', scope: 'org', target: 'TEST-other' }),
     ];
     render(<Probe repos={repos} />);
 
-    await waitFor(() => expect(JSON.parse(screen.getByTestId('lookups').textContent ?? '{}')).toHaveProperty([servingKey('github', 'TEST-other')]));
+    await waitFor(() => expect(JSON.parse(screen.getByTestId('lookups').textContent ?? '{}')).toHaveProperty(['TEST-other']));
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch).toHaveBeenCalledWith('github', 'TEST-acme');
-    expect(fetch).toHaveBeenCalledWith('github', 'TEST-other');
+    expect(fetch).toHaveBeenCalledWith('TEST-acme');
+    expect(fetch).toHaveBeenCalledWith('TEST-other');
     const lookups = JSON.parse(screen.getByTestId('lookups').textContent ?? '{}');
-    expect(lookups[servingKey('github', 'TEST-acme')].data.reviewer.state).toBe('ok');
+    expect(lookups['TEST-acme'].data.reviewer.state).toBe('ok');
   });
 
   /**
@@ -60,9 +61,9 @@ describe('useServingAccounts', () => {
    * array — a save, a delete, an inline literal — must not re-ask, and must not loop.
    */
   it('does not re-ask when the same rows arrive in a new array', async () => {
-    const fetch = vi.spyOn(api, 'fetchServingAccounts').mockImplementation(async (_t, ws) => serving(ws));
+    const fetch = vi.spyOn(api, 'fetchServingAccounts').mockImplementation(async id => serving(id));
     const repos = [
-      repo({ id: 'TEST-w1', target: 'TEST-acme/widgets' }),
+      repo({ id: 'TEST-w1', target: 'TEST-acme/widgets', repositoryId: 'TEST-acme' }),
       repo({ id: 'TEST-w2', scope: 'org', target: 'TEST-other' }),
     ];
     const { rerender } = render(<Probe repos={repos} />);
@@ -73,9 +74,9 @@ describe('useServingAccounts', () => {
 
     // A genuinely new owner does change the set, so it is asked — once. Every pair is re-asked with
     // it, because clearing the answers is what makes the changed set honest.
-    rerender(<Probe repos={[...repos, repo({ id: 'TEST-w3', target: 'TEST-third/thing' })]} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('github', 'TEST-third'));
-    expect(fetch.mock.calls.filter(([, ws]) => ws === 'TEST-third')).toHaveLength(1);
+    rerender(<Probe repos={[...repos, repo({ id: 'TEST-w3', target: 'TEST-third/thing', repositoryId: 'TEST-third' })]} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('TEST-third'));
+    expect(fetch.mock.calls.filter(([ws]) => ws === 'TEST-third')).toHaveLength(1);
     expect(fetch).toHaveBeenCalledTimes(5);
   });
 
@@ -85,7 +86,7 @@ describe('useServingAccounts', () => {
 
     await waitFor(() => {
       const lookups = JSON.parse(screen.getByTestId('lookups').textContent ?? '{}');
-      expect(lookups[servingKey('github', 'TEST-acme')].error).toMatch(/failed to load/i);
+      expect(lookups['TEST-acme'].error).toMatch(/failed to load/i);
     });
   });
 });

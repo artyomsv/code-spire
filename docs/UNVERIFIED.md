@@ -33,6 +33,37 @@ evidence would settle it**.
 
 ---
 
+## Repository cutover — boundaries of the proof (ADR-042, 2026-09-13)
+
+- **Real-row continuity is measured.** Dev was rebuilt gateway first (V4), then orchestrator
+  (V61), then UI. All 9 account/context credential/reference entries and all 12 webhook entries
+  matched their encrypted baselines after cutover. Counts stayed 6 accounts, 37 reviews, 85
+  findings, 14 runs and 3 hooks; retained workspace values and rejection metadata were unchanged.
+  Authenticated serving reads matched all eight selected bindings. This establishes local
+  migration and credential continuity, not successful live forge commands from every entry point.
+- **Three webhook origins remain unconfirmed.** The Bitbucket artyomsv/pr-test, GitHub
+  artyomsv/spire-test and GitLab artyomsv-group/code-review-poc registrations still lack origin
+  metadata. A read-only webhook-settings probe returned 403, 404 and 403 respectively; none
+  establishes the host associated with a retained key. The UI can repair the owning gateway
+  registration after explicit origin selection. Until that confirmation, verified deliveries
+  remain Attention events and cannot dispatch. Matching a namespace alone is insufficient.
+- **The dispatch matrix is observed at the credential boundary.** Its decoys and real database
+  decryption establish repository/role selection for manual, rerun, conversation, prompt, run,
+  fix and proposal entry points. Separate choreography suites test later commands. No live
+  run worker or new spend was used in this slice; slice 8b retains its live proof.
+- **FACTORY and ISSUE consumers are later work.** FACTORY activity is isolated on
+  cs.repository-activity; the later work-item slice consumes it. ISSUE hooks require source
+  metadata and SCM ingress rejects them; native work-source intake is not claimed implemented.
+- **Token validation is not repository permission proof.** Bitbucket account-less validation
+  uses the selected repository's namespace for the existing fallback request. WireMock tests
+  establish same-kind/origin selection and account binding use; a successful workspace listing
+  does not prove access to every repository. The separate reviewer-access check targets the
+  chosen full repository path. Existing per-token-family scope gaps remain below.
+- **Custom forge URL mappings still need installation evidence.** Local tests map GitHub and
+  Bitbucket public web URLs to their API origins and preserve self-hosted origins; GitLab nested
+  namespaces preserve old review IDs and transport AADs. Custom web/API proxies must be checked
+  against the actual installation. No new native permission endpoint behavior is claimed.
+
 ## Accounts normalization — live evidence still needed (ADR-041, 2026-09-12)
 
 Sources below were retrieved **2026-09-11**. WireMock checks prove how the application handles
@@ -271,14 +302,15 @@ Not work. Written down because each has been rediscovered at least once.
   matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
   wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
   and nothing should depend on this arm until then.
-- **The M2 loop is covered in three places and joined in none.** Finding → fix run → push →
-  reconciliation is what M2 exists to close. `FixRunDispatcherTest` proves the dispatch,
-  `Adr040ExistingBranchTest` proves the push against a real remote with real containers, and
-  `ReviewChainTest` proves review and reconciliation against a real GitLab. **Nothing proves the
-  halves meet**, and it is not a matter of effort: a run unit lands on the default bridge and
-  cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
-  `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
-  security control in `compose.e2e.yml`, so it is not the answer.
+- **~~The M2 loop has no joined live proof~~ — CLOSED 2026-09-12.** On the live GitHub pull
+  request `artyomsv/spire-test#31`, runs `3987682681:1` and `3987682176:1` traversed finding → fix
+  run → push → reconciliation. The review threads were resolved and verdicts persisted. This
+  observation closes the live-chain claim; it does not establish an automated GitLab loop.
+- **The automated GitLab M2 loop still cannot join dispatch, push and reconciliation.**
+  `FixRunDispatcherTest`, `Adr040ExistingBranchTest` and `ReviewChainTest` cover those legs
+  separately. A run unit cannot resolve the e2e stack's `gitlab` service: `RunUnitSpec` has no
+  network field and `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a
+  deliberate security control in `compose.e2e.yml`, so it is not the answer.
   — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
 - **~~The publisher's trunk floor is not exercised end to end~~ — CLOSED 2026-09-11.**
   It now is. This entry said the run died as `RUNTIME_UNAVAILABLE, init container failed with exit 1`

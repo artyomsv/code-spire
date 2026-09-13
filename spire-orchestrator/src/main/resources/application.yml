@@ -101,13 +101,22 @@ quarkus:
 mp:
   messaging:
     outgoing:
-      integration-out:               # dev simulator only
+      repository-activity-out:
         connector: smallrye-kafka
-        topic: cs.integration
+        topic: cs.repository-activity
+        acks: all
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
-          serializer: dev.codespire.orchestrator.pipeline.IntegrationEventSerializer
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      repository-out:
+        connector: smallrye-kafka
+        topic: cs.repository-integration
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
       commands-out:
         connector: smallrye-kafka
         topic: cs.commands
@@ -151,6 +160,32 @@ mp:
           serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
         waitForWriteCompletion: true
     incoming:
+      repository-in:
+        connector: smallrye-kafka
+        topic: cs.repository-integration
+        group:
+          id: spire-orchestrator-repository
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      registry-in:
+        connector: smallrye-kafka
+        topic: cs.registry-integration
+        group:
+          id: spire-orchestrator-registry
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
       integration-in:
         connector: smallrye-kafka
         topic: cs.integration
@@ -354,6 +389,7 @@ spire:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   spire:
+    repository-history-interval: "off"
     review:
       # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
       mode: active
