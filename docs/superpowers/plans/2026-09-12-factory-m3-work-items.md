@@ -8,7 +8,7 @@ Slice 3 completes resolved person entry and editable repository overrides; crite
 Slice 4 implements effective push permission; criterion 5 was independently verified in round 7.
 Slice 5 is locally complete: signed ticket intake, durable bookkeeping, and distinct criterion 3
 membership/attribution mutations pass, with full Java/UI/build/scanner evidence. Slices 6–10 and criteria 1, 2 and 4 remain pending.
-Criterion 3 awaits independent review. Evidence is in the corresponding slice review notes.
+Round 8 independently verified criterion 3. Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -557,7 +557,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-Criteria 7, 6 and 5 are independently verified, with the slice 2–4 mutation ledgers. Criterion 3 has distinct slice 5 membership and attribution proofs awaiting review; criteria 1, 2 and 4 remain for later slices. `O-test`
+Criteria 7, 6, 5 and 3 are independently verified, with the slice 2–5 mutation ledgers. Round 8 accepted the distinct membership and attribution proofs; criteria 1, 2 and 4 remain for later slices. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

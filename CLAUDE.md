@@ -79,8 +79,8 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
   (`docs/UNVERIFIED.md`). **M3 slices 1–5 (PR #153) add repository ownership, explicit role bindings,
   resolved person entry, effective /fix push authorization and durable GitHub ticket intake.**
-  Criteria 7, 6 and 5 are independently verified; criterion 3 awaits review of its separate
-  membership and attribution proofs. /fix permission reads hold no database transaction across
+  Criteria 7, 6, 5 and 3 are independently verified, including the separate
+  membership and attribution proofs accepted in round 8. /fix permission reads hold no database transaction across
   the network: short revision snapshots detect rotation and rebinding. Work sources own their
   actor allowlists; incomplete attribution selects nothing. Workflow history and Work items
   persist bookkeeping, with tracker content fetched separately. Source parity, full policy gates
@@ -101,11 +101,10 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
 - **Measured, not estimated (2026-09-13):** 3371 Java tests across 393 suites and 28 modules,
   zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
-  packaging passed sequentially. The full UI suite passed 650 tests; the final Work items changes
-  passed 12 targeted tests and the production build. Slice 5 has 154 mutation checks covering
+  packaging passed sequentially. After the round 8 route-fixture correction, the final full UI suite passed 650 tests
+  and the production build; all 35 route cases also passed in three shuffled orders. Slice 5 has 154 mutation checks covering
   153 distinct production changes and clean pinned Semgrep scans. Exact evidence is in
-  .claude/reviews/global/factory-m3-slice5.md. Criteria 5, 6 and 7 are independently verified;
-  criterion 3 awaits review. Live tracker/token and later execution gaps remain in UNVERIFIED.
+  .claude/reviews/global/factory-m3-slice5.md. Criteria 3, 5, 6 and 7 are independently verified. Live tracker/token and later execution gaps remain in UNVERIFIED.
   No live run worker was started.
 
 ## Build & run

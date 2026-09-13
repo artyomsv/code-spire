@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
 import { RETURN_ROUTE_KEY } from './auth';
 import { runView } from './test/liveRuns';
+import type { WorkItemDetail } from './api';
 
 /**
  * `App` is composition — a rail, a topbar and a `Routes` table — so this covers the one piece of
@@ -93,9 +94,11 @@ let session: unknown = ADMIN_SESSION;
 function payloadFor(url: string): unknown {
   if (url.startsWith('/api/work-items?')) return { items: [], total: 0, offset: 0, limit: 50 };
   if (url === '/api/work-items/TEST-item/tracker') return { title: 'TEST-ticket', body: 'TEST-body', trackerStatus: 'open' };
-  if (url === '/api/work-items/TEST-item') return { id: 'TEST-item', issueKey: 'TEST-1', repository: 'TEST-WS/TEST-REPO',
+  if (url === '/api/work-items/TEST-item') return { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-repository',
+    issueKey: 'TEST-1', repository: 'TEST-WS/TEST-REPO', revision: 1, updatedAt: '2026-09-13T12:00:00Z',
     trackerUrl: 'https://example.invalid/TEST/1', generation: 1, phase: 'spec', workflowStatus: 'awaiting_input',
-    reason: 'TEST-specification required', profile: null, ignoredLabels: [], events: [] };
+    reason: 'TEST-specification required', profile: null, ignoredLabels: [], events: [],
+    effectiveModes: {}, admittedModes: {}, policyReason: 'no_eligible_label', ceiling: null, appliedLabels: [] } satisfies WorkItemDetail;
   if (url === `/api/runs/${encodeURIComponent(runView().runId)}`) return runView();
   if (/\/api\/me$/.test(url)) return session;
   // The worker owns /wk — its own prefix, so its session cookie never reaches the other services.
@@ -187,22 +190,25 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/settings/dlq', title: 'Dead-letter', nav: 'Dead-letter' },
 ];
 
+beforeEach(() => {
+  session = ADMIN_SESSION;
+  sessionStorage.clear();
+  vi.stubGlobal('WebSocket', SilentSocket);
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+    matches: false, addEventListener: () => {}, removeEventListener: () => {},
+  }));
+  vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
+});
+
+afterEach(() => {
+  // Unmount while this test's globals still exist: pending passive effects must not fall through
+  // to native fetch or a later test's stub. The setup-file cleanup otherwise runs after this hook.
+  cleanup();
+  vi.unstubAllGlobals();
+  sessionStorage.clear();
+});
+
 describe('App — routing shell', () => {
-  beforeEach(() => {
-    session = ADMIN_SESSION;
-    vi.stubGlobal('WebSocket', SilentSocket);
-    // jsdom implements no media queries; the reviews list asks about reduced motion on mount.
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    );
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it.each(ROUTES)('renders $title at $path', async ({ path, title, nav }) => {
     renderAt(path);
 
@@ -221,6 +227,12 @@ describe('App — routing shell', () => {
     // screen at this line and satisfied the query no matter what the screen itself rendered.
     // Verified by mutation: dropping a screen's wrapper used to leave this green.
     await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument());
+    if (path === '/work-items/TEST-item') {
+      // The shell's Loading… is not the page's Loading work item…. Await both actual responses
+      // so a malformed detail payload cannot pass against the wrapper's initial loading render.
+      expect(await screen.findByRole('heading', { level: 2, name: 'TEST-1' })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { level: 4, name: 'TEST-ticket' })).toBeInTheDocument();
+    }
     expect(document.querySelector('main .content')).toBeInTheDocument();
   });
 
@@ -271,20 +283,6 @@ describe('App — routing shell', () => {
  * nothing, which reads as the row having been fixed.
  */
 describe('App — old settings routes redirect', () => {
-  beforeEach(() => {
-    session = ADMIN_SESSION;
-    vi.stubGlobal('WebSocket', SilentSocket);
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    );
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   it.each([
     ['/settings/providers?edit=TEST-id-1', '/settings/accounts?edit=TEST-id-1', 'Accounts'],
     ['/settings/operators', '/settings/accounts/people', 'Accounts'],
@@ -331,17 +329,7 @@ describe('App — rail highlighting', () => {
 
 describe('App — what a viewer may see', () => {
   beforeEach(() => {
-    vi.stubGlobal('WebSocket', SilentSocket);
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    );
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
     session = VIEWER_SESSION;
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
   const rail = () => document.querySelector('.nav') as HTMLElement;
@@ -406,11 +394,6 @@ describe('App — what a viewer may see', () => {
  */
 describe('App — before the session is known', () => {
   beforeEach(() => {
-    vi.stubGlobal('WebSocket', SilentSocket);
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    );
     // /api/me never settles, holding the shell in its unknown state for the whole test. Every other
     // endpoint answers normally, so anything privileged that renders here did so on an assumption.
     vi.stubGlobal(
@@ -419,10 +402,6 @@ describe('App — before the session is known', () => {
         /\/api\/me$/.test(url) ? new Promise(() => {}) : Promise.resolve(jsonResponse(payloadFor(url))),
       ),
     );
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
   it('renders no dashboard at all, privileged or otherwise', async () => {
@@ -482,22 +461,6 @@ describe('App — before the session is known', () => {
  * — so the route is carried in the browser and spent here, on arrival.
  */
 describe('App — returning to the screen the login left', () => {
-  beforeEach(() => {
-    session = ADMIN_SESSION;
-    sessionStorage.clear();
-    vi.stubGlobal('WebSocket', SilentSocket);
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
-    );
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(jsonResponse(payloadFor(url)))));
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    sessionStorage.clear();
-  });
-
   it('sends the operator back to the route the login took them away from', async () => {
     sessionStorage.setItem(RETURN_ROUTE_KEY, '#/settings/accounts');
 

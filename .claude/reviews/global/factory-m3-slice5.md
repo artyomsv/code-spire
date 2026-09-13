@@ -1,7 +1,7 @@
 # Factory M3 slice 5 — first durable tracker ticket
 
-Round 7 independently verified criterion 5. Criteria 5, 6 and 7 are accepted; criterion 3 awaits
-independent review of this slice. Source parity, full policy gates and build handoff remain later work.
+Round 7 independently verified criterion 5; round 8 independently verified criterion 3.
+Criteria 3, 5, 6 and 7 are accepted. Source parity, full policy gates and build handoff remain later work.
 
 ## What changed
 
@@ -73,7 +73,8 @@ The worktree had no dev run worker before Docker-driving tests.
 The full UI suite passed **650/650 tests in 79 files** with `--maxWorkers=4`; the final Work items
 changes passed their 12 tests and TypeScript/Vite production build. An earlier full run failed
 in the unchanged archive test; that suite passed 8/8 in isolation and the complete rerun passed.
-The existing bundle-size warning remains.
+The existing bundle-size warning remains. The subsequent dashboard CI failure and final full-suite
+correction are recorded in [round 8 evidence](factory-m3-round8.md).
 
 Pinned Semgrep 1.172.0 (`p/default` plus `p/secrets`) ran 442 rules on 1,159 files with zero
 findings and the same 24 pre-existing diagnostic paths; no Java parser errors. Later scans of

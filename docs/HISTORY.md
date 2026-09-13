@@ -1928,3 +1928,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Semgrep passed. 154 mutation checks cover 153 distinct production changes, including
   Java, schema and UI guards. Scope validation also accepts valid dot-prefixed GitHub names
   while refusing dot path segments. Criterion 3 awaits independent review.
+
+- **M3 round 8 — route smoke-test correction (2026-09-13).** Criterion 3 was independently
+  accepted, bringing the count to four of seven. Dashboard CI exposed a route fixture missing
+  required policy fields; the test could pass against its initial wrapper before the payload
+  rendered because it awaited the shell loading text rather than the detail responses. The
+  same exception was reproduced in isolation, so a single isolated pass did not establish
+  mock leakage. The fixture now satisfies the API type and both response headings must render
+  before the unchanged `.content` assertion. Each case gets fresh session/storage/globals and
+  unmounts before global teardown. The complete file passed 35/35 in normal order and with
+  shuffle seeds 42, 99 and 5191448392. Removing the production wrapper failed exactly the
+  retained assertion; scratch-byte restoration passed. Final full UI: 650/650, no unhandled
+  errors, production build passed. The prior full UI run predated the last display additions;
+  targeted tests had missed this fixture. Evidence: `.claude/reviews/global/factory-m3-round8.md`.
