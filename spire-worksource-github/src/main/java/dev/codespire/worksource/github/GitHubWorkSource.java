@@ -56,6 +56,7 @@ public final class GitHubWorkSource implements WorkSource {
     @Override public Set<Capability> capabilities() {
         return Set.of(Capability.CANDIDATES, Capability.LABEL_AUDIT, Capability.COMMENT, Capability.TRANSITION);
     }
+    @Override public String capabilityDetail() { return "Polling and authenticated issue webhooks are supported."; }
 
     @Override public WorkPage<WorkIssueLocation> candidates(String cursor) {
         String path = "/repos/" + scope.name() + "/issues";
@@ -120,10 +121,37 @@ public final class GitHubWorkSource implements WorkSource {
 
     @Override public String comment(WorkIssueLocation issue, String text, String effectId) {
         requireWritableIssue(issue);
+        String found = findComment(issue,text,effectId);
+        if (found != null) return found;
         return write.comment(issue.issueKey(), text, effectId);
+    }
+    @Override public String findComment(WorkIssueLocation issue, String text, String effectId) {
+        try { return findCommentBody(issue,text,effectId); }
+        catch (RuntimeException unavailable) { throw unavailable("GitHub comment recovery is unavailable; check the selected account and scope."); }
+    }
+    private String findCommentBody(WorkIssueLocation issue, String text, String effectId) {
+        requireWritableIssue(issue);
+        String body = WorkEffectMarker.body(text,effectId), cursor = null;
+        String path = issuePath(issue) + "/comments";
+        for (int pages = 0; pages < 20; pages++) {
+            int page = page(cursor);
+            PinnedJsonResponse response = read.getEvidence(path + "?per_page=100&page=" + page);
+            if (!response.body().isArray()) throw unavailable("Comment recovery is incomplete.");
+            for (JsonNode comment : response.body()) if (body.equals(comment.path("body").asText())) return id(comment.path("id"));
+            cursor = next(response,path,page);
+            if (cursor == null) return null;
+        }
+        throw unavailable("Comment recovery exceeded its page bound.");
+    }
+    @Override public boolean transitionApplied(WorkIssueLocation issue, String transitionId, String effectId) {
+        WorkEffectMarker.of(effectId);
+        if (!Set.of("open","closed").contains(transitionId)) throw unavailable("GitHub supports only open/closed transitions.");
+        if (!(fetch(issue) instanceof Fetch.Found found)) throw unavailable("The issue could not be refreshed.");
+        return transitionId.equals(found.ticket().trackerStatus());
     }
     @Override public void transition(WorkIssueLocation issue, String transitionId, String effectId) {
         requireWritableIssue(issue);
+        if (transitionApplied(issue,transitionId,effectId)) return;
         write.transition(issue.issueKey(), issue.ref().issueId(), transitionId);
     }
 

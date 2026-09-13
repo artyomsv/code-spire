@@ -26,7 +26,25 @@ public class WorkSourceAdministration {
     public record Input(String name, WorkSourceType type, String origin, String scope, UUID repositoryId, UUID accountId, boolean enabled) {}
     public record ActorInput(String handle, String providerUserId, long revision) {}
     public record Edit(String name, UUID accountId, boolean enabled, long revision) {}
+    public record Capabilities(Set<String> operations, String detail) {}
     private record Authority(long repository, long account) {}
+
+    public ActorDirectory.Result resolveActor(UUID id, String handle) {
+        WorkSourceRegistry.Source source = sources.get(id).orElseThrow();
+        if (!source.enabled()) throw new IllegalArgumentException("The source, account or repository is unavailable");
+        ScmProvider account = selected(source.type(), source.origin(), source.accountId());
+        return bounded(() -> clients.actorDirectory(account).lookup(handle, source.repository().workspace()));
+    }
+
+    public Capabilities capabilities(UUID id) {
+        WorkSourceRegistry.Source source = sources.get(id).orElseThrow();
+        return bounded(() -> {
+            var client = sources.client(source);
+            Set<String> operations = new TreeSet<>(); client.capabilities().forEach(operation -> operations.add(operation.name()));
+            return new Capabilities(operations, client.capabilityDetail()
+                    + " Account permissions are checked when an operation runs; this list does not grant access.");
+        });
+    }
 
     public WorkSourceRegistry.Source create(Input input) {
         if (input == null || input.name() == null || input.name().isBlank() || input.type() == null)
@@ -57,7 +75,8 @@ public class WorkSourceAdministration {
         WorkSourceRegistry.Source source = sources.get(id).orElseThrow();
         if (input == null || input.name() == null || input.name().isBlank()) throw new IllegalArgumentException("Source name is required");
         Authority before = authority(source.repositoryId(), input.accountId());
-        selected(source.type(), source.origin(), input.accountId());
+        // Turning an existing source off must remain possible after its account is disabled.
+        if (input.enabled() || !source.accountId().equals(input.accountId())) selected(source.type(), source.origin(), input.accountId());
         return QuarkusTransaction.requiringNew().call(() -> {
             if (!before.equals(lockAuthority(source.repositoryId(), input.accountId()))) throw new IllegalArgumentException("Account changed; reload the source");
             try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(

@@ -31,6 +31,7 @@ class GitHubWorkSourceTest {
         issue = new WorkIssueLocation(new WorkIssueRef(WorkSourceType.GITHUB, api.baseUrl(), "10001", "50001"), "42", URI.create(api.baseUrl() + "/" + scope + "/issues/42"));
         api.stubFor(get(urlEqualTo(path)).willReturn(okJson(ticket().toString())));
         timeline(1, mapper.createArrayNode().add(event(101,"labeled",900123,0)), null);
+        api.stubFor(get(urlEqualTo(path+"/comments?per_page=100&page=1")).willReturn(okJson("[]")));
     }
     @AfterEach void stop() { api.stop(); }
     GitHubIssueConfig config() { return new GitHubIssueConfig(api.baseUrl(),"bearer","TEST-token",Set.of(scope)); }
@@ -236,5 +237,10 @@ class GitHubWorkSourceTest {
         WorkIssueLocation overflow=new WorkIssueLocation(new WorkIssueRef(WorkSourceType.GITHUB,api.baseUrl(),"10001",large),"42",issue.link());
         api.stubFor(get(urlEqualTo(path)).willReturn(okJson(ticket().put("id",new java.math.BigInteger(large)).toString())));
         assertInstanceOf(WorkSource.Fetch.Unavailable.class,source.fetch(overflow));
+    }
+    @Test void commentRecoveryErrorsDoNotExposeTrackerBodies() {
+        api.stubFor(get(urlEqualTo(path+"/comments?per_page=100&page=1")).willReturn(aResponse().withStatus(403).withBody("TEST-private-error")));
+        var error=assertThrows(WorkSourceException.class,()->source.findComment(issue,"TEST-text","TEST-effect"));
+        assertFalse(error.toString().contains("TEST-private-error"));assertNull(error.getCause());
     }
 }

@@ -184,6 +184,7 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/settings/memory', title: 'Memory', nav: 'Memory' },
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
+  { path: '/settings/work-sources', title: 'Work sources', nav: 'Work sources' },
   { path: '/settings/repositories', title: 'Repositories', nav: 'Repositories' },
   { path: '/settings/llm', title: 'LLM', nav: 'LLM' },
   { path: '/settings/prompts', title: 'Prompts', nav: 'Prompts' },
@@ -342,7 +343,7 @@ describe('App — what a viewer may see', () => {
     // exercise the gate at all.
     await waitFor(() => expect(within(rail()).queryByText('Configure')).not.toBeInTheDocument());
     expect(within(rail()).getByText('Reviews')).toBeInTheDocument();
-    for (const label of ['General', 'Context', 'Accounts', 'Repositories', 'LLM', 'Prompts', 'Dead-letter']) {
+    for (const label of ['General', 'Context', 'Work sources', 'Accounts', 'Repositories', 'LLM', 'Prompts', 'Dead-letter']) {
       expect(within(rail()).queryByText(label)).not.toBeInTheDocument();
     }
   });
@@ -363,7 +364,7 @@ describe('App — what a viewer may see', () => {
    * back button arrives at a settings path without ever passing the rail. Said plainly rather than
    * redirected: a silent bounce to another screen is indistinguishable from a broken link.
    */
-  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq'])(
+  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq', '/settings/work-sources'])(
     'tells a viewer at %s that the page is not theirs',
     async (path) => {
       renderAt(path);

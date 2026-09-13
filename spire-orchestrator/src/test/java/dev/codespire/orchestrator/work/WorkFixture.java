@@ -106,6 +106,7 @@ abstract class WorkFixture {
     @AfterEach void cleanWork() throws Exception {
         try {
             if(itemId!=null){
+                execute("DELETE FROM work_tracker_outbox WHERE work_item_id=?",itemId);
                 execute("DELETE FROM work_item_gate WHERE work_item_id=?",itemId);
                 execute("DELETE FROM work_item_outbox WHERE work_item_id=?",itemId);
                 execute("DELETE FROM work_item_delivery WHERE work_item_id=?",itemId);

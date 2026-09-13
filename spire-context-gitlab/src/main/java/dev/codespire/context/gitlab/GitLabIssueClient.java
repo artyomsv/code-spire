@@ -3,11 +3,9 @@ package dev.codespire.context.gitlab;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.http.PinnedJsonClient;
-import dev.codespire.http.PinnedJsonConfig;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 
 /**
  * Thin read-only HTTP layer over the GitLab v4 REST API.
@@ -22,13 +20,11 @@ public class GitLabIssueClient {
     private final PinnedJsonClient http;
 
     public GitLabIssueClient(GitLabIssueConfig config, ObjectMapper mapper) {
-        this.http = new PinnedJsonClient(
-                new PinnedJsonConfig("GitLab API", config.baseUrl(), "Bearer " + config.secret(),
-                        Map.of("Accept", "application/json"),
-                        "Check the base URL is the instance root (no /api/v4 suffix) and the token has "
-                                + "api or read_api scope."),
-                mapper, GitLabIssueApiException::new);
+        this.http = GitLabApiConnection.reader(config, mapper);
     }
+
+    /** Strict origin-pinned reads with the headers needed for complete audit pagination. */
+    public dev.codespire.http.PinnedJsonResponse getEvidence(String path) { return http.getIdentityResponse(path); }
 
     public JsonNode getJson(String path) {
         return http.getJson(path);

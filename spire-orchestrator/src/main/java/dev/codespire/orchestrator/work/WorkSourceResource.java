@@ -13,6 +13,16 @@ public class WorkSourceResource {
     @Inject WorkSourceAdministration administration;
     @Inject WorkSourceScanner scanner;
     @GET public List<WorkSourceRegistry.Source> list() { return registry.list(); }
+    @GET @Path("/{id}/capabilities") public WorkSourceAdministration.Capabilities capabilities(@PathParam("id") UUID id) {
+        try { return administration.capabilities(id); }
+        catch (IllegalArgumentException unavailable) { throw new ServiceUnavailableException(unavailable.getMessage()); }
+    }
+    public record PersonQuery(String handle) {}
+    @POST @Path("/{id}/actors/resolve") public dev.codespire.contract.port.ActorDirectory.Result resolve(@PathParam("id") UUID id, PersonQuery input) {
+        if (input == null || input.handle() == null || input.handle().isBlank()) throw new BadRequestException("Enter a person to resolve");
+        try { return administration.resolveActor(id, input.handle()); }
+        catch (IllegalArgumentException unavailable) { throw new BadRequestException(unavailable.getMessage()); }
+    }
     @POST public Response create(WorkSourceAdministration.Input input) {
         try { return Response.status(201).entity(administration.create(input)).build(); }
         catch (IllegalArgumentException invalid) { throw new BadRequestException(invalid.getMessage()); }

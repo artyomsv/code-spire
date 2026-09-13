@@ -11,4 +11,7 @@ public final class PinnedJsonWriter {
     }
     public JsonNode post(String path, String json) { return transport.write("POST", path, json); }
     public JsonNode patch(String path, String json) { return transport.write("PATCH", path, json); }
+    public JsonNode put(String path, String json) { return transport.write("PUT", path, json); }
+    /** Jira transitions acknowledge success with exactly 204, not a JSON body. */
+    public void postNoContent(String path, String json) { transport.writeNoContent("POST", path, json); }
 }

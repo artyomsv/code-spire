@@ -411,6 +411,7 @@ spire:
 "%test":
   spire:
     work-outbox-interval: "off"
+    work-effects-interval: "off"
     work-scan-interval: "off"
     repository-history-interval: "off"
     review:

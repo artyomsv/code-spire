@@ -20,7 +20,7 @@ final class GitHubWorkWriter {
     }
     String comment(String number, String text, String effectId) {
         try {
-            String body = text + "\n\n<!-- work-effect:" + effectId + " -->";
+            String body = dev.codespire.worksource.WorkEffectMarker.body(text, effectId);
             JsonNode response = http.post("/repos/" + scope + "/issues/" + number + "/comments", mapper.writeValueAsString(Map.of("body", body)));
             JsonNode id = response.path("id");
             if (!id.isIntegralNumber() || !id.canConvertToLong() || id.longValue() < 1) throw new WorkSourceException("Comment acknowledgement has no stable identity.");

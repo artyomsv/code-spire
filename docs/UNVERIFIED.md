@@ -46,20 +46,75 @@ are the contracts checked on 2026-09-13. Token-family visibility, Enterprise var
 transfer confirmation and real label attribution still need live evidence. A 404/410 is treated
 as unavailable, not proof of deletion. A partial audit never grants authority.
 
-Comment markers and write-response checks are adapter coverage only. Retrying after a remote
-write whose response was lost is not yet proved idempotent; the outbox-backed tracker-write
-recovery and real Jira/GitLab source arms belong to slice 6. Admission emits only durable work
-notifications, with no remote tracker write or run dispatch.
+Slice 6 adds a real PostgreSQL tracker outbox and a WireMock write that succeeds remotely before
+the client times out. A fresh dispatcher reads the durable uncertain claim and finds the exact
+comment marker, with one POST in the server journal. Missing recovery evidence leaves the effect
+uncertain; it never authorizes another write. This has not been measured against a live GitHub
+token. Admission still emits only work notifications; later phase decisions enqueue tracker effects.
+
+## Work-source GitLab label audit, hooks and writes (2026-09-13)
+
+Measured against local WireMock GitLab REST v4 responses, real PostgreSQL intake and real gateway
+Kafka delivery: nested project scope, global issue identity, current labels, paginated additions/
+removals, authenticated Issue Hook deltas, allowed-person lookup, separate comment POST and
+close/reopen PUT. The unattributed intake fixture retains allowed actor hint 900123; incomplete
+audit selects nothing. No live GitLab ticket, token family or installation version was measured.
+The [label-event API](https://docs.gitlab.com/api/resource_label_events/),
+[issue API](https://docs.gitlab.com/api/issues/) and
+[Issue Hook contract](https://docs.gitlab.com/user/project/integrations/webhook_events/)
+were checked on 2026-09-13. Private/confidential visibility, PAT/project/group token permissions,
+self-hosted payload variants and real marker retention still need recorded live measurements.
+
+The shared context client supplies pinned authenticated reads; a separate writer uses the same
+connection configuration. A full page without completion evidence refuses rather than truncates.
+404/410 means unavailable. Transition recovery observes the requested state, so it proves the
+desired outcome, not which person changed it. A timeout with no confirming state remains uncertain.
+
+## Work-source Jira Cloud label audit and writes (2026-09-13)
+
+Measured against local WireMock Jira Cloud REST v2 responses and real PostgreSQL intake: explicit
+project-to-SCM mapping across origins, opaque search cursors, complete paginated changelog reads,
+actual label-set differences and author accountIds. Retained labels never acquire the editor's
+identity. Missing or incomplete audit selects nothing, including allowed actor hint 900123.
+The existing person directory requires explicit selection when a query is ambiguous; neither
+display name nor issue reporter supplies missing attribution. No live Jira Cloud site was measured.
+
+The [current search API](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-search/)
+uses `/search/jql`; the [issue API](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/)
+documents changelog label sets, real transition IDs, required fields, history metadata and 204
+transition success. Fixtures exercise separate comment writes and effect/transition metadata
+recovery. Real classic API-token/PAT permissions, changelog completeness under privacy restrictions,
+historyMetadata retention, workflow validators, rate limits and marker rendering remain unproven.
+Opaque search-token lifetime across long downtime still needs a real Cloud measurement; an
+expired/unusable cursor reports unavailable and does not advance.
+Jira uses polling; no unauthenticated webhook channel or approval parser is exposed.
+Scoped Atlassian gateway tokens remain unsupported by the existing site-host configuration.
+
+## Work-source Jira Data Center boundary (2026-09-13)
+
+WireMock Server/Data Center responses exercise project-scoped legacy search and ticket fetch.
+Capabilities expose polling and comments, but omit label audit and recoverable transitions.
+The existing identity adapter cannot confirm Cloud accountIds on this deployment; no DC username,
+user key or display-name fallback is invented. Thus polling can retain an unattributed work item
+but cannot select a profile. This is an explicit unsupported attribution path, not Cloud parity.
+No real Data Center version or token was measured. A versioned complete changelog contract,
+stable person lookup and live write/recovery evidence are required to expand these capabilities.
 
 ## Work-item process recovery and execution boundary (2026-09-13)
 
 Slice 5 rebuilds a fresh store instance from the real encrypted event log, verifies no tracker
 content in the projection, and injects a PostgreSQL projection failure after event append. The
 separate-transaction mutant leaves an event behind and fails the rollback assertion. This is
-automated persistence/transaction evidence, not a live orchestrator restart with an admitted
-ticket. That live restart, multi-page downtime recovery and uncertain tracker writes still need
-their later-slice proofs. A large or slow scan page may exceed the 30-second sweep budget; its
-cursor does not advance. Slice 6 must make sustained backlog progress independently of page size.
+automated persistence/transaction evidence. Slice 6 additionally launches the packaged orchestrator
+in separate JVMs against isolated test PostgreSQL/Kafka and a WireMock GitHub tracker, forcibly kills it
+between pages and mid-page, and resumes from durable coordinates. Both tests assert two items,
+one history entry each, no skipped coordinate and no re-fetch of the committed page/item. This
+is an actual process-kill proof on a test stack, not a dev-stack restart or a live forge measurement.
+Candidate reconciliation and checkpoint removal share one transaction. A sweep processes at most
+ten coordinates and stops at a committed boundary after its 20-second loop deadline; an in-flight
+observation has its own 20-second bound. Listing is separately bounded to 20 seconds. No global
+20/30-second sweep duration is claimed. Live tracker deletion/reordering during pagination remains
+unproven; scheduled full rescans provide eventual revisitation, not a remote snapshot guarantee.
 
 The first item waits for a specification. Full caps/gates are slice 7, explicit manual artifact
 handoff and the existing single-task build boundary are slice 8, and generated specification,

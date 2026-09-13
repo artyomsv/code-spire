@@ -43,6 +43,7 @@ public class GitLabWebhookResource {
     @POST
     public Response receive(@PathParam("key") String key, @Context HttpHeaders headers, byte[] body) {
         IngressFactory ingress = secret -> new GitLabIngress(secret, mapper, COMMANDS, reviewDrafts);
-        return edge.handle(PROVIDER, key, ingress, headers, body);
+        return edge.handle(PROVIDER, key, ingress,
+                secret -> new dev.codespire.worksource.gitlab.GitLabWorkIngress(secret, mapper), headers, body);
     }
 }

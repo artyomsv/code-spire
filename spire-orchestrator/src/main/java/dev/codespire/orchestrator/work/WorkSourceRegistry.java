@@ -19,7 +19,7 @@ public class WorkSourceRegistry {
 
     public record Version(long source, long repository, long account) {}
     public record Source(UUID id, String name, WorkSourceType type, String origin, String projectId, String scope,
-                         UUID repositoryId, UUID accountId, boolean enabled, Version version, String cursor,
+                         UUID repositoryId, UUID accountId, boolean enabled, boolean configuredEnabled, Version version, String cursor,
                          String health, ScmType scm, String forgeOrigin, RepoRef repository, Set<String> allowedActors) {
         public Source { allowedActors = Set.copyOf(allowedActors); }
     }
@@ -44,7 +44,7 @@ public class WorkSourceRegistry {
                 if (!rs.next()) return Optional.empty();
                 return Optional.of(new Source(id, rs.getString("name"), WorkSourceType.valueOf(rs.getString("type")),
                         rs.getString("origin"), rs.getString("external_project_id"), rs.getString("external_scope"),
-                        rs.getObject("repository_id", UUID.class), rs.getObject("account_id", UUID.class), rs.getBoolean("usable"),
+                        rs.getObject("repository_id", UUID.class), rs.getObject("account_id", UUID.class), rs.getBoolean("usable"), rs.getBoolean("enabled"),
                         new Version(rs.getLong("revision"), rs.getLong("repository_revision"), rs.getLong("account_revision")),
                         rs.getString("scan_cursor"), rs.getString("health"), ScmType.fromProviderType(rs.getString("scm_type")).orElseThrow(),
                         rs.getString("forge_origin"), new RepoRef(rs.getString("workspace"), rs.getString("slug")), actors(c, id)));

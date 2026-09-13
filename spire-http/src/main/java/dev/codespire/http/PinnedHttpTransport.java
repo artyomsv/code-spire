@@ -128,6 +128,11 @@ final class PinnedHttpTransport {
         return parse(response(method, path, true, true, json).body());
     }
 
+    void writeNoContent(String method, String path, String json) {
+        HttpResponse<String> result = response(method, path, false, true, json);
+        if (result.statusCode() != 204) throw failures.create(result.statusCode(), method, path, "expected 204 acknowledgement");
+    }
+
     private HttpResponse<String> response(String method, String path, boolean requireJsonShape,
                                           boolean originRequired, String json) {
         int maxBytes = requireJsonShape ? UNBOUNDED : MAX_RAW_BYTES;

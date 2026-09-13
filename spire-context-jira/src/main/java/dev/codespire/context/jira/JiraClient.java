@@ -3,11 +3,7 @@ package dev.codespire.context.jira;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.http.PinnedJsonClient;
-import dev.codespire.http.PinnedJsonConfig;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Map;
 
 /**
  * Thin read-only HTTP layer over the Jira REST API (v2 — its {@code description} comes back as a
@@ -23,12 +19,11 @@ public class JiraClient {
     private final PinnedJsonClient http;
 
     public JiraClient(JiraConfig config, ObjectMapper mapper) {
-        this.http = new PinnedJsonClient(
-                new PinnedJsonConfig("Jira API", config.baseUrl(), authHeader(config),
-                        Map.of("Accept", "application/json"),
-                        "Check the base URL is the Jira site root and the token has REST API access."),
-                mapper, JiraApiException::new);
+        this.http = JiraApiConnection.reader(config, mapper);
     }
+
+    /** Strict origin-pinned reads with the headers needed for complete audit pagination. */
+    public dev.codespire.http.PinnedJsonResponse getEvidence(String path) { return http.getIdentityResponse(path); }
 
     public JsonNode getJson(String path) {
         return http.getJson(path);
@@ -36,11 +31,4 @@ public class JiraClient {
 
     public JsonNode getIdentityJson(String path) { return http.getIdentityJson(path); }
 
-    private static String authHeader(JiraConfig config) {
-        if ("bearer".equals(config.authKind())) {
-            return "Bearer " + config.secret();
-        }
-        String raw = config.username() + ":" + config.secret();
-        return "Basic " + Base64.getEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
-    }
 }

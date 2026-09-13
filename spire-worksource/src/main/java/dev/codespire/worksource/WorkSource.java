@@ -7,6 +7,7 @@ public interface WorkSource {
     enum Capability { CANDIDATES, LABEL_AUDIT, COMMENT, TRANSITION }
 
     Set<Capability> capabilities();
+    default String capabilityDetail() { return "Consult the selected source's supported operations."; }
     WorkPage<WorkIssueLocation> candidates(String cursor);
     Fetch fetch(WorkIssueLocation issue);
     WorkPage<LabelEvent> labelEvents(WorkIssueLocation issue, String cursor);
@@ -14,6 +15,14 @@ public interface WorkSource {
     /** Writes use a distinct facade from the context provider's read-only interface. */
     String comment(WorkIssueLocation issue, String text, String effectId);
     void transition(WorkIssueLocation issue, String transitionId, String effectId);
+
+    /** Read-only recovery after an uncertain write. Absence never authorizes an automatic resend. */
+    default String findComment(WorkIssueLocation issue, String text, String effectId) {
+        throw new WorkSourceException("Comment recovery is unavailable");
+    }
+    default boolean transitionApplied(WorkIssueLocation issue, String transitionId, String effectId) {
+        throw new WorkSourceException("Transition recovery is unavailable");
+    }
 
     sealed interface Fetch {
         record Found(WorkTicket ticket) implements Fetch {}

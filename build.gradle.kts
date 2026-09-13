@@ -217,6 +217,8 @@ val fastTestModules = listOf(
     "spire-workspace",
     "spire-worksource",
     "spire-worksource-github",
+    "spire-worksource-jira",
+    "spire-worksource-gitlab",
     "spire-runtime",
 )
 

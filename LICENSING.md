@@ -28,6 +28,8 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-llm` | Apache-2.0 | Reference LLM provider. |
 | `spire-worksource` | Apache-2.0 | The tracker work-source SPI and transient evidence types. |
 | `spire-worksource-github` | Apache-2.0 | Reference GitHub issue work source and signed control-fact ingress. |
+| `spire-worksource-jira` | Apache-2.0 | Reference Jira ticket work source with separate write facade. |
+| `spire-worksource-gitlab` | Apache-2.0 | Reference GitLab ticket work source with separate write facade. |
 | `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-030). |
 | `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
 | `spire-secrets` | Apache-2.0 | One credential scrubber, for every process that writes a failure message a human reads. JDK-only ON PURPOSE: the run worker must not inherit a git library to obtain it. |

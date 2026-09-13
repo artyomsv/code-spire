@@ -390,26 +390,27 @@ source settings UI, source capability docs.
 **Produces:** same source contract for three trackers, resumable polling and idempotent comment/
 transition effects, with unsupported audit/approval channels visible.
 
-- [ ] Write `GitLabWorkSourceTest.reconstructsCurrentLabelApplierAcrossPages`,
+- [x] Write `GitLabWorkSourceTest.reconstructsCurrentLabelApplierAcrossPages`,
   `JiraWorkSourceTest.attributesOnlyTheActualAddedLabel`,
   `WorkSourceRecoveryIT.backfillWithoutAuditRemainsUnattributed`,
   `WorkSourceRecoveryIT.removeThenReaddCannotReuseAnOldAllowedActor`,
-  `WorkSourceRecoveryIT.restartResumesAfterCommittedCursor`.
-- [ ] Implement candidate/read/comment/transition/label-event operations and supported capability
+  `WorkSourceProcessRecoveryIT.restartResumesAfterCommittedCursor` and
+  `WorkSourceProcessRecoveryIT.restartResumesInsideAStagedPageWithoutRefetchingIt`.
+- [x] Implement candidate/read/comment/transition/label-event operations and supported capability
   reports for each adapter. Validate real Jira transition ids rather than treating arbitrary
   status names as commands. Respect origin/auth compatibility and source account disable/rotation.
-- [ ] Add authenticated tracker webhook normalization with source-bound project checks. If the
+- [x] Add authenticated tracker webhook normalization with source-bound project checks. If the
   deployed Jira hook cannot be authenticated using a supported mechanism, support polling and
   report the webhook limitation. Never accept an unverified hook just because its URL has a key.
-- [ ] Reconcile current label set with additions/removals and stable event ordering; exhaust required
+- [x] Reconcile current label set with additions/removals and stable event ordering; exhaust required
   history pages or return unknown. No actor fallback to issue reporter/editor. Commit scan cursors
   with reconciliation and cap each sweep; retries cannot duplicate items or lose pages.
-- [ ] Implement source comments/transitions through outbox effects with deterministic markers and
+- [x] Implement source comments/transitions through outbox effects with deterministic markers and
   uncertain-write handling. `WorkSourceEffectsTest.retryFindsThePreviouslyWrittenComment` must
   observe a successful remote write followed by a client timeout before retry.
-- [ ] Kill audit-completeness, remove/re-add and source-scope guards in targeted tests. Test credential
+- [x] Kill audit-completeness, remove/re-add and source-scope guards in targeted tests. Test credential
   errors as health failures, not issue deletions. Show the supported operations on source settings.
-- [ ] Run all three arm suites plus service recovery tests sequentially; record which token families/
+- [x] Run all three arm suites plus service recovery tests sequentially; record which token families/
   webhook variants have only documentation/WireMock evidence, and commit the parity slice.
 
 ## Slice 7 — re-resolve policy and persist dashboard approvals

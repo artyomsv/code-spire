@@ -239,15 +239,23 @@ images, two credentials, no overlap.
 
 **Purpose.** Read a tracker as a work queue and write back to it.
 
-**Owns (M3 slice 5).** `WorkSource`, `WorkSourceType`, nested capability/fetch/write result
+**Owns (M3 slices 5–6).** `WorkSource`, `WorkSourceType`, nested capability/fetch/write result
 records, `WorkIssueRef`, `WorkIssueLocation`, `WorkTicket`, `WorkPage`, `LabelEvent`,
 `CurrentLabel`, `LabelReconciler`, `WorkSourceIngress` and `WorkSourceSignal`. The SPI is
 JDK-only and Apache-2.0; build purity checks reject framework imports. `WorkTicket` is transient
 tracker content. Durable workflow events and the pure lifecycle/policy are in `spire-contract`.
 
-`spire-worksource-github` is the first Apache-2.0 reference arm. GitLab and Jira follow in slice 6.
-GitHub context and work reads share `GitHubApiConnection`; the distinct `PinnedJsonWriter`
-shares the pinned transport and authentication without granting writes to the context interface.
+`spire-worksource-github`, `spire-worksource-gitlab` and `spire-worksource-jira` are Apache-2.0
+reference arms. Each reuses its existing context client and API connection configuration; the
+distinct `PinnedJsonWriter` shares pinned transport and authentication without granting writes
+to the context interface. `WorkEffectMarker` binds comment recovery to one opaque effect identity.
+Read-only `findComment` and `transitionApplied` inspect an uncertain outcome without resending it.
+
+The orchestrator owns durable coordinate pages and the encrypted tracker outbox. Admission and
+candidate removal commit together; scan progress survives process death inside a page. Tracker
+effects claim `uncertain` before HTTP and re-read current policy before a pending write. Recovery
+can confirm an outcome or retain uncertainty; absent evidence never authorizes another send.
+Work-source settings select accounts, repositories and confirmed people and report capabilities.
 
 **Relationship to `spire-context-*`.** The context modules already hold credentials for Jira,
 Confluence, GitHub Issues and GitLab Issues and already speak those APIs through the SSRF-guarded
@@ -255,9 +263,11 @@ Confluence, GitHub Issues and GitLab Issues and already speak those APIs through
 transport**: a context provider reads an issue as context; a work source also claims, comments and
 transitions it. That distinction is what makes Knowledge and Build separate product packs.
 
-**Capability flags matter here.** Jira has transitions and a workflow; GitHub Issues has labels and
-state; GitLab has both plus epics. The domain reads capabilities and degrades, rather than assuming
-a workflow exists.
+**Capability flags matter here.** GitHub and GitLab expose issue audit, comments and state changes.
+Jira Cloud exposes complete changelog reads and real workflow transition IDs. The Data Center arm
+exposes polling and comments while attribution and recoverable transitions remain unavailable.
+Jira uses polling; GitHub and GitLab also normalize authenticated issue webhooks. These are
+implemented operation sets, not permission grants. Per-forge live gaps are in `docs/UNVERIFIED.md`.
 
 ---
 

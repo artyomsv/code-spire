@@ -24,6 +24,7 @@ dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
     implementation(project(":spire-worksource-github"))
+    implementation(project(":spire-worksource-gitlab"))
     implementation(project(":spire-scm-bitbucket"))
     implementation(project(":spire-scm-github"))
     implementation(project(":spire-scm-gitlab"))

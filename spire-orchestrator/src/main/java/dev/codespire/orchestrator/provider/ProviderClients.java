@@ -103,7 +103,12 @@ public class ProviderClients {
             case GITHUB -> new dev.codespire.worksource.github.GitHubWorkSource(
                     new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
                     mapper, projectId, scope);
-            case GITLAB, JIRA -> throw new IllegalArgumentException("This work-source adapter is not installed");
+            case GITLAB -> new dev.codespire.worksource.gitlab.GitLabWorkSource(
+                    new dev.codespire.context.gitlab.GitLabIssueConfig(gitlabSiteBase(account.baseUrl()), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
+            case JIRA -> new dev.codespire.worksource.jira.JiraWorkSource(
+                    new dev.codespire.context.jira.JiraConfig(account.baseUrl(), account.authKind(), account.authUsername(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
         };
     }
 
@@ -112,7 +117,12 @@ public class ProviderClients {
             case GITHUB -> dev.codespire.worksource.github.GitHubWorkSource.resolveScope(
                     new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
                     mapper, scope).projectId();
-            case GITLAB, JIRA -> throw new IllegalArgumentException("This work-source adapter is not installed");
+            case GITLAB -> dev.codespire.worksource.gitlab.GitLabWorkSource.resolveScope(
+                    new dev.codespire.context.gitlab.GitLabIssueConfig(gitlabSiteBase(account.baseUrl()), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
+            case JIRA -> dev.codespire.worksource.jira.JiraWorkSource.resolveScope(
+                    new dev.codespire.context.jira.JiraConfig(account.baseUrl(), account.authKind(), account.authUsername(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
         };
     }
 
@@ -123,7 +133,8 @@ public class ProviderClients {
     public static boolean supportsWorkAccount(dev.codespire.worksource.WorkSourceType type, String accountType, String authKind) {
         return switch (type) {
             case GITHUB -> "github".equals(accountType) && "bearer".equals(authKind);
-            case GITLAB, JIRA -> false;
+            case GITLAB -> "gitlab".equals(accountType) && "bearer".equals(authKind);
+            case JIRA -> "atlassian".equals(accountType) && Set.of("basic", "bearer").contains(authKind);
         };
     }
 
@@ -132,8 +143,16 @@ public class ProviderClients {
         return switch (type) {
             case GITHUB -> "github".equals(scm) && dev.codespire.contract.scm.ForgeOrigin.of(origin).equals(forgeOrigin)
                     && repositoryScope.equals(scope);
-            case GITLAB, JIRA -> false;
+            case GITLAB -> "gitlab".equals(scm) && dev.codespire.contract.scm.ForgeOrigin.of(origin).equals(forgeOrigin)
+                    && repositoryScope.equals(scope);
+            // Jira project -> SCM repository is an explicit operator mapping. Its tracker
+            // credential stays on Jira; requiring the two forge origins to match is incorrect.
+            case JIRA -> scope != null && scope.matches("[A-Z][A-Z0-9_]{1,99}");
         };
+    }
+
+    private static String gitlabSiteBase(String base) {
+        return base.replaceAll("/+$", "").replaceFirst("/api/v4$", "");
     }
 
     private final java.net.http.HttpClient accountHttp = java.net.http.HttpClient.newBuilder()

@@ -1941,3 +1941,26 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   retained assertion; scratch-byte restoration passed. Final full UI: 650/650, no unhandled
   errors, production build passed. The prior full UI run predated the last display additions;
   targeted tests had missed this fixture. Evidence: `.claude/reviews/global/factory-m3-round8.md`.
+
+- **Factory M3 slice 6 — source parity and recovery (PR #153, 2026-09-13).**
+  Round 9 independently accepted the pending-effects teardown correction on d426501c, with
+  650 UI tests and the retained mutation-verified route wrapper assertion. Criteria 3, 5, 6
+  and 7 remain four of seven. GitLab and Jira now share the work-source contract through the
+  existing pinned context transports and separate writers. GitLab has authenticated issue hooks;
+  Jira polls, binds actual Cloud accountIds and refuses unsupported Data Center attribution.
+  Both new arms separately prove unlisted and unattributed labels grant nothing, with the
+  unattributed hint deliberately passing membership. Source settings expose explicit mapping,
+  resolved actor entry, enablement, rescans and measured capabilities.
+  V65 stages coordinates and commits each reconciliation with its checkpoint. Actual packaged
+  JVMs are killed between pages and mid-page; restart admits each item exactly once without
+  rereading completed coordinates. V66 encrypts tracker effects separately from Kafka outbox
+  events. It commits uncertainty before HTTP, checks current policy/local revisions and never
+  blindly resends. A successful remote POST followed by client timeout recovers through its
+  marker with exactly one POST. A second connection observes the durable claim during HTTP.
+  Mutation work exposed a Jira offset fixture whose second inconsistent completion field
+  masked its guard; every other completion fact now agrees. An explicit Java-test Semgrep
+  scan exposed a computed ProcessBuilder executable; literal java plus the Gradle-selected
+  toolchain PATH removed the pattern without a suppression. 3545 Java tests, 675 UI tests,
+  packaging and pinned Semgrep passed. 142 checks cover 140 distinct production mutations.
+  No dev database, backup, live tracker write or run worker was used. Per-arm live forge/token
+  limits and the exact TEST cleanup remain explicit in UNVERIFIED and the slice review notes.

@@ -77,14 +77,17 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–5 (PR #153) add repository ownership, explicit role bindings,
-  resolved person entry, effective /fix push authorization and durable GitHub ticket intake.**
+  (`docs/UNVERIFIED.md`). **M3 slices 1–6 (PR #153) add repository ownership, explicit role bindings,
+  resolved person entry, effective /fix push authorization and durable GitHub/GitLab/Jira ticket intake.**
   Criteria 7, 6, 5 and 3 are independently verified, including the separate
   membership and attribution proofs accepted in round 8. /fix permission reads hold no database transaction across
   the network: short revision snapshots detect rotation and rebinding. Work sources own their
   actor allowlists; incomplete attribution selects nothing. Workflow history and Work items
-  persist bookkeeping, with tracker content fetched separately. Source parity, full policy gates
-  and artifact/build handoff follow in slices 6–8.
+  persist bookkeeping, with tracker content fetched separately. Source settings expose actor entry
+  and capabilities. Coordinate checkpoints survive actual process death between and within pages;
+  encrypted tracker effects commit uncertainty before HTTP and recover by reading evidence.
+  GitLab hooks and Jira polling have per-arm measured limits. Full policy gates and artifact/build
+  handoff follow in slices 7–8.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -99,13 +102,15 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3371 Java tests across 393 suites and 28 modules,
+- **Measured, not estimated (2026-09-13):** 3545 Java tests across 407 suites and 30 modules,
   zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
-  packaging passed sequentially. After the round 8 route-fixture correction, the final full UI suite passed 650 tests
-  and the production build; all 35 route cases also passed in three shuffled orders. Slice 5 has 154 mutation checks covering
-  153 distinct production changes and clean pinned Semgrep scans. Exact evidence is in
-  .claude/reviews/global/factory-m3-slice5.md. Criteria 3, 5, 6 and 7 are independently verified. Live tracker/token and later execution gaps remain in UNVERIFIED.
-  No live run worker was started.
+  packaging passed sequentially, including both actual scanner JVM kill/restart cases. The full UI
+  suite passed 675 tests across 81 files and the production build; all 37 route cases passed in
+  three shuffled orders. Slice 6 has 142 mutation checks covering 140 distinct production changes.
+  Pinned Semgrep found no findings; an explicit scan of all 56 changed code/test files also had
+  zero parser errors. Exact evidence is in .claude/reviews/global/factory-m3-slice6.md.
+  Criteria 3, 5, 6 and 7 remain independently verified. Live tracker/token and later execution
+  gaps remain in UNVERIFIED. No live run worker was started.
 
 ## Build & run
 

@@ -41,6 +41,10 @@ class WorkSourceScannerTest extends WorkFixture {
         assertFalse(scan.get(10, TimeUnit.SECONDS));
         assertNull(sources.get(source).orElseThrow().cursor());
     }
+    @Test void anEmptyPageCannotCommitAfterDisablement() throws Exception {
+        FutureTask<Boolean> scan=delayedEmptyPage();execute("UPDATE work_source SET enabled=false WHERE id=?",source);
+        assertFalse(scan.get(10,TimeUnit.SECONDS));assertNull(sources.get(source).orElseThrow().cursor());
+    }
 
     @Test void unavailableCandidatesPreserveTheCursorAndRecordHealth() {
         forge.stubFor(get(urlPathEqualTo("/repos/" + scope + "/issues")).willReturn(aResponse().withStatus(403)));

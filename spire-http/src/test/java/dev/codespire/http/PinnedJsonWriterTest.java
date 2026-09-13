@@ -45,6 +45,18 @@ class PinnedJsonWriterTest {
         assertThrows(IllegalStateException.class, () -> writer.post("/TEST-start", null));
         api.verify(0, postRequestedFor(urlEqualTo("/TEST-destination")));
     }
+    @Test void noContentWriteRequiresExactly204() {
+        api.stubFor(post(urlEqualTo("/TEST-transition")).willReturn(aResponse().withStatus(204)));
+        assertDoesNotThrow(() -> writer.postNoContent("/TEST-transition", "{}"));
+        api.stubFor(post(urlEqualTo("/TEST-transition")).willReturn(okJson("{}")));
+        assertThrows(IllegalStateException.class, () -> writer.postNoContent("/TEST-transition", "{}"));
+    }
+    @Test void noContentWriteCannotFollowARedirect() {
+        api.stubFor(post(urlEqualTo("/TEST-transition")).willReturn(aResponse().withStatus(307).withHeader("Location", "/TEST-destination")));
+        api.stubFor(post(urlEqualTo("/TEST-destination")).willReturn(aResponse().withStatus(204)));
+        assertThrows(IllegalStateException.class, () -> writer.postNoContent("/TEST-transition", "{}"));
+        api.verify(0, postRequestedFor(urlEqualTo("/TEST-destination")));
+    }
     @Test void evidenceReadsKeepPaginationHeaders() {
         api.stubFor(get(urlEqualTo("/TEST-evidence")).willReturn(okJson("[]").withHeader("Link", "</TEST-evidence?page=2>; rel=\"next\"")));
         PinnedJsonResponse response = reader.getIdentityResponse("/TEST-evidence");
