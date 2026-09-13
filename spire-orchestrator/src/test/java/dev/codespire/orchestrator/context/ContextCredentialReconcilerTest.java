@@ -163,9 +163,9 @@ class ContextCredentialReconcilerTest {
         assertThrows(SQLException.class, () -> execute("UPDATE context_provider SET auth_secret = NULL WHERE id = ?", source));
         assertEquals(1, reconciler.reconcile());
         assertThrows(SQLException.class, () -> execute("UPDATE context_provider SET auth_secret = 'extra' WHERE id = ?", source));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET workspace = 'illegal' WHERE id = ?", account(source)));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'REVIEWER' WHERE id = ?", account(source)));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'FACTORY' WHERE id = ?", account(source)));
+        execute("UPDATE scm_provider SET workspace = 'TEST-retained-rollback-evidence' WHERE id = ?", account(source));
+        assertEquals("TEST-retained-rollback-evidence", value("SELECT workspace FROM scm_provider WHERE id = ?", account(source)));
+        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'TEST-UNKNOWN' WHERE id = ?", account(source)));
     }
 
     private UUID legacy(String type, String url, String secret) throws Exception {

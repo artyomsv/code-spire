@@ -1,6 +1,6 @@
 # Data Model
 
-## M3 slice 1 expansion (ADR-042)
+## M3 repository ownership (ADR-042, slices 1–2)
 
 V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)
 with unique `(scm_type, forge_origin, workspace, slug)`, and `repository_account` with a repository
@@ -18,7 +18,21 @@ enqueue create/change/delete metadata atomically, including a bootstrap row for 
 registration. The outbox stores a global monotonic revision, registration id, JSON and `sent_at`;
 it contains neither `webhook_key` nor `webhook_secret`. Account/context ciphertext and UUID/AAD
 are unchanged. The gateway API accepts/returns an optional canonical `forgeOrigin`; old clients
-that omit it on update preserve the recorded origin. No old key or column is removed in this slice.
+that omit it on update preserve the recorded origin.
+
+Gateway V4 adds repository UUID, event kind, optional work-source UUID and current revision.
+UNIQUE(repository_id,event_kind) enforces one hook per kind through the real registry; a partial
+legacy index retains scoped uniqueness for registrations awaiting explicit association. Revision
+triggers include these metadata fields. Existing webhook keys, encrypted secrets and rejection
+counters are unchanged. ISSUE is a reserved source-bound kind, not an SCM review route.
+
+Orchestrator V61 drops the former account (type,workspace,role) UNIQUE and workspace-by-role
+CHECK while retaining scalar role checks and the populated scm_provider.workspace column.
+Account DTOs and runtime SELECTs do not read that retained column. New account inserts leave it
+null. repository_unregistered_event records verified but unregistered deliveries without payload
+or secrets, coalesced by registration and full repository identity; its Attention action prefills
+registration. Review dispatch requires review_status.repository_id; factory_run.repository_id
+is written atomically with queueing. Unmapped legacy rows remain readable but cannot dispatch.
 
 > Defines the actual data: (1) the **domain value types** that flow through events & ports, and (2) the
 > **persistence model** — the event store (the versioned source of truth), the blob store, and the
@@ -213,9 +227,9 @@ Operational state (not projections — ADR-013 guards):
 ### Machine accounts and context sources (V59, ADR-041)
 
 `scm_provider` owns machine credentials for GitHub, GitLab, Bitbucket Cloud and Atlassian.
-`role` is non-null (`REVIEWER | FACTORY | CONTEXT`); `workspace` is NULL exactly for CONTEXT.
-The existing `(type, workspace, role)` uniqueness still limits forge workspace roles to one
-account; PostgreSQL's distinct NULLs permit multiple context accounts, including Atlassian.
+`role` is non-null (`REVIEWER | FACTORY | CONTEXT`). V61 removes the former workspace-by-role
+constraint and `(type,workspace,role)` uniqueness; repositories explicitly select accounts.
+The populated legacy workspace column is retained without runtime use until slice 10.
 `reported_scopes TEXT NULL` distinguishes unknown from an empty report; `scopes_checked_at
 TIMESTAMPTZ NULL` records the last completed registration/Check scope observation. Failed probes
 preserve both values; they do not replace a prior report with NULL. Both are advisory metadata.

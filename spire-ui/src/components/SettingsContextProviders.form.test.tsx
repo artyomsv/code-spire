@@ -5,7 +5,7 @@ import SettingsContextProviders from './SettingsContextProviders';
 import * as api from '../api';
 
 const account = (id: string, type: string, enabled = true): api.ProviderView => ({
-  id, name: id, type, enabled, baseUrl: 'https://source.example.test', workspace: null,
+  id, name: id, type, enabled, baseUrl: 'https://source.example.test',
   authKind: 'bearer', authUsername: null, hasSecret: true, botAccountId: 'bot', botUsername: null,
   authors: [], conversationLevel: null, role: 'CONTEXT', createdAt: '', lastCheckAt: null,
   lastCheckOk: null, lastCheckError: null,

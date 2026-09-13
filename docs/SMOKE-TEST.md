@@ -1,6 +1,6 @@
 # Smoke Test Runbook
 
-## M3 slice 1 registry upgrade
+## M3 repository cutover upgrade (slices 1–2)
 
 Before rebuilding dev, follow slice 1 in
 [`2026-09-12-factory-m3-work-items.md`](superpowers/plans/2026-09-12-factory-m3-work-items.md).
@@ -20,13 +20,32 @@ records in the existing DLQ screen and replay after fixing the reported cause.
 Open Settings → Repositories → Registered repositories and accounts. Confirm the real workspace,
 forge origin and explicit reviewer/factory selections. Pending mappings name the registration and
 target; verify the host, register the matching repository if needed, then explicitly link it.
-No pipeline routing changes occur in slice 1. Do not invent accounts or runs in this live stack to
+Slice 2 switches pipeline routing to explicit repository bindings. Do not invent accounts or runs in this live stack to
 test registration: `RepositoryResourceTest` exercises the real HTTP API in Dev Services.
 
 The migration tests upgrade populated private schemas and prove ciphertext/UUID/reference/key
 preservation. Broker tests separately exercise the gateway publisher and orchestrator consumer;
 they do not claim a live multi-service rollout. The production account workspace remains populated
 through slice 2 as rollback evidence and is removed only in slice 10.
+
+For slice 2, provision `cs.repository-integration` and `cs.repository-activity` with their ACLs
+alongside the metadata topic. Rebuild **gateway first**, then orchestrator, then UI, using the
+same Compose overlays and `--build --no-deps`. New gateway deliveries wait on the new topic
+until the upgraded orchestrator consumes them. Raw old-topic SCM messages enter the DLQ with
+a provenance reason; redeliver through their verified registration after repair.
+
+Accounts no longer have workspace. Register the repository's kind, canonical forge origin,
+workspace and slug, then select REVIEWER and FACTORY accounts on that repository. Save the UUID
+returned by `/api/repositories`; manual registration without a URL and `POST /api/runs` require
+`repositoryId`. Hooks are optional. A repository has one hook per event kind; the existing
+REVIEWER key and secret survive upgrade. Pending gateway registration repair updates that
+retained registration's origin and repository association; history-only repair stays in the
+orchestrator. Confirm the real origin before selecting it. An unknown origin cannot route.
+
+After rebuilding, compare `.handoff/m3-real-credentials.bin` using the existing probe and compare
+`.handoff/m3-real-webhooks.bin` with `-Scope Webhooks`. Assert counts 6/37/85/14/3 for accounts,
+reviews, findings, runs and hooks, plus unchanged retained workspaces and hook rejection metadata.
+No run worker is needed for this slice; the live run proof waits until slice 8b.
 
 **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
@@ -58,7 +77,10 @@ docker ps --filter name=spire   # both should show (healthy)
 ```
 
 Open **http://localhost:34080**, flip the **Review-mode** slider in the sidebar to **active**
-(a fresh DB seeds to *observe*), then press **Simulate PR**.
+(a fresh DB seeds to *observe*). On this disposable stub stack, register a `TEST-` reviewer account
+and repository with a workspace beginning `TEST-`, and bind that reviewer. Then call
+`POST /dev/simulate-pr?repositoryId=<registered-test-repository-uuid>`. The simulator refuses
+real SCM mode, an absent repository UUID and namespaces without that test prefix.
 
 **Expected:** the timeline animates through
 `PullRequestEventReceived -> ReviewRequested -> FetchDiff -> DiffFetched -> GatherContext ->
@@ -218,13 +240,14 @@ summary comments — but the PR is registered manually through the dashboard ins
 arriving on a webhook. Works for any registered provider (used here with GitHub).
 
 **Gateway is not needed** — the orchestrator's `POST /api/reviews/register` publishes the
-same `PullRequestEventReceived` the gateway webhook would, onto the same `cs.integration`
+same `PullRequestEventReceived` in a provenance envelope, onto `cs.repository-integration`
 topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
 
 ### 1. One-time prerequisites
 
-1. Register a **GitHub account** in Settings → Accounts (role Reviewer; workspace = repo owner, e.g.
-   `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
+1. Register a **GitHub account** in Settings → Accounts (role Reviewer) with a token scoped
+   **Contents: Read** + **Pull requests: Read and write**. Register the repository separately with
+   forge origin `https://api.github.com`, workspace = repo owner and its slug, then select that account.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
 2. In Settings → LLM (ADR-018): first **add a model** (e.g. name `gpt-4o`, input `$2.50` / output
    `$10.00` per 1M tokens — from OpenAI's pricing page), then register an **LLM provider**: type
@@ -260,7 +283,7 @@ nothing to anchor inline comments to — the summary still posts). Then either:
   ```bash
   curl -s -X POST http://localhost:34080/api/reviews/register \
     -H 'Content-Type: application/json' \
-    -d '{"workspace":"<owner>","slug":"<repo>","pr":<number>}'
+    -d '{"repositoryId":"<registered-repository-uuid>","pr":<number>}'
   # → {"reviewId":"review::<owner>/<repo>#<number>", ...}
   ```
 
@@ -1678,13 +1701,13 @@ against a forge, authenticated as a machine account.
 
    ```bash
    curl -sS -X POST http://localhost:34080/api/providers -H 'content-type: application/json' -d '{
-     "name":"factory-bot","type":"github","baseUrl":"https://api.github.com","workspace":"<owner>",
+     "name":"factory-bot","type":"github","baseUrl":"https://api.github.com",
      "authKind":"bearer","secret":"<machine-account token>","enabled":true,"authors":[],
      "botUsername":"<machine-account login>","role":"FACTORY"}'
    ```
 
-   A workspace may hold a `REVIEWER` row and a `FACTORY` row side by side; the role is part of every
-   lookup's key, so neither path can be handed the other's token.
+   Select that account in the registered repository's FACTORY slot. The REVIEWER and FACTORY
+   bindings are independent, so neither dispatch path can be handed the other's token.
 
 5. **The harness credential pool.** The run's model key comes from the factory's OWN pool, never
    from the LLM provider registry the reviewer uses. There is no fallback: with an empty pool the
@@ -1724,7 +1747,7 @@ against a forge, authenticated as a machine account.
 
    ```bash
    curl -sS -X POST http://localhost:34080/api/runs -H 'content-type: application/json' -d '{
-     "workspace":"<owner>","slug":"<repo>","providerType":"github","baseCommit":"<head sha>",
+     "repositoryId":"<registered-repository-uuid>","baseCommit":"<head sha>",
      "subject":"m0-ordinary","harness":"codex","model":"gpt-5.6",
      "prompt":"Add a file NOTES.md containing one line: hello from the factory. Commit it."}'
    ```

@@ -24,8 +24,10 @@ class DevCredentialContinuity {
     }
 
     private static void compareOrCapture(String[] args) throws Exception {
-        EncryptionService encryption = new EncryptionService(System.getenv("SPIRE_ENCRYPTION_KEYSET"));
-        Properties current = read(encryption);
+        boolean webhooks = args.length > 2 && "Webhooks".equals(args[2]);
+        EncryptionService encryption = new EncryptionService(System.getenv(webhooks
+                ? "SPIRE_ENCRYPTION_WEBHOOK_KEYSET" : "SPIRE_ENCRYPTION_KEYSET"));
+        Properties current = webhooks ? readWebhooks(encryption) : read(encryption);
         Path file = Path.of(args[1]);
         if ("Capture".equals(args[0])) {
             if (Files.exists(file)) throw new IllegalStateException("Baseline already exists");
@@ -78,6 +80,28 @@ class DevCredentialContinuity {
             connection.commit();
         }
         if (entries.isEmpty()) throw new IllegalStateException("An empty database is not continuity proof");
+        return entries;
+    }
+
+    private static Properties readWebhooks(EncryptionService encryption) throws Exception {
+        String url = "jdbc:postgresql://localhost:" + System.getenv().getOrDefault("POSTGRES_PORT", "34432")
+                + "/" + System.getenv("POSTGRES_DB");
+        Properties entries = new Properties();
+        try (Connection connection = DriverManager.getConnection(url, System.getenv("POSTGRES_USER"), System.getenv("POSTGRES_PASSWORD"))) {
+            connection.setReadOnly(true);
+            try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+                    "SELECT id,webhook_key,webhook_secret,provider_type,scope,target FROM gateway.webhook_repo ORDER BY id")) {
+                while (rows.next()) {
+                    String id = rows.getString("id");
+                    String ciphertext = rows.getString("webhook_secret");
+                    entries.setProperty("hook-key:" + id, rows.getString("webhook_key"));
+                    entries.setProperty("hook-ciphertext:" + id, ciphertext);
+                    entries.setProperty("hook-secret:" + id, encryption.decryptString(ciphertext, "webhook:" + id));
+                    entries.setProperty("hook-scope:" + id, rows.getString("provider_type") + ":" + rows.getString("scope") + ":" + rows.getString("target"));
+                }
+            }
+        }
+        if (entries.isEmpty()) throw new IllegalStateException("Empty hook inventory is not proof");
         return entries;
     }
 }

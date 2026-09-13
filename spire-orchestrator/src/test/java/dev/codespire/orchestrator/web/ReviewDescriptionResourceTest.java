@@ -38,6 +38,9 @@ class ReviewDescriptionResourceTest {
 
     @Inject
     ProviderRegistry providerRegistry;
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    @Inject dev.codespire.orchestrator.readmodel.ReviewProjection reviews;
+    private java.util.UUID repositoryId;
 
     private static WireMockServer scm; // stands in for the SCM; baseUrl points here
     private static boolean providerRegistered; // scm_provider has a unique (type, workspace) constraint
@@ -67,6 +70,9 @@ class ReviewDescriptionResourceTest {
     void stopScmAndDeleteAcmeProvider() {
         scm.stop();
         if (acmeProviderId != null) {
+            var repo = repositories.get(repositoryId).orElseThrow();
+            repositories.update(repo.id(), repo.revision(), new dev.codespire.orchestrator.repository.RepositoryInput(
+                    repo.scmType(), repo.forgeOrigin(), repo.workspace(), repo.slug(), true, null, null));
             providerRegistry.delete(UUID.fromString(acmeProviderId));
         }
     }
@@ -83,7 +89,6 @@ class ReviewDescriptionResourceTest {
         body.put("name", "Acme");
         body.put("type", "bitbucket-cloud");
         body.put("baseUrl", scm.baseUrl());
-        body.put("workspace", "acme");
         body.put("authKind", "bearer");
         body.put("secret", "tok-abc");
         body.put("enabled", true);
@@ -92,6 +97,12 @@ class ReviewDescriptionResourceTest {
                 .when().post("/api/providers").then().statusCode(201)
                 .extract().path("id");
         providerRegistered = true;
+        repositoryId = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                "bitbucket-cloud", scm.baseUrl(), "acme", "widgets", true, UUID.fromString(acmeProviderId), null)).id();
+        var repo = new dev.codespire.contract.scm.RepoRef("acme", "widgets");
+        for (long pr : new long[]{1, 2}) {
+            reviews.claimRepository(dev.codespire.contract.event.ReviewIds.reviewId(repo, pr), repositoryId, repo, pr);
+        }
     }
 
     @Test

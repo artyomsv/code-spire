@@ -15,13 +15,20 @@ public record WebhookRepoInput(
         String scope,
         String target,
         Boolean enabled,
-        String forgeOrigin) {
+        String forgeOrigin,
+        java.util.UUID repositoryId,
+        dev.codespire.contract.event.RepositoryEventKind eventKind,
+        java.util.UUID sourceId) {
     public WebhookRepoInput {
         if (forgeOrigin != null) forgeOrigin = dev.codespire.contract.scm.ForgeOrigin.of(forgeOrigin);
     }
 
     /** Legacy callers omit origin; updates preserve an origin already supplied by an operator. */
     public WebhookRepoInput(String providerType, String scope, String target, Boolean enabled) {
-        this(providerType, scope, target, enabled, null);
+        this(providerType, scope, target, enabled, null, null, null, null);
+    }
+
+    public WebhookRepoInput(String providerType, String scope, String target, Boolean enabled, String forgeOrigin) {
+        this(providerType, scope, target, enabled, forgeOrigin, null, null, null);
     }
 }

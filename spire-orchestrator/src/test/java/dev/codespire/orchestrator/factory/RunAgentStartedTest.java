@@ -111,7 +111,7 @@ class RunAgentStartedTest {
     private String queuedRun() {
         String runId = "run::github:TEST-agent-start/app:" + UUID.randomUUID() + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL",
-                "main", "TEST-SHA", "spire/test", "TEST-bot", null), null));
+                "main", "TEST-SHA", "spire/test", "TEST-bot", null), null, null));
         return runId;
     }
 

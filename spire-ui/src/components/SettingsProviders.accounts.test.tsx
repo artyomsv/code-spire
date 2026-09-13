@@ -16,7 +16,6 @@ const forge = (over: Partial<api.ProviderView>): api.ProviderView => ({
   name: 'TEST reviewer',
   type: 'github',
   baseUrl: 'https://api.github.com',
-  workspace: 'TEST-acme',
   authKind: 'bearer',
   authUsername: null,
   hasSecret: true,
@@ -48,7 +47,7 @@ describe('SettingsProviders — the Machine accounts list', () => {
   });
 
   it('manages Atlassian accounts here and derives usage and scope text from the account', async () => {
-    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ name: 'Site account', type: 'atlassian', role: 'CONTEXT', workspace: null, usedBy: ['Project tickets', 'Wiki pages'], reportedScopes: null })]);
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ name: 'Site account', type: 'atlassian', role: 'CONTEXT', usedBy: ['Project tickets', 'Wiki pages'], reportedScopes: null })]);
     renderPage();
     const row = await rowNamed('Site account');
     expect(within(row).getByText('Project tickets, Wiki pages')).toBeInTheDocument();
@@ -92,7 +91,7 @@ describe('SettingsProviders — the Machine accounts list', () => {
     expect(within(row).getByText('github')).toBeInTheDocument();
     expect(within(row).getByText('Reviewer')).toBeInTheDocument();
     expect(within(row).getByText('@test-reviewer')).toBeInTheDocument();
-    expect(within(row).getByText('TEST-acme')).toBeInTheDocument();
+    expect(within(row).getByText('api.github.com')).toBeInTheDocument();
     // Policy is one cell: how many ids may command this bot, and how far it converses. The count
     // wears a head-count icon rather than the word "ids", so the sentence is on its tooltip.
     expect(within(row).getByLabelText('2 stable ids may command this bot')).toBeInTheDocument();
@@ -150,7 +149,7 @@ describe('SettingsProviders — the Machine accounts list', () => {
     const row = await rowNamed('TEST reviewer');
     expect(within(row).getByRole('button', { name: 'Copy the base URL' })).toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Copy the identity' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Copy the workspace' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Copy the forge host' })).toBeInTheDocument();
     expect(within(row).getByText('https://api.github.com/very/long/base/url/that/will/not/fit')).toHaveAttribute(
       'title',
       'https://api.github.com/very/long/base/url/that/will/not/fit',

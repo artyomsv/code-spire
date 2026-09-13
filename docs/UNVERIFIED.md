@@ -33,36 +33,36 @@ evidence would settle it**.
 
 ---
 
-## Repository bridge — rollout evidence still needed (ADR-042, 2026-09-13)
+## Repository cutover — boundaries of the proof (ADR-042, 2026-09-13)
 
-- **The resolver cutover is not yet measured.** The reviewed bridge was deployed to the actual dev
-  stack on 2026-09-13: orchestrator V60 mapped all 37 reviews and 14 runs to six repositories with
-  eight role bindings; gateway V3 published and acknowledged its three existing registrations.
-  All three lack origin metadata and remain `registration_origin_unknown` for explicit repair.
-  The read-only continuity probe compared all 9 real credential/reference entries successfully
-  after the bridge migration. The existing `.handoff/spire-dev-pre-m3-2026-09-13.dump` remains the
-  verified backup (182 objects; 492,480 bytes); no second dump was taken. Runtime resolution still
-  uses the legacy path. Slice 2 must compare the same baseline again after its resolver cutover;
-  post-bridge continuity does not establish that later post-condition.
-- **Historical forge origin can be unknowable.** Legacy history and gateway registrations do not
-  always record a host. The bridge uses the immutable legacy account snapshot only when there is
-  one matching origin backed by registration metadata or persisted review URLs; unknown origins,
-  conflicts and missing accounts become attention rows with explicit repair. Runs with no such
-  origin evidence remain pending even when only one legacy workspace account exists.
-  Tests establish that refusal and repair, not which host an old live row actually belonged to.
-  Inspect actual migrated mappings against the operator's known forge origins before cutover.
-- **Native per-forge identity and permission behavior is unchanged in slice 1.** No new remote
-  identity lookup or permission API is introduced here. Each introducing slice must add separate
-  GitHub, GitLab and Bitbucket observations, stating the measured endpoint/token family and host;
-  fixtures are not live evidence. The automated GitLab M2 gap remains a separate entry below.
-
-Repository-origin normalization is local URL interpretation, not an identity API measurement:
-
-| Forge behavior | Measured in this slice | Still needed before relying on a live mapping |
-|---|---|---|
-| GitHub public web URLs map to `https://api.github.com`; self-hosted origins remain unchanged | `RepositoryForgeOriginTest`, public URL and `TEST-forge.example.test` fixtures; no remote call | Inspect the actual account API base and persisted PR URL, particularly custom API proxies. |
-| GitLab web/API path suffixes share the same canonical origin | Nested-namespace PostgreSQL history fixture plus `RepositoryForgeOriginTest`; no live GitLab call | Compare the actual API and web origins on the target installation. |
-| Bitbucket Cloud public web URLs map to `https://api.bitbucket.org` | `RepositoryForgeOriginTest` public URL fixture; no live Bitbucket call | Compare a live persisted PR URL with the selected account API origin. |
+- **Real-row continuity is measured.** Dev was rebuilt gateway first (V4), then orchestrator
+  (V61), then UI. All 9 account/context credential/reference entries and all 12 webhook entries
+  matched their encrypted baselines after cutover. Counts stayed 6 accounts, 37 reviews, 85
+  findings, 14 runs and 3 hooks; retained workspace values and rejection metadata were unchanged.
+  Authenticated serving reads matched all eight selected bindings. This establishes local
+  migration and credential continuity, not successful live forge commands from every entry point.
+- **Three webhook origins remain unconfirmed.** The Bitbucket artyomsv/pr-test, GitHub
+  artyomsv/spire-test and GitLab artyomsv-group/code-review-poc registrations still lack origin
+  metadata. A read-only webhook-settings probe returned 403, 404 and 403 respectively; none
+  establishes the host associated with a retained key. The UI can repair the owning gateway
+  registration after explicit origin selection. Until that confirmation, verified deliveries
+  remain Attention events and cannot dispatch. Matching a namespace alone is insufficient.
+- **The dispatch matrix is observed at the credential boundary.** Its decoys and real database
+  decryption establish repository/role selection for manual, rerun, conversation, prompt, run,
+  fix and proposal entry points. Separate choreography suites test later commands. No live
+  run worker or new spend was used in this slice; slice 8b retains its live proof.
+- **FACTORY and ISSUE consumers are later work.** FACTORY activity is isolated on
+  cs.repository-activity; the later work-item slice consumes it. ISSUE hooks require source
+  metadata and SCM ingress rejects them; native work-source intake is not claimed implemented.
+- **Token validation is not repository permission proof.** Bitbucket account-less validation
+  uses the selected repository's namespace for the existing fallback request. WireMock tests
+  establish same-kind/origin selection and account binding use; a successful workspace listing
+  does not prove access to every repository. The separate reviewer-access check targets the
+  chosen full repository path. Existing per-token-family scope gaps remain below.
+- **Custom forge URL mappings still need installation evidence.** Local tests map GitHub and
+  Bitbucket public web URLs to their API origins and preserve self-hosted origins; GitLab nested
+  namespaces preserve old review IDs and transport AADs. Custom web/API proxies must be checked
+  against the actual installation. No new native permission endpoint behavior is claimed.
 
 ## Accounts normalization — live evidence still needed (ADR-041, 2026-09-12)
 

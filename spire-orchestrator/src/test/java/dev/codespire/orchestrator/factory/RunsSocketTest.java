@@ -182,7 +182,7 @@ class RunsSocketTest {
         var row = new FactoryRunProjection.QueuedRun(runId, "codex", model, "main", "TEST-SHA",
                 "feature/test", "TEST-bot", null);
         if (fix) row = row.asFixFor("review::TEST-live/app#42", "TEST-finding", "comment-" + UUID.randomUUID());
-        assertTrue(runs.queued(row, "TEST-task"));
+        assertTrue(runs.queued(row, "TEST-task", null));
         try (Feed feed = open()) {
             feed.next();
             saga.on(new RunResult.RunFinished(runId, fix ? "refs/heads/feature/test" : null,
@@ -221,7 +221,7 @@ class RunsSocketTest {
 
     private void requeue(String runId) {
         assertTrue(runs.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL",
-                "main", "TEST-SHA", "spire/test", "TEST-bot", null), "TEST-task"));
+                "main", "TEST-SHA", "spire/test", "TEST-bot", null), "TEST-task", null));
     }
 
     private Feed open() throws Exception {

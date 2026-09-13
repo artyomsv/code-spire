@@ -30,6 +30,9 @@ public class RepositoryRegistry {
             LEFT JOIN repository_account rb ON rb.repository_id=r.id AND rb.role='FACTORY'
             LEFT JOIN scm_provider b ON b.id=rb.account_id
             """;
+    private static final String FIND = SELECT + """
+            WHERE r.scm_type=? AND r.forge_origin=? AND r.workspace=? AND r.slug=?
+            """;
     @Inject DataSource dataSource;
     @Inject RepositoryBindings bindings;
 
@@ -45,6 +48,21 @@ public class RepositoryRegistry {
     public Optional<RepositoryView> get(UUID id) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(SELECT + " WHERE r.id=?")) {
             statement.setObject(1, id);
+            try (ResultSet rows = statement.executeQuery()) { return rows.next() ? Optional.of(view(rows)) : Optional.empty(); }
+        } catch (SQLException failure) { throw database(failure); }
+    }
+
+    /** Full forge identity lookup for the resolver cutover; never an account-workspace fallback. */
+    public Optional<RepositoryView> find(String scmType, String forgeOrigin, String workspace, String slug) {
+        // Legacy review addresses split nested GitLab paths at the first slash. The registry owns
+        // the full namespace and a leaf slug; normalize the path without changing review ids/AADs.
+        String fullPath = workspace + "/" + slug;
+        int leaf = fullPath.lastIndexOf('/');
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(FIND)) {
+            statement.setString(1, scmType);
+            statement.setString(2, ForgeOrigin.of(forgeOrigin));
+            statement.setString(3, fullPath.substring(0, leaf));
+            statement.setString(4, fullPath.substring(leaf + 1));
             try (ResultSet rows = statement.executeQuery()) { return rows.next() ? Optional.of(view(rows)) : Optional.empty(); }
         } catch (SQLException failure) { throw database(failure); }
     }

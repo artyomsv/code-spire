@@ -15,7 +15,7 @@ class ContextAccountResolutionTest {
     @Inject ProviderRegistry accounts;
 
     private ProviderInput account(boolean enabled, String token) {
-        return new ProviderInput("Shared account", "atlassian", "https://account.example.test", null,
+        return new ProviderInput("Shared account", "atlassian", "https://account.example.test",
                 "basic", "bot@example.test", token, "", enabled, List.of(), null, null, "CONTEXT");
     }
 

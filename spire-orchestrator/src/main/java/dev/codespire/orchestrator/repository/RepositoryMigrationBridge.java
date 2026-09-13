@@ -86,60 +86,8 @@ public class RepositoryMigrationBridge {
 
     private Result reconcile(Connection connection, RepositoryRegistration snapshot, Coordinates coordinates) throws SQLException {
         if (missingOrigin(snapshot.forgeOrigin())) return new Result(null, "registration_origin_unknown");
-        List<LegacyAccount> accounts = candidates(connection, coordinates);
-        List<String> origins = accounts.stream().map(LegacyAccount::origin).distinct().toList();
-        if (origins.size() != 1) return new Result(null, origins.isEmpty() ? "legacy_account_missing" : "conflicting_forge_origins");
-        String origin = origins.getFirst();
-        if (!ForgeOrigin.of(snapshot.forgeOrigin()).equals(origin)) {
-            return new Result(null, "registration_origin_mismatch");
-        }
-        UUID existing = existing(connection, coordinates, origin);
-        if (existing != null) return new Result(existing, null);
-        UUID reviewer = account(accounts, "REVIEWER");
-        UUID factory = account(accounts, "FACTORY");
-        RepositoryInput input = new RepositoryInput(coordinates.type(), origin, coordinates.workspace(), coordinates.slug(),
-                true, reviewer, factory);
-        try {
-            input = repositories.normalize(input);
-            bindings.validate(connection, input);
-        } catch (IllegalArgumentException | dev.codespire.orchestrator.provider.ProviderRegistry.AccountConflict invalid) {
-            return new Result(null, "legacy_binding_invalid");
-        }
-        UUID id = UUID.randomUUID();
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled) VALUES (?,?,?,?,?,?)
-                ON CONFLICT (scm_type,forge_origin,workspace,slug) DO NOTHING
-                """)) {
-            statement.setObject(1, id); statement.setString(2, input.scmType());
-            statement.setString(3, input.forgeOrigin()); statement.setString(4, input.workspace());
-            statement.setString(5, input.slug()); statement.setBoolean(6, input.enabled());
-            if (statement.executeUpdate() == 1) bindings.replace(connection, id, input);
-            else id = existing(connection, coordinates, origin);
-        }
-        return new Result(id, null);
-    }
-
-    private List<LegacyAccount> candidates(Connection connection, Coordinates coordinates) throws SQLException {
-        // Deleted/repurposed accounts cannot regain a binding from the immutable migration snapshot.
-        try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT l.account_id,l.base_url,l.role,p.base_url current_url,p.type current_type,p.role current_role
-                FROM repository_legacy_account l JOIN scm_provider p ON p.id=l.account_id
-                WHERE l.type=? AND l.workspace=?
-                """)) {
-            statement.setString(1, coordinates.type()); statement.setString(2, coordinates.workspace());
-            List<LegacyAccount> result = new ArrayList<>();
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    String origin = ForgeOrigin.of(rows.getString("base_url"));
-                    if (coordinates.type().equals(rows.getString("current_type"))
-                            && rows.getString("role").equals(rows.getString("current_role"))
-                            && origin.equals(ForgeOrigin.of(rows.getString("current_url")))) {
-                        result.add(new LegacyAccount(rows.getObject("account_id", UUID.class), origin, rows.getString("role")));
-                    }
-                }
-            }
-            return result;
-        }
+        UUID existing = existing(connection, coordinates, ForgeOrigin.of(snapshot.forgeOrigin()));
+        return new Result(existing, existing == null ? "repository_not_registered" : null);
     }
 
     private UUID existing(Connection connection, Coordinates coordinates, String origin) throws SQLException {
@@ -151,12 +99,6 @@ public class RepositoryMigrationBridge {
         }
     }
 
-    private UUID account(List<LegacyAccount> accounts, String role) {
-        List<UUID> matches = accounts.stream().filter(account -> account.role().equals(role)).map(LegacyAccount::id).toList();
-        if (matches.size() > 1) throw new IllegalStateException("Ambiguous legacy role binding");
-        return matches.isEmpty() ? null : matches.getFirst();
-    }
-
     private void finish(Connection connection, UUID registrationId, Result result) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "UPDATE repository_registration_bridge SET repository_id=?, problem=? WHERE registration_id=?")) {
@@ -166,6 +108,5 @@ public class RepositoryMigrationBridge {
     }
 
     private record Coordinates(String type, String workspace, String slug) { }
-    private record LegacyAccount(UUID id, String origin, String role) { }
     private record Result(UUID repositoryId, String problem) { }
 }

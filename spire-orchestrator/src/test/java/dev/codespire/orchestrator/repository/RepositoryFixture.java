@@ -24,7 +24,7 @@ abstract class RepositoryFixture {
     @BeforeEach void nameFixture() { workspace = "TEST-" + UUID.randomUUID() + "/nested"; }
 
     ProviderInput input(String role, String host, boolean enabled, String identity) {
-        return new ProviderInput("TEST-" + role, "gitlab", host, workspace, "bearer", null,
+        return new ProviderInput("TEST-" + role, "gitlab", host, "bearer", null,
                 "TEST-secret-" + role, identity, enabled, List.of(), "TEST-login-" + role, null, role);
     }
 
@@ -51,6 +51,7 @@ abstract class RepositoryFixture {
     }
 
     @AfterEach void removeFixture() throws Exception {
+        execute("DELETE FROM repository_unregistered_event WHERE workspace=?", workspace);
         execute("DELETE FROM review_status WHERE workspace=?", workspace);
         execute("DELETE FROM factory_run WHERE workspace=?", workspace);
         execute("DELETE FROM repository_registration_bridge WHERE target=?", workspace + "/TEST-repo");

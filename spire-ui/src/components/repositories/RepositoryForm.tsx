@@ -8,16 +8,17 @@ interface Props {
   kinds: string[];
   onSaved: (repository: Repository) => void;
   onCancel: () => void;
+  prefill?: URLSearchParams;
 }
 function origin(value: string): string {
   try { return new URL(value).origin; } catch { return ''; }
 }
 
 /** Coordinates identify the repository; account choices never silently follow a workspace match. */
-export default function RepositoryForm({ initial, providers, kinds, onSaved, onCancel }: Props) {
+export default function RepositoryForm({ initial, providers, kinds, onSaved, onCancel, prefill = new URLSearchParams() }: Props) {
   const [fields, setFields] = useState<RepositoryInput>({
-    scmType: initial?.scmType ?? '', forgeOrigin: initial?.forgeOrigin ?? '',
-    workspace: initial?.workspace ?? '', slug: initial?.slug ?? '', enabled: initial?.enabled ?? true,
+    scmType: initial?.scmType ?? prefill.get('scmType') ?? '', forgeOrigin: initial?.forgeOrigin ?? prefill.get('forgeOrigin') ?? '',
+    workspace: initial?.workspace ?? prefill.get('workspace') ?? '', slug: initial?.slug ?? prefill.get('slug') ?? '', enabled: initial?.enabled ?? true,
     reviewerAccountId: initial?.reviewer?.id ?? null, factoryAccountId: initial?.factory?.id ?? null,
   });
   const [busy, setBusy] = useState(false);
@@ -34,6 +35,7 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
   return (
     <form onSubmit={submit} style={{ padding: 18, display: 'grid', gap: 12 }}>
       <h3>{initial ? 'Repository details' : 'Register repository'}</h3>
+      {!initial && prefill.get('registration') && <p>Incoming registration: {prefill.get('registration')}</p>}
       <label>Forge kind <select aria-label="Forge kind" required disabled={!!initial} value={fields.scmType}
         onChange={e => patch({ scmType: e.target.value, reviewerAccountId: null, factoryAccountId: null })}>
         <option value="">Select forge</option>{kinds.map(kind => <option key={kind}>{kind}</option>)}

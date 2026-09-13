@@ -24,6 +24,9 @@ public class ProviderIdentityResolver {
     @Inject
     ProviderClients clients;
 
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+
     /** The token owner for a pending provider input; throws the adapter's API exception on an auth failure. */
     public Author resolve(ProviderInput in) {
         return clients.identitySource(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret()).whoami();
@@ -36,11 +39,26 @@ public class ProviderIdentityResolver {
 
     /** Validate + identify a pending provider input, tolerating tokens that can't name a user. */
     public Author resolveForRegistration(ProviderInput in) {
-        return clients.accountIdentity(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret(), in.workspace());
+        return clients.accountIdentity(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret(), null);
+    }
+
+    /** An optional repository supplies validation scope, never account ownership or a binding. */
+    public Author resolveForRegistration(ProviderInput in, java.util.UUID repositoryId) {
+        if (repositoryId == null) return resolveForRegistration(in);
+        var repository = repositories.get(repositoryId).orElseThrow(() -> new IllegalArgumentException("Repository is not registered"));
+        if (!repository.scmType().equals(in.type())
+                || !repository.forgeOrigin().equals(dev.codespire.contract.scm.ForgeOrigin.of(in.baseUrl()))) {
+            throw new IllegalArgumentException("Validation repository belongs to another forge");
+        }
+        return clients.accountIdentity(in.type(), in.baseUrl(), in.authKind(), in.authUsername(), in.secret(), repository.workspace());
     }
 
     /** Connectivity check for a stored provider, tolerating tokens that can't name a user. */
     public Author resolveForCheck(ScmProvider p) {
-        return clients.accountIdentity(p.type(), p.baseUrl(), p.authKind(), p.authUsername(), p.secret(), p.workspace());
+        String namespace = repositories.list().stream()
+                .filter(repository -> (repository.reviewer() != null && p.id().equals(repository.reviewer().id()))
+                        || (repository.factory() != null && p.id().equals(repository.factory().id())))
+                .map(dev.codespire.orchestrator.repository.RepositoryView::workspace).findFirst().orElse(null);
+        return clients.accountIdentity(p.type(), p.baseUrl(), p.authKind(), p.authUsername(), p.secret(), namespace);
     }
 }

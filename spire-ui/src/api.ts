@@ -263,6 +263,7 @@ export interface RegisterResult {
 
 /** Manually register a PR for review (no webhook). Body is a URL or ws+slug+pr. */
 export async function registerPr(body: {
+  repositoryId?: string;
   url?: string;
   workspace?: string;
   slug?: string;
@@ -281,6 +282,8 @@ export async function registerPr(body: {
 }
 
 export interface ResolvedUrl {
+  repositoryId?: string | null;
+  forgeOrigin?: string | null;
   workspace: string;
   slug: string;
   pr: number;
@@ -316,7 +319,6 @@ export interface ProviderView {
   name: string;
   type: string; // 'bitbucket-cloud' | 'github'
   baseUrl: string;
-  workspace: string | null;
   authKind: AuthKind;
   authUsername: string | null;
   hasSecret: boolean; // whether a token is stored (the token itself is never returned)
@@ -343,7 +345,6 @@ export interface ProviderInput {
   name: string;
   type: string;
   baseUrl: string;
-  workspace: string | null;
   authKind: AuthKind;
   authUsername?: string | null;
   secret?: string; // omit/empty on edit = keep the stored token
@@ -385,8 +386,9 @@ export async function fetchProviders(): Promise<ProviderView[]> {
   return res.json();
 }
 
-export async function createProvider(input: ProviderInput): Promise<ProviderView> {
-  const res = await apiFetch('/api/providers', {
+export async function createProvider(input: ProviderInput, validationRepositoryId?: string): Promise<ProviderView> {
+  const query = validationRepositoryId ? `?validationRepositoryId=${encodeURIComponent(validationRepositoryId)}` : '';
+  const res = await apiFetch('/api/providers' + query, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -395,8 +397,9 @@ export async function createProvider(input: ProviderInput): Promise<ProviderView
   return res.json();
 }
 
-export async function updateProvider(id: string, input: ProviderInput): Promise<ProviderView> {
-  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}`, {
+export async function updateProvider(id: string, input: ProviderInput, validationRepositoryId?: string): Promise<ProviderView> {
+  const query = validationRepositoryId ? `?validationRepositoryId=${encodeURIComponent(validationRepositoryId)}` : '';
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}` + query, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -464,8 +467,8 @@ export interface ServingAccounts {
 
 // Which accounts would review and push for this forge + workspace, decided by the orchestrator's own
 // resolvers. Nothing on a repository row stores this; the screen asks rather than infers.
-export async function fetchServingAccounts(type: string, workspace: string): Promise<ServingAccounts> {
-  const query = new URLSearchParams({ type, workspace });
+export async function fetchServingAccounts(repositoryId: string): Promise<ServingAccounts> {
+  const query = new URLSearchParams({ repositoryId });
   const res = await apiFetch(`/api/providers/serving?${query.toString()}`);
   if (!res.ok) return throwResponse(res, 'Failed to load the accounts serving this workspace');
   return res.json();
@@ -474,9 +477,13 @@ export async function fetchServingAccounts(type: string, workspace: string): Pro
 // ---- Webhook repositories (per-repo webhook registrations) ----
 
 export type WebhookScope = 'repo' | 'org';
+export type WebhookEventKind = 'REVIEWER' | 'FACTORY' | 'ISSUE';
 
 export interface WebhookRepoView {
   id: string;
+  repositoryId?: string | null;
+  eventKind?: WebhookEventKind;
+  sourceId?: string | null;
   forgeOrigin?: string | null; // absent on older gateways; explicit registration evidence when known
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope; // 'repo' (target = owner/repo) | 'org' (target = owner)
@@ -488,6 +495,9 @@ export interface WebhookRepoView {
 }
 
 export interface WebhookRepoInput {
+  repositoryId?: string | null;
+  eventKind?: WebhookEventKind;
+  sourceId?: string | null;
   forgeOrigin?: string | null; // omitted legacy edits preserve the stored origin
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope;

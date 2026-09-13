@@ -66,7 +66,7 @@ class FixRunsTest {
                 "run::github:TEST-WS/TEST-REPO:" + FINDING + ":1", "codex", "TEST-MODEL", "main",
                 "TESTSHA0", "feature/login", "machine-account", null).asFixFor(REVIEW, FINDING, "TEST-comment-1");
 
-        assertTrue(projection.queued(row, null), "the row must be written");
+        assertTrue(projection.queued(row, null, null), "the row must be written");
         assertEquals(1, fixRuns.forFinding(REVIEW, FINDING));
         assertEquals(1, fixRuns.forReview(REVIEW));
     }
@@ -85,7 +85,7 @@ class FixRunsTest {
     void aRedeliveredCommandDerivesADifferentRunIdAndIsCaughtByTheCommentClaimAlone() {
         String comment = "TEST-comment-redelivered";
         int firstAttempt = fixRuns.nextAttempt(REVIEW, FINDING);
-        assertTrue(projection.queued(fixRow(firstAttempt, comment), null), "the first delivery is written");
+        assertTrue(projection.queued(fixRow(firstAttempt, comment), null, null), "the first delivery is written");
 
         int secondAttempt = fixRuns.nextAttempt(REVIEW, FINDING);
         assertNotEquals(firstAttempt, secondAttempt,
@@ -101,7 +101,7 @@ class FixRunsTest {
     /** A comment that has bought nothing reads as empty — seeded first, or this proves nothing. */
     @Test
     void aCommentThatHasBoughtNoRunReadsAsEmpty() {
-        assertTrue(projection.queued(fixRow(1, "TEST-comment-a"), null));
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-a"), null, null));
 
         assertTrue(projection.fixRunFor(REVIEW, "TEST-comment-b").isEmpty());
     }
@@ -119,7 +119,7 @@ class FixRunsTest {
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
                 "run::github:TEST-WS/TEST-REPO:build-subject:1", "codex", "TEST-MODEL", "main",
                 "TESTSHA0", "spire/build-subject", "machine-account", null, "BUILD", null, null,
-                "TEST-comment-on-a-build"), null));
+                "TEST-comment-on-a-build"), null, null));
 
         assertTrue(projection.fixRunFor(REVIEW, "TEST-comment-on-a-build").isEmpty());
     }
@@ -162,11 +162,11 @@ class FixRunsTest {
     void oneCommentIdOnTwoReviewsIsTwoClaims() {
         String shared = "TEST-comment-42";
         String other = "review::gitlab:TEST-OTHER/TEST-OTHER:9";
-        assertTrue(projection.queued(fixRow(1, shared), null));
+        assertTrue(projection.queued(fixRow(1, shared), null, null));
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
                 "run::gitlab:TEST-OTHER/TEST-OTHER:" + FINDING + ":1", "codex", "TEST-MODEL",
                 "main", "TESTSHA0", "spire/other", "machine-account", null, "FIX", other,
-                FINDING, shared), null),
+                FINDING, shared), null, null),
                 "the unique index must not treat two reviews' comment 42 as one claim");
 
         assertEquals("run::github:TEST-WS/TEST-REPO:" + FINDING + ":1",
@@ -189,10 +189,10 @@ class FixRunsTest {
     @Test
     void aReArmMayNotChangeWhichCommentBoughtTheRun() {
         String runId = "run::github:TEST-WS/TEST-REPO:" + FINDING + ":1";
-        assertTrue(projection.queued(fixRow(1, "TEST-comment-original"), null));
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-original"), null, null));
         projection.dispatchFailed(runId, "the broker did not acknowledge the command");
 
-        assertFalse(projection.queued(fixRow(1, "TEST-comment-different"), null),
+        assertFalse(projection.queued(fixRow(1, "TEST-comment-different"), null, null),
                 "a differing retry must match no row here, and be refused by the caller");
         assertEquals(runId, projection.fixRunFor(REVIEW, "TEST-comment-original").orElseThrow(),
                 "the original claim must still hold");
@@ -200,7 +200,7 @@ class FixRunsTest {
                 "and the other comment must not have acquired it");
 
         // The negative control: the IDENTICAL retry is the one this path exists for, and it works.
-        assertTrue(projection.queued(fixRow(1, "TEST-comment-original"), null),
+        assertTrue(projection.queued(fixRow(1, "TEST-comment-original"), null, null),
                 "an identical retry re-arms, or the comparison above is simply refusing everything");
     }
 
@@ -216,7 +216,7 @@ class FixRunsTest {
     void aBuildRunWrittenByTheProjectionIsCountedByNeitherCap() {
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(
                 "run::github:TEST-WS/TEST-REPO:subject:1", "codex", "TEST-MODEL", "main",
-                "TESTSHA0", "spire/subject", "machine-account", null), null));
+                "TESTSHA0", "spire/subject", "machine-account", null), null, null));
 
         assertEquals(0, fixRuns.forReview(REVIEW));
     }

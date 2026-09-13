@@ -58,7 +58,7 @@ class ProviderResourceTest {
         m.put("name", "CF");
         m.put("type", "bitbucket-cloud");
         m.put("baseUrl", scm.baseUrl()); // the client appends /user -> hits the stub
-        m.put("workspace", workspace);
+        m.put("name", "Test " + workspace);
         m.put("authKind", authKind);
         m.put("botAccountId", "acct-1");
         m.put("enabled", true);
@@ -90,9 +90,9 @@ class ProviderResourceTest {
                 .extract().path("id");
 
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+                registry.resolveById(java.util.UUID.fromString(id)).filter(p -> p.role() == ProviderRole.FACTORY).isPresent());
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
+                registry.resolveById(java.util.UUID.fromString(id)).filter(p -> p.role() == ProviderRole.REVIEWER).isEmpty(),
                 "a FACTORY registration is never the workspace's reviewer");
 
         // The dashboard's edit form sends NO role. An update without one must keep the stored role —
@@ -105,7 +105,7 @@ class ProviderResourceTest {
                 .then().statusCode(200)
                 .body("role", equalTo("FACTORY"));
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+                registry.resolveById(java.util.UUID.fromString(id)).filter(p -> p.role() == ProviderRole.FACTORY).isPresent());
 
         // A role is fixed at registration: changing it would re-purpose this token under the other
         // authority set. The request is refused, and both lookups still answer as before.
@@ -118,9 +118,9 @@ class ProviderResourceTest {
                 .when().put("/api/providers/" + id)
                 .then().statusCode(409).body(containsString("Register a new account"));
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory", ProviderRole.FACTORY).isPresent());
+                registry.resolveById(java.util.UUID.fromString(id)).filter(p -> p.role() == ProviderRole.FACTORY).isPresent());
         org.junit.jupiter.api.Assertions.assertTrue(
-                registry.resolve("bitbucket-cloud", "rest-factory").isEmpty(),
+                registry.resolveById(java.util.UUID.fromString(id)).filter(p -> p.role() == ProviderRole.REVIEWER).isEmpty(),
                 "a refused change must not have written the other role");
     }
 
@@ -139,7 +139,7 @@ class ProviderResourceTest {
                 .when().post("/api/providers")
                 .then().statusCode(201)
                 .body("hasSecret", is(true))
-                .body("workspace", equalTo("rest-create"))
+                .body("workspace", org.hamcrest.Matchers.nullValue())
                 .body("secret", is(nullOrEmpty()))
                 .body("authors[0]", equalTo("alice"));
     }
@@ -281,7 +281,7 @@ class ProviderResourceTest {
                 .when().post("/api/providers").then().statusCode(201);
         given().when().get("/api/providers")
                 .then().statusCode(200)
-                .body("findAll { it.workspace == 'rest-list' }.size()", equalTo(1));
+                .body("findAll { it.name == 'Test rest-list' }.size()", equalTo(1));
     }
 
     private static org.hamcrest.Matcher<Object> nullOrEmpty() {

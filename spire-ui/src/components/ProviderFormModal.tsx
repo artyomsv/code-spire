@@ -2,6 +2,7 @@
  * Account identity and role controls. Credentials and reviewer policy live in focused child components.
  */
 import { useState } from 'react';
+import { fetchRepositories, type Repository } from './repositories/repositoriesApi';
 import {
   createProvider,
   updateProvider,
@@ -64,7 +65,6 @@ export default function ProviderFormModal({
     name: initial?.name ?? '',
     type: initial?.type ?? 'bitbucket-cloud',
     baseUrl: initial?.baseUrl ?? DEFAULT_BASE_URL,
-    workspace: initial?.workspace ?? '',
     authKind: initial?.authKind ?? 'bearer' as AuthKind,
     authUsername: initial?.authUsername ?? '',
     secret: '',
@@ -72,7 +72,7 @@ export default function ProviderFormModal({
     enabled: initial?.enabled ?? true,
   });
   const patch = (next: Partial<typeof fields>) => setFields((previous) => ({ ...previous, ...next }));
-  const { name, type, baseUrl, workspace, authKind, authUsername, secret, botAccountId, enabled } = fields;
+  const { name, type, baseUrl, authKind, authUsername, secret, botAccountId, enabled } = fields;
   const [role, setRole] = useState<ProviderRole>(initial?.role ?? 'REVIEWER');
   const [reviewer, setReviewer] = useState<ReviewerFields>({
     conversationLevel: initial?.conversationLevel ?? '',
@@ -83,10 +83,18 @@ export default function ProviderFormModal({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [validationRepositories, setValidationRepositories] = useState<Repository[] | null>(null);
+  const [validationRepositoryId, setValidationRepositoryId] = useState('');
+
+  async function chooseValidationRepository() {
+    try { setValidationRepositories(await fetchRepositories()); }
+    catch (failure) { setError(String(failure)); }
+  }
 
   function changeType(next: string) {
+    setValidationRepositoryId('');
     patch({ type: next });
-    if (next === 'atlassian') { setRole('CONTEXT'); patch({ workspace: '', authKind: 'basic' }); }
+    if (next === 'atlassian') { setRole('CONTEXT'); patch({ authKind: 'basic' }); }
     else if (role === 'CONTEXT' && !editing) setRole('REVIEWER');
     // Swap the base URL to the new type's default unless the user has customised it.
     if (!baseUrl.trim() || KNOWN_DEFAULTS.has(baseUrl.trim())) {
@@ -113,8 +121,8 @@ export default function ProviderFormModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || (role !== 'CONTEXT' && !workspace.trim()) || !baseUrl.trim()) {
-      setError('Name, base URL and workspace are required.');
+    if (!name.trim() || !baseUrl.trim()) {
+      setError('Name and base URL are required.');
       return;
     }
     if (authKind === 'basic' && !authUsername.trim()) {
@@ -134,7 +142,6 @@ export default function ProviderFormModal({
       name: name.trim(),
       type,
       baseUrl: baseUrl.trim(),
-      workspace: role === 'CONTEXT' ? null : workspace.trim(),
       authKind,
       authUsername: authKind === 'basic' ? authUsername.trim() : null,
       botAccountId: botAccountId.trim(),
@@ -150,9 +157,11 @@ export default function ProviderFormModal({
     setError(null);
     try {
       if (editing && initial) {
-        await updateProvider(initial.id, input);
+        if (validationRepositoryId) await updateProvider(initial.id, input, validationRepositoryId);
+        else await updateProvider(initial.id, input);
       } else {
-        await createProvider(input);
+        if (validationRepositoryId) await createProvider(input, validationRepositoryId);
+        else await createProvider(input);
       }
       onSaved();
     } catch (err) {
@@ -213,17 +222,6 @@ export default function ProviderFormModal({
                 onChange={changeType}
               />
             </label>
-            {role !== 'CONTEXT' && <label className="field">
-              <span>Workspace</span>
-              <small>Legacy routing until repository migration completes</small>
-              <input
-                className="mono"
-                placeholder="workspace"
-                aria-label="Workspace"
-                value={workspace}
-                onChange={(e) => patch({ workspace: e.target.value })}
-              />
-            </label>}
           </div>
 
           <label className="field">
@@ -232,11 +230,25 @@ export default function ProviderFormModal({
               className="mono"
               placeholder={DEFAULT_BASE_URL}
               value={baseUrl}
-              onChange={(e) => patch({ baseUrl: e.target.value })}
+              onChange={(e) => { patch({ baseUrl: e.target.value }); setValidationRepositoryId(''); }}
             />
           </label>
 
           <AccountCredentialFields fields={fields} patch={patch} initial={initial} role={role} />
+          {type === 'bitbucket-cloud' && <div>
+            <p>For an account-less access token, select a registered repository to validate access.</p>
+            {validationRepositories === null ? <button type="button" className="btn" onClick={() => void chooseValidationRepository()}>Choose validation repository</button>
+              : <label className="field"><span>Validation repository</span>
+                <select value={validationRepositoryId} onChange={event => setValidationRepositoryId(event.target.value)}>
+                  <option value="">Validate token owner only</option>
+                  {validationRepositories.filter(repository => {
+                    try { return repository.scmType === type && repository.forgeOrigin === new URL(baseUrl).origin; }
+                    catch { return false; }
+                  }).map(repository => <option key={repository.id} value={repository.id}>{repository.workspace}/{repository.slug}</option>)}
+                </select>
+              </label>}
+            <p>This checks access only. Select the account on the repository separately.</p>
+          </div>}
 
           {role === 'REVIEWER' && <ReviewerFieldsSection reviewer={reviewer} patchReviewer={patchReviewer} addAuthor={addAuthor} removeAuthor={removeAuthor} />}
 

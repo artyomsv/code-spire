@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('Capture', 'Compare')][string]$Mode,
-    [Parameter(Mandatory)][string]$Snapshot
+    [Parameter(Mandatory)][string]$Snapshot,
+    [ValidateSet('Credentials', 'Webhooks')][string]$Scope = 'Credentials'
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -31,7 +32,7 @@ foreach ($line in [IO.File]::ReadAllLines((Join-Path $repoRoot '.env'))) {
         $process.StartInfo.Environment[$name] = $value
     }
 }
-@('--class-path', ($classpath -join ';'), (Join-Path $PSScriptRoot 'DevCredentialContinuity.java'), $Mode, [IO.Path]::GetFullPath($Snapshot)) |
+@('--class-path', ($classpath -join ';'), (Join-Path $PSScriptRoot 'DevCredentialContinuity.java'), $Mode, [IO.Path]::GetFullPath($Snapshot), $Scope) |
     ForEach-Object { $process.StartInfo.ArgumentList.Add($_) }
 try {
     [void]$process.Start(); $process.WaitForExit()

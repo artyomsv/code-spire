@@ -2,9 +2,9 @@
 
 **Date:** 2026-09-12
 
-**Status:** Slice 1's blank-origin fix is accepted. The literal-SQL CI correction is implemented;
-new-head checks gate further cutover work. The bridge rollout prerequisite is measured below.
-Slices 2–10 are not complete.
+**Status:** Slice 1 is closed on fully green `363b13d`. Slice 2 implements the runtime cutover
+and proves criterion 7, with real-row post-cutover continuity. It is ready for review on PR #153.
+Slices 3–10 and criteria 1–6 remain pending. Detailed evidence is in the slice 2 review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -244,12 +244,15 @@ its slice 1 proof (620 tests and successful build).
 
 ## Slice 2 — cut over to repository ownership and per-kind hooks
 
-Bridge rollout prerequisite measured 2026-09-13, before the round 4 CI hold: orchestrator V60 and
-gateway V3 are live from reviewed commit `a956532`. All 37 reviews and 14 runs mapped to six
-repositories/eight role bindings, with zero coordinate or role/type mismatches. All three gateway
-snapshots were acknowledged; their missing origins remain explicit repair mappings. The encrypted
-post-bridge Compare matched all 9 real entries. This is not the resolver cutover or its required
-post-cutover Compare. No UI rebuild or live run-worker start was performed during this rollout.
+The reviewed V60/V3 bridge mapped all 37 reviews and 14 runs to six repositories and eight
+bindings. Slice 2's V61/V4 cutover is now live, rebuilt gateway → orchestrator → UI. The required
+real-row encrypted comparison passed all 9 account/context and 12 webhook entries. Counts
+remain 6/37/85/14/3; populated workspaces and rejection metadata are unchanged. Three origin-unknown
+registrations remain explicit repair states because their actual origins have not been confirmed.
+
+3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip; forced fast/services tiers and packaging passed. UI passed 630 tests/77 files and
+build. Sixty-two isolated mutations are recorded in .claude/reviews/global/factory-m3-slice2.md,
+including the fresh-schema production-constraint mutation. No live run worker was started.
 
 **Files:** all active account consumers, gateway registry/edge/resources, account DTOs/forms,
 repository UI and migrations; ADR-042 final decision text.
@@ -257,30 +260,31 @@ repository UI and migrations; ADR-042 final decision text.
 **Produces:** runtime resolution solely by explicit repository binding; no account workspace in
 new API/form; gateway key plus scope plus event-kind validation.
 
-- [ ] Write failing `RepositoryResolverCutoverTest.allDispatchPathsUseTheSelectedRepository`,
+- [x] Write failing `RepositoryResolverCutoverTest.allDispatchPathsUseTheSelectedRepository`,
   `RepositoryResolverCutoverTest.unmappedLegacyReviewCannotDispatch`,
   `RepositoryWebhookKindsTest.preservesLegacyKeyAndRejectsWrongKind`,
   `RepositoryWebhookKindsTest.refusesASecondWebhookForTheSameKind`, and criterion 7 tests below.
-- [ ] Change every resolver caller; search `resolveByWorkspace`, `registration`,
+- [x] Change every resolver caller; search `resolveByWorkspace`, `registration`,
   `providers.resolve`, `MachineAccounts.resolve` and serving API usages. Include manual/rerun,
   prompt, fix and result-time PR proposal paths, not only the HTTP run endpoint.
-- [ ] Drop the old UNIQUE and workspace-by-role CHECK; finish migration mappings, remove active
-  account workspace reads. Keep the populated column as rollback evidence until slice 10. Retain scalar
+- [x] Drop the old UNIQUE and workspace-by-role CHECK; finish evidenced history mappings and
+  retain explicit unknown-origin repairs. Remove active account workspace reads. Keep the populated
+  column as rollback evidence until slice 10. Retain scalar
   role checks. Refuse origin/type edits on referenced accounts. Do not add global role uniqueness.
-- [ ] Upgrade all three keyed SCM edges to product event-kind filtering. Preserve keys, secrets,
+- [x] Upgrade all three keyed SCM edges to product event-kind filtering. Preserve keys, secrets,
   scope and rejection history during migration. Wire FACTORY activity separately from REVIEWER
   commands; reserve ISSUE scope for source registration. Unknown kinds fail closed. End org
   auto-enrollment. Add `UnregisteredRepositoryAttentionTest.namesRepositoryOriginAndRegistration`:
   a verified event for an unregistered repo raises attention and a Register action pre-filled
   with repo, origin and incoming registration. Mutate its attention write, isolate the test,
   expect exactly one failure, restore; a silent drop does not satisfy cutover.
-- [ ] Replace the webhook-row screen with repository detail and one hook control per kind. Support
+- [x] Replace the webhook-row screen with repository detail and one hook control per kind. Support
   registration without hooks, retries after partial save and legacy org/deep-link navigation.
   Remove workspace from `ProviderInput`/`View` and `AccountCredentialFields`, not merely hide CSS.
-- [ ] Mutation checks for criterion 7 are specified in the matrix. Additionally kill the scope
+- [x] Mutation checks for criterion 7 are specified in the matrix. Additionally kill the scope
   comparison with `RepositoryWebhookKindsTest.validSignatureCannotCrossRepositoryScope`; use
   the same provider and a valid signature so a different guard cannot mask the mutation.
-- [ ] Run migration, gateway, orchestrator and UI verification in sequence. Search for remaining
+- [x] Run migration, gateway, orchestrator and UI verification in sequence. Search for remaining
   active workspace-only lookups; historical docs/bridge mappings are the only permitted matches.
   Add `spire-arch/AccountWorkspaceIsUnusedTest.noProductionCodeReadsLegacyAccountWorkspace`:
   inspect production source/SQL including SELECT-star mappings so retained workspace cannot silently
@@ -549,7 +553,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-All methods/classes in this matrix are **tests to add**, not claimed existing coverage. `O-test`
+Criterion 7 is proved by slice 2 and its mutation ledger. Criteria 1–6 remain **tests to add**, not claimed existing coverage. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

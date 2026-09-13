@@ -34,12 +34,31 @@ class ProviderServingResourceTest {
 
     private static ProviderInput row(String workspace, String name, String role, String botAccountId,
                                      String botUsername, boolean enabled) {
-        return new ProviderInput(name, "github", "https://api.github.com", workspace, "bearer", null,
+        return new ProviderInput(name, "github", "https://api.github.com", "bearer", null,
                 "TEST-token-" + name, botAccountId, enabled, List.of(), botUsername, null, role);
     }
 
-    private static io.restassured.response.ValidatableResponse serving(String workspace) {
-        return given().queryParam("type", "github").queryParam("workspace", workspace)
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    private final java.util.Map<String, java.util.UUID> repositoryIds = new java.util.HashMap<>();
+
+    private java.util.UUID repository(String workspace) {
+        return repositoryIds.computeIfAbsent(workspace, ws -> repositories.create(
+                new dev.codespire.orchestrator.repository.RepositoryInput("github", "https://api.github.com",
+                        ws, "TEST-repo", true, null, null)).id());
+    }
+
+    private void register(String workspace, ProviderInput input) {
+        var account = registry.create(input);
+        var repo = repositories.get(repository(workspace)).orElseThrow();
+        boolean factory = "FACTORY".equals(input.role());
+        repositories.update(repo.id(), repo.revision(), new dev.codespire.orchestrator.repository.RepositoryInput(
+                repo.scmType(), repo.forgeOrigin(), workspace, repo.slug(), true,
+                factory ? (repo.reviewer() == null ? null : repo.reviewer().id()) : UUID.fromString(account.id()),
+                factory ? UUID.fromString(account.id()) : (repo.factory() == null ? null : repo.factory().id())));
+    }
+
+    private io.restassured.response.ValidatableResponse serving(String workspace) {
+        return given().queryParam("repositoryId", repository(workspace))
                 .when().get("/api/providers/serving")
                 .then().statusCode(200)
                 .body("type", equalTo("github"))
@@ -59,7 +78,7 @@ class ProviderServingResourceTest {
     @Test
     void anEnabledReviewerWithAnIdentityIsOk() {
         String ws = workspace("rev-ok");
-        registry.create(row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", true));
+        register(ws, row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", true));
         serving(ws)
                 .body("reviewer.state", equalTo("ok"))
                 .body("reviewer.name", equalTo("TEST-reviewer"))
@@ -72,7 +91,7 @@ class ProviderServingResourceTest {
     @Test
     void aReviewerWithNoResolvedIdentityIsFlaggedNotGreen() {
         String ws = workspace("rev-noid");
-        registry.create(row(ws, "TEST-reviewer", null, "", null, true));
+        register(ws, row(ws, "TEST-reviewer", null, "", null, true));
         serving(ws).body("reviewer.state", equalTo("no-identity"));
     }
 
@@ -83,7 +102,7 @@ class ProviderServingResourceTest {
     @Test
     void aReviewerIdentifiedByAccountIdAloneIsOk() {
         String ws = workspace("rev-id-only");
-        registry.create(row(ws, "TEST-reviewer", null, "TEST-acct-1", null, true));
+        register(ws, row(ws, "TEST-reviewer", null, "TEST-acct-1", null, true));
         serving(ws).body("reviewer.state", equalTo("ok"));
     }
 
@@ -91,8 +110,8 @@ class ProviderServingResourceTest {
     @Test
     void aDisabledRowIsDisabledNotMissing() {
         String ws = workspace("disabled");
-        registry.create(row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", false));
-        registry.create(row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", "test-factory", false));
+        register(ws, row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", false));
+        register(ws, row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", "test-factory", false));
         serving(ws)
                 .body("reviewer.state", equalTo("disabled"))
                 .body("reviewer.name", equalTo("TEST-reviewer"))
@@ -104,7 +123,7 @@ class ProviderServingResourceTest {
     @Test
     void aFactoryWithNoLoginCannotPush() {
         String ws = workspace("fac-nologin");
-        registry.create(row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", null, true));
+        register(ws, row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", null, true));
         serving(ws)
                 .body("factory.state", equalTo("no-login"))
                 .body("factory.name", equalTo("TEST-factory"))
@@ -114,7 +133,7 @@ class ProviderServingResourceTest {
     @Test
     void aFactoryWithALoginIsOk() {
         String ws = workspace("fac-ok");
-        registry.create(row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", "test-factory", true));
+        register(ws, row(ws, "TEST-factory", "FACTORY", "TEST-acct-2", "test-factory", true));
         serving(ws)
                 .body("factory.state", equalTo("ok"))
                 .body("factory.botUsername", equalTo("test-factory"));
@@ -123,7 +142,7 @@ class ProviderServingResourceTest {
     @Test
     void theResponseCarriesNoSecretField() {
         String ws = workspace("nosecret");
-        registry.create(row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", true));
+        register(ws, row(ws, "TEST-reviewer", null, "TEST-acct-1", "test-bot", true));
         serving(ws)
                 .body("reviewer.secret", nullValue())
                 .body("reviewer.authSecret", nullValue())

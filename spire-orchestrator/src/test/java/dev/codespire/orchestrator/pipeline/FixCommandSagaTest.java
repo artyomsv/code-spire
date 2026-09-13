@@ -93,7 +93,7 @@ class FixCommandSagaTest {
                 noteDetails.add(detail);
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public boolean archived(String reviewId) {
                 return false;
@@ -138,9 +138,9 @@ class FixCommandSagaTest {
                 return provider();
             }
         };
-        saga.providers = new ProviderRegistry() {
+        saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolve(java.util.UUID repositoryId, ProviderRole role) {
                 return provider();
             }
         };
@@ -165,7 +165,7 @@ class FixCommandSagaTest {
     }
 
     private Optional<ScmProvider> provider() {
-        return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x", "acme",
+        return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x",
                 "bearer", null, "secret", "acct", true, allowlist, null, null, ProviderRole.REVIEWER));
     }
 
@@ -200,7 +200,7 @@ class FixCommandSagaTest {
     void aDispatchedFixIsRecordedAlongsideTheRequestThatAskedForIt() {
         target = finding(null);
 
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         assertTrue(notes.contains("FixRequested"), notes.toString());
         assertTrue(notes.contains("FixDispatched"), notes.toString());
@@ -221,7 +221,7 @@ class FixCommandSagaTest {
     void theDispatchIsToldTheConversationRootAndTheCommentThatAsked() {
         target = finding(null);
 
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         assertEquals(List.of("root-t-1|c-1|77"), dispatchedFor);
     }
@@ -238,7 +238,7 @@ class FixCommandSagaTest {
         target = finding(null);
         dispatchResult = new FixRunDispatcher.Refused("this comment already started fix run X");
 
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertFalse(notes.contains("FixDispatched"), notes.toString());
@@ -261,25 +261,25 @@ class FixCommandSagaTest {
 
         allowlist = List.of();
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         allowlist = List.of("alice");
         registered = false;
-        saga().on(fix("t-2"));
+        saga().onRepository(fix("t-2"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         registered = true;
-        saga().on(noThread());
-        saga().on(fix(null));
-        saga().on(fix("   "));
+        saga().onRepository(noThread(), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        saga().onRepository(fix(null), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        saga().onRepository(fix("   "), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         target = null;
-        saga().on(fix("t-3"));
+        saga().onRepository(fix("t-3"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         target = finding("RESOLVED");
-        saga().on(fix("t-4"));
+        saga().onRepository(fix("t-4"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         target = finding(null, "conversation");
-        saga().on(fix("t-5"));
+        saga().onRepository(fix("t-5"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
 
         assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
         assertFalse(notes.contains("FixDispatched"), notes.toString());
@@ -288,7 +288,7 @@ class FixCommandSagaTest {
     @Test
     void resolvesTheFindingTheThreadBelongsToAndRecordsTheRequest() {
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("FixRequested"), notes.toString());
         // The finding is NAMED, and asserted whole. Checking only that the path appears left the
         // severity and the start line free to be dropped or swapped for the end line.
@@ -311,7 +311,7 @@ class FixCommandSagaTest {
     @Test
     void looksTheFindingUpByTheConversationRootNotTheCommentItWasTypedIn() {
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertEquals(List.of("root-t-1"), lookedUpRefs);
     }
 
@@ -324,7 +324,7 @@ class FixCommandSagaTest {
     @Test
     void refusesWhenNoFindingHangsOffThatThread() {
         target = null;
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertFalse(notes.contains("FixRequested"), notes.toString());
         assertTrue(noteDetails.stream().anyMatch(d -> d.contains("could not match this thread")),
@@ -342,8 +342,8 @@ class FixCommandSagaTest {
     @Test
     void refusesAtopLevelFixWithNoThreadRatherThanThrowing() {
         target = finding(null);
-        saga().on(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "fix", "",
-                Author.of("acc-1", "alice", "Alice"), null, null, "c-1"));
+        saga().onRepository(new ManualCommandReceived(new RepoRef("acme", "web"), 412L, "fix", "",
+                Author.of("acc-1", "alice", "Alice"), null, null, "c-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("skipped:/fix"), notes.toString());
         assertTrue(lookedUpRefs.isEmpty(), "nothing should be looked up without a thread");
     }
@@ -352,7 +352,7 @@ class FixCommandSagaTest {
     @Test
     void refusesAFindingReconciliationHasAlreadyResolved() {
         target = finding("RESOLVED");
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertFalse(notes.contains("FixRequested"), notes.toString());
         assertTrue(noteDetails.stream().anyMatch(d -> d.contains("already resolved")), noteDetails.toString());
@@ -362,7 +362,7 @@ class FixCommandSagaTest {
     @Test
     void stillFixesAFindingJudgedStillOpen() {
         target = finding("STILL_OPEN");
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("FixRequested"), notes.toString());
     }
 
@@ -375,7 +375,7 @@ class FixCommandSagaTest {
     @Test
     void refusesAFindingFiledFromADiscussionBecauseItCarriesNoDescription() {
         target = finding(null, "conversation");
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertFalse(notes.contains("FixRequested"), notes.toString());
         assertTrue(noteDetails.stream().anyMatch(d -> d.contains("no description")),
@@ -394,7 +394,7 @@ class FixCommandSagaTest {
     void refusesFixWhenTheProviderAllowlistIsEmpty() {
         allowlist = List.of();
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertTrue(lookedUpRefs.isEmpty(), "an unlisted deployment must not even be queried");
     }
@@ -404,7 +404,7 @@ class FixCommandSagaTest {
     void allowsFixWhenTheProviderAllowlistIsConfigured() {
         allowlist = List.of("acc-1");
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("FixRequested"), notes.toString());
     }
 
@@ -426,7 +426,7 @@ class FixCommandSagaTest {
     void refusesFixWhenTheAllowlistNamesOnlyTheHandle() {
         allowlist = List.of("alice");
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("refused:/fix"), notes.toString());
         assertTrue(dispatchedFor.isEmpty(), dispatchedFor.toString());
     }
@@ -441,7 +441,7 @@ class FixCommandSagaTest {
     void refusesWhenThePullRequestWasNeverRegistered() {
         registered = false;
         target = finding(null);
-        saga().on(fix("t-1"));
+        saga().onRepository(fix("t-1"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(notes.contains("skipped:/fix"), notes.toString());
         assertTrue(lookedUpRefs.isEmpty(), "an unregistered PR must not even be queried");
     }

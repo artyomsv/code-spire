@@ -58,6 +58,7 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/settings/llm', 'LLM'],
   ['/settings/context', 'Context'],
   ['/settings/repositories', 'Repositories'],
+  ['/settings/webhooks', 'Webhooks'],
   ['/settings/prompts', 'Prompts'],
   ['/settings/dlq', 'Dead-letter'],
 ];
@@ -378,14 +379,14 @@ export default function App() {
           <Route path="/settings/accounts/people" element={configure(<SettingsOperators />)} />
           <Route path="/settings/memory" element={configure(<SettingsMemory />)} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
-          <Route path="/settings/repositories" element={configure(<SettingsWebhookRepos />)} />
-          <Route path="/settings/repositories/registry" element={configure(<RepositoryRegistryPage />)} />
+          <Route path="/settings/repositories" element={configure(<RepositoryRegistryPage />)} />
+          <Route path="/settings/repositories/registry" element={<RedirectKeepingQuery to="/settings/repositories" />} />
           {/* The three screens moved on 2026-09-07. Old addresses live in bookmarks and in attention
               rows emitted by a service not yet upgraded; the query rides along because ?edit=<id> is
               what opens the named record. */}
           <Route path="/settings/providers" element={<RedirectKeepingQuery to="/settings/accounts" />} />
           <Route path="/settings/operators" element={<RedirectKeepingQuery to="/settings/accounts/people" />} />
-          <Route path="/settings/webhooks" element={<RedirectKeepingQuery to="/settings/repositories" />} />
+          <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
           <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
           <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
           <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />

@@ -19,7 +19,6 @@ public record ScmProvider(
         String name,
         String type,
         String baseUrl,
-        String workspace,
         String authKind,
         String authUsername,
         String secret,

@@ -88,6 +88,11 @@ public class RegistryWebhookEdge {
             return Response.status(Response.Status.UNAUTHORIZED).build();
         }
 
+        if (repo.eventKind() == dev.codespire.contract.event.RepositoryEventKind.ISSUE) {
+            registry.recordRejection(key, "event_kind_mismatch");
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+
         List<IntegrationEvent> events;
         try {
             events = ingress.translate(raw);
@@ -109,6 +114,10 @@ public class RegistryWebhookEdge {
         // means a misconfigured or spoofed hook. Fail closed: an event whose repo cannot
         // be determined (an unmapped type) is refused, not waved through.
         for (IntegrationEvent event : events) {
+            if (!repo.eventKind().accepts(event)) {
+                registry.recordRejection(key, "event_kind_mismatch");
+                return Response.status(Response.Status.BAD_REQUEST).build();
+            }
             RepoRef eventRepo = repoOf(event);
             if (eventRepo != null && inScope(repo, eventRepo)) {
                 continue;
@@ -121,7 +130,7 @@ public class RegistryWebhookEdge {
         }
 
         MDC.put("reviewId", EventKeys.of(events.getFirst()));
-        if (!publisher.publishAllAwait(events)) {
+        if (!publisher.publishAllAwait(repo, events, deliveryId(raw))) {
             return Response.serverError().build();
         }
         // A verified, in-scope, published delivery proves the registration works.
@@ -134,6 +143,15 @@ public class RegistryWebhookEdge {
         headers.getRequestHeaders().forEach((name, values) ->
                 headerMap.put(name, values.isEmpty() ? "" : values.getFirst()));
         return new RawWebhook(headerMap, body);
+    }
+
+    private static String deliveryId(RawWebhook raw) {
+        // A content digest is stable across redelivery, including providers without a delivery id.
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw.body()));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     /** repo scope → exact owner/repo; org scope → any repo whose top group/owner matches the registration. */

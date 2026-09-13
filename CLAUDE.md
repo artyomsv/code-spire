@@ -77,8 +77,8 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slice 1 adds the repository registry and migration bridge**;
-  existing review/run resolution remains on the legacy workspace until slice 2's cutover.
+  (`docs/UNVERIFIED.md`). **M3 slices 1–2 (PR #153) add repository ownership and cut review/run resolution over to
+  explicit repository/role bindings.** Criterion 7 is proved; later M3 slices remain pending.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -87,23 +87,22 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   rotation reaches every source, disabling an account stops its context resolution, and referenced
   deletion returns the source names. Accounts show Used by and advisory scope reports. REVIEWER
   and FACTORY remain separate scalar roles; CONTEXT has no workspace. Code credentials carry an
-  explicit platform through the worker contract. Repositories still show the existing serving
-  identities through unchanged role resolvers. Live token-family and rollout gaps are recorded in
-  UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 retains workspace
-  remodeling, per-repository push checks and handle-to-id allowlist resolution.
+  explicit platform through the worker contract. Repositories show the selected serving
+  identities through explicit role bindings. Live token-family and rollout gaps are recorded in
+  UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 slice 2 removes account workspace from forms and runtime reads while retaining the populated
+  database column until slice 10. Per-repository push checks and handle-to-id resolution remain later work.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3009 Java tests across 348 suites, 0 failures,
-  1 skipped; 620 UI tests across 76 files; TypeScript and the UI build passed. Forced `testFast`
-  and `testServices` ran sequentially with JDK 25, Docker and Git's shell on PATH. The final service
-  invocation disabled project parallelism after Dev Services startup timeouts. The existing
-  symlink test skips because this Windows session lacks symlink privileges. Slice 1's 44 distinct
-  mutations each failed one targeted test and passed after scratch-snapshot restoration; see
-  `.claude/reviews/global/factory-m3-slice1.md`. The read-only encrypted probe matched 9 real
-  credential/reference entries before upgrade and after the reviewed bridge rollout. Live V60/V3
-  mapped all 37 reviews and 14 runs to six repositories; three origin-less webhook registrations
-  remain pending explicit repair. The resolver cutover and its post-cutover comparison are still
-  pending. The nightly testE2e tier was not run; no live run worker was started.
+- **Measured, not estimated (2026-09-13):** 3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip;
+  630 UI tests across 77 files; TypeScript/UI build and packaging passed. Forced testFast and
+  testServices ran sequentially with JDK 25 and --no-parallel. The existing symlink case skips
+  because this Windows session lacks symlink privileges. Slice 2's 62 distinct mutations each
+  failed one selected test and passed after scratch restoration; see
+  .claude/reviews/global/factory-m3-slice2.md. Live V61/V4 preserves the approved 6/37/85/14/3
+  row counts and compares identical after decrypting all 9 account/context and 12 webhook
+  baseline entries. All 37 reviews and 14 runs have repository mappings; three origin-less
+  webhook registrations remain pending explicit confirmation. No live run worker or nightly
+  testE2e tier was started.
 
 ## Build & run
 
@@ -195,8 +194,8 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
   build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
   (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
-  exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
-  `IntegrationEvent` / `ActionCommand` hierarchies, because those types *are* the Kafka wire
+  exception: **`jackson-annotations`** (annotations only, no databind) on the wire
+  event/command hierarchies and repository envelope records, because those types *are* the Kafka wire
   contract and their discriminators belong with them. Per-service mix-ins were considered and
   rejected: they spread one registry across every `ObjectMapper` in three services, where a missed
   site is a runtime wire break rather than a compile error. Adding a second exception means

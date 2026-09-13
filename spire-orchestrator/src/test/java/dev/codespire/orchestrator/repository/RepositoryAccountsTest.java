@@ -14,8 +14,8 @@ class RepositoryAccountsTest extends RepositoryFixture {
         var repository = repositories.create(repository(reviewer, factory));
         assertEquals("TEST-secret-REVIEWER", accounts.resolve(repository.id(), ProviderRole.REVIEWER).orElseThrow().secret());
         assertEquals("TEST-secret-FACTORY", accounts.resolve(repository.id(), ProviderRole.FACTORY).orElseThrow().secret());
-        assertEquals(providers.resolve("gitlab", workspace, ProviderRole.REVIEWER), accounts.resolve(repository.id(), ProviderRole.REVIEWER));
-        assertEquals(providers.resolve("gitlab", workspace, ProviderRole.FACTORY), accounts.resolve(repository.id(), ProviderRole.FACTORY));
+        assertEquals(providers.resolveById(reviewer), accounts.resolve(repository.id(), ProviderRole.REVIEWER));
+        assertEquals(providers.resolveById(factory), accounts.resolve(repository.id(), ProviderRole.FACTORY));
     }
 
     @Test void rejectsAnAccountFromAnotherOrigin() throws Exception {
@@ -101,8 +101,7 @@ class RepositoryAccountsTest extends RepositoryFixture {
         UUID reviewer = account("REVIEWER");
         var repo = repositories.create(repository(reviewer, null));
         var rotated = input("REVIEWER", origin, true, "TEST-id-REVIEWER");
-        providers.update(reviewer, new dev.codespire.orchestrator.provider.ProviderInput(rotated.name(), rotated.type(), origin,
-                workspace, "bearer", null, "TEST-rotated", rotated.botAccountId(), true, rotated.authors(), rotated.botUsername(), null, "REVIEWER"));
+        providers.update(reviewer, new dev.codespire.orchestrator.provider.ProviderInput(rotated.name(), rotated.type(), origin, "bearer", null, "TEST-rotated", rotated.botAccountId(), true, rotated.authors(), rotated.botUsername(), null, "REVIEWER"));
         assertEquals("TEST-rotated", accounts.resolve(repo.id(), ProviderRole.REVIEWER).orElseThrow().secret());
     }
 

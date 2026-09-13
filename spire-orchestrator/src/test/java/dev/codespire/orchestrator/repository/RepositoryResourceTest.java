@@ -11,6 +11,17 @@ import static org.junit.jupiter.api.Assertions.*;
 @QuarkusTest
 @TestSecurity(user = "TEST-admin", roles = {"spire-viewer", "spire-admin"})
 class RepositoryResourceTest extends RepositoryFixture {
+    @Test void repositoryOwnsWorkspaceAndRoleBindings() {
+        UUID reviewer = account("REVIEWER"), factory = account("FACTORY");
+        String id = given().contentType("application/json").body(repository(reviewer, factory)).post("/api/repositories")
+                .then().statusCode(201).body("workspace", equalTo(workspace))
+                .body("reviewer.id", equalTo(reviewer.toString())).body("factory.id", equalTo(factory.toString()))
+                .body(not(containsString("TEST-secret"))).extract().path("id");
+        given().get("/api/repositories/" + id).then().statusCode(200)
+                .body("reviewer.id", equalTo(reviewer.toString())).body("factory.id", equalTo(factory.toString()));
+        assertEquals(1, repositories.list().stream().filter(r -> r.id().toString().equals(id)).count(),
+                "Each role join must select exactly the repository's binding");
+    }
     @Test void registersARepositoryWithExplicitRoleBindings() {
         UUID reviewer = account("REVIEWER"), factory = account("FACTORY");
         String id = given().contentType("application/json").body(repository(reviewer, factory)).post("/api/repositories")

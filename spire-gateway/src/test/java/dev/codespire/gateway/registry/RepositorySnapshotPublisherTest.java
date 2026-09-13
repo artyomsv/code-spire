@@ -60,7 +60,7 @@ class RepositorySnapshotPublisherTest {
         assertEquals(registrationId, snapshot.registrationId());
         assertFalse(pending.payload().contains(created.secret()));
         assertFalse(pending.payload().contains(created.repo().webhookKey()));
-        assertEquals(9, mapper.readTree(pending.payload()).size());
+        assertEquals(12, mapper.readTree(pending.payload()).size());
         try (var consumed = companion.consumeStrings().withGroupId("TEST-registry-" + registrationId)
                 .fromTopics("cs.registry-integration", Duration.ofSeconds(5))) {
             publisher.send(pending).get(15, java.util.concurrent.TimeUnit.SECONDS);

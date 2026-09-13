@@ -187,3 +187,10 @@ reported the same rule, `java.lang.security.audit.formatted-sql-string.formatted
 The separate `Semgrep OSS` check contained exactly one annotation on the same history-bridge line;
 there was no second finding hidden behind the gate failure. New-head CI checks are required before
 the account resolver cutover proceeds.
+
+All applicable checks passed on `363b13d`, including service tests/packaging, fast tests,
+dashboard, Java/Kotlin CodeQL, kind installation and the manifests gate. The corrected Semgrep
+PR gate found zero issues (378 rules / 47 files); its full scan found zero issues (442 rules /
+1081 files). The separate OSS check passed with zero annotations. Evidence:
+[Semgrep run](https://github.com/artyomsv/code-spire/actions/runs/34731170783),
+[CI run](https://github.com/artyomsv/code-spire/actions/runs/34731170846).

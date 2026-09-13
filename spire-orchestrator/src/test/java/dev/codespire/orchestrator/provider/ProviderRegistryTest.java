@@ -30,8 +30,7 @@ class ProviderRegistryTest {
     DataSource dataSource;
 
     private static ProviderInput bearer(String workspace, String secret, List<String> authors) {
-        return new ProviderInput("CF Bitbucket", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                workspace, "bearer", null, secret, "acct-1", true, authors, null, null);
+        return new ProviderInput("CF Bitbucket", "bitbucket-cloud", "https://api.bitbucket.org/2.0", "bearer", null, secret, "acct-1", true, authors, null, null);
     }
 
     @Test
@@ -43,7 +42,7 @@ class ProviderRegistryTest {
 
         assertFalse(rawSecret(created.id()).contains("tok-SECRET-123"), "token must be encrypted at rest");
 
-        ScmProvider resolved = registry.resolve("bitbucket-cloud", "ws-create").orElseThrow();
+        ScmProvider resolved = registry.resolveById(UUID.fromString(created.id())).orElseThrow();
         assertEquals("tok-SECRET-123", resolved.secret(), "resolve decrypts the token");
     }
 
@@ -51,10 +50,9 @@ class ProviderRegistryTest {
     void updateKeepsSecretWhenBlankAndReplacesAuthors() {
         ProviderView created = registry.create(bearer("ws-keep", "tok-keep", List.of("alice")));
         UUID id = UUID.fromString(created.id());
-        registry.update(id, new ProviderInput("Renamed", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                "ws-keep", "bearer", null, null, "acct-1", true, List.of("carol"), null, null));
+        registry.update(id, new ProviderInput("Renamed", "bitbucket-cloud", "https://api.bitbucket.org/2.0", "bearer", null, null, "acct-1", true, List.of("carol"), null, null));
 
-        assertEquals("tok-keep", registry.resolve("bitbucket-cloud", "ws-keep").orElseThrow().secret());
+        assertEquals("tok-keep", registry.resolveById(id).orElseThrow().secret());
         ProviderView view = registry.get(id).orElseThrow();
         assertEquals("Renamed", view.name());
         assertEquals(List.of("carol"), view.authors());
@@ -64,7 +62,7 @@ class ProviderRegistryTest {
     void updateRotatesSecretWhenProvided() {
         ProviderView created = registry.create(bearer("ws-rotate", "old-tok", List.of()));
         registry.update(UUID.fromString(created.id()), bearer("ws-rotate", "new-tok", List.of()));
-        assertEquals("new-tok", registry.resolve("bitbucket-cloud", "ws-rotate").orElseThrow().secret());
+        assertEquals("new-tok", registry.resolveById(UUID.fromString(created.id())).orElseThrow().secret());
     }
 
     @Test
@@ -73,18 +71,17 @@ class ProviderRegistryTest {
         UUID id = UUID.fromString(created.id());
         assertTrue(registry.delete(id));
         assertTrue(registry.get(id).isEmpty());
-        assertTrue(registry.resolve("bitbucket-cloud", "ws-delete").isEmpty());
+        assertTrue(registry.resolveById(id).isEmpty());
     }
 
     @Test
-    void disabledProviderIsNotResolved() {
-        registry.create(new ProviderInput("Off", "bitbucket-cloud", "https://api.bitbucket.org/2.0",
-                "ws-disabled", "bearer", null, "tok", "acct-1", false, List.of(), null, null));
-        assertTrue(registry.resolve("bitbucket-cloud", "ws-disabled").isEmpty());
+    void disabledAccountCanBeReadForAdministrativeChecks() {
+        ProviderView created = registry.create(new ProviderInput("Off", "bitbucket-cloud", "https://api.bitbucket.org/2.0", "bearer", null, "tok", "acct-1", false, List.of(), null, null));
+        assertFalse(registry.resolveById(UUID.fromString(created.id())).orElseThrow().enabled());
     }
 
     private static ProviderInput withRole(String workspace, String role) {
-        return new ProviderInput("Role bot", "github", "https://api.github.com", workspace, "bearer", null,
+        return new ProviderInput("Role bot", "github", "https://api.github.com", "bearer", null,
                 "TEST-token", "TEST-acct", true, List.of(), "role-bot", null, role);
     }
 

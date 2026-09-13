@@ -19,7 +19,7 @@ import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
 
-/** Admin-only registry operations; registration grants no new runtime authority during the bridge. */
+/** Admin-only repository coordinates, role bindings and migration repairs. */
 @Path("/api/repositories")
 @RolesAllowed("spire-admin")
 @Consumes(MediaType.APPLICATION_JSON)

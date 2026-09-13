@@ -55,6 +55,12 @@ public class ProviderResource {
     ProviderRegistry registry;
 
     @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+
+    @Inject
     ProviderIdentityResolver identity;
 
     @Inject
@@ -82,12 +88,12 @@ public class ProviderResource {
 
     @POST
     @RolesAllowed("spire-admin")
-    public Response create(ProviderInput in) {
+    public Response create(ProviderInput in, @QueryParam("validationRepositoryId") UUID validationRepositoryId) {
         in = normalize(in, null);
         validate(in, true);
         ProviderView created;
         try {
-            created = registry.create(resolveIdentity(in));
+            created = registry.create(resolveIdentity(in, validationRepositoryId));
         } catch (ProviderRegistry.AccountConflict e) {
             throw conflict(e.getMessage());
         }
@@ -101,14 +107,15 @@ public class ProviderResource {
     @PUT
     @RolesAllowed("spire-admin")
     @Path("/{id}")
-    public ProviderView update(@PathParam("id") String id, ProviderInput in) {
+    public ProviderView update(@PathParam("id") String id, ProviderInput in,
+                               @QueryParam("validationRepositoryId") UUID validationRepositoryId) {
         ProviderView stored = registry.get(uuid(id)).orElseThrow(() -> new NotFoundException("No provider " + id));
         in = normalize(in, stored.role());
         if (!stored.role().equalsIgnoreCase(in.role())) throw conflict("The role is fixed at registration. Register a new account for that role.");
         validate(in, false);
         ProviderView updated;
         try {
-            updated = registry.update(uuid(id), resolveIdentity(in))
+            updated = registry.update(uuid(id), resolveIdentity(in, validationRepositoryId))
                     .orElseThrow(() -> new NotFoundException("No provider " + id));
         } catch (ProviderRegistry.RoleIsFixedAtRegistration | ProviderRegistry.AccountConflict e) {
             throw conflict(e.getMessage());
@@ -130,13 +137,17 @@ public class ProviderResource {
      * no new token (keeping the stored one) there is nothing new to validate, so the
      * input is passed through untouched.
      */
-    ProviderInput resolveIdentity(ProviderInput in) {
+    public Response create(ProviderInput in) { return create(in, null); }
+    public ProviderView update(String id, ProviderInput in) { return update(id, in, null); }
+    ProviderInput resolveIdentity(ProviderInput in) { return resolveIdentity(in, null); }
+
+    ProviderInput resolveIdentity(ProviderInput in, UUID validationRepositoryId) {
         if (in.secret() == null || in.secret().isBlank()) {
             return in;
         }
         Author owner;
         try {
-            owner = identity.resolveForRegistration(in);
+            owner = identity.resolveForRegistration(in, validationRepositoryId);
         } catch (RuntimeException e) {
             // Generic message to the client: the adapter's root cause may reflect
             // internal/upstream responses (SSRF probe echoes). Detail stays server-side.
@@ -156,13 +167,13 @@ public class ProviderResource {
         // silently set role = null (REVIEWER), so a FACTORY registration through this endpoint was
         // stored as the workspace's reviewer — the review pipeline held the push token and
         // POST /api/runs answered 409 forever. The trap CLAUDE.md records for ReviewResult, again.
-        return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.workspace(), in.authKind(),
+        return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.authKind(),
                 in.authUsername(), in.secret(), botId, in.enabled(), in.authors(),
                 botUsername, in.conversationLevel(), in.role());
     }
 
     /**
-     * Which accounts serve a (forge type, workspace), per role — for the Repositories screen.
+     * Which accounts are selected on one repository, per role, including unusable account states.
      *
      * <p>Reads the same rows through the same rules the pipeline applies. An enabled REVIEWER row is
      * {@code ok} when its bot identity resolved and {@code no-identity} otherwise — the condition
@@ -180,24 +191,21 @@ public class ProviderResource {
      */
     @GET
     @Path("/serving")
-    public ServingAccounts serving(@QueryParam("type") String type, @QueryParam("workspace") String workspace) {
-        requireField(type, "type");
-        requireField(workspace, "workspace");
-        if (!ProviderClients.SUPPORTED_TYPES.contains(type)) {
-            throw new BadRequestException("Unsupported provider type '" + type
-                    + "' (expected one of: " + String.join(", ", ProviderClients.SUPPORTED_TYPES.stream().sorted().toList()) + ")");
-        }
-        ServingAccount reviewer = registry.registration(type, workspace, ProviderRole.REVIEWER)
+    public ServingAccounts serving(@QueryParam("repositoryId") String repositoryId) {
+        requireField(repositoryId, "repositoryId");
+        dev.codespire.orchestrator.repository.RepositoryView repository = repositories.get(uuid(repositoryId))
+                .orElseThrow(() -> new NotFoundException("Repository is not registered"));
+        ServingAccount reviewer = repositoryAccounts.registration(repository.id(), ProviderRole.REVIEWER)
                 .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
                         : isBlank(v.botAccountId()) ? ServingAccount.of("no-identity", v)
                         : ServingAccount.of("ok", v))
                 .orElseGet(ServingAccount::missing);
-        ServingAccount factory = registry.registration(type, workspace, ProviderRole.FACTORY)
+        ServingAccount factory = repositoryAccounts.registration(repository.id(), ProviderRole.FACTORY)
                 .map(v -> !v.enabled() ? ServingAccount.of("disabled", v)
                         : MachineAccounts.canAuthenticateAPush(v.botUsername()) ? ServingAccount.of("ok", v)
                         : ServingAccount.of("no-login", v))
                 .orElseGet(ServingAccount::missing);
-        return new ServingAccounts(type, workspace, reviewer, factory);
+        return new ServingAccounts(repository.scmType(), repository.workspace(), reviewer, factory);
     }
 
     private static boolean isBlank(String s) {
@@ -218,7 +226,7 @@ public class ProviderResource {
         ScmProvider provider = registry.resolveById(uuid(id))
                 .orElseThrow(() -> new NotFoundException("No provider " + id));
         registry.recordScopes(provider.id(), clients.probeScopes(provider.type(), provider.baseUrl(), provider.authKind(),
-                provider.authUsername(), provider.secret(), provider.workspace()));
+                provider.authUsername(), provider.secret(), null));
         try {
             Author owner = identity.resolveForCheck(provider);
             registry.recordCheck(provider.id(), true, null);
@@ -325,14 +333,13 @@ public class ProviderResource {
         String role = in.role();
         if (isBlank(role)) role = storedRole != null ? storedRole
                 : ProviderClients.SUPPORTED_TYPES.contains(in.type() == null ? "" : in.type()) ? "REVIEWER" : "CONTEXT";
-        String workspace = isBlank(in.workspace()) ? null : in.workspace();
-        return new ProviderInput(in.name(), in.type(), in.baseUrl(), workspace, in.authKind(), in.authUsername(),
+        return new ProviderInput(in.name(), in.type(), in.baseUrl(), in.authKind(), in.authUsername(),
                 in.secret(), in.botAccountId(), in.enabled(), in.authors(), in.botUsername(), in.conversationLevel(), role);
     }
 
     private void recordScopes(UUID id, ProviderInput in) {
         registry.recordScopes(id, clients.probeScopes(in.type(), in.baseUrl(), in.authKind(), in.authUsername(),
-                in.secret(), in.workspace()));
+                in.secret(), null));
     }
 
     private void validate(ProviderInput in, boolean creating) {
@@ -359,11 +366,8 @@ public class ProviderResource {
                     + "' (expected one of: " + String.join(", ", TYPES.stream().sorted().toList()) + ")");
         }
         ProviderRole role = ProviderRole.of(in.role());
-        if (role == ProviderRole.CONTEXT) {
-            if (in.workspace() != null && !in.workspace().isBlank()) throw new BadRequestException("A context-only account has no workspace");
-        } else {
-            if (!ProviderClients.SUPPORTED_TYPES.contains(in.type())) throw new BadRequestException("This kind supports only the CONTEXT role");
-            requireField(in.workspace(), "workspace");
+        if (role != ProviderRole.CONTEXT && !ProviderClients.SUPPORTED_TYPES.contains(in.type())) {
+            throw new BadRequestException("This kind supports only the CONTEXT role");
         }
         validateBaseUrl(in.baseUrl());
         if (in.authKind() == null || !AUTH_KINDS.contains(in.authKind())) {

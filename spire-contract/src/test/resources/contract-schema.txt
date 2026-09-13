@@ -54,4 +54,7 @@ RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
 ContextCredential(type: java.lang.String, platform: java.lang.String, baseUrl: java.lang.String, authKind: java.lang.String, username: java.lang.String, secret: java.lang.String, projectKeys: java.lang.String)
 
 # RepositoryRegistration
-RepositoryRegistration(registrationId: java.util.UUID, revision: long, providerType: java.lang.String, forgeOrigin: java.lang.String, scope: java.lang.String, target: java.lang.String, enabled: boolean, deleted: boolean)
+RepositoryRegistration(registrationId: java.util.UUID, revision: long, providerType: java.lang.String, forgeOrigin: java.lang.String, scope: java.lang.String, target: java.lang.String, enabled: boolean, deleted: boolean, repositoryId: java.util.UUID, eventKind: dev.codespire.contract.event.RepositoryEventKind, sourceId: java.util.UUID)
+
+# RepositoryDelivery
+RepositoryDelivery(repositoryId: java.util.UUID, registrationId: java.util.UUID, registrationRevision: long, providerType: java.lang.String, forgeOrigin: java.lang.String, eventKind: dev.codespire.contract.event.RepositoryEventKind, deliveryId: java.lang.String, event: dev.codespire.contract.event.IntegrationEvent)

@@ -372,7 +372,7 @@ class FactoryRunProjectionTest {
      */
     private boolean queueWith(String runId, java.util.UUID credential) {
         return projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/x", "spire-bot", credential), null);
+                "abc1234", "spire/x", "spire-bot", credential), null, null);
     }
 
     /**
@@ -384,7 +384,7 @@ class FactoryRunProjectionTest {
      */
     private boolean reQueue(String runId) {
         return projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/x", "spire-bot", null), null);
+                "abc1234", "spire/x", "spire-bot", null), null, null);
     }
 
     /**
@@ -400,7 +400,7 @@ class FactoryRunProjectionTest {
     void aQueuedRunHasNotProposedAnythingYet() {
         String runId = "run::github:TEST-acme/app:plan-1:1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/plan-1", "spire-bot", null), "Fix the overflow in Pricer");
+                "abc1234", "spire/plan-1", "spire-bot", null), "Fix the overflow in Pricer", null);
 
         FactoryRunProjection.PullRequestPlan plan = projection.pullRequestPlanOf(runId).orElseThrow();
 
@@ -417,7 +417,7 @@ class FactoryRunProjectionTest {
     void aRunThatProposedNamesItsPullRequest() {
         String runId = "run::github:TEST-acme/app:plan-2:1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/plan-2", "spire-bot", null), "Fix the overflow in Pricer");
+                "abc1234", "spire/plan-2", "spire-bot", null), "Fix the overflow in Pricer", null);
 
         projection.pullRequestOpened(runId, 41L, "https://github.invalid/acme/app/pull/41");
 
@@ -439,11 +439,11 @@ class FactoryRunProjectionTest {
     void aReArmedDispatchTakesTheRetrysTaskSummary() {
         String runId = "run::github:TEST-acme/app:plan-4:1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/plan-4", "spire-bot", null), "Task A: fix the overflow");
+                "abc1234", "spire/plan-4", "spire-bot", null), "Task A: fix the overflow", null);
         projection.dispatchFailed(runId, "the broker refused the record");
 
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6",
-                "main", "abc1234", "spire/plan-4", "spire-bot", null), "Task B: fix the rounding"),
+                "main", "abc1234", "spire/plan-4", "spire-bot", null), "Task B: fix the rounding", null),
                 "a definite dispatch failure re-arms");
 
         assertEquals("Task B: fix the rounding",
@@ -455,7 +455,7 @@ class FactoryRunProjectionTest {
     void aRunWithNoTaskSummaryStillHasAPlan() {
         String runId = "run::github:TEST-acme/app:plan-3:1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/plan-3", "spire-bot", null), null);
+                "abc1234", "spire/plan-3", "spire-bot", null), null, null);
 
         FactoryRunProjection.PullRequestPlan plan = projection.pullRequestPlanOf(runId).orElseThrow();
 
@@ -554,7 +554,7 @@ class FactoryRunProjectionTest {
         // The resource records the row before dispatching, so a retried request must not fail on
         // the primary key — it must simply find the row already there.
         String runId = queuedRun();
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null);
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
 
         assertEquals(FactoryRunProjection.QUEUED, projection.find(runId).orElseThrow().status());
     }
@@ -566,18 +566,18 @@ class FactoryRunProjectionTest {
         // repeated request must not quietly reopen it.
         String finished = queuedRun();
         projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of(), List.of(), null, false));
-        projection.queued(new FactoryRunProjection.QueuedRun(finished, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null);
+        projection.queued(new FactoryRunProjection.QueuedRun(finished, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(finished).orElseThrow().status());
 
         String crashed = queuedRun();
         projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null));
-        projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null);
+        projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         assertEquals("SANDBOX_LOST", projection.find(crashed).orElseThrow().failureCause());
 
         String unacked = queuedRun();
         projection.dispatchFailed(unacked, "No broker ack within 10s");
         assertEquals(FactoryRunProjection.FAILED, projection.find(unacked).orElseThrow().status());
-        projection.queued(new FactoryRunProjection.QueuedRun(unacked, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null);
+        projection.queued(new FactoryRunProjection.QueuedRun(unacked, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         FactoryRunProjection.RunView view = projection.find(unacked).orElseThrow();
         assertEquals(FactoryRunProjection.QUEUED, view.status());
         assertNull(view.failureCause());
@@ -593,7 +593,7 @@ class FactoryRunProjectionTest {
         projection.dispatchFailed(runId, "No broker ack within 10s");
 
         boolean reArmed = projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.7-mini",
-                "release/2", "fedcba9876543210fedcba9876543210fedcba98", "spire/x", "other-bot", null), null);
+                "release/2", "fedcba9876543210fedcba9876543210fedcba98", "spire/x", "other-bot", null), null, null);
 
         assertFalse(reArmed);
         assertEquals(List.of(FactoryRunProjection.FAILED, FactoryRunProjection.DISPATCH_FAILED, "gpt-5.6",
@@ -607,7 +607,7 @@ class FactoryRunProjectionTest {
         projection.dispatchFailed(runId, "No broker ack within 10s");
 
         boolean reArmed = projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/x", "spire-bot", null), null);
+                "abc1234", "spire/x", "spire-bot", null), null, null);
 
         assertTrue(reArmed);
         assertEquals(java.util.Arrays.asList(FactoryRunProjection.QUEUED, null), column(runId, "status", "failure_cause"));

@@ -6,8 +6,9 @@ Architecture decision records for Code Spire. Newest first.
 
 ## ADR-042 — Repositories own coordinates and explicitly bind role accounts
 
-**Status:** accepted design; M3 slice 1 implements the expansion and migration bridge. Slice 2
-performs the runtime cutover and retires the old key; slice 10 removes the legacy workspace column.
+**Status:** implemented through M3 slice 2. Runtime resolution uses explicit repository bindings.
+The old account key and workspace-by-role check are removed; the populated workspace column
+remains rollback evidence until slice 10.
 
 **Decision.** A repository is identified by `(scm_type, forge_origin, workspace, slug)` and has
 its own UUID. Forge origin is the canonical HTTP(S) scheme, host and non-default port, with no
@@ -34,18 +35,28 @@ An unambiguous legacy match with an evidenced origin creates bindings once; subs
 preserve operator edits. A workspace alone never establishes a host. Conflicting or missing origins
 become attention rows with explicit mapping repair. A bounded history sweep uses persisted review
 URLs as origin evidence and links reviews/runs, including repositories observed through legacy org hooks. Org
-auto-enrollment survives this bridge only: cutover must replace it with attention naming the
-unregistered repository, origin and source registration plus a prefilled register action.
+auto-enrollment ends at cutover: verified unregistered deliveries create attention naming the
+repository, origin and source registration, with a prefilled Register action. Registration
+snapshots alone do not create repositories after cutover.
 
 **Rollback evidence.** Keep the old account key and populated workspace in slice 1. Slice 2 drops
 the key/checks and all runtime reads, but retains workspace untouched until slice 10. Before any
 dev upgrade, preserve a verified full database dump and the matching keysets. The repeatable
 commands and real credential continuity probe are in the M3 plan; `.handoff/` survives sessions.
 
-**Proof.** `RepositorySchemaMigrationTest`, `RepositorySnapshotMigrationTest`,
-`RepositoryMigrationBridgeTest`, `RepositoryAccountsTest`, `RepositoryResourceTest`, the broker
-publisher/consumer tests, and `RepositoryRegistryPage.test.tsx`. These establish the expansion in
-isolated PostgreSQL/Kafka; the production rollout and resolver cutover are separate claims.
+**Cutover.** Signed gateway deliveries carry kind/origin/registration provenance on the new
+`cs.repository-integration` topic. REVIEWER deliveries enter the review lifecycle; FACTORY
+activity is forwarded separately; ISSUE requires a work source and is reserved for its later
+slice. A repository has at most one webhook per kind. Gateway V4 preserves existing keys,
+ciphertexts and rejection history. Raw legacy SCM deliveries are dead-lettered with a repair
+reason, never assigned credentials by a workspace match. Existing review IDs and credential
+transport AADs retain their original namespace split, including nested GitLab paths.
+
+**Proof.** Criterion 7 uses the named resource, fresh-schema gateway and UI tests in the M3
+plan. `RepositoryResolverCutoverTest` observes each dispatch entry at the actual database-backed
+credential boundary; separate choreography suites exercise subsequent commands.
+`AccountWorkspaceIsUnusedTest` scans runtime SQL, including SELECT-star mappings. The mutation
+ledger and real-row rollout measurements are in `.claude/reviews/global/factory-m3-slice2.md`.
 
 ---
 

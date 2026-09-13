@@ -74,15 +74,20 @@ class RepositorySnapshotConsumerTest extends RepositoryFixture {
 
     @Test void brokerDeliveryReconcilesTheActualConsumerAndRegistry() throws Exception {
         UUID reviewer = account("REVIEWER"); snapshotAccounts();
+        RepositoryView selected = repositories.create(repository(reviewer, null));
         UUID registration = UUID.randomUUID();
         var snapshot = new RepositoryRegistration(registration, 1, "gitlab", origin, "repo", workspace + "/TEST-repo", true, false);
         companion.produceStrings().fromRecords(new ProducerRecord<>("cs.registry-integration", registration.toString(), mapper.writeValueAsString(snapshot)))
                 .awaitCompletion(Duration.ofSeconds(15));
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             var match = repositories.list().stream().filter(row -> row.workspace().equals(workspace)).findFirst();
-            assertTrue(match.isPresent(), "the actual consumer must create the registry row");
+            assertTrue(match.isPresent(), "the explicitly selected registry row must remain");
             var repo = match.orElseThrow();
             assertEquals(reviewer, repo.reviewer().id()); assertNull(repo.factory());
+            try (var c = dataSource.getConnection(); var ps = c.prepareStatement("SELECT repository_id FROM repository_registration_bridge WHERE registration_id=?")) {
+                ps.setObject(1, registration);
+                try (var rows = ps.executeQuery()) { assertTrue(rows.next()); assertEquals(selected.id(), rows.getObject(1, UUID.class)); }
+            }
         });
     }
 }

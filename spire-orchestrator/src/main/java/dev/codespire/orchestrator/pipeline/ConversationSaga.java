@@ -72,13 +72,12 @@ public class ConversationSaga {
     public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
         Optional<ScmProvider> providerOpt = reviewProviders.resolveForReview(e.reviewId());
         if (providerOpt.isEmpty()) {
-            LOG.infof("Follow-up skipped for %s — no enabled provider for workspace '%s'",
-                    e.reviewId(), e.repo().workspace());
+            LOG.infof("Follow-up skipped for %s — no usable repository/reviewer mapping", e.reviewId());
             return Optional.empty();
         }
         ScmProvider provider = providerOpt.get();
         LOG.debugf("Follow-up on %s resolved provider %s/%s (comment %s, topLevel=%b)",
-                e.reviewId(), provider.type(), provider.workspace(), e.commentId(), e.topLevel());
+                e.reviewId(), provider.type(), e.repo().workspace(), e.commentId(), e.topLevel());
         if (botIdentityUnknown(provider, e)) {
             return Optional.empty();
         }
@@ -104,7 +103,7 @@ public class ConversationSaga {
             // later replies that also land here post nothing.
             return Optional.of(new ActionCommand.NotifyTurnCap(
                     e.reviewId(), e.repo(), e.prId(), target.thread(), levels.turnCap(),
-                    workerCredentials.pack(provider)));
+                    workerCredentials.pack(provider, e.repo().workspace())));
         }
         if (!decision.answer()) {
             return Optional.empty();
@@ -132,7 +131,7 @@ public class ConversationSaga {
         LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
         return Optional.of(new ActionCommand.AnswerFollowUp(
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
-                workerCredentials.pack(provider), llm.packed(), botMentioned,
+                workerCredentials.pack(provider, e.repo().workspace()), llm.packed(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
                 promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()),
                 findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
@@ -201,7 +200,7 @@ public class ConversationSaga {
                 "bot identity unknown — re-save the provider to resolve it");
         LOG.infof("Follow-up skipped for %s — bot identity unknown for provider %s/%s "
                 + "(botAccountId blank; re-save the provider to resolve it)",
-                e.reviewId(), provider.type(), provider.workspace());
+                e.reviewId(), provider.type(), e.repo().workspace());
         return true;
     }
 
@@ -217,7 +216,7 @@ public class ConversationSaga {
     private ConversationPolicy.ConversationDecision decide(
             AuthorReplied e, ScmProvider provider, ThreadTarget target, boolean botMentioned,
             boolean onFlaggedLine) {
-        ConversationLevel level = levels.effectiveLevel(provider.type(), e.repo().workspace());
+        ConversationLevel level = levels.effectiveLevel(provider);
         boolean authorAllowed = allowlistAllows(provider.authors(), e.author());
         int priorTurns = threads.turnCount(e.reviewId(), target.thread());
 

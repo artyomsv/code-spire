@@ -9,8 +9,15 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
 @JsonTypeName("RepositoryRegistration")
 public record RepositoryRegistration(UUID registrationId, long revision, String providerType,
                                      String forgeOrigin, String scope, String target,
-                                     boolean enabled, boolean deleted) {
+                                     boolean enabled, boolean deleted, UUID repositoryId,
+                                     RepositoryEventKind eventKind, UUID sourceId) {
+    public RepositoryRegistration(UUID registrationId, long revision, String providerType,
+                                  String forgeOrigin, String scope, String target, boolean enabled, boolean deleted) {
+        this(registrationId, revision, providerType, forgeOrigin, scope, target, enabled, deleted,
+                null, RepositoryEventKind.REVIEWER, null);
+    }
     public RepositoryRegistration {
+        if (eventKind == null) eventKind = RepositoryEventKind.REVIEWER;
         if (registrationId == null || revision < 1 || providerType == null || providerType.isBlank()
                 || (forgeOrigin != null && forgeOrigin.isBlank())
                 || (!"repo".equals(scope) && !"org".equals(scope)) || target == null || target.isBlank()) {

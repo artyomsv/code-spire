@@ -1852,3 +1852,17 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     all three existing gateway snapshots were acknowledged and remain origin-unknown repair rows.
     The real encrypted baseline comparison passed all 9 entries after V60. Runtime account
     resolution remains on the legacy path; slice 2's later cutover comparison is still required.
+
+- **M3 slice 2 — repository cutover (PR #153, 2026-09-13; awaiting review):** all active SCM
+  dispatch uses explicit repository/role bindings. Account workspace leaves DTOs, forms and
+  runtime SQL; V61 drops its old constraints while retaining populated rollback evidence.
+  Gateway V4 preserves hook keys/secrets/rejection history and adds one hook per kind. Verified
+  provenance uses a new topic, FACTORY activity is separate, and unknown repositories produce
+  Attention instead of auto-enrollment. The repository screen supports optional hooks, missing
+  roles, partial-save retry and legacy repair at the gateway owner. Nested GitLab paths preserve
+  old review IDs and transport AADs. Criterion 7 has its exact named tests and production-schema
+  mutation; 62 distinct mutations are recorded. 3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip; 630 UI tests and packaging passed.
+  The real gateway-first V4/V61 rollout preserved 6/37/85/14/3 rows, all retained workspaces and
+  hook rejection metadata; 9 account/context and 12 webhook entries matched after decryption.
+  The three missing origins remain explicit repairs, not inferred mappings. No live run worker,
+  new spend, synthetic live row or second dump was used. Later M3 criteria remain pending.

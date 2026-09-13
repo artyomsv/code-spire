@@ -89,8 +89,8 @@ class ConversationFindingSagaTest {
         long pr = liveReview();
         String reviewId = reviewIdFor(pr);
 
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         ReviewDetail.FindingView filed = findingAt(reviewId, LOC);
         assertEquals("warning", filed.sev(), "the leading severity word is what was filed");
@@ -126,7 +126,7 @@ class ConversationFindingSagaTest {
                 "major shadows the field", HUMAN, new ThreadRef(rootRefOf(pr)),
                 new ThreadLocation(PATH, LINE), null);
 
-        sagaAllowingEveryone().on(command);
+        sagaAllowingEveryone().onRepository(command, ReviewFixtures.repositoryId());
 
         assertEquals("shadows the field", findingAt(reviewId, LOC).msg());
         assertNull(onlyConfirmation().triggeringCommentId());
@@ -149,7 +149,7 @@ class ConversationFindingSagaTest {
         String summaryRef = "TEST-SUMMARY-" + pr;
         projection.recordPosted(reviewId, "TESTSHA" + pr, summaryRef);
 
-        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty(), "nothing to anchor, nothing filed");
         assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
@@ -169,7 +169,7 @@ class ConversationFindingSagaTest {
         long pr = liveReview();
         String reviewId = reviewIdFor(pr);
 
-        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major something", HUMAN, null, null, commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty(), "nothing to anchor, nothing filed");
         assertTrue(emitted.isEmpty(), "nowhere posted yet -- nothing to reply into");
@@ -192,8 +192,8 @@ class ConversationFindingSagaTest {
         threads.markFindingThread(reviewId, root, PATH, LINE);
         threads.markAnswerThread(reviewId, reply, root);
 
-        sagaAllowingEveryone().on(finding(pr, "blocker drops the lock", HUMAN, reply, null,
-                commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "blocker drops the lock", HUMAN, reply, null,
+                commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         ReviewDetail.FindingView filed = findingAt(reviewId, LOC);
         assertEquals("critical", filed.sev());
@@ -221,8 +221,8 @@ class ConversationFindingSagaTest {
         assertNull(threads.locationOf(reviewId, summary),
                 "a row that exists without a location must read back as no location, not as ':0'");
 
-        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, summary, null,
-                commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major something", HUMAN, summary, null,
+                commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty());
         assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("needs to be on a specific line")),
@@ -248,19 +248,19 @@ class ConversationFindingSagaTest {
         long pr = ReviewFixtures.newPr();   // deliberately NOT seeded — no review_status row
         String reviewId = reviewIdFor(pr);
 
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(emitted.isEmpty(), "confirming a finding stored nowhere tells the human a lie");
         assertTrue(lifecycle.currentState(reviewId).raisedFindingComments().isEmpty(),
                 "and burning the comment id would make the finding unfileable forever");
-        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("no registered review")),
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("not registered to this repository")),
                 "refused in /review's own idiom; timeline was " + timelineDetails);
 
         // The other half: register the PR, redeliver the same comment, and it files for real.
         ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertEquals("shadows the field", findingAt(reviewId, LOC).msg());
         assertEquals(1, confirmations().size());
@@ -282,10 +282,10 @@ class ConversationFindingSagaTest {
         threads.markSummaryThread(reviewId, summary);
 
         // No location anywhere -> a Refused outcome, with somewhere (the summary thread) to reply to.
-        sagaAllowingEveryone().on(finding(pr, "major something", HUMAN, summary, null, commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major something", HUMAN, summary, null, commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(emitted.isEmpty(), "an unregistered PR must get no reply, even on the refusal path");
-        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("no registered review")),
+        assertTrue(timelineDetails.stream().anyMatch(d -> d.contains("not registered to this repository")),
                 "refused in /review's own idiom; timeline was " + timelineDetails);
     }
 
@@ -304,8 +304,8 @@ class ConversationFindingSagaTest {
         String reviewId = reviewIdFor(pr);
         IntegrationSaga saga = sagaFor(provider(List.of(HUMAN.username())));
 
-        saga.on(finding(pr, "blocker anything", STRANGER, new ThreadRef(rootRefOf(pr)),
-                new ThreadLocation(PATH, LINE), "TEST-COMMENT-STRANGER-" + pr));
+        saga.onRepository(finding(pr, "blocker anything", STRANGER, new ThreadRef(rootRefOf(pr)),
+                new ThreadLocation(PATH, LINE), "TEST-COMMENT-STRANGER-" + pr), ReviewFixtures.repositoryId());
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty(),
                 "an unlisted author files nothing");
@@ -314,8 +314,8 @@ class ConversationFindingSagaTest {
         assertTrue(lifecycle.currentState(reviewId).raisedFindingComments().isEmpty(),
                 "the aggregate never saw the command either");
 
-        saga.on(finding(pr, "blocker anything", HUMAN, new ThreadRef(rootRefOf(pr)),
-                new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        saga.onRepository(finding(pr, "blocker anything", HUMAN, new ThreadRef(rootRefOf(pr)),
+                new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertNotNull(findingAt(reviewId, LOC),
                 "the control: the same command from an allowlisted author does file, so the "
@@ -334,8 +334,8 @@ class ConversationFindingSagaTest {
         String reviewId = reviewIdFor(pr);
         assertEquals(ArchiveOutcome.ARCHIVED, projection.archiveReview(WS, REPO, pr));
 
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertTrue(projection.openFindingsFor(reviewId).isEmpty(),
                 "an archived review is retired — nothing is written to it");
@@ -365,8 +365,8 @@ class ConversationFindingSagaTest {
                 new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr));
         IntegrationSaga saga = sagaAllowingEveryone();
 
-        saga.on(event);
-        saga.on(event);
+        saga.onRepository(event, ReviewFixtures.repositoryId());
+        saga.onRepository(event, ReviewFixtures.repositoryId());
 
         assertEquals(1, findingsAt(reviewId, LOC).size(), "one anchor stays one tracked concern");
         assertEquals(1, confirmations().size(),
@@ -393,7 +393,7 @@ class ConversationFindingSagaTest {
         ManualCommandReceived command = finding(pr, "major shadows the field", HUMAN,
                 new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr));
         IntegrationSaga saga = sagaAllowingEveryone();
-        saga.on(command);
+        saga.onRepository(command, ReviewFixtures.repositoryId());
         assertNotNull(findingAt(reviewId, LOC), "the finding has to exist before a round can resolve it");
 
         // A later round judges it RESOLVED: neither stillOpenPriorFindings nor
@@ -406,7 +406,7 @@ class ConversationFindingSagaTest {
                 List.of());
         assertTrue(findingsAt(reviewId, LOC).isEmpty(), "the round dropped it from the baseline");
 
-        saga.on(command);
+        saga.onRepository(command, ReviewFixtures.repositoryId());
 
         assertTrue(findingsAt(reviewId, LOC).isEmpty(),
                 "a redelivered command must not put a resolved finding back on the baseline");
@@ -433,16 +433,16 @@ class ConversationFindingSagaTest {
         IntegrationSaga saga = sagaAllowingEveryone();
         saga.projection = projectionFailingOnTheFindingWrite();
 
-        assertThrows(IllegalStateException.class, () -> saga.on(finding(pr, "major shadows the field",
-                HUMAN, new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr))),
+        assertThrows(IllegalStateException.class, () -> saga.onRepository(finding(pr, "major shadows the field",
+                HUMAN, new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId()),
                 "the write fails and the message dead-letters — that part is expected");
 
         assertTrue(lifecycle.currentState(reviewId).raisedFindingComments().isEmpty(),
                 "the comment id must not be consumed by a write that never landed: nothing could "
                         + "rebuild the finding, so a replay is its only chance");
 
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         assertEquals("shadows the field", findingAt(reviewId, LOC).msg(),
                 "the replay must file it for real");
@@ -461,8 +461,8 @@ class ConversationFindingSagaTest {
     void theRaisedEventReachesTheReviewHistoryWithItsAnchorAndSeverity() throws InterruptedException {
         long pr = liveReview();
 
-        sagaAllowingEveryone().on(finding(pr, "major shadows the field", HUMAN,
-                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)));
+        sagaAllowingEveryone().onRepository(finding(pr, "major shadows the field", HUMAN,
+                new ThreadRef(rootRefOf(pr)), new ThreadLocation(PATH, LINE), commentIdOf(pr)), ReviewFixtures.repositoryId());
 
         ReviewDetail.EventView row = awaitHistoryRow(pr, "ConversationFindingRaised");
         assertEquals("MAJOR at " + LOC, row.det());
@@ -478,7 +478,11 @@ class ConversationFindingSagaTest {
      * the failure has to be in the write and nowhere else.
      */
     private static ReviewProjection projectionFailingOnTheFindingWrite() {
-        return new ReviewProjection() {
+        return new dev.codespire.orchestrator.TestRepositoryProjection() {
+            @Override
+            public Optional<java.util.UUID> repositoryIdOf(String reviewId) {
+                return Optional.of(ReviewFixtures.repositoryId());
+            }
             @Override
             public boolean archived(String reviewId) {
                 return false;
@@ -574,7 +578,7 @@ class ConversationFindingSagaTest {
 
     private static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "TEST-PROVIDER", "github",
-                "https://example.invalid", WS, "bearer", null, "TEST-SECRET", "TEST-BOT-ACCOUNT",
+                "https://example.invalid", "bearer", null, "TEST-SECRET", "TEST-BOT-ACCOUNT",
                 true, authors, null, null, ProviderRole.REVIEWER));
     }
 
@@ -621,14 +625,9 @@ class ConversationFindingSagaTest {
                 emitted.add(command);
             }
         };
-        saga.providers = new ProviderRegistry() {
+        saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override
-            public Optional<ScmProvider> resolve(String type, String workspace) {
-                return provider;
-            }
-
-            @Override
-            public Optional<ScmProvider> resolveByWorkspace(String workspace) {
+            public Optional<ScmProvider> resolve(java.util.UUID repositoryId, ProviderRole role) {
                 return provider;
             }
         };
@@ -640,7 +639,7 @@ class ConversationFindingSagaTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
+            public String pack(ScmProvider p, String repositoryWorkspace) {
                 return "TEST-PACKED-CREDENTIAL";
             }
         };

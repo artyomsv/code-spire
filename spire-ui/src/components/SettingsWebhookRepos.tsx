@@ -1,16 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, RotateCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check } from 'lucide-react';
 import {
-  createWebhookRepo,
   deleteWebhookRepo,
-  fetchProviders,
   fetchWebhookRepos,
   rotateWebhookSecret,
   updateWebhookRepo,
-  verifyRepo,
-  type ProviderView,
-  type RepoCheck,
-  type WebhookRepoInput,
   type WebhookRepoSecret,
   type WebhookRepoView,
   type WebhookScope,
@@ -18,12 +12,11 @@ import {
 import { CopyableValue } from '../render';
 import CopyField from './CopyField';
 import IconButton from './IconButton';
-import Select from './Select';
 import ServingCell from './ServingCell';
 import Tooltip from './Tooltip';
-import { webhookSetupGuide, webhookTargetHelp } from './webhookSetup';
+import { webhookSetupGuide } from './webhookSetup';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
-import { ownerOf, servingKey, useServingAccounts } from '../hooks/useServingAccounts';
+import { useServingAccounts } from '../hooks/useServingAccounts';
 
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
@@ -73,7 +66,7 @@ export default function SettingsWebhookRepos() {
     <section className="content">
       <div className="card">
         <div className="prov-head">
-          <h2 className="prov-title">Repositories</h2>
+          <h2 className="prov-title">Webhooks</h2>
           <a href="#/settings/repositories/registry">Registered repositories and accounts</a>
           <Tooltip label="Add webhook">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add webhook">
@@ -89,8 +82,8 @@ export default function SettingsWebhookRepos() {
             Paste each row’s <strong>Payload URL</strong>, and the <strong>secret</strong> you were shown
             when the row was created, into that repository or organization’s webhook settings, prefixing
             the path with your public webhook base (e.g. your Cloudflare tunnel URL). The secret is shown
-            once; use Rotate in the edit dialog to mint a new one. The owner must match a reviewer account
-            registered under Settings → Accounts.
+            once; use Rotate in the edit dialog to mint a new one. Repository settings select the
+            accounts that process each repository's events.
           </p>
         )}
 
@@ -117,9 +110,7 @@ export default function SettingsWebhookRepos() {
             </div>
             <div className="wh-empty-title">No webhooks yet</div>
             <p className="wh-empty-text">
-              Register a repository or organization to get a unique payload URL and secret. Paste them
-              into the provider’s webhook settings and every pull request flows in automatically — no
-              per-repo setup after that.
+              Register a repository and select the webhook kinds it needs.
             </p>
             <button className="btn" onClick={() => setForm('new')}>
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -147,7 +138,7 @@ export default function SettingsWebhookRepos() {
               <tbody>
                 {repos.map((w) => {
                   // One lookup for both chips: the same (type, owner) pair answers reviewer and factory.
-                  const serves = serving[servingKey(w.providerType, ownerOf(w))];
+                  const serves = w.repositoryId ? serving[w.repositoryId] : { error: 'Select a repository to see its accounts' };
                   return (
                   <tr key={w.id}>
                     <td style={CELL_SUB}>{scopeLabel(w.scope)}</td>
@@ -229,273 +220,52 @@ export default function SettingsWebhookRepos() {
   );
 }
 
-/** Loads enabled providers and preselects one — the row's provider on edit (matched by type + owner),
- *  else the first. Keeps the modal under the max-8 useState rule.
- *  Reviewer accounts only: this form registers what will be reviewed, and a Factory account has
- *  nothing to review with. */
-function useWebhookProviders(initial: WebhookRepoView | null) {
-  const [providers, setProviders] = useState<ProviderView[]>([]);
-  const [providersLoaded, setProvidersLoaded] = useState(false);
-  const [providerId, setProviderId] = useState('');
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    fetchProviders()
-      .then((all) => {
-        if (!alive) return;
-        const usable = all.filter((p) => p.enabled && p.role === 'REVIEWER');
-        setProviders(usable);
-        if (initial) {
-          const owner = ownerOf(initial);
-          const match = usable.find((p) => p.type === initial.providerType && p.workspace === owner);
-          setProviderId(match?.id ?? '');
-        } else if (usable.length > 0) {
-          setProviderId(usable[0].id);
-        }
-      })
-      .catch((err) => alive && setLoadError(err instanceof Error ? err.message : String(err)))
-      .finally(() => alive && setProvidersLoaded(true));
-    return () => {
-      alive = false;
-    };
-  }, [initial]);
-
-  return { providers, providersLoaded, providerId, setProviderId, loadError };
-}
-
-function WebhookRepoFormModal({
-  initial,
-  onClose,
-  onSaved,
-}: {
-  initial: WebhookRepoView | null;
-  onClose: () => void;
-  onSaved: () => void;
+/** Legacy registration repair preserves its existing key, ciphertext and product kind. */
+function WebhookRepoFormModal({ initial, onClose, onSaved }: {
+  initial: WebhookRepoView | null; onClose: () => void; onSaved: () => void;
 }) {
-  const editing = initial !== null;
-
-  const { providers, providersLoaded, providerId, setProviderId, loadError } = useWebhookProviders(initial);
-  const [scope, setScope] = useState<WebhookScope>(initial?.scope ?? 'repo');
-  const [slug, setSlug] = useState(() => {
-    if (initial && initial.scope === 'repo') {
-      const i = initial.target.indexOf('/');
-      return i >= 0 ? initial.target.slice(i + 1) : '';
-    }
-    return '';
-  });
+  const [origin, setOrigin] = useState(initial?.forgeOrigin ?? '');
+  const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
-
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
-
-  const [verify, setVerify] = useState<{ state: 'idle' | 'checking' | 'ok' | 'fail'; detail?: string }>({
-    state: 'idle',
-  });
-  const verifyReq = useRef(0);
-
-  // A changed provider / scope / slug invalidates any prior/in-flight verify result.
-  useEffect(() => {
-    verifyReq.current += 1;
-    setVerify({ state: 'idle' });
-  }, [providerId, scope, slug]);
-
-  const selectedProvider = providers.find((p) => p.id === providerId) ?? null;
-  // On edit, if the provider was deleted we can't derive the owner — fall back to the stored row (read-only).
-  const legacyEdit = editing && providersLoaded && !selectedProvider;
-  const owner = selectedProvider?.workspace ?? (legacyEdit ? initial!.target.split('/')[0] : '');
-  const providerType = selectedProvider?.type ?? initial?.providerType ?? '';
-  const target = legacyEdit ? initial!.target : scope === 'org' ? owner : `${owner}/${slug.trim()}`;
-  const targetHelp = webhookTargetHelp(providerType, scope);
-  const validSlug = /^[^/\s]+$/.test(slug.trim());
-  const valid = legacyEdit ? true : selectedProvider != null && (scope === 'org' ? owner.length > 0 : validSlug);
-  const noProviders = providersLoaded && providers.length === 0 && !legacyEdit;
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!valid) {
-      setError(selectedProvider == null ? 'Select a provider first.' : 'Repository must be a single name (no slash).');
-      return;
-    }
-    const input: WebhookRepoInput = { providerType, scope, target, enabled };
-    setBusy(true);
-    setError(null);
-    try {
-      if (editing && initial) {
-        await updateWebhookRepo(initial.id, input);
-        onSaved();
-      } else {
-        setRevealed(await createWebhookRepo(input));
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function rotate() {
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
     if (!initial) return;
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
     try {
-      setRevealed(await rotateWebhookSecret(initial.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
+      await updateWebhookRepo(initial.id, { providerType: initial.providerType, scope: initial.scope,
+        target: initial.target, enabled, forgeOrigin: origin.trim() || null });
+      onSaved();
+    } catch (failure) { setError(String(failure)); }
+    finally { setBusy(false); }
   }
-
-  async function onVerify() {
-    if (!selectedProvider) return;
-    const reqId = ++verifyReq.current;
-    setVerify({ state: 'checking' });
-    try {
-      const result: RepoCheck = await verifyRepo(selectedProvider.id, target);
-      if (reqId !== verifyReq.current) return; // input changed while in flight — drop the stale result
-      setVerify(result.ok ? { state: 'ok' } : { state: 'fail', detail: result.detail ?? 'Not reachable' });
-    } catch (err) {
-      if (reqId !== verifyReq.current) return;
-      setVerify({ state: 'fail', detail: err instanceof Error ? err.message : String(err) });
-    }
+  async function rotate() {
+    if (!initial || !window.confirm('Rotate this secret? Update the forge webhook afterward.')) return;
+    setBusy(true); setError(null);
+    try { setRevealed(await rotateWebhookSecret(initial.id)); }
+    catch (failure) { setError(String(failure)); }
+    finally { setBusy(false); }
   }
-
-  if (revealed) {
-    return <SecretRevealModal result={revealed} rotated={editing} onDone={onSaved} />;
-  }
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="modal-head">
-          <h3>{editing ? 'Edit webhook' : 'Add webhook'}</h3>
-          <button className="iconbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        <form className="modal-body scroll" onSubmit={submit}>
-          {noProviders ? (
-            <div className="modal-msg">
-              Register a reviewer account first under Settings → Accounts, then add a webhook for one of its repositories.
-            </div>
-          ) : (
-            <>
-              <div className="field-row-2">
-                <label className="field">
-                  <span>Workspace</span>
-                  {legacyEdit ? (
-                    <div className="mono field-static">
-                      {initial!.providerType} · {owner}
-                    </div>
-                  ) : (
-                    <Select
-                      ariaLabel="Workspace"
-                      value={providerId}
-                      options={providers.map((p) => ({ value: p.id, label: `${p.type} · ${p.workspace} (${p.name})` }))}
-                      onChange={setProviderId}
-                    />
-                  )}
-                  <small className="field-hint">
-                    Which accounts review and push here is decided by the forge and workspace, not stored on this row.
-                  </small>
-                </label>
-                <label className="field">
-                  <span>Scope</span>
-                  <Select
-                    ariaLabel="Scope"
-                    value={scope}
-                    options={SCOPES.map((s) => ({ value: s.value, label: s.label }))}
-                    onChange={(v) => setScope(v as WebhookScope)}
-                    disabled={legacyEdit}
-                  />
-                </label>
-              </div>
-
-              {scope === 'repo' ? (
-                <label className="field">
-                  <span>Repository</span>
-                  <div className="wh-repo-input">
-                    <span className="wh-owner mono">{owner || '—'}/</span>
-                    <input
-                      className="mono"
-                      placeholder="repo-name"
-                      value={slug}
-                      onChange={(e) => setSlug(e.target.value)}
-                      disabled={legacyEdit}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      className="btn-ghost wh-verify-btn"
-                      onClick={() => void onVerify()}
-                      disabled={legacyEdit || !selectedProvider || !validSlug || verify.state === 'checking'}
-                    >
-                      {verify.state === 'checking' ? 'Verifying…' : 'Verify'}
-                    </button>
-                  </div>
-                  {verify.state === 'ok' && <div className="wh-verify ok">Repository found</div>}
-                  {verify.state === 'fail' && <div className="wh-verify fail">{verify.detail}</div>}
-                  <small className="field-hint">{targetHelp.hint}</small>
-                </label>
-              ) : (
-                <label className="field">
-                  <span>Organization</span>
-                  <div className="mono field-static">{owner || '—'}</div>
-                  <small className="field-hint">{targetHelp.hint}</small>
-                </label>
-              )}
-
-              {editing && initial && (
-                <div className="field">
-                  <span>Webhook secret</span>
-                  <div className="secret-row">
-                    <div className="mono field-static">Stored — write-only</div>
-                    <button type="button" className="btn-ghost" onClick={rotate} disabled={busy}>
-                      <RotateCw size={14} />
-                      Rotate
-                    </button>
-                  </div>
-                  <small className="field-hint">
-                    The secret is never shown after creation. Rotate to mint a new one — paste it into the provider’s
-                    webhook settings (the old value stops working).
-                  </small>
-                </div>
-              )}
-
-              {editing && initial && (
-                <label className="field">
-                  <span>Payload URL (path)</span>
-                  <div className="mono field-static">{webhookPath(initial)}</div>
-                  <small className="field-hint">Prefix with your public webhook base to get the full payload URL.</small>
-                </label>
-              )}
-
-              <label className="field-check">
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-                <span>Enabled</span>
-              </label>
-            </>
-          )}
-
-          {(error ?? loadError) && <div className="modal-msg modal-error">{error ?? loadError}</div>}
-
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn" disabled={busy || (!editing && noProviders)}>
-              {busy ? 'Saving…' : editing ? 'Save changes' : 'Add webhook'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+  if (revealed) return <SecretRevealModal result={revealed} rotated onDone={onSaved} />;
+  return <div className="modal-overlay"><div className="modal" role="dialog" aria-modal="true" aria-label="Edit webhook">
+    <form onSubmit={save} className="modal-body">
+      <h3>{initial ? 'Edit existing webhook' : 'Register a repository'}</h3>
+      {initial ? <>
+        <p>{initial.providerType} · {initial.scope} · {initial.target}</p>
+        <p>Existing organization hooks accept events only for explicitly registered repositories.</p>
+        <label className="field">Forge origin<input aria-label="Forge origin" type="url" value={origin} onChange={e => setOrigin(e.target.value)} /></label>
+        <label><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /> Enabled</label>
+        <p>Saving preserves the existing URL, secret and event kind.</p>
+        <button className="btn" disabled={busy}>Save changes</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => void rotate()}>Rotate secret</button>
+      </> : <p><a href="#/settings/repositories">Register a repository, then choose its webhook kinds.</a></p>}
+      {error && <p role="alert">{error}</p>}
+      <button type="button" className="btn" onClick={onClose}>Close</button>
+    </form>
+  </div></div>;
 }
 
-/** Provider-specific "what to do on the portal" steps, shown under the freshly revealed URL + secret. */
 function WebhookSetupChecklist({ providerType }: { providerType: string }) {
   const guide = webhookSetupGuide(providerType);
   if (!guide) {

@@ -54,6 +54,9 @@ public class FixRunDispatcher {
     FactoryRunProjection runs;
 
     @Inject
+    dev.codespire.orchestrator.readmodel.ReviewProjection reviews;
+
+    @Inject
     FindingProjection findings;
 
     @Inject
@@ -141,7 +144,8 @@ public class FixRunDispatcher {
         // No second unrecognised-SCM refusal here: the plan already made that decision and now
         // hands over its ANSWER. The copy that used to sit here was word-for-word identical, could
         // not be reached, and was covered by nothing.
-        Optional<ScmProvider> account = machineAccounts.resolve(planned.scmType(), planned.workspace());
+        java.util.Optional<java.util.UUID> repositoryId = reviews.repositoryIdOf(reviewId);
+        Optional<ScmProvider> account = repositoryId.flatMap(machineAccounts::resolve);
         if (account.isEmpty()) {
             // Two causes, one answer: no FACTORY registration at all, or one with no resolved login.
             // MachineAccounts refuses both, because packing a null login throws inside
@@ -213,7 +217,7 @@ public class FixRunDispatcher {
                 // Kept for the same reason as a build run's, though a fix run proposes nothing: the
                 // runs list shows what each run was asked to do, and a blank there for half the rows
                 // would read as "nothing was asked" rather than "this one pushes onto an open one".
-                FactoryPullRequestBody.summaryOf(command.prompt()))) {
+                FactoryPullRequestBody.summaryOf(command.prompt()), repositoryId.orElseThrow())) {
             return new Refused("a fix run is already recorded at " + planned.runId()
                     + ", so nothing new was dispatched");
         }

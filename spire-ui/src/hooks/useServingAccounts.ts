@@ -38,8 +38,7 @@ export function useServingAccounts(repos: WebhookRepoView[]): Record<string, Ser
 
   const pairs = new Map<string, { type: string; owner: string }>();
   for (const w of repos) {
-    const owner = ownerOf(w);
-    pairs.set(servingKey(w.providerType, owner), { type: w.providerType, owner });
+    if (w.repositoryId) pairs.set(w.repositoryId, { type: w.providerType, owner: w.repositoryId });
   }
   const dep = [...pairs.keys()].sort().join(',');
 
@@ -48,8 +47,8 @@ export function useServingAccounts(repos: WebhookRepoView[]): Record<string, Ser
     // A fresh `{}` is a new reference React cannot bail out of, so clearing an already-empty map
     // would re-render every consumer of this hook for no change.
     setLookups((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-    for (const [key, { type, owner }] of pairs) {
-      fetchServingAccounts(type, owner)
+    for (const [key, { owner }] of pairs) {
+      fetchServingAccounts(owner)
         .then((data) => {
           if (alive) setLookups((prev) => ({ ...prev, [key]: { data } }));
         })

@@ -146,6 +146,9 @@ class ContractSchemaSnapshotTest {
         lines.add("# RepositoryRegistration");
         lines.add(render(dev.codespire.contract.event.RepositoryRegistration.class, "RepositoryRegistration"));
         lines.add("");
+        lines.add("# RepositoryDelivery");
+        lines.add(render(dev.codespire.contract.event.RepositoryDelivery.class, "RepositoryDelivery"));
+        lines.add("");
         return String.join("\n", lines);
     }
 

@@ -14,11 +14,25 @@ import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
 
-/** Explicit repository resolution. Legacy pipeline callers remain unchanged during slice 1. */
+/** Sole pipeline credential selector: repository id, explicit role binding, compatible enabled account. */
 @ApplicationScoped
 public class RepositoryAccounts {
     @Inject DataSource dataSource;
     @Inject ProviderRegistry providers;
+
+    /** Non-secret configured account, including disabled accounts, for the serving view. */
+    public Optional<dev.codespire.orchestrator.provider.ProviderView> registration(UUID repositoryId, ProviderRole role) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT account_id FROM repository_account WHERE repository_id=? AND role=?")) {
+            statement.setObject(1, repositoryId);
+            statement.setString(2, role.name());
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? providers.get(rows.getObject(1, UUID.class)) : Optional.empty();
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Cannot read selected repository account", failure);
+        }
+    }
 
     public Optional<ScmProvider> resolve(UUID repositoryId, ProviderRole role) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""

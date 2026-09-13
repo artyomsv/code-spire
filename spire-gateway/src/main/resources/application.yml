@@ -128,13 +128,14 @@ mp:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: org.apache.kafka.common.serialization.StringSerializer
-      integration-out:
+      repository-out:
         connector: smallrye-kafka
-        topic: cs.integration
+        topic: cs.repository-integration
+        acks: all
         key:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
-          serializer: dev.codespire.gateway.IntegrationEventSerializer
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
 
 # Prod: the packaged deployment runs behind the dashboard image's nginx, which is the ONLY ingress
 # and puts all four services on one origin so ADR-022's cookie-path scoping actually isolates them.

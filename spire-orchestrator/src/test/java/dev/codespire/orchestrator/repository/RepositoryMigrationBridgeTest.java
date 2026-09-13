@@ -23,12 +23,13 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
     @Test void replaysGatewaySnapshotWithoutDuplicateBindings() throws Exception {
         UUID reviewer = account("REVIEWER"), factory = account("FACTORY");
         snapshotAccounts();
+        repositories.create(repository(reviewer, factory));
         var snapshot = registration(UUID.randomUUID(), 1);
         bridge.apply(snapshot);
         var repo = migrated();
         assertEquals(reviewer, repo.reviewer().id()); assertEquals(factory, repo.factory().id());
-        assertEquals(providers.resolve("gitlab", workspace, ProviderRole.REVIEWER), accounts.resolve(repo.id(), ProviderRole.REVIEWER));
-        assertEquals(providers.resolve("gitlab", workspace, ProviderRole.FACTORY), accounts.resolve(repo.id(), ProviderRole.FACTORY));
+        assertEquals(providers.resolveById(reviewer), accounts.resolve(repo.id(), ProviderRole.REVIEWER));
+        assertEquals(providers.resolveById(factory), accounts.resolve(repo.id(), ProviderRole.FACTORY));
         // State is in SQL: a fresh CDI-free instance simulates recreation after restart.
         var restarted = new RepositoryMigrationBridge();
         restarted.dataSource = dataSource; restarted.repositories = repositories; restarted.bindings = new RepositoryBindings();
@@ -49,7 +50,7 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
         var snapshot = registration(UUID.randomUUID(), 1);
         bridge.apply(snapshot);
         var pending = mappings.pending().stream().filter(row -> row.registrationId().equals(snapshot.registrationId())).findFirst().orElseThrow();
-        assertEquals("conflicting_forge_origins", pending.problem());
+        assertEquals("repository_not_registered", pending.problem());
         assertTrue(repositories.list().stream().noneMatch(row -> row.workspace().equals(workspace)));
         var row = attention.collect().stream().filter(value -> snapshot.registrationId().toString().equals(value.subject())).findFirst();
         assertTrue(row.isPresent(), "the pending mapping must reach the operator attention panel");
@@ -94,12 +95,12 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
         providers.update(factory, input("FACTORY", origin, true, "TEST-id-REVIEWER")); snapshotAccounts();
         var snapshot = registration(UUID.randomUUID(), 1);
         bridge.apply(snapshot);
-        assertEquals("legacy_binding_invalid", mappings.pending().stream().filter(row -> row.registrationId().equals(snapshot.registrationId()))
+        assertEquals("repository_not_registered", mappings.pending().stream().filter(row -> row.registrationId().equals(snapshot.registrationId()))
                 .findFirst().orElseThrow().problem());
         assertTrue(repositories.list().stream().noneMatch(row -> row.workspace().equals(workspace)));
     }
 
-    @Test void orgHistoryCreatesOnlyTheRepositoryActuallyObserved() throws Exception {
+    @Test void orgHistoryLinksOnlyAnExplicitlyRegisteredRepository() throws Exception {
         account("REVIEWER"); account("FACTORY"); snapshotAccounts();
         UUID orgRegistration = UUID.randomUUID(); createdRegistrations.add(orgRegistration);
         bridge.apply(new RepositoryRegistration(orgRegistration, 1, "gitlab", origin, "org", workspace.split("/")[0], true, false));
@@ -114,6 +115,7 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
                     base_branch,base_commit,branch,ended_at) VALUES (?,'gitlab',?,?,'TEST-history',1,'succeeded',
                     'TEST-harness','TEST-model','TEST-main','TEST-sha','TEST-branch',now())
                 """, run, workspace, "TEST-repo");
+        repositories.create(repository(null, null));
         histories.importHistory(history);
         try (var c = dataSource.getConnection(); var ps = c.prepareStatement("SELECT repository_id FROM review_status WHERE review_id=?")) {
             ps.setString(1, review.toString());
@@ -143,7 +145,7 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
         bridge.apply(new RepositoryRegistration(id, 1, "gitlab", "https://TEST-other.example.test", "repo", workspace + "/TEST-repo", true, false));
         var pending = mappings.pending().stream().filter(row -> row.registrationId().equals(id)).findFirst();
         assertTrue(pending.isPresent(), "mismatched origin must remain explicitly pending");
-        assertEquals("registration_origin_mismatch", pending.orElseThrow().problem());
+        assertEquals("repository_not_registered", pending.orElseThrow().problem());
         assertTrue(repositories.list().stream().noneMatch(row -> row.workspace().equals(workspace)));
     }
 
@@ -154,7 +156,7 @@ class RepositoryMigrationBridgeTest extends RepositoryFixture {
         histories.importHistory(new RepositoryHistoryBridge.History("gitlab", workspace, "TEST-repo"));
         var pending = mappings.pending().stream().filter(row -> row.target().equals(workspace + "/TEST-repo")).findFirst();
         assertTrue(pending.isPresent());
-        assertEquals("registration_origin_mismatch", pending.orElseThrow().problem());
+        assertEquals("repository_not_registered", pending.orElseThrow().problem());
         assertTrue(repositories.list().stream().noneMatch(row -> row.workspace().equals(workspace)));
     }
 }
