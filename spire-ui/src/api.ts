@@ -1,5 +1,6 @@
 import { apiFetch } from './auth';
 
+export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
 export interface WorkItemSummary {
   id: string;
   sourceId: string;
@@ -24,6 +25,9 @@ export interface WorkItemPage {
 }
 
 export interface WorkItemDetail extends WorkItemSummary {
+  effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
+  admittedLimits?: import('./components/work-items/workPolicyApi').Limits;
+  gate?: import('./components/work-items/approvalsApi').Gate | null;
   effectiveModes: Record<string, string>;
   admittedModes: Record<string, string>;
   policyReason: string;
@@ -33,6 +37,12 @@ export interface WorkItemDetail extends WorkItemSummary {
   events: { sequence: number; type: string; reason: string; occurredAt: string }[];
 }
 
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean): Promise<void> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: item.revision, readmit }) });
+  if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
+}
+
 /** Fetched for the current detail request; these fields are never workflow projection columns. */
 export interface WorkItemTracker {
   title: string;
@@ -40,8 +50,8 @@ export interface WorkItemTracker {
   trackerStatus: string;
 }
 
-export async function getWorkItems(offset = 0, limit = 50): Promise<WorkItemPage> {
-  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}`);
+export async function getWorkItems(offset = 0, limit = 50, status?: WorkWorkflowStatus): Promise<WorkItemPage> {
+  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`);
   if (!response.ok) return throwResponse(response, 'Failed to load work items');
   return response.json();
 }

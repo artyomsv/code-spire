@@ -23,6 +23,7 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-workspace")) // reuse the immutable publisher protected-path floor
     implementation(project(":spire-worksource-github"))
     implementation(project(":spire-worksource-jira"))
     implementation(project(":spire-worksource-gitlab"))

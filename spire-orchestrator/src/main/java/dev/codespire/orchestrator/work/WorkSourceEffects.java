@@ -21,6 +21,7 @@ public class WorkSourceEffects {
     @Inject WorkItemStore store;
     @Inject WorkSourceRegistry sources;
     @Inject WorkPolicyRegistry policies;
+    @Inject WorkItemTransitions transitions;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
     public enum Kind { COMMENT, TRANSITION }
@@ -70,7 +71,8 @@ public class WorkSourceEffects {
 
         WorkPolicyRegistry.Policy policy=policies.get(source.repositoryId());
         WorkEvidence evidence=WorkEvidence.collect(()->sources.client(source),item.issue(),null);
-        WorkPolicy.Selection selection=WorkPolicy.select(evidence.labels(),source.allowedActors(),policy.mappings(),policy.ceiling(),item.admittedModes());
+        WorkItemTransitions.Observation observed=new WorkItemTransitions.Observation(source,policy,evidence);
+        WorkPolicy.Selection selection=transitions.select(observed,item);
         String mode=selection.effective().get(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)));
         if(evidence.failure()!=null || selection.selected()==null || mode==null || mode.equals("off")
                 || effect.intent().kind()==Kind.TRANSITION && (!mode.equals("auto") || !item.workflowStatus().equals("active"))) {
@@ -78,8 +80,7 @@ public class WorkSourceEffects {
         }
         boolean claimed=QuarkusTransaction.requiringNew().call(()-> {
             try(Connection c=dataSource.getConnection()) {
-                WorkSourceRegistry.Source current=sources.get(c,source.id(),true).orElseThrow();
-                if(!current.enabled() || !source.version().equals(current.version()) || policies.get(c,source.repositoryId(),true).revision()!=policy.revision())return false;
+                if(!transitions.current(c,observed))return false;
                 try(PreparedStatement ps=c.prepareStatement("SELECT generation,revision,phase FROM work_item WHERE id=? FOR UPDATE")) {
                     ps.setString(1,effect.item());try(ResultSet rs=ps.executeQuery()) {
                         if(!rs.next() || rs.getLong(1)!=effect.generation() || rs.getLong(2)!=effect.revision() || !rs.getString(3).equals(effect.phase())) {

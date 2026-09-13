@@ -80,6 +80,7 @@ public class AttentionQueries {
             accountScopeRows(c, rows);
             contextMigrationRows(c, rows);
             dev.codespire.orchestrator.repository.RepositoryAttentionRows.collect(c, rows);
+            dev.codespire.orchestrator.work.WorkAttentionRows.collect(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);

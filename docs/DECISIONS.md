@@ -4,6 +4,65 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-045 — Declared profile precedence and bounded phase decisions
+
+**Status:** accepted M3 policy rule; implemented in slice 7. Artifact handoff and held publication
+remain slice 8 work; verify/review/land execution capabilities remain unavailable where no executor exists.
+
+**Decision.** Operators assign distinct nonnegative precedence numbers to profile identities and
+create immutable profile versions. Names select no code path. The lowest-precedence eligible label
+selects the displayed profile. An eligible label is current, mapped and attributed to a person on
+that work source's allowlist. Missing attribution grants nothing.
+
+The effective vector is never above any applied label in any component.
+
+Meet every eligible label, the pinned admission vector and the current repository ceiling, component
+by component: ordinary phases use `off < approve < auto`, delivery uses `off < draft_pr < pr`, and
+land uses `off < approve < auto_if_green`. Omitted phases are off. Numeric maxima take the minimum;
+zero stops execution. Protected paths take the union, including the publisher's existing immutable
+CI floor. Incomparable vectors are valid and compose without widening either one. Precedence is a
+selection/display rule and never substitutes for these bounds. A higher-precedence request or a
+restricted vector records a durable clamp milestone and a current attention condition.
+
+Gate lifetime is an integer from 1 through 2,147,483,647 seconds. Reject larger values at profile
+creation so an accepted policy cannot overflow the persisted deadline during admission.
+
+Admission pins the profile version and effective bounds. Later label edits, allowed-person changes,
+account/source changes and ceiling edits are checked at each continuation. Raising authority cannot
+widen an admitted generation; an operator must explicitly re-admit. Remote observations happen before
+registry locks, and the commit compares source/account/repository and policy revisions. A concurrent
+edit or unavailable observation cannot grant permission. This is a fresh check at a phase boundary,
+not instantaneous cancellation of an effect already accepted by a remote service.
+
+The phase order is `intake → spec → plan → build → verify → deliver → review → land`. Delivery must
+precede the existing PR reviewer because that reviewer needs a pushed PR. Slice 8a corrects the older
+published diagrams and binds actual prepared artifacts. A policy permitting a phase does not supply
+its implementation. Tests identify their execution capability explicitly; production does not turn a
+missing specification, verifier or publisher hold into a successful no-op.
+
+Dashboard gates are encrypted aggregate facts with synchronous query rows. Bind an answer to the
+item/generation, phase, policy, authority and item revision; artifact/head binding joins this contract
+in slice 8. One open gate holds a dispatch slot. At `now >= expiresAt`, expiry wins, persists refusal
+and releases the slot. A stale answer requires a new decision. The winning answer key is idempotent;
+a conflicting answer is 409. Resolver identity comes from the verified operator session, never the
+request body. Restart sweeps persisted overdue gates; ordinary retries cannot reopen a refused gate.
+Expiry takes the same local registry, policy and item lock order as an answer: projection foreign
+keys also lock parent rows. It needs no successful remote read to revoke an overdue decision.
+
+**FR-F22 / FR-F25 conflict.** FR-F22 authorizes an explicit `/fix`; FR-F25 says a human comment takes
+over. Classify an authenticated, authorized explicit command and a matching gate answer before
+ordinary comment takeover. An ordinary comment is neither an approval nor a resume instruction.
+A command that fails its authorization checks cannot borrow the gate-answer exception. The tracker
+and PR-review channels must prove their own stable actor and current artifact/head before entering
+the same decision boundary; the dashboard permission does not grant them authority.
+
+**Consequences.** The UI displays requested profile, ceiling, actual modes, limits and clamp reason;
+it does not invent a profile name for a composite vector. Usage and attempt identities persist across
+re-admission. Dispatch reservations constrain local work and do not erase the existing documented
+softness of monetary limits while remote work is in flight. M3's accepted journey proof remains at
+the prepared plan/build boundary, with actual publication hold proved separately in slice 8b.
+
+---
 ## ADR-044 — Stable identities for person policy and repository fix overrides
 
 **Status:** identity and override editing implemented in M3 slice 3; effective push authorization

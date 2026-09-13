@@ -31,6 +31,8 @@ class WorkAdmissionPinTest extends WorkFixture {
         WorkItemEvent later=store.load(itemId);
         assertEquals("approve",later.policy().effective().get(WorkPolicy.Phase.PLAN));
         assertEquals(admitted.admittedModes(),later.admittedModes());assertEquals(1,later.policy().applied().size());
-        assertEquals(2,store.history(itemId).size());
+        assertEquals(List.of("POLICY_CLAMPED","POLICY_OBSERVED","POLICY_OBSERVED"),
+                store.history(itemId).stream().map(event->((WorkItemEvent)event.payload()).milestone()).toList(),
+                "The admission clamp and both policy observations must remain distinct durable facts");
     }
 }

@@ -7,8 +7,13 @@ and proves criterion 7, with real-row post-cutover continuity. It was accepted a
 Slice 3 completes resolved person entry and editable repository overrides; criterion 6 was independently verified in round 6.
 Slice 4 implements effective push permission; criterion 5 was independently verified in round 7.
 Slice 5 is locally complete: signed ticket intake, durable bookkeeping, and distinct criterion 3
-membership/attribution mutations pass, with full Java/UI/build/scanner evidence. Slices 6–10 and criteria 1, 2 and 4 remain pending.
-Round 8 independently verified criterion 3. Evidence is in the corresponding slice review notes.
+membership/attribution mutations pass, with full Java/UI/build/scanner evidence.
+Round 8 independently verified criterion 3; round 9 accepted the route teardown correction.
+Slice 6 is pushed on 721f4084 with source parity, safe writes and actual JVM restart evidence.
+Round 10 accepted slice 6. Slice 7 implements full policy bounds, visible clamps and durable
+dashboard gates, including actual JVM restart evidence. Criteria 2 and 4 are ready for independent
+review; criteria 3, 5, 6 and 7 remain independently verified. Slices 8–10 and criterion 1 remain pending.
+Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -421,30 +426,30 @@ Approvals screen; ADR-045 policy decision.
 **Produces:** checked profile vectors, visible clamps, current-policy phase decisions, durable gates,
 expiry and operator answers.
 
-- [ ] Apply the accepted profile precedence and meet rule. Write criterion 2 and 4 tests plus
+- [x] Apply the accepted profile precedence and meet rule. Write criterion 2 and 4 tests plus
   `AutonomyProfileTest.requiresDistinctProfilePrecedence`,
   `AutonomyProfileTest.incomparableVectorsMeetWithoutWideningEither`,
   `AutonomyProfileTest.omittedPhaseIsOff`,
   `WorkItemPolicyIT.lowestEligibleLabelWins`,
   `WorkItemPolicyIT.profileEditCannotWidenAnAdmittedVersion`,
   `WorkItemPolicyIT.removedLabelStopsTheNextTransition`.
-- [ ] Implement versioned vector/precedence validation, current allowed label selection, pinned
+- [x] Implement versioned vector/precedence validation, current allowed label selection, pinned
   admission version and component-wise restriction across EVERY eligible label, not only the lowest-precedence label. Record selection/clamp/reason with policy revision.
   Include source disabled/allowlist removed, stricter caps and protected-path floor cases.
-- [ ] Call the transition service from every entry point named in design §6.2. Re-read evidence
+- [x] Call the transition service from every entry point named in design §6.2. Re-read evidence
   outside the transaction and compare registry revision inside it; stale external data must not
   become authority after a newer local edit. Include outbox retries and operator resume.
-- [ ] Implement gate open/resolve/expiry atomically with event/outbox and reservations. Write
+- [x] Implement gate open/resolve/expiry atomically with event/outbox and reservations. Write
   `GateResourceTest.concurrentAnswersProduceOneResolution`,
   `GateExpiryTest.exactDeadlineRefusesALateApproval`,
-  `GateExpiryTest.restartExpiresOpenGateAndReleasesReservation`,
+  `GateProcessRecoveryIT.restartExpiresOpenGateAndReleasesReservation`,
   `GateResourceTest.viewerCannotResolveAGate` and `GateResourceTest.replayedAnswerIsIdempotent`.
-- [ ] Render Approvals and integrate attention using current OPEN/expired/clamped conditions. A
+- [x] Render Approvals and integrate attention using current OPEN/expired/clamped conditions. A
   resolved gate disappears from open views. UI submits expected version and displays 409/503
   honestly; status union, renderer and filters change together.
-- [ ] Kill criterion 2/4 mutations and each concurrency/expiry/auth guard with isolated tests; use
+- [x] Kill criterion 2/4 mutations and each concurrency/expiry/auth guard with isolated tests; use
   an injected clock and real PostgreSQL interleavings, not sleeps against the live scheduler.
-- [ ] Run contract, orchestrator, UI tests sequentially; demonstrate restart and ceiling downgrade
+- [x] Run Java/Gradle test invocations sequentially and verify the UI; demonstrate restart and ceiling downgrade
   through real APIs in the test stack; update ADR-045 and commit.
 
 ## Slice 8a — prepared task to policy-controlled build

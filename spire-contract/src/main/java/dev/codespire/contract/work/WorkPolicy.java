@@ -8,7 +8,10 @@ import java.util.*;
 public final class WorkPolicy {
     private WorkPolicy() {}
     public enum Phase { INTAKE, SPEC, PLAN, BUILD, VERIFY, REVIEW, DELIVER, LAND }
-    public record Profile(UUID id, String name, long version, int precedence, Map<Phase, String> modes) {
+    public record Profile(UUID id, String name, long version, int precedence, Map<Phase, String> modes, WorkPolicyLimits limits) {
+        public Profile(UUID id, String name, long version, int precedence, Map<Phase, String> modes) {
+            this(id, name, version, precedence, modes, WorkPolicyLimits.inactive());
+        }
         public Profile {
             Objects.requireNonNull(id);
             if (name == null || name.isBlank() || version < 1 || precedence < 0)
@@ -20,16 +23,26 @@ public final class WorkPolicy {
                 complete.put(phase, mode);
             }
             modes = Map.copyOf(complete);
+            limits = limits == null ? WorkPolicyLimits.inactive() : limits;
         }
     }
     public record IgnoredLabel(String label, String reason, String actorId, LabelEvent.Origin origin) {}
     public record AppliedLabel(String label, String actorId, LabelEvent.Origin origin, String eventId, UUID profileId, long profileVersion) {}
-    public record Selection(Profile selected, Map<Phase, String> effective, List<IgnoredLabel> ignored, String reason, List<AppliedLabel> applied, Profile ceiling) {
-        public Selection { effective = Map.copyOf(effective); ignored = List.copyOf(ignored); applied = List.copyOf(applied); }
+    public record Selection(Profile selected, Map<Phase, String> effective, List<IgnoredLabel> ignored, String reason, List<AppliedLabel> applied, Profile ceiling, WorkPolicyLimits limits) {
+        public Selection(Profile selected, Map<Phase, String> effective, List<IgnoredLabel> ignored, String reason, List<AppliedLabel> applied, Profile ceiling) {
+            this(selected, effective, ignored, reason, applied, ceiling, WorkPolicyLimits.inactive());
+        }
+        public Selection { effective = Map.copyOf(effective); ignored = List.copyOf(ignored); applied = List.copyOf(applied); limits = limits == null ? WorkPolicyLimits.inactive() : limits; }
     }
 
     public static Selection select(List<CurrentLabel> current, Set<String> allowedActors,
                                    Map<String, Profile> mappings, Profile ceiling, Map<Phase, String> admitted) {
+        return select(current, allowedActors, mappings, ceiling, admitted, null);
+    }
+
+    public static Selection select(List<CurrentLabel> current, Set<String> allowedActors,
+                                   Map<String, Profile> mappings, Profile ceiling, Map<Phase, String> admitted,
+                                   WorkPolicyLimits admittedLimits) {
         List<IgnoredLabel> ignored = new ArrayList<>();
         List<Profile> eligible = new ArrayList<>();
         List<AppliedLabel> applied = new ArrayList<>();
@@ -58,8 +71,11 @@ public final class WorkPolicy {
             if (admitted != null) rank = Math.min(rank, vocabulary.indexOf(admitted.getOrDefault(phase, "off")));
             effective.put(phase, vocabulary.get(rank));
         }
-        return new Selection(selected, effective, ignored,
-                effective.equals(selected.modes()) ? "policy_selected" : "policy_clamped", applied, ceiling);
+        List<WorkPolicyLimits> limits = new ArrayList<>(bounds.stream().map(Profile::limits).toList());
+        if (admittedLimits != null) limits.add(admittedLimits);
+        WorkPolicyLimits effectiveLimits = WorkPolicyLimits.meet(limits, Set.of());
+        boolean clamped = selected.precedence() > ceiling.precedence() || !effective.equals(selected.modes()) || !effectiveLimits.equals(selected.limits());
+        return new Selection(selected, effective, ignored, clamped ? "policy_clamped" : "policy_selected", applied, ceiling, effectiveLimits);
     }
 
     private static List<String> vocabulary(Phase phase) {

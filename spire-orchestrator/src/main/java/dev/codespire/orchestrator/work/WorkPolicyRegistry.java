@@ -2,6 +2,8 @@ package dev.codespire.orchestrator.work;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.work.WorkPolicy;
+import dev.codespire.contract.work.WorkPolicyLimits;
+import dev.codespire.workspace.ProtectedPaths;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -56,6 +58,7 @@ public class WorkPolicyRegistry {
 
     @Transactional
     public WorkPolicy.Profile createVersion(WorkPolicy.Profile profile) {
+        dev.codespire.workspace.PathGlob.compileAll(List.copyOf(profile.limits().protectedPaths()));
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO autonomy_profile(id,name,precedence) VALUES (?,?,?) ON CONFLICT (id) DO NOTHING
@@ -73,7 +76,10 @@ public class WorkPolicyRegistry {
                 ps.setObject(1, profile.id()); ps.setLong(2, profile.version()); ps.setString(3, encode(profile)); ps.executeUpdate();
             }
             return profile;
-        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+        } catch (SQLException failure) {
+            if("23505".equals(failure.getSQLState()))throw new IllegalArgumentException("Profile name, precedence or version already exists");
+            throw WorkSourceRegistry.database(failure);
+        }
     }
 
     @Transactional
@@ -125,7 +131,11 @@ public class WorkPolicyRegistry {
         }
     }
     private WorkPolicy.Profile decode(String value) {
-        try { return mapper.readValue(value, WorkPolicy.Profile.class); }
+        try {
+            WorkPolicy.Profile profile = mapper.readValue(value, WorkPolicy.Profile.class);
+            return new WorkPolicy.Profile(profile.id(), profile.name(), profile.version(), profile.precedence(), profile.modes(),
+                    WorkPolicyLimits.meet(List.of(profile.limits()), Set.copyOf(ProtectedPaths.CI_FLOOR)));
+        }
         catch (java.io.IOException failure) { throw new IllegalStateException("Invalid stored work policy", failure); }
     }
     private String encode(WorkPolicy.Profile value) {

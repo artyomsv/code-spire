@@ -84,26 +84,8 @@ class WorkSourceProcessRecoveryIT extends WorkFixture {
         assertEquals(0,count("SELECT count(*) FROM factory_run WHERE work_item_id=?",secondId));
     }
     Process startScanner(String name) throws Exception {
-        Path app=Path.of(System.getProperty("spire.test.packaged-app"));assertTrue(Files.isRegularFile(app),"The test task must package the current production scanner");
-        var config=ConfigProvider.getConfig();Properties properties=new Properties();
-        for(String key:List.of("quarkus.datasource.jdbc.url","quarkus.datasource.username","quarkus.datasource.password","kafka.bootstrap.servers","spire.encryption.keyset"))
-            properties.setProperty(key,config.getValue(key,String.class));
-        properties.setProperty("quarkus.http.port","0");properties.setProperty("quarkus.oidc.tenant-enabled","false");
-        properties.setProperty("quarkus.oidc.auth-server-url","http://localhost/TEST-disabled-oidc");
-        properties.setProperty("quarkus.oidc.credentials.secret","TEST-disabled-oidc");
-        properties.setProperty("quarkus.http.proxy.trusted-proxies","127.0.0.1");
-        properties.setProperty("spire.security.auth-enabled","false");properties.setProperty("spire.security.allow-insecure-provider-urls","true");
-        properties.setProperty("quarkus.http.auth.permission.operator.policy","permit");
-        properties.setProperty("quarkus.log.console.json.enabled","false");properties.setProperty("spire.work-scan-interval","0.2s");
-        properties.setProperty("spire.work-effects-interval","off");properties.setProperty("spire.work-outbox-interval","off");properties.setProperty("spire.repository-history-interval","off");
-        Path configFile=temporary.resolve(name+".properties");try(var output=Files.newOutputStream(configFile)){properties.store(output,"TEST-only process recovery configuration");}
-        // The test task puts its selected JDK first on PATH; the executable is a literal.
-        ProcessBuilder builder=new ProcessBuilder("java","-Xmx256m","-jar",app.toAbsolutePath().toString());
-        // A fresh directory prevents Quarkus from reading the worktree's dev .env.
-        builder.directory(temporary.toFile());builder.environment().keySet().removeIf(key->key.startsWith("SPIRE_")||key.startsWith("QUARKUS_")||key.startsWith("KAFKA_")||key.startsWith("POSTGRES_"));
-        builder.environment().put("QUARKUS_CONFIG_LOCATIONS",configFile.toUri().toString());
-        Path log=temporary.resolve(name+".log");builder.redirectErrorStream(true).redirectOutput(log.toFile());
-        Process child=builder.start();children.add(child);logs.put(child,log);return child;
+        Process child=WorkProcessHarness.start(temporary,name,Map.of());
+        children.add(child);logs.put(child,temporary.resolve(name+".log"));return child;
     }
     void assertAlive(Process child) { assertTrue(child.isAlive(),"The isolated scanner exited before its checkpoint; inspect the TEST process log in "+temporary); }
     void kill(Process child) throws Exception { child.destroyForcibly();assertTrue(child.waitFor(10,TimeUnit.SECONDS),"Scanner process did not stop"); }

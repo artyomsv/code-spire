@@ -185,6 +185,8 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
   { path: '/settings/work-sources', title: 'Work sources', nav: 'Work sources' },
+  { path: '/settings/work-policy', title: 'Work policy', nav: 'Work policy' },
+  { path: '/approvals', title: 'Approvals', nav: 'Approvals' },
   { path: '/settings/repositories', title: 'Repositories', nav: 'Repositories' },
   { path: '/settings/llm', title: 'LLM', nav: 'LLM' },
   { path: '/settings/prompts', title: 'Prompts', nav: 'Prompts' },
@@ -364,7 +366,7 @@ describe('App — what a viewer may see', () => {
    * back button arrives at a settings path without ever passing the rail. Said plainly rather than
    * redirected: a silent bounce to another screen is indistinguishable from a broken link.
    */
-  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq', '/settings/work-sources'])(
+  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq', '/settings/work-sources', '/settings/work-policy'])(
     'tells a viewer at %s that the page is not theirs',
     async (path) => {
       renderAt(path);

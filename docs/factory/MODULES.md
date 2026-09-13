@@ -310,6 +310,11 @@ delivered there would be read only after the run it cancels had finished.
 
 ### `spire-contract` (Apache-2.0, framework-free)
 
+**Implemented through M3 slice 7.** `WorkPolicy` selects the displayed profile by declared
+precedence and bounds every mode and numeric cap by all eligible labels, admission and the current
+ceiling. `WorkPolicyLimits` unions protected paths. `WorkItemLifecycle` is the pure phase decider;
+`WorkItemEvent`, `WorkGate` and `WorkProgress` carry durable policy, approval and usage facts.
+
 New sealed hierarchy members for the commands, results and domain events in
 [ARCHITECTURE.md](./ARCHITECTURE.md) §6, plus value types shared across services: `AutonomyProfile`,
 `GateMode`, `PhaseName`, `Entitlements`, `RefusalReason`, and the `ArchivedNotice`-style constant
@@ -321,6 +326,13 @@ entry that has already let two changes through. Every new *nested* type introduc
 reviewed by hand until that gate recurses.
 
 ### `spire-orchestrator` (FSL)
+
+**Implemented through M3 slice 7.** `WorkItemTransitions` observes tracker evidence outside database
+locks, then checks registry revisions and serializes each aggregate decision. Intake, resume,
+phase results, dashboard answers and pending tracker writes use that policy boundary. The store
+atomically appends encrypted history, query projections and Kafka outbox rows. Gate expiry also
+releases reservations and cancels pending tracker effects. `WorkPhaseCapability` refuses execution
+until a real executor is bound; slice 8 supplies the prepared artifact/build integration.
 
 `WorkItemLifecycle` decider; `RunSaga` owning staleness and retry; gate open/resolve/expire; the
 entitlement check placed **beside** `SpendGate` and the priceability check, so every reason a

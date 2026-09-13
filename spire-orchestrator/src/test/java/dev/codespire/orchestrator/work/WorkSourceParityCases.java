@@ -15,11 +15,17 @@ import java.util.*;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Both arms exercise the actual source/account registry, fetched tracker evidence and JDBC store. */
+/** Every arm exercises the actual source/account registry, fetched tracker evidence and JDBC store. */
 abstract class WorkSourceParityCases extends WorkFixture {
     abstract WorkSourceType type();
     boolean jira() { return type() == WorkSourceType.JIRA; }
     @Override @BeforeEach void seedWork() {
+        if (type() == WorkSourceType.GITHUB) {
+            super.seedWork();
+            forge.stubFor(get(urlEqualTo("/repos/"+scope+"/issues?state=open&sort=created&direction=asc&per_page=100&page=1"))
+                    .willReturn(okJson(mapper.createArrayNode().add(ticket()).toString())));
+            return;
+        }
         forge=new WireMockServer(WireMockConfiguration.options().dynamicPort());forge.start();
         String slug="TEST-"+UUID.randomUUID(); scope=jira()?"TEST":"TEST-work/"+slug;
         account=UUID.fromString(providers.create(new ProviderInput("TEST-parity-account-"+UUID.randomUUID(),jira()?"atlassian":"gitlab",forge.baseUrl()+(jira()?"":"/api/v4"),
@@ -57,6 +63,7 @@ abstract class WorkSourceParityCases extends WorkFixture {
         audit("900123");
     }
     @Override ObjectNode ticket() {
+        if(type() == WorkSourceType.GITHUB) return super.ticket();
         if(!jira()) {
             ObjectNode node=mapper.createObjectNode().put("id",50001).put("iid",42).put("project_id",10001)
                     .put("title","TEST-parity-title").put("description","TEST-parity-body").put("state","opened");node.putArray("labels").add(LABEL);return node;
@@ -67,6 +74,11 @@ abstract class WorkSourceParityCases extends WorkFixture {
     }
     ObjectNode labelEvent(String actor) {
         ObjectNode event=mapper.createObjectNode().put("created_at","2026-09-13T12:00:00Z");
+        if(type() == WorkSourceType.GITHUB) {
+            event.put("id",101).put("event","labeled");event.putObject("label").put("name",LABEL);
+            if(actor==null)event.putNull("actor");else event.putObject("actor").put("id",Long.parseLong(actor));
+            return event;
+        }
         if(!jira()) {
             event.put("id",101).put("resource_id",50001).put("resource_type","Issue").put("action","add");
             event.putObject("label").put("name",LABEL); if(actor==null)event.putNull("user");else event.putObject("user").put("id",Long.parseLong(actor));
@@ -79,7 +91,12 @@ abstract class WorkSourceParityCases extends WorkFixture {
     }
     @Override void audit(String actor) { auditPage(actor,false); }
     void auditPage(String actor,boolean incomplete) {
-        if(jira()) {
+        if(type() == WorkSourceType.GITHUB) {
+            var response=okJson(mapper.createArrayNode().add(labelEvent(actor)).toString());
+            if(incomplete)response.withHeader("Link","<"+forge.baseUrl()+path+"/timeline?per_page=100&page=2>; rel=\"next\"");
+            forge.stubFor(get(urlEqualTo(path+"/timeline?per_page=100&page=1")).willReturn(response));
+            forge.stubFor(get(urlEqualTo(path+"/timeline?per_page=100&page=2")).willReturn(aResponse().withStatus(503)));
+        } else if(jira()) {
             ObjectNode page=mapper.createObjectNode().put("startAt",0).put("total",incomplete?2:1).put("isLast",!incomplete);page.putArray("values").add(labelEvent(actor));
             forge.stubFor(get(urlEqualTo(path+"/changelog?startAt=0&maxResults=100")).willReturn(okJson(page.toString())));
             forge.stubFor(get(urlEqualTo(path+"/changelog?startAt=1&maxResults=100")).willReturn(aResponse().withStatus(503)));
@@ -101,9 +118,11 @@ abstract class WorkSourceParityCases extends WorkFixture {
         assertEquals(LabelEvent.Origin.UNATTRIBUTED,item.policy().ignored().getFirst().origin());
         assertEquals("label_unattributed",item.policy().ignored().getFirst().reason());noEffects();
     }
-    @Test void allowedAttributedLabellerCanSelect() {
+    @Test void allowedAttributedLabellerCanSelect() throws Exception {
         assertTrue(scanner.scan(source));WorkItemEvent item=store.load(itemId);assertEquals(profile,item.policy().selected().id());
-        assertEquals("awaiting_input",item.workflowStatus());
+        assertTrue(item.policy().ignored().isEmpty());assertEquals("awaiting_input",item.workflowStatus());
+        assertEquals("specification_required",item.reason());
+        assertEquals(1,count("SELECT count(*) FROM work_item_outbox WHERE work_item_id=?",itemId));
     }
     @Test void aGenuinelyMissingActorSelectsNoProfile() throws Exception {
         audit(null);assertTrue(scanner.scan(source));WorkItemEvent item=store.load(itemId);assertNull(item.policy().selected());
@@ -114,6 +133,7 @@ abstract class WorkSourceParityCases extends WorkFixture {
         assertEquals(1,count("SELECT count(*) FROM work_item WHERE id=?",itemId));assertEquals(1,store.history(itemId).size());
     }
     void noEffects() throws Exception {
+        assertEquals(0,count("SELECT count(*) FROM work_item_outbox WHERE work_item_id=? AND effect_type <> 'WORK_EVENT'",itemId));
         assertEquals(0,count("SELECT count(*) FROM work_tracker_outbox WHERE work_item_id=?",itemId));
         assertEquals(0,count("SELECT count(*) FROM factory_run WHERE work_item_id=?",itemId));
         assertEquals(0,count("SELECT count(*) FROM work_item_gate WHERE work_item_id=?",itemId));

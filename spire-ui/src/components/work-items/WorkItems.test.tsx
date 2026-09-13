@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as api from '../../api';
+import * as auth from '../../auth';
 import type { WorkItemDetail as Detail, WorkItemSummary } from '../../api';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
@@ -24,6 +25,43 @@ function showDetail() {
     <Route path="/work-items/:id" element={<WorkItemDetail />} />
   </Routes></MemoryRouter>);
 }
+
+it('resets pagination when selecting an approval workflow filter', async () => {
+  vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0, limit = 50) => ({ items: [item(offset)], total: 100, offset, limit }));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Next page' }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50));
+  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50, 'waiting_approval'));
+});
+
+it('rechecks the displayed item revision before resuming', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue();showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(detail(), false));
+});
+
+it('shows a refused resume without claiming that work continued', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockRejectedValue(new Error('TEST-409 item changed'));showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-409 item changed');
+  expect(screen.getByText('Awaiting input')).toBeInTheDocument();
+});
+
+it('offers no resume or readmission action to a viewer', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });showDetail();
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Re-admit under current policy' })).not.toBeInTheDocument();
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -123,7 +161,8 @@ it('renders an unknown workflow status as unknown and refused', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'TEST-future' }], total: 1, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
   expect(await screen.findByText('Unknown (TEST-future)')).toHaveClass('refused');
-  expect(screen.queryByText('Completed')).toBeNull();
+  // The filter may offer Completed; an unknown result must never render a successful status pill.
+  expect(screen.queryByText('Completed', { selector: '.pill' })).toBeNull();
 });
 
 it('keeps the workflow visible when the tracker cannot be fetched', async () => {

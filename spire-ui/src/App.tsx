@@ -1,3 +1,5 @@
+import Approvals from './components/work-items/Approvals';
+import WorkPolicies from './components/work-items/WorkPolicies';
 import WorkSources from './components/work-items/WorkSources';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
@@ -52,6 +54,8 @@ function toggleTheme() {
 const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/work-items/', 'Work item detail'],
   ['/work-items', 'Work items'],
+  ['/approvals', 'Approvals'],
+  ['/settings/work-policy', 'Work policy'],
   ['/runs/', 'Run detail'],
   ['/runs', 'Runs'],
   ['/r/', 'Review detail'],
@@ -224,6 +228,7 @@ export default function App() {
             <Bot className="ic" size={16} />
             Runs
           </a>
+          <a className={location.pathname.startsWith('/approvals') ? 'active' : ''} href="#/approvals">Approvals</a>
           <a className={onWorkItems ? 'active' : ''} href="#/work-items">
             <ListTodo className="ic" size={16} />
             Work items
@@ -256,6 +261,7 @@ export default function App() {
             </svg>
             General
           </a>
+          <a className={location.pathname.startsWith('/settings/work-policy') ? 'active' : ''} href="#/settings/work-policy">Work policy</a>
           <a className={onWorkSources ? 'active' : ''} href="#/settings/work-sources">
             <svg className="ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <rect x="3" y="3" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
@@ -390,6 +396,8 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/*" element={<RunDetail />} />
+          <Route path="/approvals" element={<Approvals />} />
+          <Route path="/settings/work-policy" element={configure(<WorkPolicies />)} />
           <Route path="/work-items" element={<WorkItems />} />
           <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />

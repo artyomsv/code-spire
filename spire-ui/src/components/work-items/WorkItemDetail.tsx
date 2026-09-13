@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import WorkItemPolicy from './WorkItemPolicy';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useParams } from 'react-router';
-import { getWorkItem, getWorkItemTracker, type WorkItemDetail as Detail, type WorkItemTracker } from '../../api';
+import { getWorkItem, getWorkItemTracker, resumeWorkItem, type WorkItemDetail as Detail, type WorkItemTracker } from '../../api';
+import { useMe } from '../../hooks/useMe';
+import { canAdminister } from '../../auth';
 import { WorkflowStatus, workReason } from './WorkItems';
 
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
+  const [refresh, setRefresh] = useState(0);
   const [state, setState] = useState<{ item: Detail | null; error: string | null }>({ item: null, error: null });
   const [tracker, setTracker] = useState<{ value: WorkItemTracker | null; error: string | null }>({ value: null, error: null });
   useEffect(() => {
@@ -16,7 +20,7 @@ export default function WorkItemDetail() {
     getWorkItemTracker(id).then(value => { if (active) setTracker({ value, error: null }); })
       .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
     return () => { active = false; };
-  }, [id]);
+  }, [id, refresh]);
   const { item, error } = state;
   return <section className="content"><div className="card" style={{ padding: 18 }}>
     <Link to="/work-items">← Work items</Link>
@@ -26,12 +30,9 @@ export default function WorkItemDetail() {
       <h3>Workflow</h3><WorkflowStatus status={item.workflowStatus} />
       <p>{workReason(item.reason)}</p>
       <p>Phase: {item.phase} · Generation: {item.generation}</p>
-      <p>{item.profile ? `Selected profile: ${item.profile.name} v${item.profile.version}` : 'No profile selected'}</p>
-      <p>{item.ceiling ? `Repository ceiling: ${item.ceiling.name} v${item.ceiling.version}` : 'No repository ceiling configured'}</p>
-      <p>{workReason(item.policyReason)}</p>
-      <table><thead><tr><th>Phase</th><th>Effective mode</th><th>Mode at admission</th></tr></thead>
-        <tbody>{Object.entries(item.effectiveModes).map(([phase, mode]) =>
-          <tr key={phase}><th>{phase.toLowerCase()}</th><td>{mode}</td><td>{item.admittedModes[phase]}</td></tr>)}</tbody></table>
+      <WorkItemPolicy item={item} />
+      {item.gate && <p>Approval: {item.gate.state} · <Link to="/approvals">Open approvals</Link></p>}
+      <WorkItemActions key={`${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
       <h3>Applied labels</h3>
       <ul>{item.appliedLabels.map(label => <li key={label.label}><strong>{label.label}</strong>: actor {label.actorId}, {label.origin.toLowerCase().split('_').join(' ')}; profile version {label.profileVersion}</li>)}</ul>
       <h3>Ignored labels</h3>
@@ -47,4 +48,24 @@ export default function WorkItemDetail() {
         </>}
     </>}
   </div></section>;
+}
+
+function WorkItemActions({ item, changed }: { item: Detail; changed: () => void }) {
+  const { me } = useMe();
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function resume(readmit: boolean) {
+    setBusy(true); setError('');
+    try { await resumeWorkItem(item, readmit); if (active.current) changed(); }
+    catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(false); }
+  }
+  if (!canAdminister(me)) return null;
+  return <div>
+    {['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus) &&
+      <button className="btn" disabled={busy} onClick={() => void resume(false)}>Recheck and resume</button>}
+    {['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus) &&
+      <button className="btn" disabled={busy} onClick={() => void resume(true)}>Re-admit under current policy</button>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
 }

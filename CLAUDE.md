@@ -32,7 +32,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..044 cover the software factory; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..045 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -45,7 +45,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 The per-milestone story — what shipped, what each review round found, the traps each one paid for —
 is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-13**.
+describe the new current state. Everything below is true as of **2026-09-14**.
 
 - **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
   `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
@@ -77,7 +77,7 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–6 (PR #153) add repository ownership, explicit role bindings,
+  (`docs/UNVERIFIED.md`). **M3 slices 1–7 (PR #153) add repository ownership, explicit role bindings,
   resolved person entry, effective /fix push authorization and durable GitHub/GitLab/Jira ticket intake.**
   Criteria 7, 6, 5 and 3 are independently verified, including the separate
   membership and attribution proofs accepted in round 8. /fix permission reads hold no database transaction across
@@ -86,8 +86,9 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   persist bookkeeping, with tracker content fetched separately. Source settings expose actor entry
   and capabilities. Coordinate checkpoints survive actual process death between and within pages;
   encrypted tracker effects commit uncertainty before HTTP and recover by reading evidence.
-  GitLab hooks and Jira polling have per-arm measured limits. Full policy gates and artifact/build
-  handoff follow in slices 7–8.
+  GitLab hooks and Jira polling have per-arm measured limits. Slice 7 adds current-policy phase
+  decisions, numeric caps, visible clamps and durable dashboard approvals. An actual child-JVM
+  kill/restart proves gate expiry and reservation release. Artifact/build handoff remains slice 8.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -102,15 +103,16 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3545 Java tests across 407 suites and 30 modules,
+- **Measured, not estimated (2026-09-14):** 3649 Java tests across 418 suites and 30 modules,
   zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
-  packaging passed sequentially, including both actual scanner JVM kill/restart cases. The full UI
-  suite passed 675 tests across 81 files and the production build; all 37 route cases passed in
-  three shuffled orders. Slice 6 has 142 mutation checks covering 140 distinct production changes.
-  Pinned Semgrep found no findings; an explicit scan of all 56 changed code/test files also had
-  zero parser errors. Exact evidence is in .claude/reviews/global/factory-m3-slice6.md.
-  Criteria 3, 5, 6 and 7 remain independently verified. Live tracker/token and later execution
-  gaps remain in UNVERIFIED. No live run worker was started.
+  packaging passed sequentially, including all three actual scanner/gate JVM kill/restart cases.
+  The full UI passed 701 tests across 86 files; all 40 route tests passed in three shuffled orders.
+  Final presentation changes passed 100 targeted tests and the production build. Slice 7 has
+  123 mutation checks covering 120 distinct production changes plus one explicitly requested
+  test-inheritance mutation. Pinned Semgrep reports zero findings over all 55 changed source/test
+  files; the existing api.ts parser warning was separately reproduced on accepted 721f4084.
+  Evidence: .claude/reviews/global/factory-m3-slice7.md. Criteria 3, 5, 6 and 7 remain independently
+  verified; 2 and 4 are ready for review. Live limits remain in UNVERIFIED. No live run worker was started.
 
 ## Build & run
 

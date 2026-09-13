@@ -1964,3 +1964,22 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   packaging and pinned Semgrep passed. 142 checks cover 140 distinct production mutations.
   No dev database, backup, live tracker write or run worker was used. Per-arm live forge/token
   limits and the exact TEST cleanup remain explicit in UNVERIFIED and the slice review notes.
+
+- **Factory M3 slice 7 — visible policy bounds and durable approvals (PR #153, 2026-09-14).**
+  Round 10 accepted slice 6. GitHub now inherits the shared parity cases; an architecture test
+  derives adapter modules and fails when Jira loses inheritance. Profiles bound every mode and
+  numeric cap by all eligible labels, admission and the current ceiling, with cumulative protected
+  paths. ADR-045 states the invariant and resolves the FR-F22/F25 classification conflict.
+  V67 persists visible clamp milestones. Separate meet, silent-write and empty-message mutants
+  fail the named criterion 2 tests. A running SPEC result under a newly disabled PLAN persists
+  plan_off without another attempt or PR; a gate policy revision change requires a new decision
+  even when every mode and cap remains identical. Both criterion 4 mutants are discriminating.
+  V68 binds versioned gates and attempts, encrypted notes, usage and reservations. Dashboard
+  answers and expiry serialize on the aggregate; late/conflicting answers refuse, winning retries
+  are idempotent, and expiry releases the reservation and invalidates pending effects. One child
+  JVM itself opens the gate, is killed while OPEN, and a second expires it. Approvals, policy
+  settings, detail and current attention conditions expose the durable results.
+  3649 Java tests, 701 UI tests, packaging and pinned Semgrep passed. 123 mutation checks
+  cover 120 distinct production changes and the authorized inheritance check. Criteria 2 and 4
+  are ready for independent review; 3, 5, 6 and 7 remain verified. Artifact/build handoff remains
+  slice 8. No dev data, backup, live tracker write or live run worker was used.

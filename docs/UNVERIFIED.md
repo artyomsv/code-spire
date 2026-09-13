@@ -116,9 +116,20 @@ observation has its own 20-second bound. Listing is separately bounded to 20 sec
 20/30-second sweep duration is claimed. Live tracker deletion/reordering during pagination remains
 unproven; scheduled full rescans provide eventual revisitation, not a remote snapshot guarantee.
 
-The first item waits for a specification. Full caps/gates are slice 7, explicit manual artifact
-handoff and the existing single-task build boundary are slice 8, and generated specification,
-multi-step planning and verification executors remain M4. No run worker was started.
+Slice 7 adds numeric caps, cumulative protected paths and dashboard gates. A packaged child JVM
+admits the TEST ticket and opens its gate; the test kills that JVM while the gate is OPEN. A second
+packaged JVM expires the persisted gate and releases its reservation. Real test-stack HTTP reads
+prove the gate's open view, disappearance after expiry and durable detail reason. This proves
+process recovery against isolated PostgreSQL/Kafka and WireMock, not live OIDC or a live tracker.
+Recovery children use separate TEST incoming topics and consumer groups so a killed child cannot
+retain the parent test's partitions. Kafka Admin verifies actual assignments while both gate JVMs
+are alive; the normal work-consumer duplicate-acknowledgement test remains separate and unchanged.
+
+Policy tests explicitly supply a test execution capability to record phase attempts and deliver
+their results through the internal transition service. Production reports missing executors as
+unavailable. Explicit manual artifact handoff and the existing single-task build boundary remain
+slice 8; generated specification, multi-step planning and verification executors remain M4.
+Gate artifact/head binding belongs to that artifact handoff. No run worker was started.
 
 ## Repository push permission — GitHub (2026-09-13)
 

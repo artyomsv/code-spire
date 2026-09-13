@@ -1633,3 +1633,20 @@
 
 .account-uses { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-scopes { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-3); }
+.work-policy-form fieldset {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 16px;
+  border: 0;
+  padding: 18px 0;
+  margin: 0 0 18px;
+}
+.work-policy-form fieldset > :is(legend, p, button, div),
+.work-policy-form fieldset > label:has(textarea) { grid-column: 1 / -1; }
+.work-policy-form legend { font-weight: 600; padding: 0; }
+.work-policy-form button { justify-self: start; }
+.work-approvals { list-style: none; padding: 0; display: grid; gap: 18px; }
+.work-approvals > li { border-bottom: 1px solid var(--border); padding-bottom: 18px; }
+.work-approvals fieldset { border: 0; padding: 12px 0; }
+.work-approvals .field { max-width: 720px; margin-bottom: 12px; }
+.work-approvals button + button { margin-left: 8px; }
