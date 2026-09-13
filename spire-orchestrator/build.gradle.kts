@@ -50,6 +50,8 @@ dependencies {
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
     testImplementation("io.rest-assured:rest-assured")
     testImplementation("org.wiremock:wiremock:3.13.2")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
+    testImplementation("org.flywaydb:flyway-database-postgresql")
 }
 
 tasks.test {

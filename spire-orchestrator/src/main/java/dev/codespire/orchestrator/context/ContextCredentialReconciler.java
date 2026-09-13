@@ -71,9 +71,9 @@ public class ContextCredentialReconciler {
                     if (account == null) {
                         account = UUID.randomUUID();
                         try (var insert = c.prepareStatement("""
-                                INSERT INTO scm_provider (id, name, type, base_url, workspace, role,
+                                INSERT INTO scm_provider (id, name, type, base_url, role,
                                     auth_kind, auth_username, auth_secret)
-                                VALUES (?, ?, ?, ?, NULL, 'CONTEXT', ?, ?, ?)
+                                VALUES (?, ?, ?, ?, 'CONTEXT', ?, ?, ?)
                                 """)) {
                             insert.setObject(1, account);
                             String name = source.getString("name");

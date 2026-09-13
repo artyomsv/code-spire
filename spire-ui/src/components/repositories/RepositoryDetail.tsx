@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createWebhookRepo, fetchWebhookRepos, updateWebhookRepo, rotateWebhookSecret, verifyRepo,
   type WebhookRepoView, type WebhookRepoSecret, type WebhookEventKind } from '../../api';
 import type { Repository, RepositoryAccount } from './repositoriesApi';
+import ActorPicker from '../ActorPicker';
 
 interface Props {
   repository: Repository;
@@ -112,6 +113,8 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged, on
         </div>;
       })}
     </section>
+    {repository.reviewer ? <ActorPicker accountId={repository.reviewer.id} accountType={repository.scmType} repositoryId={repository.id} />
+      : <p>Select a reviewer account to edit fix overrides.</p>}
     {error && <p role="alert">{error}</p>}
     {revealed && <div role="dialog" aria-label="Webhook secret">
       <p>Copy this secret now. It is shown once; store it in the forge webhook settings.</p>

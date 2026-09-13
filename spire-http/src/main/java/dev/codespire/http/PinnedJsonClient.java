@@ -108,6 +108,14 @@ public class PinnedJsonClient {
     }
 
     private String send(String method, String path, boolean requireJsonShape) {
+        return send(method, path, requireJsonShape, false);
+    }
+
+    public JsonNode getIdentityJson(String path) {
+        return parse(send("GET", path, true, true));
+    }
+
+    private String send(String method, String path, boolean requireJsonShape, boolean originRequired) {
         int maxBytes = requireJsonShape ? UNBOUNDED : MAX_RAW_BYTES;
         URI target = URI.create(baseUri + path);
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -117,6 +125,7 @@ public class PinnedJsonClient {
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> failures.create(status, method, path, null));
                 target = redirectTarget(target, location, status, method, path);
+                if (originRequired && !sameOrigin(target)) throw failures.create(status, method, path, "identity redirect left configured origin");
                 requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }

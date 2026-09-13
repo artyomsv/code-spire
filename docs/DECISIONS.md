@@ -4,6 +4,29 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-044 — Stable identities for person policy and repository fix overrides
+
+**Status:** identity and override editing implemented in M3 slice 3; effective push authorization
+lands in slice 4. Criterion 7 was independently verified on 716dc75.
+
+**Decision.** Resolve people with the selected account's credential. GitHub/GitLab handle lookup
+must match exactly; Bitbucket/Jira use explicit selection where their API exposes candidates.
+Repeat resolution and stable-ID verification on save. Lock the account through the write so
+credential/origin edits cannot replace the resolving identity midway. Cache only display metadata,
+refresh by ID and report stale labels without assigning a new ID after a handle changes hands.
+A policy-bearing account cannot change forge kind or origin until its people are removed.
+
+Repository ALLOW/DENY overrides have one row per stable actor and optimistic revisions. Legacy
+numeric GitHub/GitLab IDs, or stable IDs observed on that repository's actual review history,
+become grants. Other strings need repair. These grants never replace target, branch, observe-mode
+or spending checks. The shared person control is reusable by work-source registration, which
+is introduced in slice 5; source authority must remain scoped to that source.
+
+No credential elevation or secret response is introduced. Capability prerequisites are visible
+in the person control, with separate per-forge evidence limits in UNVERIFIED.
+
+---
+
 ## ADR-042 — Repositories own coordinates and explicitly bind role accounts
 
 **Status:** implemented through M3 slice 2. Runtime resolution uses explicit repository bindings.

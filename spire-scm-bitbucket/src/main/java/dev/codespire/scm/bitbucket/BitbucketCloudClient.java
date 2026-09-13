@@ -75,6 +75,14 @@ public class BitbucketCloudClient {
     }
 
     private String send(String method, String path, String jsonBody) {
+        return send(method, path, jsonBody, false);
+    }
+
+    public JsonNode getIdentityJson(String path) {
+        return parse(send("GET", path, null, true));
+    }
+
+    private String send(String method, String path, String jsonBody, boolean originRequired) {
         URI target = URI.create(baseUri + path);
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             HttpResponse<String> response = execute(method, path, target, jsonBody);
@@ -88,6 +96,7 @@ public class BitbucketCloudClient {
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> new BitbucketApiException(status, method, path));
                 target = redirectTarget(target, location, status, method, path);
+                if (originRequired && !sameOrigin(target)) throw new BitbucketApiException(status, method, path, "identity redirect left configured origin");
                 requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }

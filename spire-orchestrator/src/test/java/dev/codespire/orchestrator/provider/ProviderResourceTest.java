@@ -62,7 +62,7 @@ class ProviderResourceTest {
         m.put("authKind", authKind);
         m.put("botAccountId", "acct-1");
         m.put("enabled", true);
-        m.put("authors", List.of("alice"));
+        m.put("authors", List.of());
         if (secret != null) {
             m.put("secret", secret);
         }
@@ -141,7 +141,7 @@ class ProviderResourceTest {
                 .body("hasSecret", is(true))
                 .body("workspace", org.hamcrest.Matchers.nullValue())
                 .body("secret", is(nullOrEmpty()))
-                .body("authors[0]", equalTo("alice"));
+                .body("authors.size()", equalTo(0));
     }
 
     @Test

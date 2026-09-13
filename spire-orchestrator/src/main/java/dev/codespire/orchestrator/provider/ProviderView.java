@@ -28,5 +28,6 @@ public record ProviderView(
         String role,
         String reportedScopes,
         Instant scopesCheckedAt,
-        List<String> usedBy) {
+        List<String> usedBy,
+        List<ActorDisplay> actorDisplays) {
 }

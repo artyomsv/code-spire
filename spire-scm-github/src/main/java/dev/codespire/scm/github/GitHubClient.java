@@ -53,6 +53,11 @@ public class GitHubClient {
         return parse(send("GET", path, JSON_MEDIA, null));
     }
 
+    /** Identity and permission evidence may never be supplied by a redirected foreign origin. */
+    public JsonNode getIdentityJson(String path) {
+        return parse(send("GET", path, URI.create(baseUri + path), JSON_MEDIA, null, true));
+    }
+
     /** The API host, so callers can key per-instance operational state (see {@code DiffSource.apiHost}). */
     public String apiHost() {
         return baseUri.getHost() != null ? baseUri.getHost() : baseUri.toString();
@@ -133,6 +138,10 @@ public class GitHubClient {
 
     /** Overload for targets outside the baseUri+path convention (e.g. {@link #postGraphQl}). */
     private String send(String method, String path, URI initialTarget, String accept, String jsonBody) {
+        return send(method, path, initialTarget, accept, jsonBody, false);
+    }
+
+    private String send(String method, String path, URI initialTarget, String accept, String jsonBody, boolean originRequired) {
         URI target = initialTarget;
         for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
             HttpResponse<String> response = execute(method, path, target, accept, jsonBody);
@@ -146,6 +155,7 @@ public class GitHubClient {
                 String location = response.headers().firstValue("Location")
                         .orElseThrow(() -> new GitHubApiException(status, method, path));
                 target = redirectTarget(target, location, status, method, path);
+                if (originRequired && !sameOrigin(target)) throw new GitHubApiException(status, method, path, "identity redirect left configured origin");
                 requireSafeRedirectTarget(target, status, method, path);
                 continue;
             }

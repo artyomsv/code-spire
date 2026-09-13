@@ -35,6 +35,8 @@ public class ProviderRegistry {
     @Inject
     EncryptionService encryption;
 
+    @Inject ActorPolicyRegistry actorPolicies;
+
     /** A panel row derives from last_check_ok, so recording one is exactly when to re-push. */
     @Inject
     dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
@@ -115,6 +117,7 @@ public class ProviderRegistry {
             }
             validateSourceReferences(c, id, in);
             validateRepositoryReferences(c, id, in);
+            validateActorReferences(c, id, in);
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
@@ -148,7 +151,11 @@ public class ProviderRegistry {
                 ps.setObject(idx, id);
                 ps.executeUpdate();
             }
-            replaceAuthors(c, id, in.authors());
+            // Recheck under the account lock: remote token validation may have allowed a
+            // versioned policy edit after the resource read the submitted legacy author list.
+            if (in.authors() != null && !new java.util.HashSet<>(authorsOf(c, id)).equals(new java.util.HashSet<>(in.authors()))) {
+                throw new AccountConflict("Edit people through the resolved policy editor, then reload this account.");
+            }
         } catch (SQLException e) {
             if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account with this identity already exists.");
             throw new IllegalStateException("Failed to update provider " + id, e);
@@ -258,7 +265,8 @@ public class ProviderRegistry {
                 rs.getString("last_check_error"),
                 rs.getString("role"), rs.getString("reported_scopes"),
                 rs.getTimestamp("scopes_checked_at") == null ? null : rs.getTimestamp("scopes_checked_at").toInstant(),
-                usedBy(c, rs.getObject("id", UUID.class), rs.getString("role")));
+                usedBy(c, rs.getObject("id", UUID.class), rs.getString("role")),
+                actorPolicies.account(rs.getObject("id", UUID.class)).actors());
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {
@@ -370,6 +378,19 @@ public class ProviderRegistry {
                 }
                 if (!invalid.isEmpty()) throw new AccountConflict("Repoint these sources before changing account kind or origin: "
                         + String.join(", ", invalid));
+            }
+        }
+    }
+
+    private void validateActorReferences(Connection c, UUID id, ProviderInput input) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT type,base_url FROM scm_provider WHERE id=? "
+                + "AND EXISTS (SELECT 1 FROM provider_author WHERE provider_id=?)")) {
+            ps.setObject(1, id); ps.setObject(2, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && (!rs.getString(1).equals(input.type()) || !dev.codespire.contract.scm.ForgeOrigin.of(rs.getString(2))
+                        .equals(dev.codespire.contract.scm.ForgeOrigin.of(input.baseUrl())))) {
+                    throw new AccountConflict("Remove the account's policy people before changing forge kind or origin.");
+                }
             }
         }
     }

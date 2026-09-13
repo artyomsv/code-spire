@@ -345,3 +345,32 @@ REST (`api.bitbucket.org/2.0`), auth = bot **App Password** (Basic) or OAuth, sc
 ## 11. Versioning
 `eventVersion` starts at 1 per type. Additive fields don't bump it; breaking changes bump it and ship an
 upcaster (`vN → vN+1`) in `spire-contract`. Consumers tolerate unknown fields. Published events are immutable.
+
+## Resolved people and repository fix overrides (M3 slice 3)
+
+All person endpoints require `spire-admin` and use the explicitly selected account. A resolution
+response contains status, candidates (`providerUserId`, observed `handle`, `displayName`) and a
+safe capability explanation. It never contains credentials or email fields.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /api/providers/{id}/actors/resolve` | Resolve `{handle, repositoryId?}`; repository scope must be bound to this account. |
+| `GET /api/providers/{id}/actors?refresh=true` | Read account policy; optional refresh resolves each stored ID, never its old handle. |
+| `POST /api/providers/{id}/actors` | Save `{handle, providerUserId, revision, repositoryId?}` after repeating lookup and by-ID verification. |
+| `DELETE /api/providers/{id}/actors/{actorId}?revision=` | Remove an account entry with optimistic policy revision. |
+| `/api/repositories/{id}/fix-actors` | Corresponding list/save/delete operations using its reviewer; save additionally requires `effect: ALLOW|DENY`, and the existing actor revision (zero for creation). |
+| `POST /api/repositories/{id}/fix-actors/resolve` | Resolve through that repository's selected reviewer. |
+
+Not-found, ambiguous or unsupported identity input returns 422 without writing; upstream
+unavailability returns 503. A stale policy, disabled account or missing reviewer returns 409.
+GitHub/GitLab support exact handles. Bitbucket/Jira return `SELECTION_REQUIRED`; the browser
+must name a returned candidate, and the server repeats that selection check on save. Candidate
+IDs are disambiguators in selection controls, not an operator input requirement.
+
+Account create no longer accepts a raw author list: save credentials first, then resolve people.
+An ordinary account update can omit `authors` to preserve policy; a supplied list must match the
+current list under the account lock. A policy edit during token validation makes the old form
+return 409 and rolls back its credential/configuration changes. It cannot replace the list with
+unresolved text. Account views include `actorDisplays` for cached labels and stale states. Legacy
+unresolved entries are labelled for repair. Repository fix overrides are separate from account
+review/conversation policy; slice 4 activates the permission fallback without changing those rules.

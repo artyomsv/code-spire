@@ -294,3 +294,25 @@ includes the account platform separately from the source type.
   `provider:<id>`); LLM and harness credentials retain their separate registries and boundaries.
 - **Never stored:** diffs/source (re-fetched by commit). Bootstrap encryption and service secrets
   come from the deployment secret store; registered account tokens are encrypted in PostgreSQL.
+
+## Resolved policy actors (orchestrator V62)
+
+`provider_author.author` remains the stable-id account policy key. V62 adds `observed_handle`,
+`display_name`, `resolved_at` and `refresh_failed` as display observations; `scm_provider.actor_policy_revision`
+protects account list edits. Credential-only updates preserve these observations and policy.
+
+`repository_fix_actor` has primary key `(repository_id,actor_id)`, closed `ALLOW|DENY` effect,
+observed display metadata and a sequence-assigned revision. Contradictory edits compare the
+stored revision; deletion followed by recreation cannot reuse an earlier revision. Repository
+binding changes and actor writes serialize on the repository row. Account writes serialize on
+the account row so resolution cannot race credential/origin replacement.
+
+An unresolved observation, one older than 24 hours, or a failed refresh is labelled stale.
+Refresh failure persists across reloads; a successful read of the same stable ID clears it.
+Display freshness never supplies authorization evidence.
+
+Migration grants only legacy numeric GitHub/GitLab ids or ids already observed as stable review
+authors on that exact registered repository. Other legacy strings remain in the account list for
+explicit re-resolution and do not acquire new fix authority. The account workspace rollback
+column and all credential ciphertext are untouched. No runtime INSERT or UPDATE may name that
+retained column, as enforced by `AccountWorkspaceIsUnusedTest` alongside its read checks.

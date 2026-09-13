@@ -1,3 +1,4 @@
+vi.mock('../actorsApi', async importOriginal => ({ ...await importOriginal<typeof import('../actorsApi')>(), fetchActors: vi.fn().mockResolvedValue({ revision: 0, actors: [] }) }));
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import * as api from '../../api';

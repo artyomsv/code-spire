@@ -47,15 +47,15 @@ class ProviderRegistryTest {
     }
 
     @Test
-    void updateKeepsSecretWhenBlankAndReplacesAuthors() {
+    void updateKeepsSecretWhenBlankAndPreservesAuthors() {
         ProviderView created = registry.create(bearer("ws-keep", "tok-keep", List.of("alice")));
         UUID id = UUID.fromString(created.id());
-        registry.update(id, new ProviderInput("Renamed", "bitbucket-cloud", "https://api.bitbucket.org/2.0", "bearer", null, null, "acct-1", true, List.of("carol"), null, null));
+        registry.update(id, new ProviderInput("Renamed", "bitbucket-cloud", "https://api.bitbucket.org/2.0", "bearer", null, null, "acct-1", true, null, null, null));
 
         assertEquals("tok-keep", registry.resolveById(id).orElseThrow().secret());
         ProviderView view = registry.get(id).orElseThrow();
         assertEquals("Renamed", view.name());
-        assertEquals(List.of("carol"), view.authors());
+        assertEquals(List.of("alice"), view.authors());
     }
 
     @Test

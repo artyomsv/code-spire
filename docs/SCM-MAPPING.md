@@ -171,6 +171,21 @@ worse than no mark, because a consumer learns to trust it and is then silently w
 The mark is a fixed marker at the top of the description instead, written by the orchestrator, and
 it is identical on all four.
 
+## People directories (M3 slice 3)
+
+| Forge | Lookup and refresh | Capability |
+|---|---|---|
+| GitHub | GET /users/{login}; GET /user/{id} | Exact login, then durable numeric ID; visibility depends on selected credential. |
+| GitLab | GET /users?username=; GET /users/{id} | Exact username, refuse ambiguous/incomplete replies. |
+| Bitbucket Cloud | Workspace members; GET /users/{account_id} | Explicit member selection across bounded pages; workspace/user-read access required. Nicknames are not unique. |
+| Jira Cloud | GET /rest/api/3/user/search; GET /rest/api/3/user?accountId= | Explicit candidate selection; Browse users and groups plus user-read access. |
+| Jira Data Center | Unsupported person lookup | Existing context-read support does not imply Cloud accountId support. |
+
+Every save repeats resolution through the same configured account, verifies the returned stable
+ID, and stores observed labels separately. Identity reads reject redirects to another origin.
+Per-forge documentation links and measured-versus-live limits are recorded separately in
+UNVERIFIED. No source allowlist inheritance is implied by reusable account person controls.
+
 ## Sources
 Bitbucket Cloud: developer.atlassian.com/cloud/bitbucket/rest + support.atlassian.com event-payloads ·
 GitHub: docs.github.com/rest/pulls · GitLab: docs.gitlab.com/api/merge_requests, /discussions ·

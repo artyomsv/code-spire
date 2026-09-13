@@ -34,6 +34,8 @@ public class JiraClient {
         return http.getJson(path);
     }
 
+    public JsonNode getIdentityJson(String path) { return http.getIdentityJson(path); }
+
     private static String authHeader(JiraConfig config) {
         if ("bearer".equals(config.authKind())) {
             return "Bearer " + config.secret();

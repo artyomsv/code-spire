@@ -950,7 +950,7 @@
   .conn-badge.conn-checking { color: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
   /* The same icon where nothing can be checked from — a tracker account, managed on Context. */
   .conn-static { cursor: default; }
-  /* Two marks, not two sentences: how many ids may command this bot, and how far it converses. */
+  /* Observed people and the conversation policy; the table scrolls for long lists. */
   .policy-cell { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
   .policy-bit {
     display: inline-flex; align-items: center; gap: 4px;

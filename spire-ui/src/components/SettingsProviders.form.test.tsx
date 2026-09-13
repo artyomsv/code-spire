@@ -181,6 +181,15 @@ describe('SettingsProviders — provider form', () => {
     expect(update.mock.calls[0][1]).not.toHaveProperty('secret');
   });
 
+  it('keeps person policy out of factory account edits', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([{ ...existing, role: 'FACTORY' }]);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+    const form = within(await screen.findByRole('dialog'));
+    expect(form.queryByLabelText('Person')).not.toBeInTheDocument();
+    expect(form.queryByRole('region', { name: 'Allowed people' })).not.toBeInTheDocument();
+  });
+
   it('swaps the base URL to the new type default when it has not been customised', async () => {
     renderPage();
     const dialog = await openAddForm();
@@ -277,7 +286,6 @@ describe('SettingsProviders — provider form', () => {
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /conversation level/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Explain' }));
-    fireEvent.change(within(dialog).getByPlaceholderText('stable user id'), { target: { value: '3218389' } });
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Factory' }));
@@ -285,7 +293,7 @@ describe('SettingsProviders — provider form', () => {
 
     await waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0][0].role).toBe('FACTORY');
-    expect(create.mock.calls[0][0].authors).toEqual([]);
+    expect(create.mock.calls[0][0].authors).toBeUndefined();
     expect(create.mock.calls[0][0].conversationLevel).toBeUndefined();
   });
 
@@ -322,7 +330,7 @@ describe('SettingsProviders — provider form', () => {
   it('hides the reviewer-only fields once Factory is chosen', async () => {
     renderPage();
     const dialog = await openFilledAddForm();
-    expect(within(dialog).getByText(/may command this bot/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Save the account first/)).toBeInTheDocument();
     expect(within(dialog).getByRole('combobox', { name: /conversation level/i })).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
@@ -333,23 +341,19 @@ describe('SettingsProviders — provider form', () => {
     expect(within(dialog).getByText(/must resolve to a login/i)).toBeInTheDocument();
   });
 
-  /**
-   * /fix matches the stable id only; a field that says "username" leads to a list /fix refuses.
-   * This also covers the flush: typing an allowlist entry and pressing Save without pressing Add is
-   * the obvious operator mistake, and the form must not drop the draft silently.
-   */
-  it('asks for a stable user id in the allowlist, and flushes a typed one on submit', async () => {
+  /** People are resolved only after credentials have a durable account identity. */
+  it('requires saving credentials before resolving policy people', async () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
     renderPage();
     const dialog = await openFilledAddForm();
     typeSecret(dialog);
 
-    const field = within(dialog).getByPlaceholderText('stable user id');
-    fireEvent.change(field, { target: { value: '3218389' } });
+    expect(within(dialog).queryByPlaceholderText('stable user id')).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Save the account first/)).toBeVisible();
     submit(dialog);
 
     await waitFor(() => expect(create).toHaveBeenCalled());
-    expect(create.mock.calls[0][0].authors).toEqual(['3218389']);
+    expect(create.mock.calls[0][0].authors).toBeUndefined();
   });
 });
 

@@ -91,6 +91,7 @@ public class ProviderResource {
     public Response create(ProviderInput in, @QueryParam("validationRepositoryId") UUID validationRepositoryId) {
         in = normalize(in, null);
         validate(in, true);
+        if (in.authors() != null && !in.authors().isEmpty()) throw conflict("Save the account first, then resolve people in its policy editor.");
         ProviderView created;
         try {
             created = registry.create(resolveIdentity(in, validationRepositoryId));

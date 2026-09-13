@@ -1866,3 +1866,22 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   hook rejection metadata; 9 account/context and 12 webhook entries matched after decryption.
   The three missing origins remain explicit repairs, not inferred mappings. No live run worker,
   new spend, synthetic live row or second dump was used. Later M3 criteria remain pending.
+
+- **Factory M3 slice 3 — resolved people and editable overrides (PR #153, 2026-09-13).**
+  Account person entry resolves with the selected credential, repeats lookup and stable-ID
+  verification on save, and renders cached handles after reload. Raw-author writes through the
+  older account endpoint are refused; ordinary credential edits retain policy and observations.
+  GitHub/GitLab exact matching and Bitbucket/Jira explicit selection have separate capability
+  notes. Identity redirects cannot cross origin. V62 adds display observations, durable stale
+  flags, optimistic revisions and one ALLOW/DENY row per repository actor. Its legacy-grant
+  filters and constraints are measured against fresh V61 schemas. The account/workspace write
+  guard now covers INSERT and UPDATE; the startup reconciler omits the retained column.
+  The HTTP/DB and fresh-reader-JVM proof plus UI round trip establish automated criterion 6;
+  work-source screen wiring follows in slice 5/6 and effective push authorization in slice 4.
+  Tests caught a refresh failure that vanished on reload, an ambiguity fixture that could
+  pass on a 404 and an old account form overwriting a concurrent policy during token validation.
+  The locked registry write now owns the compatibility check and rolls back the stale edit. 3118 Java tests,
+  636 UI tests, packaging and pinned Semgrep passed; 92 production mutations
+  have selected failures and scratch-restored passes. See the slice 3 review notes for boundaries
+  and the exact ledger. Live V62 preserves the approved row and credential baselines; the existing
+  GitHub person resolves by stable ID and keeps its observed handle across a full service restart.

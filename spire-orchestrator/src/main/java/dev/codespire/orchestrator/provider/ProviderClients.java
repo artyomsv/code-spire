@@ -233,6 +233,17 @@ public class ProviderClients {
         };
     }
 
+    public dev.codespire.contract.port.ActorDirectory actorDirectory(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubActorDirectory(new GitHubClient(githubConfig(provider), mapper));
+            case "gitlab" -> new dev.codespire.scm.gitlab.GitLabActorDirectory(new GitLabClient(gitlabConfig(provider), mapper));
+            case "bitbucket-cloud" -> new dev.codespire.scm.bitbucket.BitbucketActorDirectory(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            case "atlassian" -> new dev.codespire.context.jira.JiraActorDirectory(new dev.codespire.context.jira.JiraClient(
+                    new dev.codespire.context.jira.JiraConfig(provider.baseUrl(), provider.authKind(), provider.authUsername(), provider.secret(), Set.of()), mapper));
+            default -> throw new IllegalStateException("Unsupported account directory");
+        };
+    }
+
     /**
      * A read-only thread reader for a resolved provider — re-fetches a comment thread's full
      * messages from the SCM on demand (ADR-011: conversation text is never persisted, only re-fetched

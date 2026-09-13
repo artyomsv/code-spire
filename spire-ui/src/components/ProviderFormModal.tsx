@@ -13,6 +13,7 @@ import {
 } from '../api';
 import { roleLabel } from './accounts';
 import Select from './Select';
+import ActorPicker from './ActorPicker';
 import AccountCredentialFields, { type AccountFields } from './AccountCredentialFields';
 export { DeleteConfirmModal } from './DeleteAccountModal';
 import ReviewerFieldsSection, { type ReviewerFields } from './ReviewerFieldsSection';
@@ -76,8 +77,6 @@ export default function ProviderFormModal({
   const [role, setRole] = useState<ProviderRole>(initial?.role ?? 'REVIEWER');
   const [reviewer, setReviewer] = useState<ReviewerFields>({
     conversationLevel: initial?.conversationLevel ?? '',
-    authors: initial?.authors ?? [],
-    authorDraft: '',
   });
   const patchReviewer = (patch: Partial<ReviewerFields>) => setReviewer((prev) => ({ ...prev, ...patch }));
 
@@ -106,19 +105,6 @@ export default function ProviderFormModal({
     }
   }
 
-  function addAuthor() {
-    const v = reviewer.authorDraft.trim();
-    if (!v || reviewer.authors.includes(v)) {
-      patchReviewer({ authorDraft: '' });
-      return;
-    }
-    patchReviewer({ authors: [...reviewer.authors, v], authorDraft: '' });
-  }
-
-  function removeAuthor(a: string) {
-    patchReviewer({ authors: reviewer.authors.filter((x) => x !== a) });
-  }
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !baseUrl.trim()) {
@@ -134,10 +120,6 @@ export default function ProviderFormModal({
       return;
     }
 
-    // Flush a typed-but-not-yet-added author so it isn't silently dropped on submit.
-    const draft = reviewer.authorDraft.trim();
-    const finalAuthors = draft && !reviewer.authors.includes(draft) ? [...reviewer.authors, draft] : reviewer.authors;
-
     const input: ProviderInput = {
       name: name.trim(),
       type,
@@ -146,7 +128,6 @@ export default function ProviderFormModal({
       authUsername: authKind === 'basic' ? authUsername.trim() : null,
       botAccountId: botAccountId.trim(),
       enabled,
-      authors: role === 'REVIEWER' ? finalAuthors : [],
       conversationLevel: role === 'REVIEWER' && reviewer.conversationLevel ? reviewer.conversationLevel : undefined,
       // Fixed at registration: on edit the stored role goes back as it came. A different one is a 409.
       role: editing && initial ? initial.role : role,
@@ -250,7 +231,9 @@ export default function ProviderFormModal({
             <p>This checks access only. Select the account on the repository separately.</p>
           </div>}
 
-          {role === 'REVIEWER' && <ReviewerFieldsSection reviewer={reviewer} patchReviewer={patchReviewer} addAuthor={addAuthor} removeAuthor={removeAuthor} />}
+          {role === 'REVIEWER' && <ReviewerFieldsSection reviewer={reviewer} patchReviewer={patchReviewer} />}
+
+          {role === 'REVIEWER' && (initial ? <ActorPicker accountId={initial.id} accountType={initial.type} /> : <p>Save the account first, then resolve people in its policy editor.</p>)}
 
           <label className="field-check">
             <input type="checkbox" checked={enabled} onChange={(e) => patch({ enabled: e.target.checked })} />

@@ -315,6 +315,7 @@ export type AuthKind = 'bearer' | 'basic';
 export type ProviderRole = 'REVIEWER' | 'FACTORY' | 'CONTEXT';
 
 export interface ProviderView {
+  actorDisplays?: import('./components/actorsApi').ActorDisplay[];
   id: string;
   name: string;
   type: string; // 'bitbucket-cloud' | 'github'
@@ -350,7 +351,7 @@ export interface ProviderInput {
   secret?: string; // omit/empty on edit = keep the stored token
   botAccountId?: string; // blank = auto-resolved server-side from the token owner
   enabled: boolean;
-  authors: string[];
+  authors?: string[];
   conversationLevel?: string; // omit/'' = inherit the global default
   role?: ProviderRole; // sent on create; on edit the stored role, never another — a change is a 409
 }

@@ -32,7 +32,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | ADR-001..042 — every locked decision with its why. ADR-029..040 and ADR-042 are the software factory's; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042 and ADR-044 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -77,8 +77,9 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–2 (PR #153) add repository ownership and cut review/run resolution over to
-  explicit repository/role bindings.** Criterion 7 is proved; later M3 slices remain pending.
+  (`docs/UNVERIFIED.md`). **M3 slices 1–3 (PR #153) add repository ownership, explicit role bindings and resolved person entry.**
+  Criterion 7 is independently verified; criterion 6 has its automated persistence/UI proof.
+  Repository ALLOW/DENY overrides are editable; slice 4 activates effective push authorization.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -90,19 +91,17 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   explicit platform through the worker contract. Repositories show the selected serving
   identities through explicit role bindings. Live token-family and rollout gaps are recorded in
   UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 slice 2 removes account workspace from forms and runtime reads while retaining the populated
-  database column until slice 10. Per-repository push checks and handle-to-id resolution remain later work.
+  database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks follow in slice 4.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip;
-  630 UI tests across 77 files; TypeScript/UI build and packaging passed. Forced testFast and
-  testServices ran sequentially with JDK 25 and --no-parallel. The existing symlink case skips
-  because this Windows session lacks symlink privileges. Slice 2's 62 distinct mutations each
-  failed one selected test and passed after scratch restoration; see
-  .claude/reviews/global/factory-m3-slice2.md. Live V61/V4 preserves the approved 6/37/85/14/3
-  row counts and compares identical after decrypting all 9 account/context and 12 webhook
-  baseline entries. All 37 reviews and 14 runs have repository mappings; three origin-less
-  webhook registrations remain pending explicit confirmation. No live run worker or nightly
-  testE2e tier was started.
+- **Measured, not estimated (2026-09-13):** 3118 Java tests across 365 suites, zero failures
+  and 1 existing Windows symlink privilege skip; 636 UI tests across 78 files. Forced testFast
+  and testServices ran sequentially; packaging and the UI build passed. Slice 3 has 92
+  verified production mutations and a clean pinned Semgrep scan. Evidence and exact mutation
+  selectors/hashes are in .claude/reviews/global/factory-m3-slice3.md. Live V62/V4 preserves the
+  6/37/85/14/3 row baseline and all encrypted credentials. The existing GitHub person's observed
+  handle and stable ID survive a full orchestrator restart without refresh. Three origin-less hooks
+  remain pending explicit repair. No live run worker or nightly testE2e tier was started.
 
 ## Build & run
 

@@ -33,6 +33,60 @@ evidence would settle it**.
 
 ---
 
+## People directory — GitHub identity behavior (2026-09-13)
+
+Measured against a local WireMock GitHub API with TEST-prefixed people and credentials:
+exact login matching, stable numeric ID selection, by-ID rename refresh, malformed/refused
+responses and rejection of foreign-origin redirects. The resource persistence test also uses
+this fixture through the configured account and actual PostgreSQL. The dev GitHub reviewer at
+api.github.com also refreshed its existing actor 3218389 by ID and resolved @artyomsv back to
+that ID on 2026-09-13; policy and revision were unchanged. A subsequent full orchestrator restart
+preserved the identical cached policy and observations without another refresh. This measures that configured credential,
+not other token families or Enterprise Managed User visibility. The documented
+[login and durable-ID endpoints](https://docs.github.com/en/rest/users/users) are the contract;
+a 404 can also mean the selected account cannot see the person.
+
+## People directory — GitLab identity behavior (2026-09-13)
+
+Measured against local WireMock, including the configured /api/v4 prefix in the resource suite:
+exact username filtering, ambiguous result refusal, stable-ID refresh and foreign-origin
+redirect refusal. No live measurement against gitlab.com, git.epam.com or gitbud.epam.com is
+claimed. [GitLab Users API](https://docs.gitlab.com/api/users/) distinguishes exact username
+filtering from fuzzy search; installation-specific visibility remains unmeasured.
+
+## People directory — Bitbucket Cloud identity behavior (2026-09-13)
+
+Measured against local WireMock: matching workspace members across pages, duplicate nickname
+selection, missing-scope capability errors, by-account-ID verification and foreign-origin redirect
+refusal. No live token was given more authority. [Workspace membership](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-workspace-members-get)
+requires workspace-read access; [user reads](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-users/)
+require user-read access. These operations and account_id availability still need live proof for
+each token family. Nicknames are not treated as exact handles. Ten member pages is a hard limit;
+exceeding it refuses selection. Effective push-permission reads additionally require repository-admin
+access and belong to slice 4, not to this identity proof.
+
+Atlassian's [identity privacy contract](https://developer.atlassian.com/cloud/bitbucket/bitbucket-api-changes-gdpr/)
+specifies account_id or UUID in user URLs and defines nicknames as non-unique. The adapter uses
+account_id consistently with the existing webhook author identity.
+
+## People directory — Jira Cloud identity behavior (2026-09-13)
+
+Measured against local WireMock: disambiguated accountId selection, refusal of responses without
+Cloud account IDs, inactive-user refusal, by-ID refresh and foreign-origin redirect refusal.
+The [search contract](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-user-search/#api-rest-api-3-user-search-get)
+and [by-ID contract](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-users/#api-rest-api-3-user-get)
+require the applicable user-read scopes and Browse users and groups permission. Privacy can hide
+results; an empty search proves no visible match, not absence from the site. Up to 50 candidates
+are shown and the operator must select one. No live Jira Cloud installation was measured.
+Work-source UI wiring is a slice 5/6 dependency; it must use the source's explicit account.
+
+## People directory — Jira Data Center identity behavior (2026-09-13)
+
+Not implemented or measured against a live Data Center installation. The current person adapter
+uses Cloud accountId endpoints; it never treats a Data Center username or display name as a
+Cloud account ID. The UI states this capability limit. Existing Data Center context reads do
+not establish support for person lookup, and are unchanged.
+
 ## Repository cutover — boundaries of the proof (ADR-042, 2026-09-13)
 
 - **Real-row continuity is measured.** Dev was rebuilt gateway first (V4), then orchestrator

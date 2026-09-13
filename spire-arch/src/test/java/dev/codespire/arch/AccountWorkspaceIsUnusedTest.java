@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The populated rollback column must never silently become a runtime input again. */
+/** The populated rollback column must have no runtime read or write references. */
 class AccountWorkspaceIsUnusedTest {
     @Test void noProductionCodeReadsLegacyAccountWorkspace() throws Exception {
         List<String> violations = new ArrayList<>();
@@ -22,6 +22,18 @@ class AccountWorkspaceIsUnusedTest {
                         inspected++;
                         String source = JavaSource.withoutComments(Files.readString(path));
                         String joined = source.replaceAll("\"\\s*\\+\\s*\"", "");
+                        var insert = Pattern.compile("(?is)INSERT\\s+INTO\\s+(?:orchestrator\\.)?scm_provider\\s*\\(([^)]*)\\)").matcher(joined);
+                        while (insert.find()) {
+                            if (Pattern.compile("(?i)\\bworkspace\\b").matcher(insert.group(1)).find()) {
+                                violations.add(path + ": inserts legacy account workspace");
+                            }
+                        }
+                        var update = Pattern.compile("(?is)UPDATE\\s+(?:orchestrator\\.)?scm_provider\\b(?:\\s+(?:AS\\s+)?\\w+)?\\s+SET\\s+([^;\"{}]*?)(?:\\bWHERE\\b|\\bRETURNING\\b|[;\"])").matcher(joined);
+                        while (update.find()) {
+                            if (Pattern.compile("(?i)\\bworkspace\\b").matcher(update.group(1)).find()) {
+                                violations.add(path + ": updates legacy account workspace");
+                            }
+                        }
                         var select = Pattern.compile("(?is)SELECT\\s+([^;\"{}]*?)\\s+FROM\\s+(?:orchestrator\\.)?scm_provider\\b").matcher(joined);
                         while (select.find()) {
                             if (Pattern.compile("(?i)\\bworkspace\\b|(?<![\\w.])\\*(?!\\w)").matcher(select.group(1)).find()

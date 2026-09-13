@@ -3,8 +3,9 @@
 **Date:** 2026-09-12
 
 **Status:** Slice 1 is closed on fully green `363b13d`. Slice 2 implements the runtime cutover
-and proves criterion 7, with real-row post-cutover continuity. It is ready for review on PR #153.
-Slices 3–10 and criteria 1–6 remain pending. Detailed evidence is in the slice 2 review notes.
+and proves criterion 7, with real-row post-cutover continuity. It was accepted and criterion 7 independently verified on 716dc75 in round 5.
+Slice 3 completes automated criterion 6 proof, resolved person entry and editable repository overrides.
+Slices 4–10 and criteria 1–5 remain pending. Detailed evidence is in the slice 2 and slice 3 review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -302,22 +303,22 @@ override registry, person controls; ADR-044 identity half.
 **Produces:** exact identity resolution with typed errors; stable-id persisted allowlists and
 `ALLOW|DENY` repository fix overrides with readable display metadata.
 
-- [ ] Apply accepted capability errors and disambiguated selection for Bitbucket/Jira person lookup.
+- [x] Apply accepted capability errors and disambiguated selection for Bitbucket/Jira person lookup.
   Write criterion 6 tests and `ActorResolutionResourceTest.usesOnlyTheSelectedAccountsCredential`,
   `ActorResolutionResourceTest.refusesAnAmbiguousMatch`,
   `ActorResolutionResourceTest.rechecksSubmittedIdentityOnSave`,
   `ActorDisplayTest.renamedHandleKeepsTheStoredId`.
-- [ ] Implement directory adapters via configured account origin/auth. Exact match and stable id
+- [x] Implement directory adapters via configured account origin/auth. Exact match and stable id
   are required; no username-to-id string coercion and no first search result. Implement by-id
   refresh with stale display metadata on failure; never send a secret in a response.
-- [ ] Add the repository override table and UI controls. One actor has one override; a contradictory
+- [x] Add the repository override table and UI controls. One actor has one override; a contradictory
   edit is a version conflict, not “last array entry wins.” Migrate verified legacy stable-id grants
   to their real repository mappings. Flag unresolved legacy handles without granting authority.
-- [ ] Add account and source person pickers with unresolved/error states. Show handle plus policy
+- [x] Add account person pickers and the reusable source control with unresolved/error states. Work-source registration does not exist until slice 5: wire its person picker there using the source account, without inheriting account policy. Show handle plus policy
   effect; a count may accompany people but cannot replace their identities.
-- [ ] Kill criterion 6 mutations, then separately kill account credential selection and returned-id
+- [x] Kill criterion 6 mutations, then separately kill account credential selection and returned-id
   verification with the corresponding targeted tests. Restore and rerun each case green.
-- [ ] Run adapter unit tests, resource persistence test and UI form round-trip; update SCM-MAPPING
+- [x] Run adapter unit tests, resource persistence test and UI form round-trip; update SCM-MAPPING
   identity capability notes and per-forge UNVERIFIED entries (what was measured, which forge, and remaining proof), then commit. At this exit overrides are editable; slice 4 activates
   their new permission fallback without changing unrelated review policy.
 
