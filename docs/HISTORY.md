@@ -1808,3 +1808,28 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     scope-query wrapper and unconditional scope-write overload were removed so future call sites
     cannot silently choose the old path. Disabled migration rows intentionally remain in Attention
     because their legacy credential columns must be retired too; that intent is now commented.
+
+- **Factory M3 slice 1 (2026-09-13, PR #153; ADR-042) — repository registration before resolver cutover.**
+  Repositories own explicit forge origin, workspace and slug plus reviewer/factory account bindings.
+  The settings view and admin API expose those choices, disabled or missing accounts, identity
+  conflicts and stale edits. Existing review/run callers retain their legacy resolution until
+  slice 2; the account workspace and its constraints remain intact.
+  - V60 expands the orchestrator schema without changing account ids, ciphertext or context
+    references. Gateway V3 queues versioned metadata snapshots in a transactional outbox; broker
+    acknowledgement precedes completion, and failed snapshots have a registry DLQ replay route.
+    Replays preserve operator rebindings. Automatic migration requires explicit registration
+    origin or stored PR URL evidence; unknown/mismatched origins produce named attention rows
+    and explicit mapping repair. Historical review and run coordinates are linked together.
+  - The reviewed backup command now targets persistent, git-ignored `.handoff/` in the worktree.
+    The existing 182-object, 492,480-byte archive was reused; no second dump was taken for the
+    review correction. A read-only encrypted continuity probe matched 9 real credential/reference
+    entries. This remains pre-upgrade evidence: no dev deployment or live migration was performed.
+  - M2's live proof is recorded for `artyomsv/spire-test#31`, runs `3987682681:1` and
+    `3987682176:1`, resolved threads and persisted verdicts. The automated GitLab networking gap
+    remains separate. Slice 8b retains the standalone live `/fix` publication regression proof.
+  - Review evidence and the per-guard mutation ledger are in
+    `.claude/reviews/global/factory-m3-slice1.md`.
+  - Final sequential forced gates: 3005 Java tests across 348 suites, zero failures and one
+    existing Windows symlink privilege skip; 620 UI tests across 76 files and the UI build passed.
+    Forty distinct mutations each failed one targeted test and passed after scratch restoration.
+    Docker-driving tests passed with the live run workers stopped; none was started for this slice.

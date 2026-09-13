@@ -54,6 +54,7 @@ final class DlqTopics {
 
     /** Unknown/blank types fall back to cs.commands — the biggest DLQ source is AnswerFollowUp. */
     static String forType(String type) {
+        if ("RepositoryRegistration".equals(type)) return "cs.registry-integration";
         if (ACTION_COMMAND_TYPES.contains(type)) {
             return COMMANDS;
         }

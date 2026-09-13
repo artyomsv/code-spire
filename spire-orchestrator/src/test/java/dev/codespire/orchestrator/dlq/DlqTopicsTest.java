@@ -7,6 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /** Plain unit test (no Quarkus) — the type -> original-topic map must be deterministic. */
 class DlqTopicsTest {
 
+    @Test void registrationReplaysOntoItsRegistryTopic() {
+        assertEquals("cs.registry-integration", DlqTopics.forType("RepositoryRegistration"));
+    }
+
     @Test
     void aRunRecordReplaysOntoTheFactorysOwnTopics() {
         // Falling through to cs.commands republished a token-bearing record onto a topic whose

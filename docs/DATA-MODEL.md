@@ -1,5 +1,25 @@
 # Data Model
 
+## M3 slice 1 expansion (ADR-042)
+
+V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)
+with unique `(scm_type, forge_origin, workspace, slug)`, and `repository_account` with a repository
+FK, account FK and one row per REVIEWER/FACTORY role. `review_status.repository_id` and
+`factory_run.repository_id` are nullable during the bridge. Existing history keys stay intact.
+
+`repository_legacy_account` is immutable migration evidence: account UUID, kind, base URL,
+workspace and role, without credentials or an FK that would erase evidence on deletion.
+`repository_registration_bridge` stores the latest registration revision, metadata, selected
+repository or named reconciliation problem. Duplicate/stale revisions cannot overwrite it.
+Operators repair pending mappings through `/api/repositories/pending`.
+
+Gateway V3 adds nullable `webhook_repo.forge_origin` and `repository_snapshot_outbox`. Triggers
+enqueue create/change/delete metadata atomically, including a bootstrap row for each existing
+registration. The outbox stores a global monotonic revision, registration id, JSON and `sent_at`;
+it contains neither `webhook_key` nor `webhook_secret`. Account/context ciphertext and UUID/AAD
+are unchanged. The gateway API accepts/returns an optional canonical `forgeOrigin`; old clients
+that omit it on update preserve the recorded origin. No old key or column is removed in this slice.
+
 > Defines the actual data: (1) the **domain value types** that flow through events & ports, and (2) the
 > **persistence model** — the event store (the versioned source of truth), the blob store, and the
 > read-model projections, with relationships and encryption. Companion to [CONTRACT.md](CONTRACT.md)

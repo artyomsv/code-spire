@@ -1,5 +1,21 @@
 # Domain Contract (`spire-contract`)
 
+## Repository metadata channel (M3 slice 1, ADR-042)
+
+`cs.registry-integration` carries `RepositoryRegistration`, keyed by registration UUID (not a
+review id). Its `type` discriminator is `RepositoryRegistration`; fields are `registrationId`,
+positive monotonic `revision`, `providerType`, nullable `forgeOrigin`, `scope` (`repo`/`org`),
+`target`, `enabled`, and `deleted`. The gateway outbox publishes only after its SQL transaction
+commits and marks sent only after broker acknowledgement. The orchestrator accepts newer
+revisions transactionally. Unknown legacy origins are reconciled only when unambiguous;
+otherwise the snapshot becomes an operator-visible pending mapping.
+
+This is an integration snapshot, not a domain event or a new aggregate. Webhook keys and secrets
+never cross the channel. Failed processing uses `cs.dlq`; the discriminator routes manual replay
+back to `cs.registry-integration`. Existing review/run contracts and resolvers remain intact
+during slice 1. Broker deployments with topic auto-creation disabled must provision this topic
+and allow the gateway to write and the orchestrator to read it before upgrading.
+
 > The shared kernel every service depends on: identifiers, the event envelope, the event & command
 > catalog, the `ReviewLifecycle` decider, the SPI ports, the context-aggregation policy, topics, and
 > the Bitbucket **Cloud** mapping. Companion to [EVENT-MODEL.md](EVENT-MODEL.md) (the narrative slices)

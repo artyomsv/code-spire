@@ -101,8 +101,8 @@ public class WebhookRepoRegistry {
         String key = newWebhookKey();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
-                     INSERT INTO webhook_repo (id, provider_type, scope, target, webhook_key, webhook_secret, enabled)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     INSERT INTO webhook_repo (id, provider_type, scope, target, webhook_key, webhook_secret, enabled, forge_origin)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                      """)) {
             ps.setObject(1, id);
             ps.setString(2, in.providerType());
@@ -111,6 +111,7 @@ public class WebhookRepoRegistry {
             ps.setString(5, key);
             ps.setString(6, encryption.encryptString(secret, aad(id)));
             ps.setBoolean(7, in.enabled() == null || in.enabled());
+            ps.setString(8, in.forgeOrigin());
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create webhook repo", e);
@@ -126,13 +127,14 @@ public class WebhookRepoRegistry {
                 return Optional.empty();
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, updated_at=now() "
+                    "UPDATE webhook_repo SET provider_type=?, scope=?, target=?, enabled=?, forge_origin=COALESCE(?,forge_origin), updated_at=now() "
                             + "WHERE id=?")) {
                 ps.setString(1, in.providerType());
                 ps.setString(2, in.scope());
                 ps.setString(3, in.target().trim());
                 ps.setBoolean(4, in.enabled() == null || in.enabled());
-                ps.setObject(5, id);
+                ps.setString(5, in.forgeOrigin());
+                ps.setObject(6, id);
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
@@ -283,7 +285,8 @@ public class WebhookRepoRegistry {
                 rs.getString("webhook_key"),
                 secret != null && !secret.isBlank(),
                 rs.getBoolean("enabled"),
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getString("forge_origin"));
     }
 
     private boolean exists(Connection c, UUID id) throws SQLException {

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-12
 
-**Status:** Accepted with Round 2 amendments; implementation checkboxes and test outcomes remain pending until measured.
+**Status:** Planning accepted; slice 1 implemented and verified for review. Slices 2–10 remain planned.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -35,10 +35,11 @@ Testing Library; existing Gradle split test tiers. Keep the versions already pin
   and a body explaining nontrivial changes. No authoring attribution, coauthor trailers, model
   names, vendor names or generated-by notices in commit/PR text. Requested PR title takes
   precedence over generic commit-style templates.
-- The running `spire-dev` stack and `spire-run-worker` Gradle process on `:34083` are shared.
-  Do not stop them, run compose down or kill their processes. Service tests use their own
-  Testcontainers resources. If a Docker test cannot coexist with the dev worker, coordinate
-  a safe window with the analyst; do not stop the worker unilaterally.
+- The running `spire-dev` stack is shared; do not run compose down. On 2026-09-13 the analyst
+  stopped all four competing `quarkusDev` run workers. Keep them stopped: the analyst will start
+  a worker for slice 8b's live proof. Service tests use their own Testcontainers resources. If a
+  Docker-driving test loses a container unexpectedly, report possible external deletion to the
+  analyst before investigating a production defect; the Gradle lock does not cover dev workers.
 - **Never run concurrent Gradle test invocations in this worktree.** Run `./gradlew testFast`
   then `./gradlew testServices`, sequentially, using `--rerun-tasks` for measured evidence.
   On PowerShell use `.\gradlew.bat`. Targeted runs use `--tests` plus `--rerun-tasks`.
@@ -55,8 +56,9 @@ Testing Library; existing Gradle split test tiers. Keep the versions already pin
   requires announcing its actual ids and exact cleanup `DELETE` before insertion; track remote
   issue/branch cleanup too. This round creates no data. Do not include generic destructive SQL
   against user-owned rows in a runbook and call it cleanup.
-- Temporary files belong in this session's scratchpad:
-  `C:\Users\artjo\AppData\Local\Temp\claude\E--Projects-Stukans-code-spire-worktrees-feat-software-factory\5f317e7d-1b64-4305-bf1c-e3a370b07eb1\scratchpad`.
+- Temporary files belong in the active session's scratchpad. Do not reuse a previous session's
+  path. Persistent database backups and encrypted continuity evidence belong in the worktree's
+  git-ignored `.handoff/` directory.
 - Unknown capabilities, missing external evidence and test skips are visible outcomes. No stub
   phase reports success in production. Proposed tests below are not evidence until executed.
 
@@ -118,20 +120,20 @@ the plan and its architecture allowlist together.
 
 **Files:** only this document and its linked design.
 
-- [ ] Confirm branch and clean initial worktree, read the complete brief, re-fetch issue #114 and
+- [x] Confirm branch and clean initial worktree, read the complete brief, re-fetch issue #114 and
   inspect ADR-041, factory requirements and the actual run/account/webhook implementation.
-- [ ] Write the aggregate decision and why; repository migration; policy/identity/gate rules;
+- [x] Write the aggregate decision and why; repository migration; policy/identity/gate rules;
   ordered runnable slices; exact proof and mutation obligations for criteria 1–7.
-- [ ] Record under-specification in design §11 rather than choosing silent fallback behavior.
-- [ ] Check Markdown links, `git diff --check`, exact two-file scope and absence of secrets/data.
+- [x] Record under-specification in design §11 rather than choosing silent fallback behavior.
+- [x] Check Markdown links, `git diff --check`, exact two-file scope and absence of secrets/data.
   No Gradle/UI suites are warranted for this documentation-only change.
-- [ ] Commit `Plan Factory M3 work items, labels and gates`, with a body explaining the new
+- [x] Commit `Plan Factory M3 work items, labels and gates`, with a body explaining the new
   registry and workflow decisions and the acceptance-proof plan. Push with
   `git push -u origin feat/factory-m3-work-items`.
-- [ ] Write the PR body as a real UTF-8 scratchpad file and use `gh pr create --draft --base master
+- [x] Write the PR body as a real UTF-8 scratchpad file and use `gh pr create --draft --base master
   --head feat/factory-m3-work-items --title "Factory M3 — work items, labels and gates"
   --body-file <scratchpad-body>`. Link issue #114 without claiming to close implementation work.
-- [ ] Verify the remote head equals the commit, PR is draft against master, and only these two
+- [x] Verify the remote head equals the commit, PR is draft against master, and only these two
   documents are in its diff. Report the PR number and the design questions. **Stop Round 1.**
 
 ## Slice 1 — register a repository while preserving existing resolution
@@ -142,14 +144,19 @@ outbox; first repository UI; ADR-042 draft in `docs/DECISIONS.md`.
 **Produces:** `RepositoryAccounts.resolve(repositoryId, role)` and a non-secret serving view;
 `POST/GET /api/repositories`; versioned metadata-only registration snapshots.
 
-- [ ] **Before any new migration reaches dev:** take a full `pg_dump`, validate the archive and
+- [x] **Before any new migration reaches dev:** take a full `pg_dump`, validate the archive and
   record its path/hash. Use the exact PowerShell commands below; the binary dump never passes
   through PowerShell text redirection. The running stack holds real accounts, encrypted source
   credentials and review/run history. Preserve its existing matching keyset securely outside git.
 
+The existing `.handoff/spire-dev-pre-m3-2026-09-13.dump` satisfies this prerequisite (182 objects,
+492,480 bytes, verified 2026-09-13). **Do not take another dump for slice 1.** For a future upgrade,
+run this repeatable command from the worktree root; `.handoff/` is git-ignored and survives sessions.
+
 ```powershell
-$m3Scratch = 'C:\Users\artjo\AppData\Local\Temp\claude\E--Projects-Stukans-code-spire-worktrees-feat-software-factory\5f317e7d-1b64-4305-bf1c-e3a370b07eb1\scratchpad'
-$m3Dump = Join-Path $m3Scratch ('m3-before-slice1-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
+$m3Handoff = Join-Path (Get-Location).Path '.handoff'
+[void](New-Item -ItemType Directory -Force -Path $m3Handoff)
+$m3Dump = Join-Path $m3Handoff ('m3-before-slice1-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
 $m3Process = [Diagnostics.Process]::new()
 $m3Process.StartInfo = [Diagnostics.ProcessStartInfo]::new('docker')
 $m3Process.StartInfo.UseShellExecute = $false
@@ -161,54 +168,68 @@ Get-FileHash -LiteralPath $m3Dump -Algorithm SHA256
 ```
 
 Validate archive listing with `pg_restore --list` using a one-shot container with only this
-scratchpad mounted read-only, without changing the running stack:
+handoff directory mounted read-only, without changing the running stack:
 
 ```powershell
-docker run --rm --mount "type=bind,source=$m3Scratch,target=/backup,readonly" postgres:18.4-alpine pg_restore --list "/backup/$([IO.Path]::GetFileName($m3Dump))"
+docker run --rm --mount "type=bind,source=$m3Handoff,target=/backup,readonly" postgres:18.4-alpine pg_restore --list "/backup/$([IO.Path]::GetFileName($m3Dump))"
 if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed' }
 ```
 
-- [ ] Add `scripts/verify-dev-credential-continuity.ps1` as the read-only local operational probe.
+- [x] Add `scripts/verify-dev-credential-continuity.ps1` as the read-only local operational probe.
   It uses the actual dev keyset and `EncryptionService`, with `provider:<id>` for account secrets
   and `context-provider:<id>` for remaining legacy context secrets. Capture encrypted baseline
-  evidence (including source→account references) into scratch; Compare re-decrypts actual rows
+  evidence (including source→account references) into .handoff/; Compare re-decrypts actual rows
   and checks equality in memory. Never write/log plaintext, keysets or unkeyed secret hashes.
   Execute Capture before migration; slice 2 must execute Compare on the real dev rows:
 
 ```powershell
-.\scripts\verify-dev-credential-continuity.ps1 -Mode Capture -Snapshot (Join-Path $m3Scratch 'm3-real-credentials.bin')
-.\scripts\verify-dev-credential-continuity.ps1 -Mode Compare -Snapshot (Join-Path $m3Scratch 'm3-real-credentials.bin')
+$m3Handoff = Join-Path (Get-Location).Path '.handoff'
+.\scripts\verify-dev-credential-continuity.ps1 -Mode Capture -Snapshot (Join-Path $m3Handoff 'm3-real-credentials.bin')
+.\scripts\verify-dev-credential-continuity.ps1 -Mode Compare -Snapshot (Join-Path $m3Handoff 'm3-real-credentials.bin')
 ```
 
-- [ ] Reconcile `CLAUDE.md` and `docs/UNVERIFIED.md` **in this slice**: the live M2 chain on
+Capture has already established the encrypted baseline for 9 real credential/reference entries.
+Reuse it for Compare; Capture deliberately refuses to overwrite existing evidence. The measured
+comparison in slice 1 is pre-upgrade only; slice 2's comparison after cutover remains required.
+
+- [x] Reconcile `CLAUDE.md` and `docs/UNVERIFIED.md` **in this slice**: the live M2 chain on
   `artyomsv/spire-test#31`, runs `3987682681:1` and `3987682176:1`, resolved threads and persisted
   verdicts was measured on 2026-09-12. Keep the automated GitLab gap as its own open entry:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab.
 
-- [ ] Apply the accepted bridge-only org enrollment decision. Write failing migration/service tests:
+- [x] Apply the accepted bridge-only org enrollment decision. Write failing migration/service tests:
   `RepositorySchemaMigrationTest.preservesAccountIdsCredentialsAndContextReferences`,
   `RepositoryMigrationBridgeTest.replaysGatewaySnapshotWithoutDuplicateBindings`,
   `RepositoryMigrationBridgeTest.leavesConflictingOriginsPending`, and
   `RepositoryResourceTest.registersARepositoryWithExplicitRoleBindings`.
-- [ ] Add repository and binding tables, revision checks, referenced-delete protection and
+- [x] Add repository and binding tables, revision checks, referenced-delete protection and
   migration snapshot storage. Preserve UUID/AAD and V59 source recovery. Do not relax the old
   account key before the bridge can preserve assignments.
-- [ ] Publish/consume real gateway metadata with stable snapshot revision and outbox retries.
+- [x] Publish/consume real gateway metadata with stable snapshot revision and outbox retries.
   Provision `cs.registry-integration`, keyed by registration id. Do not read gateway SQL from the
   orchestrator or send its webhook secret across this channel.
-- [ ] Add repository registration/detail UI backed by the API, including empty/disabled/pending
+- [x] Add repository registration/detail UI backed by the API, including empty/disabled/pending
   roles. Show workspace on the repository. During this slice the old account field is explicitly
   labelled legacy; it is removed at slice 2's cutover.
-- [ ] Prove old review/run resolution equals new bindings for migrated fixtures, across restart,
+- [x] Prove old review/run resolution equals new bindings for migrated fixtures, across restart,
   multiple roles, hosts and nested namespaces. Duplicate source snapshots must not recreate
   an account an operator has already rebound.
-- [ ] Mutation: omit factory-role filtering in the binding resolver; run only
+  Migration requires origin evidence from explicit registration metadata or persisted PR URLs;
+  a workspace match alone cannot choose credentials. Unknown or conflicting origins remain
+  pending for explicit repair, including factory-only history without PR origin evidence.
+- [x] Mutation: omit factory-role filtering in the binding resolver; run only
   `RepositoryAccountsTest.reviewerNeverReceivesTheFactoryCredential`. Expect one assertion failure
   with distinct `TEST-` credentials, restore snapshot, rerun green. Also kill the origin-match
   guard with `rejectsAnAccountFromAnotherOrigin` and migration AAD/id preservation with the
   migration test above, each as a separate mutation.
-- [ ] Run relevant service/UI tests sequentially, demonstrate registration through the real API
+- [x] Run relevant service/UI tests sequentially, demonstrate registration through the real API
   in the isolated test stack, update ADR-042/upgrade notes, commit the slice for review.
+
+Measured 2026-09-13: forced `testFast` then `testServices`, 3005 Java tests / 348 suites with zero
+failures and one existing Windows symlink skip; 620 UI tests and the UI build passed. Forty
+distinct production mutations failed exactly one targeted test and passed after restoration.
+Details: `.claude/reviews/global/factory-m3-slice1.md`. The dev stack was not rebuilt; slice 2's
+post-cutover comparison against the real encrypted baseline remains required.
 
 ## Slice 2 — cut over to repository ownership and per-kind hooks
 

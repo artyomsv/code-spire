@@ -13,6 +13,7 @@ import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
 import SettingsWebhookRepos from './components/SettingsWebhookRepos';
+import RepositoryRegistryPage from './components/repositories/RepositoryRegistryPage';
 import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
@@ -378,6 +379,7 @@ export default function App() {
           <Route path="/settings/memory" element={configure(<SettingsMemory />)} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
           <Route path="/settings/repositories" element={configure(<SettingsWebhookRepos />)} />
+          <Route path="/settings/repositories/registry" element={configure(<RepositoryRegistryPage />)} />
           {/* The three screens moved on 2026-09-07. Old addresses live in bookmarks and in attention
               rows emitted by a service not yet upgraded; the query rides along because ?edit=<id> is
               what opens the named record. */}

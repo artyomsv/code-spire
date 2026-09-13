@@ -1,5 +1,33 @@
 # Smoke Test Runbook
 
+## M3 slice 1 registry upgrade
+
+Before rebuilding dev, follow slice 1 in
+[`2026-09-12-factory-m3-work-items.md`](superpowers/plans/2026-09-12-factory-m3-work-items.md).
+The verified `.handoff/spire-dev-pre-m3-2026-09-13.dump` already satisfies the backup prerequisite;
+do not take a second dump. `.handoff/m3-real-credentials.bin` holds encrypted baseline evidence
+for 9 real credential/reference entries. Keep the matching keysets outside git. Slice 2 must
+rerun the probe's Compare mode on the real upgraded rows.
+
+The first upgraded gateway enqueues existing registrations in V3. Legacy registrations with no
+recorded origin require explicit mapping; workspace alone is not host evidence. The gateway API
+accepts an optional `forgeOrigin`, preserving it when an old client edits other fields.
+The orchestrator applies V60,
+consumes `cs.registry-integration`, and sweeps existing history. Topic auto-creation works in the
+bundled broker; external brokers must provision the topic and ACLs first. Inspect pending broker
+records in the existing DLQ screen and replay after fixing the reported cause.
+
+Open Settings → Repositories → Registered repositories and accounts. Confirm the real workspace,
+forge origin and explicit reviewer/factory selections. Pending mappings name the registration and
+target; verify the host, register the matching repository if needed, then explicitly link it.
+No pipeline routing changes occur in slice 1. Do not invent accounts or runs in this live stack to
+test registration: `RepositoryResourceTest` exercises the real HTTP API in Dev Services.
+
+The migration tests upgrade populated private schemas and prove ciphertext/UUID/reference/key
+preservation. Broker tests separately exercise the gateway publisher and orchestrator consumer;
+they do not claim a live multi-service rollout. The production account workspace remains populated
+through slice 2 as rollback evidence and is removed only in slice 10.
+
 **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via

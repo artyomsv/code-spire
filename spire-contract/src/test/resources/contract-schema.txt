@@ -52,3 +52,6 @@ RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
 
 # ContextCredential
 ContextCredential(type: java.lang.String, platform: java.lang.String, baseUrl: java.lang.String, authKind: java.lang.String, username: java.lang.String, secret: java.lang.String, projectKeys: java.lang.String)
+
+# RepositoryRegistration
+RepositoryRegistration(registrationId: java.util.UUID, revision: long, providerType: java.lang.String, forgeOrigin: java.lang.String, scope: java.lang.String, target: java.lang.String, enabled: boolean, deleted: boolean)

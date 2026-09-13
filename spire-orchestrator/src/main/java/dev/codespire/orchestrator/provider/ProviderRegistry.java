@@ -115,6 +115,7 @@ public class ProviderRegistry {
                 }
             }
             validateSourceReferences(c, id, in);
+            validateRepositoryReferences(c, id, in);
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
@@ -418,7 +419,29 @@ public class ProviderRegistry {
             ps.setObject(1, id);
             try (var rs = ps.executeQuery()) { while (rs.next()) uses.add(rs.getString(1)); }
         }
+        try (PreparedStatement ps = c.prepareStatement("SELECT r.forge_origin,r.workspace,r.slug FROM repository r "
+                + "JOIN repository_account a ON a.repository_id=r.id WHERE a.account_id=? ORDER BY r.id")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) uses.add(rs.getString(1) + "/" + rs.getString(2) + "/" + rs.getString(3));
+            }
+        }
         return uses;
+    }
+
+    private void validateRepositoryReferences(Connection c, UUID id, ProviderInput in) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT r.scm_type,r.forge_origin FROM repository r "
+                + "JOIN repository_account a ON a.repository_id=r.id WHERE a.account_id=?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    if (!rs.getString(1).equals(in.type()) || !rs.getString(2).equals(
+                            dev.codespire.contract.scm.ForgeOrigin.of(in.baseUrl()))) {
+                        throw new AccountConflict("Reassign the referencing repositories before changing account kind or origin");
+                    }
+                }
+            }
+        }
     }
 
     private void validateSourceReferences(Connection c, UUID id, ProviderInput in) throws SQLException {

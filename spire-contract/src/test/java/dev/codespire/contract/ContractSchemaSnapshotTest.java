@@ -143,6 +143,9 @@ class ContractSchemaSnapshotTest {
         lines.add("# ContextCredential");
         lines.add(render(dev.codespire.contract.context.ContextCredential.class, "ContextCredential"));
         lines.add("");
+        lines.add("# RepositoryRegistration");
+        lines.add(render(dev.codespire.contract.event.RepositoryRegistration.class, "RepositoryRegistration"));
+        lines.add("");
         return String.join("\n", lines);
     }
 

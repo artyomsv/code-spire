@@ -17,5 +17,6 @@ public record WebhookRepoView(
         String webhookKey,
         boolean hasSecret,
         boolean enabled,
-        Instant createdAt) {
+        Instant createdAt,
+        String forgeOrigin) {
 }

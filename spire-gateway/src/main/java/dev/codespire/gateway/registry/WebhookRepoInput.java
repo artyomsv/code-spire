@@ -14,5 +14,14 @@ public record WebhookRepoInput(
         String providerType,
         String scope,
         String target,
-        Boolean enabled) {
+        Boolean enabled,
+        String forgeOrigin) {
+    public WebhookRepoInput {
+        if (forgeOrigin != null) forgeOrigin = dev.codespire.contract.scm.ForgeOrigin.of(forgeOrigin);
+    }
+
+    /** Legacy callers omit origin; updates preserve an origin already supplied by an operator. */
+    public WebhookRepoInput(String providerType, String scope, String target, Boolean enabled) {
+        this(providerType, scope, target, enabled, null);
+    }
 }

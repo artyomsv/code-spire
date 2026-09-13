@@ -477,6 +477,7 @@ export type WebhookScope = 'repo' | 'org';
 
 export interface WebhookRepoView {
   id: string;
+  forgeOrigin?: string | null; // absent on older gateways; explicit registration evidence when known
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope; // 'repo' (target = owner/repo) | 'org' (target = owner)
   target: string; // owner/repo (repo scope) | owner (org scope)
@@ -487,6 +488,7 @@ export interface WebhookRepoView {
 }
 
 export interface WebhookRepoInput {
+  forgeOrigin?: string | null; // omitted legacy edits preserve the stored origin
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope;
   target: string; // owner/repo (repo scope) | owner (org scope)

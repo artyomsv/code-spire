@@ -33,6 +33,35 @@ evidence would settle it**.
 
 ---
 
+## Repository bridge — rollout evidence still needed (ADR-042, 2026-09-13)
+
+- **The actual dev upgrade is not yet measured.** Slice 1 tests upgrade populated private
+  PostgreSQL schemas, exercise the gateway outbox and real broker consumer, and compare legacy
+  and explicit role resolution with distinct encrypted credentials. The running dev services have
+  not been rebuilt for slice 1. The existing `.handoff/spire-dev-pre-m3-2026-09-13.dump` is the
+  verified backup (182 objects; 492,480 bytes). The read-only continuity probe captured and compared
+  9 real credential/reference entries successfully before upgrade; that does not prove post-upgrade
+  continuity. Slice 2 must compare the same encrypted baseline after its migration on the real rows.
+- **Historical forge origin can be unknowable.** Legacy history and gateway registrations do not
+  always record a host. The bridge uses the immutable legacy account snapshot only when there is
+  one matching origin backed by registration metadata or persisted review URLs; unknown origins,
+  conflicts and missing accounts become attention rows with explicit repair. Runs with no such
+  origin evidence remain pending even when only one legacy workspace account exists.
+  Tests establish that refusal and repair, not which host an old live row actually belonged to.
+  Inspect actual migrated mappings against the operator's known forge origins before cutover.
+- **Native per-forge identity and permission behavior is unchanged in slice 1.** No new remote
+  identity lookup or permission API is introduced here. Each introducing slice must add separate
+  GitHub, GitLab and Bitbucket observations, stating the measured endpoint/token family and host;
+  fixtures are not live evidence. The automated GitLab M2 gap remains a separate entry below.
+
+Repository-origin normalization is local URL interpretation, not an identity API measurement:
+
+| Forge behavior | Measured in this slice | Still needed before relying on a live mapping |
+|---|---|---|
+| GitHub public web URLs map to `https://api.github.com`; self-hosted origins remain unchanged | `RepositoryForgeOriginTest`, public URL and `TEST-forge.example.test` fixtures; no remote call | Inspect the actual account API base and persisted PR URL, particularly custom API proxies. |
+| GitLab web/API path suffixes share the same canonical origin | Nested-namespace PostgreSQL history fixture plus `RepositoryForgeOriginTest`; no live GitLab call | Compare the actual API and web origins on the target installation. |
+| Bitbucket Cloud public web URLs map to `https://api.bitbucket.org` | `RepositoryForgeOriginTest` public URL fixture; no live Bitbucket call | Compare a live persisted PR URL with the selected account API origin. |
+
 ## Accounts normalization — live evidence still needed (ADR-041, 2026-09-12)
 
 Sources below were retrieved **2026-09-11**. WireMock checks prove how the application handles
@@ -271,14 +300,15 @@ Not work. Written down because each has been rediscovered at least once.
   matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
   wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
   and nothing should depend on this arm until then.
-- **The M2 loop is covered in three places and joined in none.** Finding → fix run → push →
-  reconciliation is what M2 exists to close. `FixRunDispatcherTest` proves the dispatch,
-  `Adr040ExistingBranchTest` proves the push against a real remote with real containers, and
-  `ReviewChainTest` proves review and reconciliation against a real GitLab. **Nothing proves the
-  halves meet**, and it is not a matter of effort: a run unit lands on the default bridge and
-  cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
-  `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
-  security control in `compose.e2e.yml`, so it is not the answer.
+- **~~The M2 loop has no joined live proof~~ — CLOSED 2026-09-12.** On the live GitHub pull
+  request `artyomsv/spire-test#31`, runs `3987682681:1` and `3987682176:1` traversed finding → fix
+  run → push → reconciliation. The review threads were resolved and verdicts persisted. This
+  observation closes the live-chain claim; it does not establish an automated GitLab loop.
+- **The automated GitLab M2 loop still cannot join dispatch, push and reconciliation.**
+  `FixRunDispatcherTest`, `Adr040ExistingBranchTest` and `ReviewChainTest` cover those legs
+  separately. A run unit cannot resolve the e2e stack's `gitlab` service: `RunUnitSpec` has no
+  network field and `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a
+  deliberate security control in `compose.e2e.yml`, so it is not the answer.
   — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
 - **~~The publisher's trunk floor is not exercised end to end~~ — CLOSED 2026-09-11.**
   It now is. This entry said the run died as `RUNTIME_UNAVAILABLE, init container failed with exit 1`

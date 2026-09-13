@@ -151,6 +151,19 @@ mp:
           serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
         waitForWriteCompletion: true
     incoming:
+      registry-in:
+        connector: smallrye-kafka
+        topic: cs.registry-integration
+        group:
+          id: spire-orchestrator-registry
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
       integration-in:
         connector: smallrye-kafka
         topic: cs.integration
@@ -354,6 +367,7 @@ spire:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   spire:
+    repository-history-interval: "off"
     review:
       # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
       mode: active

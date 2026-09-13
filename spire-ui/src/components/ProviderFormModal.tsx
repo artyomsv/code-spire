@@ -215,9 +215,11 @@ export default function ProviderFormModal({
             </label>
             {role !== 'CONTEXT' && <label className="field">
               <span>Workspace</span>
+              <small>Legacy routing until repository migration completes</small>
               <input
                 className="mono"
                 placeholder="workspace"
+                aria-label="Workspace"
                 value={workspace}
                 onChange={(e) => patch({ workspace: e.target.value })}
               />

@@ -74,6 +74,7 @@ export default function SettingsWebhookRepos() {
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title">Repositories</h2>
+          <a href="#/settings/repositories/registry">Registered repositories and accounts</a>
           <Tooltip label="Add webhook">
             <button className="iconbtn" onClick={() => setForm('new')} aria-label="Add webhook">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">

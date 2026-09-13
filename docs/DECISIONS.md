@@ -4,6 +4,51 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-042 — Repositories own coordinates and explicitly bind role accounts
+
+**Status:** accepted design; M3 slice 1 implements the expansion and migration bridge. Slice 2
+performs the runtime cutover and retires the old key; slice 10 removes the legacy workspace column.
+
+**Decision.** A repository is identified by `(scm_type, forge_origin, workspace, slug)` and has
+its own UUID. Forge origin is the canonical HTTP(S) scheme, host and non-default port, with no
+API path suffix. Nested namespaces stay in workspace. `repository_account` binds at most one
+REVIEWER and one FACTORY account. Configuration may leave either role empty or select a disabled
+account; resolution requires an enabled repository and enabled account of the matching kind,
+origin and role. Known reviewer/factory identities must differ at binding time and at resolution,
+including after credential rotation. Account UUIDs,
+ciphertexts, `provider:<id>` AADs and context source references are preserved.
+
+**Why.** The former `(type, workspace, role)` account key conflates credentials with repository
+selection and cannot distinguish hosts. Explicit references support credential rotation without
+reassigning repositories. Repository edits use revision checks; account deletion names its
+referencing repositories, and changing a referenced account's kind/origin is refused.
+
+**Bridge.** V60 snapshots legacy account assignments without changing existing serving resolvers.
+The gateway retains ownership of webhooks and credentials. Its V3 transactional outbox publishes
+typed, revisioned `RepositoryRegistration` metadata on `cs.registry-integration`, keyed by
+registration UUID. Broker acknowledgement marks an outbox row sent; duplicate delivery and stale
+revisions are harmless. Consumer failures use the existing DLQ with a registry-specific replay
+route. No webhook secret or routing key appears in this event.
+
+An unambiguous legacy match with an evidenced origin creates bindings once; subsequent snapshots
+preserve operator edits. A workspace alone never establishes a host. Conflicting or missing origins
+become attention rows with explicit mapping repair. A bounded history sweep uses persisted review
+URLs as origin evidence and links reviews/runs, including repositories observed through legacy org hooks. Org
+auto-enrollment survives this bridge only: cutover must replace it with attention naming the
+unregistered repository, origin and source registration plus a prefilled register action.
+
+**Rollback evidence.** Keep the old account key and populated workspace in slice 1. Slice 2 drops
+the key/checks and all runtime reads, but retains workspace untouched until slice 10. Before any
+dev upgrade, preserve a verified full database dump and the matching keysets. The repeatable
+commands and real credential continuity probe are in the M3 plan; `.handoff/` survives sessions.
+
+**Proof.** `RepositorySchemaMigrationTest`, `RepositorySnapshotMigrationTest`,
+`RepositoryMigrationBridgeTest`, `RepositoryAccountsTest`, `RepositoryResourceTest`, the broker
+publisher/consumer tests, and `RepositoryRegistryPage.test.tsx`. These establish the expansion in
+isolated PostgreSQL/Kafka; the production rollout and resolver cutover are separate claims.
+
+---
+
 ## ADR-041 — Credentials live on accounts; context sources reference an account
 
 **Context.** `context_provider` copied the credential shape of `llm_provider`: a key without

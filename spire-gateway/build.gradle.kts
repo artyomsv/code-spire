@@ -38,6 +38,7 @@ dependencies {
     // other's — the alternative was a bus message, which would put a non-reviewId class on cs.*.
     implementation("io.quarkus:quarkus-websockets-next")
     implementation("io.quarkus:quarkus-messaging-kafka")
+    implementation("io.quarkus:quarkus-scheduler") // durable registration snapshot outbox
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("io.quarkus:quarkus-smallrye-health")
     implementation("io.quarkus:quarkus-logging-json") // structured JSON logs in prod (plain console in dev/test)

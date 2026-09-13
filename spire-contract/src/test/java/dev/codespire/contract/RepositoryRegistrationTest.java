@@ -1,0 +1,23 @@
+package dev.codespire.contract;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.event.RepositoryRegistration;
+import org.junit.jupiter.api.Test;
+import java.util.UUID;
+import static org.junit.jupiter.api.Assertions.*;
+
+class RepositoryRegistrationTest {
+    @Test void metadataOnlyWireShapeRoundTrips() throws Exception {
+        String json = """
+                {"type":"RepositoryRegistration","registrationId":"00000000-0000-0000-0000-000000000001","revision":17,"providerType":"TEST-forge",
+                 "forgeOrigin":null,"scope":"repo","target":"TEST-group/nested/TEST-repo","enabled":true,"deleted":false}
+                """;
+        var mapper = new ObjectMapper();
+        var snapshot = mapper.readValue(json, RepositoryRegistration.class);
+        assertEquals(17, snapshot.revision());
+        assertEquals(mapper.readTree(json), mapper.readTree(mapper.writeValueAsString(snapshot)));
+    }
+    @Test void rejectsInvalidSnapshotBeforeStorage() {
+        assertThrows(IllegalArgumentException.class, () -> new RepositoryRegistration(UUID.randomUUID(), 0, "TEST-forge", null, "repo", "TEST/repo", true, false));
+    }
+}

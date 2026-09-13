@@ -200,7 +200,7 @@ idempotent restart and refusal of ambiguous mappings. Do not exercise this on th
 in a test. The bridge must preserve its existing webhook keys and encrypted secrets.
 
 Before any new migration can reach the real dev stack, slice 1 takes and validates a full
-`pg_dump` into the session scratchpad. The plan includes the exact binary-safe command. Preserve
+`pg_dump` into the worktree's git-ignored `.handoff/` directory. The plan includes the exact binary-safe command. Preserve
 the matching existing keyset outside git and capture a credential-continuity proof using real
 rows and their actual Tink AADs. Slice 2 compares decrypted credentials against that baseline on
 the real dev rows after cutover; matching fixture data or matching ciphertext alone is insufficient.

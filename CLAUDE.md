@@ -32,7 +32,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | ADR-001..041 — every locked decision with its why. ADR-029..040 are the software factory's; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | ADR-001..042 — every locked decision with its why. ADR-029..040 and ADR-042 are the software factory's; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -45,7 +45,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 The per-milestone story — what shipped, what each review round found, the traps each one paid for —
 is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-12**.
+describe the new current state. Everything below is true as of **2026-09-13**.
 
 - **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
   `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
@@ -73,10 +73,13 @@ describe the new current state. Everything below is true as of **2026-09-12**.
   three adapters, so a run can end at a pull request rather than at a branch; `GET /api/runs`, the
   run↔review join and the `/runs` screen; and `spire-run-worker` in **both packaged stacks behind
   the `factory` compose profile** — opt-in because the Docker socket it mounts is root-equivalent
-  on the host. **The loop M2 exists to close has never been run end to end in one place**: the
-  dispatch, the push and the reconciliation are each proved separately, and a run unit cannot
-  reach the e2e stack's GitLab because `RunUnitSpec` has no network field (`docs/UNVERIFIED.md`).
-  **Next is M3** — `docs/factory/ROADMAP.md`. The two factory images are still not on GHCR.
+  on the host. **M2 was measured end to end on 2026-09-12:** runs `3987682681:1` and
+  `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
+  chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
+  `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
+  (`docs/UNVERIFIED.md`). **M3 slice 1 adds the repository registry and migration bridge**;
+  existing review/run resolution remains on the legacy workspace until slice 2's cutover.
+  The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
   URL, project keys and path allowlists. V59 plus an idempotent startup reconciler moves legacy
@@ -90,14 +93,14 @@ describe the new current state. Everything below is true as of **2026-09-12**.
   remodeling, per-repository push checks and handle-to-id allowlist resolution.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-12):** 2954 Java tests across 336 suites, 0 failures,
-  1 skipped; 613 UI tests across 75 files; TypeScript clean. Java verification uses JDK 25,
-  Docker and Git's shell on PATH. Nine intentional mutations fail their targeted tests, including
-  migration rollback, credential equality, disabled-account filtering, platform dispatch,
-  provider-neutrality, unknown scopes, account-picker compatibility, legacy wire degradation
-  and retaining scope observations through outages. UI table layout was
-  observed in headless Chrome at 1280/1440/1920 widths. The nightly testE2e tier and a production
-  credential migration were not run for this change.
+- **Measured, not estimated (2026-09-13):** 3005 Java tests across 348 suites, 0 failures,
+  1 skipped; 620 UI tests across 76 files; TypeScript and the UI build passed. Forced `testFast`
+  and `testServices` ran sequentially with JDK 25, Docker and Git's shell on PATH. The existing
+  symlink test skips because this Windows session lacks symlink privileges. Slice 1's 40 distinct
+  mutations each failed one targeted test and passed after scratch-snapshot restoration; see
+  `.claude/reviews/global/factory-m3-slice1.md`. The read-only encrypted probe matched 9 real
+  credential/reference entries before upgrade. The nightly testE2e tier and a live dev migration
+  were not run; no live run worker was started.
 
 ## Build & run
 

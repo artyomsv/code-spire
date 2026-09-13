@@ -47,6 +47,14 @@ public class ProviderClients {
     /** Account kinds also include credentials for the context-only adapters. */
     public static final Set<String> ACCOUNT_TYPES = Set.of("bitbucket-cloud", "github", "gitlab", "atlassian");
 
+    /** Translate a persisted repository web URL to the account API origin; host aliases live here. */
+    public static String repositoryForgeOrigin(String type, String webUrl) {
+        String origin = dev.codespire.contract.scm.ForgeOrigin.of(webUrl);
+        if ("github".equals(type) && "https://github.com".equals(origin)) return "https://api.github.com";
+        if ("bitbucket-cloud".equals(type) && "https://bitbucket.org".equals(origin)) return "https://api.bitbucket.org";
+        return origin;
+    }
+
     public static boolean supportsContext(String source, String account) {
         return switch (source) {
             case "jira", "confluence" -> "atlassian".equals(account);

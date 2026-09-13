@@ -120,6 +120,14 @@ spire:
 mp:
   messaging:
     outgoing:
+      registry-out:
+        connector: smallrye-kafka
+        topic: cs.registry-integration
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
       integration-out:
         connector: smallrye-kafka
         topic: cs.integration
@@ -212,6 +220,8 @@ mp:
         json:
           enabled: false   # plain console keeps test output readable
   spire:
+    # The snapshot scheduler is exercised explicitly by its outbox tests.
+    repository-publish-interval: "off"
     encryption:
       # Test-only webhook keyset (not a secret) — matches the orchestrator's so a
       # secret encrypted there decrypts here. Prod/dev read SPIRE_ENCRYPTION_WEBHOOK_KEYSET.
