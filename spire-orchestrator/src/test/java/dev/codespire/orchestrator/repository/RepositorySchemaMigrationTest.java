@@ -15,6 +15,19 @@ class RepositorySchemaMigrationTest {
     @Inject DataSource dataSource;
     @Inject EncryptionService encryption;
 
+    @Test void databaseRejectsBlankRepositoryOrigin() throws Exception {
+        UUID id = UUID.randomUUID();
+        try (java.sql.Connection connection = dataSource.getConnection();
+             java.sql.PreparedStatement insert = connection.prepareStatement("INSERT INTO repository (id,scm_type,forge_origin,workspace,slug) VALUES (?,'gitlab','','TEST-blank-origin','TEST-repo')");
+             java.sql.PreparedStatement cleanup = connection.prepareStatement("DELETE FROM repository WHERE id=?")) {
+            insert.setObject(1, id); cleanup.setObject(1, id);
+            try {
+                java.sql.SQLException failure = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+                assertEquals("23514", failure.getSQLState());
+            } finally { cleanup.executeUpdate(); }
+        }
+    }
+
     @Test void preservesAccountIdsCredentialsAndContextReferences() throws Exception {
         String schema = "test_repository_upgrade_" + UUID.randomUUID().toString().replace("-", "");
         Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("59").load().migrate();

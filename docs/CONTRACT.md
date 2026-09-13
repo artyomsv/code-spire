@@ -7,8 +7,10 @@ review id). Its `type` discriminator is `RepositoryRegistration`; fields are `re
 positive monotonic `revision`, `providerType`, nullable `forgeOrigin`, `scope` (`repo`/`org`),
 `target`, `enabled`, and `deleted`. The gateway outbox publishes only after its SQL transaction
 commits and marks sent only after broker acknowledgement. The orchestrator accepts newer
-revisions transactionally. Unknown legacy origins are reconciled only when unambiguous;
-otherwise the snapshot becomes an operator-visible pending mapping.
+revisions transactionally. New records reject blank origins while allowing null. At legacy
+ingress the bridge converts blank origins to null before strict record decoding, then records
+`registration_origin_unknown` and acknowledges the snapshot. Missing origins are never inferred
+from account workspace equality; they remain operator-visible pending mappings for repair.
 
 This is an integration snapshot, not a domain event or a new aggregate. Webhook keys and secrets
 never cross the channel. Failed processing uses `cs.dlq`; the discriminator routes manual replay

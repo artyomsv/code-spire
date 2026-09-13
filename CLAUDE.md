@@ -93,10 +93,11 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   remodeling, per-repository push checks and handle-to-id allowlist resolution.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3005 Java tests across 348 suites, 0 failures,
+- **Measured, not estimated (2026-09-13):** 3009 Java tests across 348 suites, 0 failures,
   1 skipped; 620 UI tests across 76 files; TypeScript and the UI build passed. Forced `testFast`
-  and `testServices` ran sequentially with JDK 25, Docker and Git's shell on PATH. The existing
-  symlink test skips because this Windows session lacks symlink privileges. Slice 1's 40 distinct
+  and `testServices` ran sequentially with JDK 25, Docker and Git's shell on PATH. The final service
+  invocation disabled project parallelism after Dev Services startup timeouts. The existing
+  symlink test skips because this Windows session lacks symlink privileges. Slice 1's 44 distinct
   mutations each failed one targeted test and passed after scratch-snapshot restoration; see
   `.claude/reviews/global/factory-m3-slice1.md`. The read-only encrypted probe matched 9 real
   credential/reference entries before upgrade. The nightly testE2e tier and a live dev migration

@@ -1833,3 +1833,13 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     existing Windows symlink privilege skip; 620 UI tests across 76 files and the UI build passed.
     Forty distinct mutations each failed one targeted test and passed after scratch restoration.
     Docker-driving tests passed with the live run workers stopped; none was started for this slice.
+  - **Slice 1 review correction:** reject blank origins in the wire record while preserving null;
+    constrain the gateway and repository columns; normalize legacy blank payloads to unknown at
+    the bridge boundary. The broker test requires both the durable `registration_origin_unknown`
+    mapping/revision and a committed consumer offset. Removing the blank-safe check failed the
+    mapping assertion after the offset committed, so DLQ delivery cannot stand in for repair.
+    Four additional isolated mutations bring the total to 44. Final forced gates passed 3009 Java
+    tests across 348 suites, zero failures and the same Windows symlink skip. The archived-review
+    retry fixture now uses a future test clock to prevent its background scheduler stealing the
+    live-row precondition; production timing is unchanged. Dev Services startup timeouts on a
+    parallel retry were cleared by the final invocation's `--no-parallel --max-workers=2`.

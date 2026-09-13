@@ -122,3 +122,54 @@ once. The two UI mutations and one CLI mutation used the same fail/restore/pass 
 | `credential_comparison` | Read-only CLI Compare rejects an encrypted TEST baseline with one extra reference; bypassing equality fails that assertion; restoration rejects it and matches the real 9-entry baseline |
 
 Completed: 37 distinct Java mutations, 2 UI mutations and 1 CLI mutation (40 total).
+
+## Round 3 — blank-origin review correction
+
+The record now rejects empty/whitespace origins while allowing null. Gateway `webhook_repo`
+and orchestrator `repository` enforce the requested non-empty CHECK constraints. The bridge
+uses one blank-safe missing-origin predicate both when decoding legacy payloads and when
+reconciling mappings. Legacy blanks are converted to null before strict record construction;
+the resulting unknown-origin mapping is durable and repairable.
+
+`RepositorySnapshotConsumerTest.blankLegacyOriginIsPendingAndAcknowledged` sends raw empty-origin
+JSON through the actual broker and consumer. It waits for the consumer group's committed offset
+to pass that exact message, then asserts the stored revision, `registration_origin_unknown`,
+null origin and no repository binding. DLQ delivery alone cannot pass the mapping assertion.
+Removing `origin.isBlank()` from the shared bridge predicate produced exactly one
+`AssertionFailedError` at the durable-row assertion, after the consumer offset had committed.
+No exception escaped into the test. Restoration made that same real-broker test pass.
+All four review-fix mutations compiled, failed exactly one targeted test, restored from a working
+scratch snapshot and passed that same test. They bring the slice's distinct mutation total to 44.
+
+| Production guard removed | Targeted test | Scratch snapshot SHA256 |
+|---|---|---|
+| Record `forgeOrigin != null && forgeOrigin.isBlank()` | `RepositoryRegistrationTest.rejectsBlankOriginButAllowsUnknownOrigin` | `6E3CC31C742B93B112E1E527834BC67D8EBBB02A71932AEF806F0A8FA57E053B` |
+| Bridge `origin.isBlank()` | `RepositorySnapshotConsumerTest.blankLegacyOriginIsPendingAndAcknowledged` | `6A0CA6B8573A8977DD42742D67E1FEBF85AF03E6C1670772475D1DA49DB38B7C` |
+| Gateway origin CHECK | `RepositorySnapshotPublisherTest.databaseRejectsBlankOriginButAllowsUnknownOrigin` | `1E278A1DF48DC2B3D3A49E800E7952E2C1DD52FC7134A5AE54248DC552BB6C8D` |
+| Repository origin CHECK | `RepositorySchemaMigrationTest.databaseRejectsBlankRepositoryOrigin` | `18EFA507137BF5BD8AFC425AD49E3D366E90DE8AF239EA78B6C9B41ABE0BBB1A` |
+
+The first forced service run exposed the same pre-existing retry-fixture race in
+`ArchivedReviewAttentionTest`: its live-row precondition failed before the archive assertion,
+because the background scheduler could claim its wall-clock-due fixture first. It now schedules
+against an explicit future test clock, as `ReviewRetryScheduleIT` already does. No production
+timing changed. The final service gate is rerun after this test-only correction.
+The first retry also encountered PostgreSQL Dev Services startup timeouts in gateway and
+review-worker, before their Quarkus suites could run. Container logs showed database initialization,
+not a missing-container error. The next forced service run disables Gradle project parallelism
+for this invocation only; no runtime timeout or repository build configuration is changed.
+
+Final verification passed on 2026-09-13:
+
+| Gate | Result |
+|---|---|
+| `testFast --rerun-tasks --console=plain` | 1054 tests / 125 suites; no failures/errors; one existing Windows symlink privilege skip |
+| `testServices --rerun-tasks --no-parallel --max-workers=2 --console=plain` | 1955 tests / 223 suites; no failures/errors/skips; 22m 2s |
+| Combined Java reports | 3009 tests / 348 suites; zero failures/errors; one skip |
+| Four new isolated mutations | Each compiled, failed exactly one targeted test and passed after scratch restoration |
+| UI | Unchanged by this correction; preceding slice 1 proof remains 620 tests / 76 files and successful build |
+
+The final service invocation passed gateway (84), orchestrator (1295), review-worker (225),
+run-worker (266), plus agent-image/runtime-docker (85 combined). All report files came from the
+forced tiers, excluding the separate nightly E2E tier. No live run worker was started and no
+missing-container failure occurred. A read-only thread capture confirmed the long Docker test
+was waiting in its existing publisher drain; no runtime code or timing was changed for this fix.

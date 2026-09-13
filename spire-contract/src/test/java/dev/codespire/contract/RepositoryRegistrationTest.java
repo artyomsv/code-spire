@@ -20,4 +20,13 @@ class RepositoryRegistrationTest {
     @Test void rejectsInvalidSnapshotBeforeStorage() {
         assertThrows(IllegalArgumentException.class, () -> new RepositoryRegistration(UUID.randomUUID(), 0, "TEST-forge", null, "repo", "TEST/repo", true, false));
     }
+
+    @Test void rejectsBlankOriginButAllowsUnknownOrigin() {
+        UUID id = UUID.randomUUID();
+        for (String origin : new String[] { "", " \t\r\n" }) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new RepositoryRegistration(id, 1, "TEST-forge", origin, "repo", "TEST/repo", true, false));
+        }
+        assertNull(new RepositoryRegistration(id, 1, "TEST-forge", null, "repo", "TEST/repo", true, false).forgeOrigin());
+    }
 }

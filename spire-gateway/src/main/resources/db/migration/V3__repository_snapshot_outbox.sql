@@ -1,5 +1,6 @@
 -- Metadata only: signatures/credentials never cross to the orchestrator registry channel.
-ALTER TABLE webhook_repo ADD COLUMN forge_origin TEXT;
+ALTER TABLE webhook_repo ADD COLUMN forge_origin TEXT
+    CHECK (forge_origin IS NULL OR forge_origin <> '');
 CREATE TABLE repository_snapshot_outbox (
     revision BIGSERIAL PRIMARY KEY,
     registration_id UUID NOT NULL,

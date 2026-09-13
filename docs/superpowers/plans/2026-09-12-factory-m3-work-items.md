@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-12
 
-**Status:** Planning accepted; slice 1 implemented and verified for review. Slices 2–10 remain planned.
+**Status:** Planning accepted; slice 1 review correction implemented and verified. Slice 2 is next;
+slices 3–10 remain planned.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -230,6 +231,15 @@ failures and one existing Windows symlink skip; 620 UI tests and the UI build pa
 distinct production mutations failed exactly one targeted test and passed after restoration.
 Details: `.claude/reviews/global/factory-m3-slice1.md`. The dev stack was not rebuilt; slice 2's
 post-cutover comparison against the real encrypted baseline remains required.
+
+The blank-origin review correction adds four discriminating mutations (44 total): strict record
+validation, legacy consumer normalization and both database CHECK constraints. The real-consumer
+mutation fails the durable pending-mapping assertion after offset commit, so an escaped exception
+or a DLQ record alone cannot satisfy the proof.
+Final correction verification: 3009 Java tests across 348 suites, zero failures and the same one
+Windows symlink skip. Forced fast and service tiers ran sequentially; the final service invocation
+used `--no-parallel --max-workers=2` after Dev Services startup timeouts. The unchanged UI retains
+its slice 1 proof (620 tests and successful build).
 
 ## Slice 2 — cut over to repository ownership and per-kind hooks
 

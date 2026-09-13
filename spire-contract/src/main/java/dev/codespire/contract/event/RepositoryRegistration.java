@@ -12,6 +12,7 @@ public record RepositoryRegistration(UUID registrationId, long revision, String 
                                      boolean enabled, boolean deleted) {
     public RepositoryRegistration {
         if (registrationId == null || revision < 1 || providerType == null || providerType.isBlank()
+                || (forgeOrigin != null && forgeOrigin.isBlank())
                 || (!"repo".equals(scope) && !"org".equals(scope)) || target == null || target.isBlank()) {
             throw new IllegalArgumentException("Invalid repository registration snapshot");
         }

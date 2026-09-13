@@ -1,5 +1,9 @@
 package dev.codespire.orchestrator.repository;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.codespire.contract.event.RepositoryRegistration;
 import dev.codespire.contract.scm.ForgeOrigin;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -20,6 +24,22 @@ public class RepositoryMigrationBridge {
     @Inject DataSource dataSource;
     @Inject RepositoryRegistry repositories;
     @Inject RepositoryBindings bindings;
+    @Inject ObjectMapper mapper;
+
+    /** Legacy blank origins mean unknown; new wire records still reject present-but-blank values. */
+    @Transactional
+    public void applyLegacyPayload(String payload) throws JsonProcessingException {
+        JsonNode document = mapper.readTree(payload);
+        JsonNode origin = document.get("forgeOrigin");
+        if (origin != null && origin.isTextual() && missingOrigin(origin.textValue())) {
+            ((ObjectNode) document).putNull("forgeOrigin");
+        }
+        apply(mapper.treeToValue(document, RepositoryRegistration.class));
+    }
+
+    private static boolean missingOrigin(String origin) {
+        return origin == null || origin.isBlank();
+    }
 
     @Transactional
     public void apply(RepositoryRegistration snapshot) {
@@ -65,11 +85,11 @@ public class RepositoryMigrationBridge {
     }
 
     private Result reconcile(Connection connection, RepositoryRegistration snapshot, Coordinates coordinates) throws SQLException {
+        if (missingOrigin(snapshot.forgeOrigin())) return new Result(null, "registration_origin_unknown");
         List<LegacyAccount> accounts = candidates(connection, coordinates);
         List<String> origins = accounts.stream().map(LegacyAccount::origin).distinct().toList();
         if (origins.size() != 1) return new Result(null, origins.isEmpty() ? "legacy_account_missing" : "conflicting_forge_origins");
         String origin = origins.getFirst();
-        if (snapshot.forgeOrigin() == null) return new Result(null, "registration_origin_unknown");
         if (!ForgeOrigin.of(snapshot.forgeOrigin()).equals(origin)) {
             return new Result(null, "registration_origin_mismatch");
         }

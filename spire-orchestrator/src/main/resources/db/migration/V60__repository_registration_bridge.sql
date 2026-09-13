@@ -3,7 +3,7 @@
 CREATE TABLE repository (
     id UUID PRIMARY KEY,
     scm_type TEXT NOT NULL,
-    forge_origin TEXT NOT NULL,
+    forge_origin TEXT NOT NULL CHECK (forge_origin <> ''),
     workspace TEXT NOT NULL CHECK (workspace <> ''),
     slug TEXT NOT NULL CHECK (slug <> ''),
     enabled BOOLEAN NOT NULL DEFAULT TRUE,

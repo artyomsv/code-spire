@@ -121,4 +121,16 @@ class RepositorySnapshotPublisherTest {
             assertEquals("https://test-forge.example.test", mapper.readValue(row.payload(), RepositoryRegistration.class).forgeOrigin());
         }
     }
+
+    @Test void databaseRejectsBlankOriginButAllowsUnknownOrigin() throws Exception {
+        create();
+        assertNull(registry.get(registrationId).orElseThrow().forgeOrigin());
+        try (java.sql.Connection connection = dataSource.getConnection();
+             java.sql.PreparedStatement statement = connection.prepareStatement("UPDATE webhook_repo SET forge_origin='' WHERE id=?")) {
+            statement.setObject(1, registrationId);
+            java.sql.SQLException failure = assertThrows(java.sql.SQLException.class, statement::executeUpdate);
+            assertEquals("23514", failure.getSQLState());
+        }
+        assertEquals(1, ownPending().size(), "a rejected update must not queue another snapshot");
+    }
 }
