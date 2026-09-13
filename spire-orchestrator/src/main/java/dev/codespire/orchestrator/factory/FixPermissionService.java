@@ -2,11 +2,11 @@ package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.RepositoryPermission;
-import dev.codespire.orchestrator.provider.ActorPolicyRegistry;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRole;
 import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -16,52 +16,78 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import javax.sql.DataSource;
 
-/** Each decision reads current authority using only the repository's assigned reviewer credential. */
+/** Fresh reviewer-only authority, with short database reads on either side of the bounded network call. */
 @ApplicationScoped
 public class FixPermissionService {
     @Inject DataSource dataSource;
     @Inject RepositoryAccounts accounts;
     @Inject ProviderClients clients;
-    @Inject ActorPolicyRegistry actors;
 
-    @Transactional
+    private record Version(long repository, UUID account, long credential, long override) {}
+    private record Registration(RepoRef repository, Version version, FixAuthorization.Override override) {}
+    private record Snapshot(Registration registration, ScmProvider account) {}
+
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
     public FixAuthorization.Decision authorize(UUID repositoryId, String actorId) {
         RepositoryPermission unreadable = RepositoryPermission.unknown("Effective repository permission could not be read.");
         if (actorId == null || actorId.isBlank()) return FixAuthorization.decide(actorId, null, unreadable);
-        // Hold the same rows as repository/account edits across the bounded read. An account can have
-        // its token rotated or be rebound, but that change cannot split one permission decision.
-        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
-                SELECT r.workspace,r.slug FROM repository r
-                JOIN repository_account b ON b.repository_id=r.id AND b.role='REVIEWER'
-                JOIN scm_provider p ON p.id=b.account_id
-                WHERE r.id=? FOR UPDATE OF r,p
-                """)) {
-            statement.setObject(1, repositoryId);
-            RepoRef repository;
-            try (ResultSet rows = statement.executeQuery()) {
-                if (!rows.next()) return unavailableRepository();
-                repository = new RepoRef(rows.getString(1), rows.getString(2));
-            }
-            Optional<ScmProvider> account = accounts.resolve(repositoryId, ProviderRole.REVIEWER);
-            if (account.isEmpty()) return unavailableRepository();
-            FixAuthorization.Override override = override(repositoryId, actorId);
+        try {
+            Snapshot snapshot = QuarkusTransaction.requiringNew().call(() -> snapshot(repositoryId, actorId));
+            if (snapshot == null) return unavailableRepository();
+            FixAuthorization.Override override = snapshot.registration().override();
             if (override != null) return FixAuthorization.decide(actorId, override, unreadable);
-            RepositoryPermission permission = measure(account.get(), repository, actorId);
+
+            // The short transaction has committed and released its connection. Saves and other
+            // permission reads can proceed while the forge is slow; no database lock crosses this call.
+            RepositoryPermission permission = measure(snapshot.account(), snapshot.registration().repository(), actorId);
+            Registration current = QuarkusTransaction.requiringNew().call(() -> registration(repositoryId, actorId));
+            if (current == null || !snapshot.registration().version().equals(current.version())) {
+                return new FixAuthorization.Decision(false, FixAuthorization.Reason.PERMISSION_UNAVAILABLE,
+                        "Repository, reviewer credential or /fix overrides changed during permission lookup; retry the command.");
+            }
+            // Explicit overrides already returned above; only the measured fallback reaches here.
             return FixAuthorization.decide(actorId, null, permission);
-        } catch (SQLException | RuntimeException failure) {
+        } catch (RuntimeException failure) {
             return new FixAuthorization.Decision(false, FixAuthorization.Reason.PERMISSION_UNAVAILABLE, unreadable.detail());
         }
     }
 
-    private FixAuthorization.Override override(UUID repositoryId, String actorId) {
-        return actors.repository(repositoryId).stream().filter(actor -> actorId.equals(actor.providerUserId()))
-                .map(actor -> FixAuthorization.Override.valueOf(actor.effect())).findFirst().orElse(null);
+    private Snapshot snapshot(UUID repositoryId, String actorId) {
+        Registration registration = registration(repositoryId, actorId);
+        if (registration == null) return null;
+        Optional<ScmProvider> account = accounts.resolve(repositoryId, ProviderRole.REVIEWER);
+        return account.map(value -> new Snapshot(registration, value)).orElse(null);
+    }
+
+    private Registration registration(UUID repositoryId, String actorId) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
+                SELECT r.workspace,r.slug,r.revision AS repository_revision,p.id AS account_id,
+                       p.revision AS account_revision,COALESCE(f.revision,0) AS actor_revision,f.effect
+                FROM repository r
+                JOIN repository_account b ON b.repository_id=r.id AND b.role='REVIEWER'
+                JOIN scm_provider p ON p.id=b.account_id
+                LEFT JOIN repository_fix_actor f ON f.repository_id=r.id AND f.actor_id=?
+                WHERE r.id=?
+                """)) {
+            statement.setString(1, actorId);
+            statement.setObject(2, repositoryId);
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) return null;
+                String effect = rows.getString("effect");
+                return new Registration(new RepoRef(rows.getString("workspace"), rows.getString("slug")),
+                        new Version(rows.getLong("repository_revision"), rows.getObject("account_id", UUID.class),
+                                rows.getLong("account_revision"), rows.getLong("actor_revision")),
+                        effect == null ? null : FixAuthorization.Override.valueOf(effect));
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Cannot read repository permission revision", failure);
+        }
     }
 
     RepositoryPermission measure(ScmProvider account, RepoRef repository, String actorId) {

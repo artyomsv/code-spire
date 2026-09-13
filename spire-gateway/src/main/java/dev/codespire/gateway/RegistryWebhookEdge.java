@@ -50,15 +50,23 @@ public class RegistryWebhookEdge {
     @Inject
     IntegrationPublisher publisher;
 
+    @Inject WorkIngressPublisher workPublisher;
+
     /** Builds the provider ingress from the decrypted per-repo secret — the only per-provider difference. */
     public interface IngressFactory extends Function<String, ScmIngress> {
     }
 
     public Response handle(String providerType, String key, IngressFactory ingressFactory,
                            HttpHeaders headers, byte[] body) {
+        return handle(providerType, key, ingressFactory, null, headers, body);
+    }
+
+    public Response handle(String providerType, String key, IngressFactory ingressFactory,
+                           Function<String, dev.codespire.worksource.WorkSourceIngress> workFactory,
+                           HttpHeaders headers, byte[] body) {
         MDC.put("provider", providerType);
         try {
-            return route(providerType, key, ingressFactory, headers, body);
+            return route(providerType, key, ingressFactory, workFactory, headers, body);
         } finally {
             MDC.remove("provider");
             MDC.remove("reviewId");
@@ -66,6 +74,7 @@ public class RegistryWebhookEdge {
     }
 
     private Response route(String providerType, String key, IngressFactory ingressFactory,
+                           Function<String, dev.codespire.worksource.WorkSourceIngress> workFactory,
                            HttpHeaders headers, byte[] body) {
         Optional<Resolved> found = registry.findByKey(key);
         if (found.isEmpty()) {
@@ -89,8 +98,7 @@ public class RegistryWebhookEdge {
         }
 
         if (repo.eventKind() == dev.codespire.contract.event.RepositoryEventKind.ISSUE) {
-            registry.recordRejection(key, "event_kind_mismatch");
-            return Response.status(Response.Status.BAD_REQUEST).build();
+            return routeWork(key, repo, workFactory, raw);
         }
 
         List<IntegrationEvent> events;
@@ -143,6 +151,32 @@ public class RegistryWebhookEdge {
         headers.getRequestHeaders().forEach((name, values) ->
                 headerMap.put(name, values.isEmpty() ? "" : values.getFirst()));
         return new RawWebhook(headerMap, body);
+    }
+
+    private Response routeWork(String key, Resolved registration,
+                               Function<String, dev.codespire.worksource.WorkSourceIngress> factory, RawWebhook raw) {
+        if (factory == null || registration.repositoryId() == null || registration.sourceId() == null
+                || registration.forgeOrigin() == null || registration.forgeOrigin().isBlank()
+                || !"repo".equals(registration.scope())) {
+            registry.recordRejection(key, "work_registration_incomplete");
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        List<dev.codespire.worksource.WorkSourceSignal> signals;
+        try {
+            signals = factory.apply(registration.secret()).translate(raw.headers(), raw.body(), registration.forgeOrigin());
+        } catch (RuntimeException malformed) {
+            registry.recordRejection(key, "malformed_payload");
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        for (dev.codespire.worksource.WorkSourceSignal signal : signals) {
+            if (!registration.target().equals(signal.externalScope())) {
+                registry.recordRejection(key, "out_of_scope");
+                return Response.status(Response.Status.BAD_REQUEST).build();
+            }
+        }
+        if (!workPublisher.publishAwait(registration, signals, deliveryId(raw))) return Response.serverError().build();
+        registry.clearRejections(key);
+        return signals.isEmpty() ? Response.noContent().build() : Response.accepted().build();
     }
 
     private static String deliveryId(RawWebhook raw) {

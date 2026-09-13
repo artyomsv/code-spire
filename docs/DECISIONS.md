@@ -7,7 +7,7 @@ Architecture decision records for Code Spire. Newest first.
 ## ADR-044 — Stable identities for person policy and repository fix overrides
 
 **Status:** identity and override editing implemented in M3 slice 3; effective push authorization
-implemented in slice 4. Criteria 7 and 6 are independently verified.
+implemented in slice 4. Criteria 7, 6 and 5 are independently verified.
 
 **Decision.** Resolve people with the selected account's credential. GitHub/GitLab handle lookup
 must match exactly; Bitbucket/Jira use explicit selection where their API exposes candidates.
@@ -24,8 +24,10 @@ is introduced in slice 5; source authority must remain scoped to that source.
 
 For /fix, reject an unknown actor or unusable repository/reviewer first. Then apply an explicit
 deny, an explicit grant, or a fresh effective push measurement, in that order. Unknown permission
-refuses. The reviewer account and repository rows stay locked through the bounded read, so a
-credential rotation or repository rebind cannot split the decision. The total identity/redirect/
+refuses. Slice 5 replaces the initial pessimistic lock: a short transaction snapshots repository,
+account and actor-policy revisions, the bounded remote read holds no database transaction, and a
+second short transaction checks the revisions. Rotation, rebinding or an override edit discards the
+measurement as PERMISSION_UNAVAILABLE. Operator saves do not wait for the forge. The total identity/redirect/
 pagination budget is 20 seconds and cancellation stops unfinished work; successes are not cached.
 Only /fix leaves the legacy common author-list gate. Review, finding and conversation eligibility
 continue to use that account list, matching stable IDs only. A numeric username cannot impersonate
@@ -33,6 +35,57 @@ a different actor's stored ID. Target/finding, self-loop, observe/archive, spend
 
 No credential elevation or secret response is introduced. Capability prerequisites are visible
 in the person control, with separate per-forge evidence limits in UNVERIFIED.
+
+---
+
+## ADR-043 — Tracker authority and durable work-item bookkeeping
+
+**Status:** implemented for the first GitHub ticket in M3 slice 5; parity, tracker effect recovery,
+full policy gates and build handoff follow in slices 6–8. Local verification is recorded in
+`.claude/reviews/global/factory-m3-slice5.md`; live tracker behavior remains in UNVERIFIED.
+
+**Decision.** A source names an explicit credential, tracker origin and stable project ID, and one
+target repository. Its stable actor allowlist belongs to that source; account authors and reviewer
+permissions do not grant label authority. Signed ISSUE hooks have a source/repository binding and
+publish normalized control facts on `cs.work-integration`, keyed by the stable work-item ID.
+No raw webhook body or ticket content crosses that durable channel.
+
+The ID hashes versioned, UTF-8 length-prefixed SCM coordinates and stable tracker coordinates.
+Mutable issue keys, credentials and titles are not identity. The bounded subject fits `RunIds`.
+Work events use a separate domain type and `cs.work-events`; they cannot be decoded as review
+domain events. The existing encrypted `event_log` stores both kinds under separate stream IDs.
+
+Current labels are reconciled with the complete bounded audit, including removals and re-additions.
+An incomplete or ambiguous history cannot establish an applier. A verified actor hint may remain
+visible with origin UNATTRIBUTED; it grants nothing even when the hinted actor is allowed.
+Missing ID, unknown attribution and unlisted actor have separate refusal reasons and mutations.
+Webhook intake and scans use the same evidence and policy path. A second current-label fetch
+detects changes during the observation; external revocation cannot be globally atomic with a
+local commit. Source, account, repository and policy revisions are checked under a short lock
+after the remote reads, and stale observations are discarded.
+
+Profiles have immutable numbered versions and operator-owned unique precedence. Names select no
+behavior. Missing phases are off; the effective vector meets every eligible label, the combined
+mode vector at admission and the current ceiling. Admission retains the selected version and
+every effective mode, so removing another restrictive label cannot widen the original grant.
+Events retain applied-label provenance and all local authority revisions. The detail screen
+shows these restrictions separately from the display profile. Automatic specification waits
+for real input; disabled and approval modes remain stopped or explicitly unavailable.
+Missing M4 executors never become successful no-op phases. Slice 7 completes caps, approval gates
+and the transition policy surface; slice 8 supplies the explicit artifact/build handoff.
+
+**Atomicity.** The lifecycle alone decides work domain events. JDBC event append, projection,
+delivery dedupe and encrypted notification outbox participate in one JTA transaction. A scan
+page advances its cursor in that transaction only after all observations reconcile. Notifications
+are at least once, with stable event IDs; no run command is emitted by this admission slice.
+The injected projection-failure test proves rollback after append, and its separate-transaction
+mutant proves that a surfaced exception alone is insufficient.
+
+`work_item` retains coordinates, profile/version, phase, workflow status, reason and revisions.
+It has no title, body or tracker-status mirror. Detail retrieves tracker content separately, so
+an inaccessible tracker cannot hide durable workflow history or masquerade as deletion. Gates
+and later effects retain item/generation references; ticket-derived sensitive payloads stay under
+the existing Tink encryption boundary with stream/effect associated data.
 
 ---
 

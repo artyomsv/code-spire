@@ -1,5 +1,25 @@
 # Data Model
 
+## Work-item bookkeeping (M3 slice 5)
+
+V63 adds `scm_provider.revision` for credential-authority rechecks. V64 introduces `work_source`
+(explicit account/repository, immutable tracker scope, health and scan cursor), source-owned
+stable actor IDs, immutable `autonomy_profile_version` definitions, repository ceilings and
+label mappings. It also introduces `work_item`, delivery dedupe, encrypted work outbox and the
+reserved work gate table, plus nullable work coordinates on `factory_run`.
+
+`work_item` contains coordinates, generation, admission profile/version, workflow phase/status,
+policy revision and reason. It contains no title, body or tracker status. Those are fetched for
+each detail request and are not copied into events or outbox payloads. `WorkItemEvent` retains
+the combined mode vector at admission, effective modes, applied/ignored label provenance and
+authority revisions. Its event-store and outbox encryption use distinct AADs.
+
+The item ID is a versioned SHA-256 digest of eight length-prefixed, normalized SCM/repository
+and tracker identity components. Mutable issue keys, account credentials and display names do
+not change identity. Redelivery records, event append, projection and outbox share one JTA
+transaction; a failed projection rolls all of them back. A scan page advances its cursor only
+with the reconciled page. Source failure records health and preserves existing workflow.
+
 ## M3 repository ownership (ADR-042, slices 1–2)
 
 V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)

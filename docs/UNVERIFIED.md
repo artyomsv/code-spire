@@ -33,6 +33,38 @@ evidence would settle it**.
 
 ---
 
+## Work-source GitHub label audit and tracker writes (2026-09-13)
+
+Slice 5 measures signed issue normalization, repository metadata and stable-ID checks, current
+labels, remove/re-add audit across pages, origin-bound pagination, incomplete-history refusal,
+separate comment/transition writes and acknowledgements against WireMock. The real PostgreSQL
+intake and real gateway Kafka route have automated proof; no dev work source or live tracker
+write was created for this slice. The shared client retains its existing `2022-11-28` API pin.
+[Issue timeline events](https://docs.github.com/en/rest/issues/timeline?apiVersion=2022-11-28)
+and [repository issues](https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28)
+are the contracts checked on 2026-09-13. Token-family visibility, Enterprise variants, deletion/
+transfer confirmation and real label attribution still need live evidence. A 404/410 is treated
+as unavailable, not proof of deletion. A partial audit never grants authority.
+
+Comment markers and write-response checks are adapter coverage only. Retrying after a remote
+write whose response was lost is not yet proved idempotent; the outbox-backed tracker-write
+recovery and real Jira/GitLab source arms belong to slice 6. Admission emits only durable work
+notifications, with no remote tracker write or run dispatch.
+
+## Work-item process recovery and execution boundary (2026-09-13)
+
+Slice 5 rebuilds a fresh store instance from the real encrypted event log, verifies no tracker
+content in the projection, and injects a PostgreSQL projection failure after event append. The
+separate-transaction mutant leaves an event behind and fails the rollback assertion. This is
+automated persistence/transaction evidence, not a live orchestrator restart with an admitted
+ticket. That live restart, multi-page downtime recovery and uncertain tracker writes still need
+their later-slice proofs. A large or slow scan page may exceed the 30-second sweep budget; its
+cursor does not advance. Slice 6 must make sustained backlog progress independently of page size.
+
+The first item waits for a specification. Full caps/gates are slice 7, explicit manual artifact
+handoff and the existing single-task build boundary are slice 8, and generated specification,
+multi-step planning and verification executors remain M4. No run worker was started.
+
 ## Repository push permission — GitHub (2026-09-13)
 
 Measured against a local WireMock GitHub API: by-ID handle refresh followed by effective

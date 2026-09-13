@@ -1,5 +1,63 @@
 import { apiFetch } from './auth';
 
+export interface WorkItemSummary {
+  id: string;
+  sourceId: string;
+  repositoryId: string;
+  repository: string;
+  issueKey: string;
+  trackerUrl: string;
+  generation: number;
+  phase: string;
+  workflowStatus: string;
+  reason: string;
+  profile: { id: string; name: string; version: number } | null;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface WorkItemPage {
+  items: WorkItemSummary[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface WorkItemDetail extends WorkItemSummary {
+  effectiveModes: Record<string, string>;
+  admittedModes: Record<string, string>;
+  policyReason: string;
+  ceiling: WorkItemSummary['profile'];
+  appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
+  ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
+  events: { sequence: number; type: string; reason: string; occurredAt: string }[];
+}
+
+/** Fetched for the current detail request; these fields are never workflow projection columns. */
+export interface WorkItemTracker {
+  title: string;
+  body: string;
+  trackerStatus: string;
+}
+
+export async function getWorkItems(offset = 0, limit = 50): Promise<WorkItemPage> {
+  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}`);
+  if (!response.ok) return throwResponse(response, 'Failed to load work items');
+  return response.json();
+}
+
+export async function getWorkItem(id: string): Promise<WorkItemDetail> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(id)}`);
+  if (!response.ok) return throwResponse(response, 'Failed to load work item');
+  return response.json();
+}
+
+export async function getWorkItemTracker(id: string): Promise<WorkItemTracker> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(id)}/tracker`);
+  if (!response.ok) return throwResponse(response, 'Tracker unavailable');
+  return response.json();
+}
+
 export type ReviewStatus =
   | 'reviewing'
   | 'completed'

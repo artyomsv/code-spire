@@ -23,6 +23,7 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-worksource-github"))
     implementation(project(":spire-diff")) // prompt sample preview: render a real review's diff like the worker does
     implementation(project(":spire-llm")) // prompt sample preview: PromptRenderer (real clipping/fencing)
     implementation(project(":spire-encryption")) // AES-GCM encryption at rest (ADR-009 / ADR-015)

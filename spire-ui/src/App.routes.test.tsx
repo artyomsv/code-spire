@@ -91,6 +91,11 @@ const VIEWER_SESSION = { authEnabled: true, authenticated: true, user: 'dev-view
 let session: unknown = ADMIN_SESSION;
 
 function payloadFor(url: string): unknown {
+  if (url.startsWith('/api/work-items?')) return { items: [], total: 0, offset: 0, limit: 50 };
+  if (url === '/api/work-items/TEST-item/tracker') return { title: 'TEST-ticket', body: 'TEST-body', trackerStatus: 'open' };
+  if (url === '/api/work-items/TEST-item') return { id: 'TEST-item', issueKey: 'TEST-1', repository: 'TEST-WS/TEST-REPO',
+    trackerUrl: 'https://example.invalid/TEST/1', generation: 1, phase: 'spec', workflowStatus: 'awaiting_input',
+    reason: 'TEST-specification required', profile: null, ignoredLabels: [], events: [] };
   if (url === `/api/runs/${encodeURIComponent(runView().runId)}`) return runView();
   if (/\/api\/me$/.test(url)) return session;
   // The worker owns /wk — its own prefix, so its session cookie never reaches the other services.
@@ -164,6 +169,8 @@ const renderAtWithProbe = (path: string) =>
  * `<Route>` and adding a row here as one action.
  */
 const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
+  { path: '/work-items', title: 'Work items', nav: 'Work items' },
+  { path: '/work-items/TEST-item', title: 'Work item detail', nav: 'Work items' },
   { path: '/runs', title: 'Runs', nav: 'Runs' },
   { path: `/runs/${runView().runId}`, title: 'Run detail', nav: 'Runs' },
   { path: '/', title: 'Reviews', nav: 'Reviews' },

@@ -120,6 +120,14 @@ spire:
 mp:
   messaging:
     outgoing:
+      work-integration-out:
+        connector: smallrye-kafka
+        topic: cs.work-integration
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
       registry-out:
         connector: smallrye-kafka
         topic: cs.registry-integration

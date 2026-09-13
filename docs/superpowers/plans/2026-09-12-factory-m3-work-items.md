@@ -5,7 +5,10 @@
 **Status:** Slice 1 is closed on fully green `363b13d`. Slice 2 implements the runtime cutover
 and proves criterion 7, with real-row post-cutover continuity. It was accepted and criterion 7 independently verified on 716dc75 in round 5.
 Slice 3 completes resolved person entry and editable repository overrides; criterion 6 was independently verified in round 6.
-Slice 4 implements effective push permission with automated criterion 5 proof. Slices 5–10 and criteria 1–4 remain pending. Evidence is in the corresponding slice review notes.
+Slice 4 implements effective push permission; criterion 5 was independently verified in round 7.
+Slice 5 is locally complete: signed ticket intake, durable bookkeeping, and distinct criterion 3
+membership/attribution mutations pass, with full Java/UI/build/scanner evidence. Slices 6–10 and criteria 1, 2 and 4 remain pending.
+Criterion 3 awaits independent review. Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -107,9 +110,9 @@ Abbreviations used only in the task file lists:
 | Active account consumers | Modify `O/provider/ReviewProviderResolver.java`; `O/pipeline/IntegrationSaga.java`, `ReviewRerunService.java`; `O/ingress/ManualRegisterResource.java`; `O/prompt/PromptSampleRenderer.java`; `O/factory/MachineAccounts.java`, `RunResource.java`, `FixRunDispatcher.java`, `FactoryPullRequests.java`, relevant credential assemblers and non-secret serving views. Confirm exact call sites by search before edits. |
 | Gateway | Modify `G/RegistryWebhookEdge.java`, `WebhookProviders.java`, `WebhookCommands.java`, `registry/WebhookRepo*.java`; create registry snapshot outbox/publisher and work integration publisher; gateway migrations/configuration; all three SCM resource routes. |
 | Identity/permission | Create `C/port/ActorDirectory.java`, `RepositoryPermissionSource.java`; `C/scm/ResolvedActor.java`, `RepositoryPermission.java`; `O/provider/ActorResolutionResource.java`; `O/factory/FixAuthorization.java`, `FixPermissionService.java`; implementations in existing `spire-scm-{github,gitlab,bitbucket}` packages. |
-| Work-source SPI | New `spire-worksource/src/main/java/dev/codespire/worksource/WorkSource.java`, `WorkItemRef.java`, `LabelEvent.java`, capabilities/paging/actor records. Three `spire-worksource-{github,gitlab,jira}` adapter modules; reuse/refactor existing issue clients and `spire-http/PinnedJsonClient` transport. |
+| Work-source SPI | New `spire-worksource/src/main/java/dev/codespire/worksource/WorkSource.java`, `WorkIssueRef.java`, `WorkIssueLocation.java`, `LabelEvent.java`, capabilities/paging/actor records. Three `spire-worksource-{github,gitlab,jira}` adapter modules; reuse/refactor existing issue clients and `spire-http/PinnedJsonClient` transport. |
 | Work-item lifecycle | Create `C/lifecycle/WorkItemLifecycle.java`, work-item state/command/value types; extend `C/event/DomainEvent.java`; create work integration/command wire hierarchies and `WorkItemIds`. Update envelope decoding, `O/pipeline/DomainEventSink.java`, `O/eventstore/JdbcEventStore.java`. |
-| Orchestration | Create `O/workitem/WorkItemStore.java`, `WorkItemSaga.java`, `WorkItemTransitions.java`, `WorkItemProjection.java`, `WorkItemResource.java`, `WorkItemOutbox.java`, `WorkItemDispatcher.java`; `O/worksource/WorkSourceRegistry.java`, `WorkSourceClients.java`, `WorkSourceScanner.java`, resource and reconciliation classes. |
+| Orchestration | Slice 5 uses `O/work/WorkItemStore.java` (including projection), `WorkItemIntake.java`, `WorkItemResource.java`, `WorkItemOutbox.java`, `WorkSourceRegistry.java`, `WorkSourceScanner.java` and administration/resources. Pure `WorkItemLifecycle`/`WorkPolicy` live in `spire-contract`; adapter composition stays in `ProviderClients`. Dispatch and phase completion follow in later slices. |
 | Policy/approval | Create `O/autonomy/AutonomyRegistry.java`, `AutonomyResource.java`; pure policy values/resolver in contract lifecycle package; `O/workitem/GateExpiry.java`, `GateResource.java`, `GateAnswerRouter.java`, `HumanTakeover.java`; expand attention queries. |
 | Run bridge | Modify `O/factory/RunResultSaga.java`, `FactoryRunProjection.java`, `FactoryPullRequests.java`, run dispatch assembly; contract run records/control; `spire-run-worker/.../RunControlListener.java`, `RunLauncher.java`, `OrphanWatchdog.java`; publication-hold handling in runtime/publisher. |
 | UI | Create focused `U/components/repositories/`, `workItems/`, `approvals/`, `autonomy/` components and API modules. Modify `App.tsx`, `api.ts`, `ProviderFormModal.tsx`, `AccountCredentialFields.tsx`, `ReviewerFieldsSection.tsx`, `AccountsCells.tsx`, `SettingsWebhookRepos.tsx`, serving hooks and `AttentionBell.tsx`. |
@@ -356,28 +359,28 @@ work-item lifecycle/store/saga/outbox/resource, wire/config changes, Work items 
 **Produces:** authenticated label intake and explicit rescan; attributable label reconciliation;
 one durable suggest item without a run or mirrored issue content.
 
-- [ ] Write `WorkItemIntakeIT.signedLabelCreatesOneVisibleItemAcrossRedelivery`,
+- [x] Write `WorkItemIntakeIT.signedLabelCreatesOneVisibleItemAcrossRedelivery`,
   `WorkItemStoreTest.restartRehydratesOnlyWorkflowMilestones`,
   `WorkItemStoreTest.rollbackLeavesNoGateEventOrOutboxEffect`,
   `WorkItemProjectionTest.containsNoTrackerContentColumns`, and criterion 3 tests.
-- [ ] Add the SPI/module dependencies and build purity/licensing checks. Reuse the issue client's
+- [x] Add the SPI/module dependencies and build purity/licensing checks. Reuse the issue client's
   HTTP/auth implementation through a read facade and a separate work writer; no write methods on
   a context-provider interface. GitHub candidates/fetch/label audit use bounded pagination.
-- [ ] Add source registration with explicit account and repository, typed actor allowlist and
+- [x] Add source registration with explicit account and repository, typed actor allowlist and
   health/cursor state. Add minimum versioned profile/mapping/ceiling registry necessary for a
   real suggest admission; do not embed profile behavior in a forge adapter.
-- [ ] Implement work-item ids/generations, lifecycle decide/fold, typed event decoding and dedicated
+- [x] Implement work-item ids/generations, lifecycle decide/fold, typed event decoding and dedicated
   work topics. Make JDBC event append, projection, dedupe and outbox one real transaction.
   Route work events away from review history; test `WorkItemEventRoutingTest.neverWritesAReviewRow`.
-- [ ] Extend the keyed gateway edge for a bound issue scope; signed delivery and scanner events
+- [x] Extend the keyed gateway edge for a bound issue scope; signed delivery and scanner events
   enter the same reconciliation path. Store control facts only. Start polling with conservative
   unknown attribution when full history cannot be proven.
-- [ ] Render a paginated Work items screen/detail from persisted workflow fields, ignored-label
+- [x] Render a paginated Work items screen/detail from persisted workflow fields, ignored-label
   reasons and a live tracker link; show tracker fetch errors separately from workflow state.
-- [ ] Kill criterion 3 mutations, event-route isolation and rollback guards individually. For
+- [x] Kill criterion 3 mutations, event-route isolation and rollback guards individually. For
   rollback mutate the shared-transaction use and inject a failure after event append but before
   projection/outbox completion; a compile failure is not a valid transaction test.
-- [ ] Run SPI/adapter tests and service intake/restart/UI proofs; commit the first ticket slice.
+- [x] Run SPI/adapter tests and service intake/restart/UI proofs; commit the first ticket slice.
 
 ## Slice 6 — source parity, safe writes and downtime recovery
 
@@ -554,7 +557,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-Criteria 7 and 6 are independently verified, with the slice 2 and 3 mutation ledgers. Criterion 5 has its slice 4 automated proof; criteria 1–4 remain tests to add. `O-test`
+Criteria 7, 6 and 5 are independently verified, with the slice 2–4 mutation ledgers. Criterion 3 has distinct slice 5 membership and attribution proofs awaiting review; criteria 1, 2 and 4 remain for later slices. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

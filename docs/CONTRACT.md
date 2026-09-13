@@ -1,5 +1,29 @@
 # Domain Contract (`spire-contract`)
 
+## Work-item channels and policy (M3 slice 5, ADR-043)
+
+Signed issue delivery produces `WorkSourceDelivery` on `cs.work-integration`, keyed by the
+stable `WorkItemIds` digest. Its coordinates bind the registration, repository, source, SCM
+origin and external scope; a webhook hint is not proof of complete current-label history.
+`WorkItemIntake` and the scanner fetch the current issue and bounded audit evidence through
+the explicitly selected source account. Unknown attribution grants nothing, even with an
+otherwise allowed actor hint. Actor membership and missing identity have separate reasons.
+
+`WorkItemLifecycle` is the sole work-event decider. `WorkItemEvent` is stored and decoded as
+its own type, outside the review `DomainEvent` and `IntegrationEvent` hierarchies. One JTA
+transaction appends its encrypted envelope, updates bookkeeping, deduplicates delivery and
+enqueues the encrypted notification. The outbox publishes the stable envelope ID on
+`cs.work-events` and marks it published only after broker acknowledgement; delivery is at least
+once. Work ingress failures use `cs.work-dlq`. Review history does not consume work events.
+
+Profiles have immutable versions and an operator-defined unique precedence. Every eligible
+current label contributes a component-wise restriction; the repository ceiling and the full
+mode vector retained at admission also bound later decisions. The selected profile name is a
+display choice, not the whole effective policy. Events retain applied/ignored evidence and the
+source, account, repository and policy revisions. Approval and specification execution are
+unavailable until their later slices: intake records that limitation rather than producing a
+gate, run or completed phase. Tracker status never supplies workflow status.
+
 ## Repository metadata and ingress channels (M3 slices 1–2, ADR-042)
 
 `cs.registry-integration` carries `RepositoryRegistration`, keyed by registration UUID (not a

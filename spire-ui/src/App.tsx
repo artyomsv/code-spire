@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Bot, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -21,6 +21,8 @@ import RequireRole from './components/RequireRole';
 import RedirectKeepingQuery from './components/RedirectKeepingQuery';
 import Runs from './components/Runs';
 import RunDetail from './components/RunDetail';
+import WorkItems from './components/work-items/WorkItems';
+import WorkItemDetail from './components/work-items/WorkItemDetail';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
@@ -47,6 +49,8 @@ function toggleTheme() {
  * <p>Order is significant: `/analytics/me` must precede `/analytics`.
  */
 const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ['/work-items/', 'Work item detail'],
+  ['/work-items', 'Work items'],
   ['/runs/', 'Run detail'],
   ['/runs', 'Runs'],
   ['/r/', 'Review detail'],
@@ -86,6 +90,7 @@ export default function App() {
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
   const onRuns = location.pathname.startsWith('/runs');
+  const onWorkItems = location.pathname.startsWith('/work-items');
   // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
   // "not settings", which was right while the rail had two sections and silently wrong the moment
   // Analytics arrived: both entries lit up at once.
@@ -215,6 +220,10 @@ export default function App() {
           <a className={onRuns ? 'active' : ''} href="#/runs">
             <Bot className="ic" size={16} />
             Runs
+          </a>
+          <a className={onWorkItems ? 'active' : ''} href="#/work-items">
+            <ListTodo className="ic" size={16} />
+            Work items
           </a>
           <a className={onMyActivity ? 'active' : ''} href="#/analytics/me">
             <UserRound className="ic" size={16} />
@@ -371,6 +380,8 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/*" element={<RunDetail />} />
+          <Route path="/work-items" element={<WorkItems />} />
+          <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />
           {/* Before the :workspace/:slug route, or "me" would be read as a workspace. */}
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />

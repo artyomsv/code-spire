@@ -43,6 +43,7 @@ public class GitHubWebhookResource {
     @POST
     public Response receive(@PathParam("key") String key, @Context HttpHeaders headers, byte[] body) {
         IngressFactory ingress = secret -> new GitHubIngress(secret, mapper, COMMANDS, reviewDrafts);
-        return edge.handle(PROVIDER, key, ingress, headers, body);
+        return edge.handle(PROVIDER, key, ingress,
+                secret -> new dev.codespire.worksource.github.GitHubWorkIngress(secret, mapper), headers, body);
     }
 }

@@ -96,6 +96,46 @@ public class ProviderClients {
     @Inject
     ObjectMapper mapper;
 
+    /** Work-source composition shares provider transport but returns only the work SPI. */
+    public dev.codespire.worksource.WorkSource workSource(dev.codespire.worksource.WorkSourceType type,
+                                                          ScmProvider account, String projectId, String scope) {
+        return switch (type) {
+            case GITHUB -> new dev.codespire.worksource.github.GitHubWorkSource(
+                    new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
+            case GITLAB, JIRA -> throw new IllegalArgumentException("This work-source adapter is not installed");
+        };
+    }
+
+    public String workProjectId(dev.codespire.worksource.WorkSourceType type, ScmProvider account, String scope) {
+        return switch (type) {
+            case GITHUB -> dev.codespire.worksource.github.GitHubWorkSource.resolveScope(
+                    new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
+            case GITLAB, JIRA -> throw new IllegalArgumentException("This work-source adapter is not installed");
+        };
+    }
+
+    public boolean compatibleWorkAccount(dev.codespire.worksource.WorkSourceType type, ScmProvider account) {
+        return supportsWorkAccount(type, account.type(), account.authKind());
+    }
+
+    public static boolean supportsWorkAccount(dev.codespire.worksource.WorkSourceType type, String accountType, String authKind) {
+        return switch (type) {
+            case GITHUB -> "github".equals(accountType) && "bearer".equals(authKind);
+            case GITLAB, JIRA -> false;
+        };
+    }
+
+    public boolean workScopeMatchesRepository(dev.codespire.worksource.WorkSourceType type, String origin, String scope,
+                                              String scm, String forgeOrigin, String repositoryScope) {
+        return switch (type) {
+            case GITHUB -> "github".equals(scm) && dev.codespire.contract.scm.ForgeOrigin.of(origin).equals(forgeOrigin)
+                    && repositoryScope.equals(scope);
+            case GITLAB, JIRA -> false;
+        };
+    }
+
     private final java.net.http.HttpClient accountHttp = java.net.http.HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(10))
             .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();

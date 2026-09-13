@@ -80,36 +80,68 @@ class FixPermissionServiceTest {
     @Test void disabledReviewerCannotUseAnOverride() { override("900123","ALLOW");providers.update(account,input("REVIEWER",false,null));reason(REPOSITORY_UNAVAILABLE,false); }
     @Test void previousSuccessCannotAuthorizeDuringAnOutage() { reason(CAN_PUSH,true);forge.stubFor(get(urlEqualTo(path())).willReturn(aResponse().withStatus(503)));reason(PERMISSION_UNAVAILABLE,false); }
     @Test void accountRotationCannotSplitAPermissionDecision() throws Exception {
-        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(1500)));
+        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(3000)));
         try (ExecutorService pool=Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FixAuthorization.Decision> decision=pool.submit(this::result);
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
             while(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty() && System.nanoTime()<deadline) Thread.sleep(20);
             assertFalse(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty(),"lookup must have reached the delayed permission read");
             Future<?> rotation=pool.submit(()->providers.update(account,input("REVIEWER",true,"TEST-rotated")));
-            assertThrows(TimeoutException.class,()->rotation.get(250,TimeUnit.MILLISECONDS),"the account lock must cover the whole permission read");
-            assertTrue(decision.get(10,TimeUnit.SECONDS).allowed());rotation.get(10,TimeUnit.SECONDS);
+            assertDoesNotThrow(()->rotation.get(1,TimeUnit.SECONDS),"an account save must finish while the forge read is outstanding");
+            FixAuthorization.Decision result=decision.get(10,TimeUnit.SECONDS);
+            assertFalse(result.allowed());assertEquals(PERMISSION_UNAVAILABLE,result.reason());
         }
         forge.resetRequests();reason(CAN_PUSH,true);
         forge.verify(getRequestedFor(urlEqualTo(path())).withHeader("Authorization",equalTo("Bearer TEST-rotated")));
     }
     @Test void repositoryRebindingCannotSplitAPermissionDecision() throws Exception {
         UUID replacement=account("REVIEWER");RepositoryView view=repositories.get(repository).orElseThrow();
-        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(1500)));
+        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(3000)));
         try (ExecutorService pool=Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FixAuthorization.Decision> decision=pool.submit(this::result);
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
             while(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty() && System.nanoTime()<deadline) Thread.sleep(20);
             assertFalse(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty(),"lookup must have reached the delayed permission read");
             Future<?> rotation=pool.submit(()->repositories.update(repository,view.revision(),new RepositoryInput("github",forge.baseUrl(),"TEST-permissions",slug,true,replacement,null)));
-            assertThrows(TimeoutException.class,()->rotation.get(250,TimeUnit.MILLISECONDS),"the repository lock must cover the whole permission read");
-            assertTrue(decision.get(10,TimeUnit.SECONDS).allowed());rotation.get(10,TimeUnit.SECONDS);
+            assertDoesNotThrow(()->rotation.get(1,TimeUnit.SECONDS),"a repository save must finish while the forge read is outstanding");
+            FixAuthorization.Decision result=decision.get(10,TimeUnit.SECONDS);
+            assertFalse(result.allowed());assertEquals(PERMISSION_UNAVAILABLE,result.reason());
         }
         assertEquals(replacement,repositories.get(repository).orElseThrow().reviewer().id());
     }
     @Test void timedOutPermissionCannotGrant() {
         forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(11000)));
         reason(PERMISSION_UNAVAILABLE,false);
+    }
+    @Test void aDenyAddedDuringPermissionReadCannotBeMissed() throws Exception {
+        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(3000)));
+        try (ExecutorService pool=Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<FixAuthorization.Decision> decision=pool.submit(this::result);
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+            while(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty() && System.nanoTime()<deadline) Thread.sleep(20);
+            assertFalse(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty());
+            Future<?> change=pool.submit(()->override("900123","DENY"));
+            assertDoesNotThrow(()->change.get(1,TimeUnit.SECONDS));
+            FixAuthorization.Decision result=decision.get(10,TimeUnit.SECONDS);
+            assertFalse(result.allowed());assertEquals(PERMISSION_UNAVAILABLE,result.reason());
+        }
+        reason(EXPLICIT_DENY,false);
+    }
+    @Test void aRepositoryDisabledDuringPermissionReadCannotGrant() throws Exception {
+        RepositoryView view=repositories.get(repository).orElseThrow();
+        forge.stubFor(get(urlEqualTo(path())).willReturn(okJson("{\"permission\":\"write\",\"user\":{\"id\":900123}}").withFixedDelay(3000)));
+        try (ExecutorService pool=Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<FixAuthorization.Decision> decision=pool.submit(this::result);
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+            while(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty() && System.nanoTime()<deadline) Thread.sleep(20);
+            assertFalse(forge.findAll(getRequestedFor(urlEqualTo(path()))).isEmpty());
+            Future<?> change=pool.submit(()->repositories.update(repository,view.revision(),
+                    new RepositoryInput("github",forge.baseUrl(),"TEST-permissions",slug,false,account,null)));
+            assertDoesNotThrow(()->change.get(1,TimeUnit.SECONDS));
+            FixAuthorization.Decision result=decision.get(10,TimeUnit.SECONDS);
+            assertFalse(result.allowed());assertEquals(PERMISSION_UNAVAILABLE,result.reason());
+        }
+        reason(REPOSITORY_UNAVAILABLE,false);
     }
     @AfterEach void cleanup() throws Exception {
         execute("DELETE FROM repository_account WHERE repository_id=?",repository);

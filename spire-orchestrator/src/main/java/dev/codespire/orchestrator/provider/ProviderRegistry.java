@@ -124,7 +124,7 @@ public class ProviderRegistry {
             boolean updateBotUsername = in.botUsername() != null && !in.botUsername().isBlank();
             String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, auth_kind=?, "
                     + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, "
-                    + "role=COALESCE(?, role), updated_at=now()"
+                    + "role=COALESCE(?, role), revision=revision+1, updated_at=now()"
                     + (rotateSecret ? ", auth_secret=?, reported_scopes=NULL, scopes_checked_at=NULL" : "")
                     + (updateBotUsername ? ", bot_username=?" : "")
                     + " WHERE id=?";
@@ -333,6 +333,10 @@ public class ProviderRegistry {
 
     private List<String> usedBy(Connection c, UUID id, String role) throws SQLException {
         List<String> uses = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM work_source WHERE account_id=? ORDER BY name,id")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) { while (rs.next()) uses.add(rs.getString(1)); }
+        }
         if ("REVIEWER".equals(role)) uses.add("Reviewer");
         if ("FACTORY".equals(role)) uses.add("Factory");
         try (var ps = c.prepareStatement("SELECT name FROM context_provider WHERE account_id = ? ORDER BY name, id")) {
@@ -365,6 +369,16 @@ public class ProviderRegistry {
     }
 
     private void validateSourceReferences(Connection c, UUID id, ProviderInput in) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT type,origin,name FROM work_source WHERE account_id=?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    if (!ProviderClients.supportsWorkAccount(dev.codespire.worksource.WorkSourceType.valueOf(rs.getString(1)), in.type(), in.authKind())
+                            || !rs.getString(2).equals(dev.codespire.contract.scm.ForgeOrigin.of(in.baseUrl())))
+                        throw new AccountConflict("Repoint this work source before changing account kind, origin or auth: " + rs.getString(3));
+                }
+            }
+        }
         try (var ps = c.prepareStatement("SELECT name, type, base_url FROM context_provider WHERE account_id = ?")) {
             ps.setObject(1, id);
             try (var rs = ps.executeQuery()) {

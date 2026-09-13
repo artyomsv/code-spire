@@ -1900,3 +1900,31 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   valid repository metadata and kills exactly the intended identity mutant. 3186 Java tests,
   packaging and pinned Semgrep passed. Criteria 6 and 7 were independently accepted; criterion 5
   has automated proof. No production migration, live credential elevation or second dump was needed.
+
+- **Factory M3 slice 5 — first durable tracker ticket (PR #153, 2026-09-13).**
+  The GitHub work-source arm shares the existing pinned read transport and authentication, with
+  writes on a separate facade. The Apache-2.0 SPI remains framework-free. Explicit source and
+  repository bindings, source-owned resolved actor IDs, immutable profiles and a repository
+  ceiling govern signed issue intake and scans. Current-label authority requires complete audit
+  evidence; an allowed actor hint with UNATTRIBUTED origin still grants nothing. Membership,
+  attribution and genuinely missing identity have separate service cases. Deleting membership
+  or attribution fails only its named test across the complete intake class.
+  Events, projection, dedupe and encrypted outbox commit together. The rollback mutant commits
+  an orphan event on a separate transaction, which the test detects after an injected projection
+  failure. Real Kafka tests require committed consumer offsets before cleanup, including the
+  duplicate delivery; merely seeing the first row had allowed cleanup to race redelivery.
+  Work events have their own topics and cannot become review history. Work items displays
+  durable workflow, effective/admitted modes and label evidence; current title/body/status comes
+  from a separate tracker fetch. Removing a restrictive label cannot widen the combined policy
+  retained at admission. Missing specification/approval execution stays visibly unavailable.
+  Round 7 independently accepted criterion 5 and found that a 20-second permission read held
+  repository/account locks. Short revision snapshots now bracket the bounded remote call;
+  rotation/rebinding completes while the forge is still waiting and invalidates its answer.
+  The carry has seven mutation proofs, including deleting the re-read. No shared dev database,
+  live token privileges, backup or run worker was changed. Live tracker/token behavior, parity,
+  uncertain remote writes and bounded recovery of slow scan pages remain explicit later work.
+  Validation: 3371 Java tests / 393 suites / 28 modules, zero failures and 1
+  existing Windows skip; 650 full UI tests plus 12 final targeted tests; packaging and pinned
+  Semgrep passed. 154 mutation checks cover 153 distinct production changes, including
+  Java, schema and UI guards. Scope validation also accepts valid dot-prefixed GitHub names
+  while refusing dot path segments. Criterion 3 awaits independent review.

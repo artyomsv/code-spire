@@ -16,6 +16,7 @@ repositories {
 }
 
 dependencies {
+    api(project(":spire-worksource")) // framework-free normalized work-source control facts
     // Annotations only (no databind): the sealed event/command hierarchies ARE
     // the wire contract, so the polymorphic type ids live with them.
     api("com.fasterxml.jackson.core:jackson-annotations:2.22")

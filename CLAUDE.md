@@ -32,7 +32,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042 and ADR-044 cover the software factory; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..044 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -77,9 +77,14 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–4 (PR #153) add repository ownership, explicit role bindings, resolved person entry and effective /fix push authorization.**
-  Criteria 7 and 6 are independently verified.
-  Repository DENY/ALLOW overrides take precedence over a fresh effective push measurement; unknown permission refuses. Criterion 5 has automated saga and adapter proof.
+  (`docs/UNVERIFIED.md`). **M3 slices 1–5 (PR #153) add repository ownership, explicit role bindings,
+  resolved person entry, effective /fix push authorization and durable GitHub ticket intake.**
+  Criteria 7, 6 and 5 are independently verified; criterion 3 awaits review of its separate
+  membership and attribution proofs. /fix permission reads hold no database transaction across
+  the network: short revision snapshots detect rotation and rebinding. Work sources own their
+  actor allowlists; incomplete attribution selects nothing. Workflow history and Work items
+  persist bookkeeping, with tracker content fetched separately. Source parity, full policy gates
+  and artifact/build handoff follow in slices 6–8.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -94,13 +99,14 @@ describe the new current state. Everything below is true as of **2026-09-13**.
   database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-13):** 3186 Java tests across 372 suites,
-  zero failures and 1 existing Windows symlink privilege skip. Forced testFast and
-  testServices ran sequentially, and packaging passed. Slice 4 has 64 isolated production
-  mutations and a clean pinned Semgrep scan; its exact ledger is in
-  .claude/reviews/global/factory-m3-slice4.md. Slice 3's 636 UI tests and live V62/V4 continuity
-  evidence remain in its review notes. Criteria 6 and 7 are independently verified. Live permission
-  behavior has separate per-forge UNVERIFIED entries. No live run worker was started.
+- **Measured, not estimated (2026-09-13):** 3371 Java tests across 393 suites and 28 modules,
+  zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
+  packaging passed sequentially. The full UI suite passed 650 tests; the final Work items changes
+  passed 12 targeted tests and the production build. Slice 5 has 154 mutation checks covering
+  153 distinct production changes and clean pinned Semgrep scans. Exact evidence is in
+  .claude/reviews/global/factory-m3-slice5.md. Criteria 5, 6 and 7 are independently verified;
+  criterion 3 awaits review. Live tracker/token and later execution gaps remain in UNVERIFIED.
+  No live run worker was started.
 
 ## Build & run
 

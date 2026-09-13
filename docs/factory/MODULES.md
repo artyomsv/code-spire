@@ -239,8 +239,15 @@ images, two credentials, no overlap.
 
 **Purpose.** Read a tracker as a work queue and write back to it.
 
-**Owns.** `WorkSource`, `WorkSourceType`, `WorkSourceCapabilities`, `WorkItemRef`, `WorkItem`,
-`WorkQuery`.
+**Owns (M3 slice 5).** `WorkSource`, `WorkSourceType`, nested capability/fetch/write result
+records, `WorkIssueRef`, `WorkIssueLocation`, `WorkTicket`, `WorkPage`, `LabelEvent`,
+`CurrentLabel`, `LabelReconciler`, `WorkSourceIngress` and `WorkSourceSignal`. The SPI is
+JDK-only and Apache-2.0; build purity checks reject framework imports. `WorkTicket` is transient
+tracker content. Durable workflow events and the pure lifecycle/policy are in `spire-contract`.
+
+`spire-worksource-github` is the first Apache-2.0 reference arm. GitLab and Jira follow in slice 6.
+GitHub context and work reads share `GitHubApiConnection`; the distinct `PinnedJsonWriter`
+shares the pinned transport and authentication without granting writes to the context interface.
 
 **Relationship to `spire-context-*`.** The context modules already hold credentials for Jira,
 Confluence, GitHub Issues and GitLab Issues and already speak those APIs through the SSRF-guarded

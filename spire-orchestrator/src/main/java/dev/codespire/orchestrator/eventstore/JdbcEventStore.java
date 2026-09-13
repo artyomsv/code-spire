@@ -110,7 +110,7 @@ public class JdbcEventStore implements EventStore {
         byte[] plaintext = KEY_ID.equals(rs.getString("key_id")) ? encryption.decrypt(stored, streamId) : stored;
         Object payload;
         try {
-            payload = mapper.readValue(plaintext, EventTypes.domainType(eventType));
+            payload = mapper.readValue(plaintext, EventTypes.storedType(eventType));
         } catch (IOException e) {
             throw new UncheckedIOException("Corrupt payload for " + eventType + " in " + streamId, e);
         }

@@ -101,6 +101,14 @@ quarkus:
 mp:
   messaging:
     outgoing:
+      work-events-out:
+        connector: smallrye-kafka
+        topic: cs.work-events
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
       repository-activity-out:
         connector: smallrye-kafka
         topic: cs.repository-activity
@@ -160,6 +168,19 @@ mp:
           serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
         waitForWriteCompletion: true
     incoming:
+      work-integration-in:
+        connector: smallrye-kafka
+        topic: cs.work-integration
+        group:
+          id: spire-orchestrator-work
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.work-dlq
       repository-in:
         connector: smallrye-kafka
         topic: cs.repository-integration
@@ -389,6 +410,8 @@ spire:
 # Test: DevServices boot Postgres + a broker automatically.
 "%test":
   spire:
+    work-outbox-interval: "off"
+    work-scan-interval: "off"
     repository-history-interval: "off"
     review:
       # Tests exercise the active pipeline — seed active (prod/dev seed observe in code).
