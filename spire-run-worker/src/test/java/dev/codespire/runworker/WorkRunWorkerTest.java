@@ -23,9 +23,12 @@ class WorkRunWorkerTest {
     String state="ready";
     boolean claim=true,permitAllowed=true,cancelled,claimFails,leaseAvailable=true,reportAccepted=true,present=true,held=true,lateCancel;
     int launches,publicationClaims,publications,deletions;
+    boolean revoked;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
     Finalization finalization=Finalization.salvaged(0,"TEST exited");
     final WorkRunStore store=new WorkRunStore(){
+        // These unit decisions supplement the durable-store and actual killed-JVM proof.
+        @Override public boolean revoked(RunCommand.ExecuteWorkRun execution){return revoked;}
         @Override public boolean claim(RunCommand.ExecuteWorkRun execution){events.add("claim");if(claimFails)throw new IllegalStateException("TEST store unavailable");return claim;}
         @Override public Optional<Held> find(String id){return Optional.of(new Held(command,null,"TEST-unit",state,ready,terminal,permit,Instant.now().minusSeconds(120)));}
         @Override public void buildResult(RunResult result){events.add("build-result");pending.add(result);if(!(result instanceof RunResult.RunWorkReady))terminal=result;}
@@ -79,6 +82,9 @@ class WorkRunWorkerTest {
     @Test void aFailedClaimCannotAcknowledgeTheCommand(){claimFails=true;assertThrows(IllegalStateException.class,this::execute);assertEquals(List.of("claim"),events);}
     @Test void anExecuteRedeliveryCannotRunTheHarnessAgain(){claim=false;execute();assertEquals(0,launches);assertTrue(reported.isEmpty());assertEquals(List.of("claim","ack-command"),events);}
     @Test void cancellationBeforeBuildBuysNoHarnessCall(){cancelled=true;execute();assertEquals(0,launches);assertEquals("CANCELLED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());}
+    @Test void durableHoldBeforeBuildBuysNoHarnessCallWithoutM1Cancel(){revoked=true;assertFalse(cancelled);execute();assertEquals(0,launches);assertEquals("CANCELLED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());}
+    @Test void durableHoldIsCheckedAgainAtPublisherStart(){revoked=true;assertFalse(cancelled);worker.publish(permit);assertEquals("CANCELLED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());assertEquals(0,deletions);}
+    @Test void durableHoldRecoversReadyRunWithoutM1Cancel(){revoked=true;assertFalse(cancelled);worker.recover();assertEquals("CANCELLED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());assertEquals(0,publications);assertEquals(1,runtime.cancelled.size());}
     @Test void aFailedLeaseBuysNoHarnessCall(){leaseAvailable=false;execute();assertEquals(0,launches);assertEquals("WORKER_FAILED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());}
     @Test void cancellationAfterTheBuildRetainsItsMeasuredUsage(){lateCancel=true;execute();var failure=assertInstanceOf(RunResult.RunFailed.class,terminal);assertEquals("CANCELLED",failure.cause());assertEquals(ready.tokenUsage(),failure.tokenUsage());}
     @Test void aBrokerRefusalKeepsTheResultPending(){reportAccepted=false;execute();assertEquals(List.of(ready),pending);assertFalse(events.contains("ack-result"));}

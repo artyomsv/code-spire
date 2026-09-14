@@ -44,7 +44,7 @@ class RepositoryWebhookKindsTest {
         }
     }
 
-    @Test void preservesLegacyKeyAndRejectsWrongKind() throws Exception {
+    @Test void preservesLegacyKeyAndSeparatesFactoryActivityFromReviewerCommands() throws Exception {
         String schema = "test_webhook_kind_" + UUID.randomUUID().toString().replace("-", "");
         Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).target("3").load().migrate();
         DataSource legacyData = scoped(schema);
@@ -79,10 +79,22 @@ class RepositoryWebhookKindsTest {
             }
             byte[] body = comment("TEST-kind/repo");
             io.quarkus.test.junit.QuarkusMock.installMockForType(upgraded, WebhookRepoRegistry.class);
-            signed(key, "TEST-legacy-secret", body).then().statusCode(400);
+            var emitted=new java.util.ArrayList<dev.codespire.contract.event.IntegrationEvent>();
+            io.quarkus.test.junit.QuarkusMock.installMockForType(new dev.codespire.gateway.IntegrationPublisher() {
+                @Override public boolean publishAllAwait(WebhookRepoRegistry.Resolved registration,
+                        java.util.List<dev.codespire.contract.event.IntegrationEvent> events,String deliveryId) {
+                    emitted.addAll(events);return true;
+                }
+            },dev.codespire.gateway.IntegrationPublisher.class);
+            signed(key, "TEST-legacy-secret", body).then().statusCode(202);
+            var activity=assertInstanceOf(dev.codespire.contract.event.IntegrationEvent.RepositoryActivity.class,emitted.getFirst());
+            assertEquals("comment",activity.kind());assertEquals(7,activity.prId());assertEquals("21",activity.commentId());
+            assertFalse(activity.fixCommand(),"A /review command is still human activity for the factory");
+            emitted.clear();
             upgraded.update(id, new WebhookRepoInput("github", "repo", "TEST-kind/repo", true,
                     "https://api.github.com", null, RepositoryEventKind.REVIEWER, null));
             signed(key, "TEST-legacy-secret", body).then().statusCode(202);
+            assertInstanceOf(dev.codespire.contract.event.IntegrationEvent.ManualCommandReceived.class,emitted.getFirst());
         } finally {
             try (Connection c = dataSource.getConnection(); var statement = c.createStatement()) {
                 statement.execute("DROP SCHEMA " + schema + " CASCADE");

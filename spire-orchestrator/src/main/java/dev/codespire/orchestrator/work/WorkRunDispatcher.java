@@ -87,7 +87,15 @@ public class WorkRunDispatcher {
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='uncertain',reason='dispatch_claimed',run_id=?,preparation_binding=? WHERE attempt_id=?")) {
                 ps.setString(1,prepared.command().runId());ps.setString(2,prepared.command().work().preparationBinding());ps.setObject(3,attempt);ps.executeUpdate();
             }
-            store.appendDecision(c,history,item.withMilestone("BUILD_DISPATCH_CLAIMED"),"build-claim:"+attempt);
+            String factoryActor=null,reviewerActor=null;
+            try(var ps=c.prepareStatement("SELECT a.role,p.bot_account_id FROM repository_account a JOIN scm_provider p ON p.id=a.account_id WHERE a.repository_id=? AND a.role IN ('FACTORY','REVIEWER') FOR SHARE OF p")) {
+                ps.setObject(1,item.repositoryId());try(var rs=ps.executeQuery()) {
+                    while(rs.next())if("FACTORY".equals(rs.getString(1)))factoryActor=rs.getString(2);else reviewerActor=rs.getString(2);
+                }
+            }
+            WorkControl control=new WorkControl(prepared.command().runId(),prepared.command().work(),prepared.command().execution().branch(),factoryActor,reviewerActor,null,null,null,
+                    item.control()==null?null:item.control().trackerActor());
+            store.appendDecision(c,history,item.controlled(control).withMilestone("BUILD_DISPATCH_CLAIMED"),"build-claim:"+attempt);
             return prepared;
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist build dispatch",failure);}

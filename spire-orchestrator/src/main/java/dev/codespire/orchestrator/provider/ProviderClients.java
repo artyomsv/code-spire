@@ -292,6 +292,13 @@ public class ProviderClients {
         };
     }
 
+    public dev.codespire.contract.port.PullRequestApprovalSource pullRequestApprovalSource(ScmProvider provider) {
+        return switch(provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubPullRequestApprovalSource(new GitHubClient(githubConfig(provider),mapper));
+            default -> new dev.codespire.contract.port.PullRequestApprovalSource() {};
+        };
+    }
+
     public dev.codespire.contract.port.RepositoryPermissionSource repositoryPermissionSource(ScmProvider provider) {
         return switch (provider.type()) {
             case "github" -> new dev.codespire.scm.github.GitHubRepositoryPermissionSource(new GitHubClient(githubConfig(provider), mapper));

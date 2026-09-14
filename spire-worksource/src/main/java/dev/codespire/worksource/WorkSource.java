@@ -16,6 +16,12 @@ public interface WorkSource {
     }
     WorkPage<LabelEvent> labelEvents(WorkIssueLocation issue, String cursor);
 
+    /** Authenticated polling alternative to signed comment deliveries. No prose crosses this boundary. */
+    default WorkPage<WorkSourceActivity> activities(WorkIssueLocation issue,String cursor) {
+        throw new WorkSourceException("Tracker answer polling is unavailable for this source");
+    }
+    default boolean pollsActivities() {return false;}
+
     /** Writes use a distinct facade from the context provider's read-only interface. */
     String comment(WorkIssueLocation issue, String text, String effectId);
     void transition(WorkIssueLocation issue, String transitionId, String effectId);

@@ -13,6 +13,17 @@ beforeEach(() => {
   vi.spyOn(api, 'answer').mockResolvedValue();
 });
 function show() { render(<MemoryRouter><Approvals /></MemoryRouter>); }
+it('makes an unavailable PR channel visible while retaining dashboard and tracker answers', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, prReviewAvailable: false, prReviewDetail: 'TEST-forge cannot prove current approval', trackerCommand: '/approve TEST-gate 2 TEST-artifact' }]);
+  show();
+  expect(await screen.findByText(/PR review: Unavailable/)).toHaveTextContent('TEST-forge cannot prove current approval');
+  expect(screen.getByText('/approve TEST-gate 2 TEST-artifact')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled();
+});
+it('announces supported PR answers explicitly', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, prReviewAvailable: true }]);show();
+  expect(await screen.findByText(/PR review: Available/)).toBeInTheDocument();
+});
 it('submits the displayed gate version and removes a resolved open row', async () => {
   show(); fireEvent.change(await screen.findByLabelText('Decision note'), { target: { value: 'TEST-reviewed' } });
   vi.mocked(api.approvals).mockResolvedValue([]); fireEvent.click(screen.getByRole('button', { name: 'Approve' }));

@@ -45,14 +45,14 @@ public class WorkRunWorker {
         active.add(id);
         try {
             RunResult result;
-            if(claims.taken(id,RunDispatcher.CANCEL_SLOT)) {
+            if(claims.taken(id,RunDispatcher.CANCEL_SLOT) || store.revoked(command)) {
                 result=failures.of(command.execution(),"CANCELLED","Cancelled before the held build started");
             } else if(!leases.take(id)) {
                 result=failures.of(command.execution(),"WORKER_FAILED","No lease was taken; the held build was not started");
             } else {
                 result=launcher.launchHeld(command,new HeldObserver(command),unit->store.saveUnit(id,unit));
             }
-            if(cancelled(id)) result=cancelledResult(command,result);
+            if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
@@ -91,7 +91,7 @@ public class WorkRunWorker {
                 var spec=builder.publication(held.unit(),held.execution(),held.permit());
                 PublisherOutcome outcome=new PublisherOutcome();
                 Finalization end=publication.publishHeld(handle,new PublicationKey(held.execution().work().publicationKey()),
-                        held.permit().permit().deliveryAttemptId(),spec,outcome::accept,()->publicationAllowed(id));
+                        held.permit().permit().deliveryAttemptId(),spec,outcome::accept,()->publicationAllowed(held.execution()));
                 if(outcome.pushedRef().isPresent() && !outcome.refused()) {
                     result=new RunResult.RunFinished(id,outcome.pushedRef().orElseThrow(),held.ready().changedPaths(),
                             List.of(),held.ready().tokenUsage(),false);
@@ -108,7 +108,7 @@ public class WorkRunWorker {
                             outcome.failureCause().orElse("Publication was not observed")+": "+outcome.failureDetail())
                             .withUsage(held.ready().tokenUsage());
                 }
-                if(cancelled(id))result=cancelledResult(held.execution(),result);
+                if(cancelled(id) || store.revoked(held.execution()))result=cancelledResult(held.execution(),result);
             }
             store.terminal(result); // Paid usage and publication evidence are durable before any deletion or send.
             releasePublished(store.find(id).orElseThrow(),publication);
@@ -134,7 +134,7 @@ public class WorkRunWorker {
                 if("publishing".equals(held.state())) {
                     if(unit.isPresent() && store.claimPublicationRecovery(id,horizon.orElseThrow()))
                         publishClaimed(store.find(id).orElseThrow(),unit.orElseThrow(),publication);
-                } else if("ready".equals(held.state()) && cancelled(id)) {
+                } else if("ready".equals(held.state()) && (cancelled(id) || store.revoked(held.execution()))) {
                     unit.ifPresent(publication::cancel);
                     store.terminal(cancelledResult(held.execution(),held.ready()));
                 } else if("building".equals(held.state()) && held.updatedAt().isBefore(horizon.orElseThrow())) {
@@ -181,10 +181,10 @@ public class WorkRunWorker {
 
     private boolean cancelled(String id) {return registry.wasCancelled(id) || claims.taken(id,RunDispatcher.CANCEL_SLOT);}
 
-    private boolean publicationAllowed(String id) {
-        try {return !cancelled(id);}
+    private boolean publicationAllowed(RunCommand.ExecuteWorkRun command) {
+        try {return !cancelled(command.runId()) && !store.revoked(command);}
         catch(RuntimeException failure) {
-            LOG.warnf("run %s: publication cannot read cancellation (%s); no publisher may start",id,failure.getClass().getSimpleName());
+            LOG.warnf("run %s: publication cannot read cancellation (%s); no publisher may start",command.runId(),failure.getClass().getSimpleName());
             return false;
         }
     }
@@ -217,8 +217,17 @@ public class WorkRunWorker {
             store.recordUnit(id,unitId);
             leases.recordUnit(id,unitId);
             results.report(new RunResult.RunStarted(id,unitId));
-            if(cancelled(id)) {registry.cancel(id);runtime.cancel(handle);}
+            if(cancelled(id) || store.revoked(command)) {registry.cancel(id);runtime.cancel(handle);}
         }
         public void unitReleased(){throw new IllegalStateException("A held build must retain its workspace");}
+    }
+
+    public void hold(RunCommand.HoldWorkRun command) {
+        store.revoke(command); // Must commit before touching Docker, even if execution has not arrived.
+        var held=store.find(command.runId());
+        if(held.isEmpty() || !held.orElseThrow().execution().work().equals(command.work()))return;
+        registry.cancel(command.runId());
+        if(runtime instanceof PublicationRuntime publication)
+            localUnit(command.runId()).filter(publication::publicationHeld).ifPresent(publication::cancel);
     }
 }

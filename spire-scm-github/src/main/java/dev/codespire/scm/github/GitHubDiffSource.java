@@ -54,6 +54,14 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
         client.getJson("/repos/" + repo.full());
     }
 
+    @Override public String fetchBranchHead(RepoRef repo,String branch) {
+        var row=client.getIdentityJson("/repos/"+repo.full()+"/branches/"+URLEncoder.encode(branch,StandardCharsets.UTF_8));
+        String head=row.path("commit").path("sha").asText("");
+        if(!branch.equals(row.path("name").asText()) || !head.matches("[0-9a-f]{40}|[0-9a-f]{64}"))
+            throw new IllegalStateException("Current branch identity could not be verified");
+        return head;
+    }
+
     @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode pr = client.getJson(prPath(repo, prId));

@@ -30,7 +30,7 @@ public final class GitHubWorkIngress implements WorkSourceIngress {
         if (!signatures.verifySignature(raw)) throw new WorkSourceException("Invalid GitHub work-source signature.");
         String kind = headers.entrySet().stream().filter(e -> e.getKey().equalsIgnoreCase("X-GitHub-Event"))
                 .map(Map.Entry::getValue).findFirst().orElse("");
-        if (!"issues".equals(kind)) return List.of();
+        if (!Set.of("issues","issue_comment").contains(kind)) return List.of();
         try {
             JsonNode root = mapper.readTree(body);
             JsonNode repository = root.path("repository");
@@ -49,6 +49,15 @@ public final class GitHubWorkIngress implements WorkSourceIngress {
                     || link.getUserInfo() != null) throw new WorkSourceException("Invalid GitHub ticket URL.");
             WorkIssueLocation location = new WorkIssueLocation(ref, number, link);
             String action = root.path("action").asText();
+            if("issues".equals(kind) && Set.of("deleted","transferred").contains(action))
+                return List.of(new WorkSourceSignal(scope,location,null,new WorkSourceActivity("retired:"+ref.issueId(),root.path("sender").path("id").asText(null),null,null,true)));
+            if("issue_comment".equals(kind)) {
+                if(!"created".equals(action))return List.of();
+                JsonNode comment=root.path("comment"),user=comment.path("user");
+                String actor=user.path("id").isIntegralNumber()?id(user.path("id")):null;
+                return List.of(new WorkSourceSignal(scope,location,null,WorkSourceActivity.comment(
+                        id(comment.path("id")),actor,comment.path("body").asText(""))));
+            }
             LabelEvent hint = null;
             if ("labeled".equals(action) || "unlabeled".equals(action)) {
                 String label = root.path("label").path("name").asText("");

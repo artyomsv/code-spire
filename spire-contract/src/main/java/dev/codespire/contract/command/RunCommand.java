@@ -17,6 +17,7 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
+        @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
         @JsonSubTypes.Type(value = RunCommand.SteerRun.class, name = "SteerRun")
 })
@@ -197,6 +198,14 @@ public sealed interface RunCommand {
             if(scmCredential==null || scmCredential.isBlank())throw new IllegalArgumentException("A publication credential is required");
         }
         @Override public String toString(){return "PublishWorkRun[runId="+runId+", permit="+permit+", scmCredential=***]";}
+    }
+
+    /** Irreversible for this build identity, including permits queued before human takeover. */
+    record HoldWorkRun(String runId,dev.codespire.contract.work.WorkRunBinding work) implements RunCommand {
+        public HoldWorkRun {
+            if(runId==null || runId.isBlank())throw new IllegalArgumentException("A held run is required");
+            Objects.requireNonNull(work,"A hold must bind the exact work generation and build");
+        }
     }
 
     record CancelRun(String runId, String reason) implements RunCommand {

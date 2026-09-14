@@ -19,4 +19,6 @@ public interface ScmIngress {
 
     /** -> PullRequestEventReceived / PullRequestClosed / ManualCommandReceived / AuthorReplied / PushReceived. */
     List<IntegrationEvent> translate(RawWebhook raw);
+    /** Factory hooks observe acting identities even when review draft/self-loop policy skips an event. */
+    default List<IntegrationEvent> activity(RawWebhook raw) { return translate(raw); }
 }

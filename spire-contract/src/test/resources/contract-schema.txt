@@ -14,6 +14,7 @@ ManualCommandReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, comm
 PullRequestClosed(repo: dev.codespire.contract.scm.RepoRef, prId: long, reason: dev.codespire.contract.event.IntegrationEvent$CloseReason)
 PullRequestEventReceived(repo: dev.codespire.contract.scm.RepoRef, prId: long, action: dev.codespire.contract.event.IntegrationEvent$PrAction, title: java.lang.String, description: java.lang.String, sourceBranch: java.lang.String, targetBranch: java.lang.String, headCommit: java.lang.String, author: dev.codespire.contract.scm.Author, htmlUrl: java.lang.String, providerType: java.lang.String, fromFork: boolean)
 PushReceived(repo: dev.codespire.contract.scm.RepoRef, ref: java.lang.String, commits: java.util.List<java.lang.String>)
+RepositoryActivity(repo: dev.codespire.contract.scm.RepoRef, kind: java.lang.String, actorId: java.lang.String, branch: java.lang.String, head: java.lang.String, prId: long, reviewId: java.lang.String, commentId: java.lang.String, fixCommand: boolean)
 ReviewFailed(reviewId: java.lang.String, commit: java.lang.String, phase: java.lang.String, error: java.lang.String, retryable: boolean, attempt: int, credentialRejected: boolean)
 ReviewGenerated(reviewId: java.lang.String, prId: long, commit: java.lang.String, result: dev.codespire.contract.review.ReviewResult, verdicts: java.util.List<dev.codespire.contract.review.FindingVerdict>, reconcileUsage: dev.codespire.contract.review.ModelUsage)
 TurnCapNotified(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
@@ -44,6 +45,7 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 CancelRun(runId: java.lang.String, reason: java.lang.String)
 ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String)
 ExecuteWorkRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, work: dev.codespire.contract.work.WorkRunBinding)
+HoldWorkRun(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding)
 PublishWorkRun(runId: java.lang.String, permit: dev.codespire.contract.work.WorkPublicationPermit, scmCredential: java.lang.String)
 SteerRun(runId: java.lang.String, instruction: java.lang.String)
 
@@ -76,3 +78,6 @@ WorkExecution(runId: java.lang.String, build: dev.codespire.contract.work.WorkRu
 
 # PullRequestRef
 PullRequestRef(number: long, url: java.lang.String, draft: java.lang.Boolean)
+
+# WorkControl
+WorkControl(runId: java.lang.String, build: dev.codespire.contract.work.WorkRunBinding, branch: java.lang.String, factoryActor: java.lang.String, reviewerActor: java.lang.String, operator: java.lang.String, note: java.lang.String, observedHead: java.lang.String, trackerActor: java.lang.String)

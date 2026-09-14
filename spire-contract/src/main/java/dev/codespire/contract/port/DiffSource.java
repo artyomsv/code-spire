@@ -29,6 +29,11 @@ public interface DiffSource {
 
     PullRequest fetchPullRequest(RepoRef repo, long prId);
 
+    /** Current branch identity for an explicit operator resume; missing evidence must refuse. */
+    default String fetchBranchHead(RepoRef repo, String branch) {
+        throw new UnsupportedOperationException("Current branch evidence is unavailable");
+    }
+
     /** Canonical diff for the given head commit. A 404 means the commit was force-pushed away -> treat as superseded. */
     Diff fetchDiff(RepoRef repo, long prId, String commit);
 

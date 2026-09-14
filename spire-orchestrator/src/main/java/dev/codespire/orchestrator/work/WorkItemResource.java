@@ -21,12 +21,21 @@ public class WorkItemResource {
     @Inject WorkItemStore store;
     @Inject WorkSourceRegistry sources;
     @Inject WorkItemTransitions transitions;
-    public record Resume(long expectedRevision,boolean readmit) {}
+    @Inject WorkItemControl control;
+    @Inject io.quarkus.security.identity.SecurityIdentity identity;
+    public record Resume(long expectedRevision,boolean readmit,String note) {
+        public Resume(long expectedRevision,boolean readmit) {this(expectedRevision,readmit,null);}
+    }
     @POST @Path("/{id}/resume") @RolesAllowed("spire-admin")
     @Consumes(MediaType.APPLICATION_JSON)
     public jakarta.ws.rs.core.Response resume(@PathParam("id") String id,Resume input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current work-item revision is required");
-        var result=transitions.resume(id,input.expectedRevision(),input.readmit());
+        String subject=dev.codespire.orchestrator.security.OidcSubjects.of(identity);
+        if(subject.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        var item=store.load(id);
+        var result=item!=null && "suspended".equals(item.workflowStatus())
+                ?control.resume(id,input.expectedRevision(),subject,input.note())
+                :transitions.resume(id,input.expectedRevision(),input.readmit());
         return jakarta.ws.rs.core.Response.status(result.status()).entity(Map.of("reason",result.reason())).build();
     }
     public record Profile(UUID id, String name, long version) {}
@@ -39,7 +48,7 @@ public class WorkItemResource {
                        Map<WorkPolicy.Phase,String> effectiveModes, Map<WorkPolicy.Phase,String> admittedModes,
                        String policyReason, Profile ceiling, List<WorkPolicy.AppliedLabel> appliedLabels,
                        WorkPolicyLimits effectiveLimits,WorkPolicyLimits admittedLimits,WorkGate gate,WorkProgress progress,
-                       WorkPreparation preparation,List<Build> builds) {}
+                       WorkPreparation preparation,List<Build> builds,WorkControl control) {}
     public record Page(List<View> items, long total, int offset, int limit) {}
     public record Tracker(String title, String body, String trackerStatus) {}
 
@@ -82,7 +91,7 @@ public class WorkItemResource {
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id));
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control());
     }
 
     private List<Build> builds(String id) {

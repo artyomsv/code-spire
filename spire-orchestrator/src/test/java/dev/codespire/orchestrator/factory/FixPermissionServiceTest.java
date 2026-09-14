@@ -18,6 +18,15 @@ import static dev.codespire.orchestrator.factory.FixAuthorization.Reason.*;
 /** Real registry, encrypted selected credential and HTTP adapters; TEST-only Dev Services rows. */
 @QuarkusTest
 class FixPermissionServiceTest {
+    @Test void nativeApprovalRequiresMeasuredPushEvenWithAnAllowOverride() {
+        override("900123","ALLOW");response("read");
+        var decision=permissions.authorizeApproval(repository,"900123");assertFalse(decision.allowed());assertEquals(CANNOT_PUSH,decision.reason());
+        forge.verify(getRequestedFor(urlEqualTo(path())));
+    }
+    @Test void nativeApprovalStillHonorsDenyDespiteMeasuredPush() {
+        response("write");assertTrue(permissions.authorizeApproval(repository,"900123").allowed());override("900123","DENY");
+        var decision=permissions.authorizeApproval(repository,"900123");assertFalse(decision.allowed());assertEquals(EXPLICIT_DENY,decision.reason());
+    }
     @Inject FixPermissionService permissions;
     @Inject ProviderRegistry providers;
     @Inject RepositoryRegistry repositories;

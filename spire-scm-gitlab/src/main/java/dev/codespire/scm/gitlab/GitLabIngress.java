@@ -130,6 +130,31 @@ public class GitLabIngress implements ScmIngress {
         };
     }
 
+    @Override public List<IntegrationEvent> activity(RawWebhook raw) {
+        var root=parse(raw.body());String event=root.path("object_kind").asText();
+        if("push".equals(event))return List.of(new IntegrationEvent.RepositoryActivity(repo(root),"push",
+                root.path("user_id").asText(null),root.path("ref").asText(null),root.path("after").asText(null),0,null,null,false));
+        var attributes=root.path("object_attributes");String actor=root.path("user").path("id").asText(null);
+        if(MERGE_REQUEST.equals(event)) {
+            if(fromFork(attributes))return List.of();
+            String action=attributes.path("action").asText();
+            if(!Set.of("update","close","merge","approved","unapproved","approval","unapproval").contains(action))return List.of();
+            boolean approval=Set.of("approved","unapproved","approval","unapproval").contains(action);
+            return List.of(new IntegrationEvent.RepositoryActivity(repo(root),approval?"approval":"push",actor,
+                    "refs/heads/"+attributes.path("source_branch").asText(""),attributes.path("last_commit").path("id").asText(null),
+                    attributes.path("iid").asLong(),null,null,false));
+        }
+        if(NOTE.equals(event) && MR_NOTEABLE.equals(attributes.path("noteable_type").asText())) {
+            if(!"create".equals(attributes.path("action").asText("create")) || attributes.path("system").asBoolean(false))return List.of();
+            var mr=root.path("merge_request");if(fromFork(mr))return List.of();
+            String body=attributes.path("note").asText("").strip();
+            return List.of(new IntegrationEvent.RepositoryActivity(repo(root),"comment",actor,
+                    "refs/heads/"+mr.path("source_branch").asText(""),mr.path("last_commit").path("id").asText(null),
+                    mr.path("iid").asLong(),null,attributes.path("id").asText(null),commands.contains("fix") && body.split("\\s+",2)[0].equalsIgnoreCase("/fix")));
+        }
+        return List.of();
+    }
+
     /** A draft→ready flip reviews even without a new push (GitLab has no ready_for_review event); otherwise
      *  only a push (flagged by oldrev) moves the diff. */
     private List<IntegrationEvent> updateEvent(JsonNode payload, JsonNode attrs, boolean skipDraft) {

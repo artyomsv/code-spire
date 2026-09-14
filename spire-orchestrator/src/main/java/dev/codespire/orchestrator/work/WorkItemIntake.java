@@ -16,6 +16,7 @@ public class WorkItemIntake {
     @Inject WorkSourceRegistry sources;
     @Inject WorkPolicyRegistry policies;
     @Inject WorkItemStore store;
+    @Inject WorkGateChannels gates;
 
     @Incoming("work-integration-in") @Blocking
     public void on(String payload) throws JsonProcessingException { accept(mapper.readValue(payload, WorkSourceDelivery.class)); }
@@ -26,6 +27,12 @@ public class WorkItemIntake {
         if (source == null || !source.enabled() || !source.repositoryId().equals(delivery.repositoryId())
                 || !source.scm().providerType().equals(delivery.providerType()) || !source.forgeOrigin().equals(delivery.forgeOrigin())
                 || !source.repository().equals(delivery.repo()) || !source.scope().equals(delivery.signal().externalScope())) return null;
+        if(delivery.signal().activity()!=null) {
+            var issue=delivery.signal().issue();
+            if(!source.origin().equals(issue.ref().origin()) || source.type()!=issue.ref().type()
+                    || !source.projectId().equals(issue.ref().projectId()))return null;
+            return gates.tracker(source,delivery);
+        }
         return reconcile(source, delivery.signal().issue(), delivery.signal().hint(), delivery.deliveryId());
     }
 

@@ -15,6 +15,26 @@ import static org.junit.jupiter.api.Assertions.*;
 class WorkRunProcessRecoveryIT extends WorkItemRunFixture {
     @TempDir Path directory;
     final List<Process> children=new ArrayList<>();
+    @Test void takeoverRevocationSurvivesKilledJvmWithoutAnM1CancelClaim() throws Exception {
+        var command=command("takeover-death");String branch=command.execution().branch();
+        try {
+            Process first=start("build",command);var built=await(first,"ready.json");
+            var ready=mapper.treeToValue(built.path("ready"),RunResult.RunWorkReady.class);
+            assertEquals(1,built.path("builds").asInt());assertFalse(origin.hasBranch(branch));
+            first.destroyForcibly();assertTrue(first.waitFor(10,TimeUnit.SECONDS));
+            Process second=start("hold",command);var revoked=await(second,"revoked.json");
+            assertTrue(revoked.path("revoked").asBoolean(),"The publication revocation must commit before stopping Docker");
+            assertFalse(revoked.path("cancelClaim").asBoolean(),"An M1 cancel must not mask loss of the takeover hold");
+            assertEquals("ready",store.find(command.runId()).orElseThrow().state());
+            second.destroyForcibly();assertTrue(second.waitFor(10,TimeUnit.SECONDS));
+            assertFalse(store.claimPublication(verifiedTestPermit(command,ready)),"A fresh valid permit cannot undo takeover after process death");
+            Process third=start("finish",command);var finished=await(third,"published.json");
+            assertTrue(third.waitFor(20,TimeUnit.SECONDS));assertEquals(0,third.exitValue());
+            assertEquals("CANCELLED",finished.path("terminal").path("cause").asText());
+            assertEquals(0,finished.path("builds").asInt());assertFalse(origin.hasBranch(branch));
+            assertTrue(((dev.codespire.runtime.PublicationRuntime)runtime).publicationHeld(new dev.codespire.runtime.RunHandle(command.runId(),command.runId())),"Orphan salvage must retain the unpublished workspace");
+        } finally {for(Process child:children)if(child.isAlive()){child.destroyForcibly();child.waitFor();}}
+    }
     @Test void killedOwnersRetainTheHoldAndResumeOnlyTheClaimedPublisher() throws Exception {
         proof(false);
     }

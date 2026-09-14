@@ -77,6 +77,9 @@ public class WorkDelivery {
             }
         }
         WorkItemEvent item=store.load(effect.item());
+        if("proposing".equals(effect.state()) && Set.of("suspended","retired").contains(item.workflowStatus())) {
+            observeHeldProposal(effect,item);return;
+        }
         // A crash after aggregate completion must not repeat the proposal or require REVIEW to still be DELIVER.
         if("proposing".equals(effect.state()) && item.progress().execution()!=null
                 && item.progress().execution().pullRequest()!=null && item.progress().execution().runId().equals(effect.run())
@@ -103,12 +106,40 @@ public class WorkDelivery {
             var complete=transitions.complete(before.item(),new WorkItemTransitions.PhaseResult(before.attempt(),true,0,0,0,true,
                     current.progress().execution().delivered(opened)));
             if(complete.status()==200)state(before,"delivered",null);
+            else if(Set.of("suspended","retired").contains(store.load(before.item()).workflowStatus()))observeHeldProposal(before,store.load(before.item()));
         }catch(PullRequestSink.DeliveryUnavailable refusal) {
             stop(before,refusal.getMessage());
         }catch(RuntimeException failure) {
             // Never POST again after an ambiguous response. Recovery reads the forge by both branches.
             state(before,"proposing","proposal_outcome_unknown");
         }
+    }
+
+    private void observeHeldProposal(Effect effect,WorkItemEvent item) {
+        try {
+            var account=accounts.resolve(item.repositoryId()).orElseThrow();
+            var source=sources.get(item.sourceId()).orElseThrow();
+            var request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            // The write was already claimed before takeover. Recovery may only read its outcome.
+            var found=clients.pullRequestSink(account).findByHead(source.repository(),request.headBranch(),request.baseBranch());
+            if(found.isEmpty())return;
+            var pr=found.orElseThrow();runs.pullRequestOpened(effect.run(),pr.number(),pr.url());
+            QuarkusTransaction.requiringNew().run(()->{
+                try(var c=dataSource.getConnection()) {
+                    sources.get(c,item.sourceId(),true);policies.get(c,item.repositoryId(),true);WorkItemTransitions.lockItem(c,item.workItemId());
+                    var claimed=read(c,effect.attempt(),true);
+                    if(claimed==null || !"proposing".equals(claimed.state()))return;
+                    var history=store.history(item.workItemId());var current=(WorkItemEvent)history.getLast().payload();
+                    if(!Set.of("suspended","retired").contains(current.workflowStatus()))return;
+                    var execution=current.progress().execution();
+                    if(execution!=null && effect.run().equals(execution.runId()))
+                        store.appendDecision(c,history,WorkItemLifecycle.state(current,current.workflowStatus(),current.reason(),"PUBLICATION_OBSERVED",
+                                current.gate(),current.progress().withExecution(execution.delivered(pr))),"held-proposal:"+effect.attempt());
+                    state(effect,"delivered","publication_observed_after_takeover");
+                }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+                catch(java.io.IOException failure){throw new IllegalStateException("Cannot record publication outcome",failure);}
+            });
+        }catch(RuntimeException | java.io.IOException unavailable) { /* Preserve the proposing row; the next sweep only re-reads. */ }
     }
 
     private Claim claim(Effect expected,WorkItemTransitions.Observation observed) {
@@ -220,7 +251,8 @@ public class WorkDelivery {
     }
     private void stopLocked(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,Effect effect,String reason) throws SQLException,java.io.IOException {
         state(effect,"refused",reason);
-        if(item.generation()==effect.generation() && Objects.equals(item.progress().attemptId(),effect.attempt()))
+        if(item.generation()==effect.generation() && Objects.equals(item.progress().attemptId(),effect.attempt())
+                && !Set.of("suspended","retired").contains(item.workflowStatus()))
             store.appendDecision(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt());
     }
 }

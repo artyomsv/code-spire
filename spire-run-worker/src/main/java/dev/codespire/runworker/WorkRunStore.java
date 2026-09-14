@@ -26,6 +26,19 @@ public class WorkRunStore {
                        String state, RunResult.RunWorkReady ready, RunResult terminal,
                        RunCommand.PublishWorkRun permit, java.time.Instant updatedAt) {}
 
+    public void revoke(RunCommand.HoldWorkRun command) {
+        update("INSERT INTO runworker.work_publication_revocation(run_id,binding) VALUES (?,?) ON CONFLICT DO NOTHING",
+                command.runId(),command.work().publicationKey());
+    }
+
+    public boolean revoked(RunCommand.ExecuteWorkRun command) {
+        try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(
+                "SELECT 1 FROM runworker.work_publication_revocation WHERE run_id=? AND binding=?")) {
+            ps.setString(1,command.runId());ps.setString(2,command.work().publicationKey());
+            try(ResultSet rs=ps.executeQuery()){return rs.next();}
+        }catch(SQLException failure){throw database(failure);}
+    }
+
     public boolean claim(RunCommand.ExecuteWorkRun execution) {
         byte[] payload = encode(execution.runId(), "execution", execution);
         try (Connection c = dataSource.getConnection()) {
@@ -120,6 +133,7 @@ public class WorkRunStore {
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE runworker.work_run SET state='publishing',permit=?,permit_id=?,updated_at=now()
                     WHERE run_id=? AND NOT EXISTS (SELECT 1 FROM runworker.run_claim WHERE run_id=? AND slot='cancel')
+                        AND NOT EXISTS (SELECT 1 FROM runworker.work_publication_revocation h WHERE h.run_id=work_run.run_id AND h.binding=work_run.binding)
                     """)) {
                 ps.setBytes(1, encode(request.runId(), "permit", request));
                 ps.setObject(2, request.permit().deliveryAttemptId());
@@ -147,6 +161,8 @@ public class WorkRunStore {
                 SELECT * FROM runworker.work_run WHERE state IN ('building','publishing')
                     OR (state='ready' AND EXISTS (SELECT 1 FROM runworker.run_claim c
                         WHERE c.run_id=work_run.run_id AND c.slot='cancel'))
+                    OR (state='ready' AND EXISTS (SELECT 1 FROM runworker.work_publication_revocation h
+                        WHERE h.run_id=work_run.run_id AND h.binding=work_run.binding))
                 ORDER BY updated_at LIMIT 20
                 """);
              ResultSet rows=ps.executeQuery()) {

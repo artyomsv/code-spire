@@ -33,6 +33,7 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.ManualCommandReceived.class, name = "ManualCommandReceived"),
         @JsonSubTypes.Type(value = IntegrationEvent.AuthorReplied.class, name = "AuthorReplied"),
         @JsonSubTypes.Type(value = IntegrationEvent.PushReceived.class, name = "PushReceived"),
+        @JsonSubTypes.Type(value = IntegrationEvent.RepositoryActivity.class, name = "RepositoryActivity"),
         @JsonSubTypes.Type(value = IntegrationEvent.DiffFetched.class, name = "DiffFetched"),
         @JsonSubTypes.Type(value = IntegrationEvent.ContextRequested.class, name = "ContextRequested"),
         @JsonSubTypes.Type(value = IntegrationEvent.ContextContributed.class, name = "ContextContributed"),
@@ -52,6 +53,10 @@ public sealed interface IntegrationEvent {
     enum PrAction { OPENED, UPDATED }
 
     enum CloseReason { MERGED, DECLINED }
+
+    /** Signed acting identity, never a commit author. Comment text is reduced to an explicit command. */
+    record RepositoryActivity(RepoRef repo,String kind,String actorId,String branch,String head,long prId,
+                              String reviewId,String commentId,boolean fixCommand) implements IntegrationEvent {}
 
     // --- ingress (produced by spire-gateway / ScmIngress) ---
 

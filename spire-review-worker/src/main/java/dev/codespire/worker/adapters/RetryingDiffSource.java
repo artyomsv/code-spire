@@ -98,6 +98,11 @@ public class RetryingDiffSource implements DiffSource {
     }
 
     @Override
+    public String fetchBranchHead(RepoRef repo, String branch) {
+        return withRetry("fetchBranchHead", () -> delegate.fetchBranchHead(repo, branch));
+    }
+
+    @Override
     public void assertRepoAccessible(RepoRef repo) {
         withRetry("assertRepoAccessible", () -> {
             delegate.assertRepoAccessible(repo);

@@ -7,6 +7,25 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WorkItemLifecycleTest {
+    @Test void recordedControlSurvivesPersistedEventRoundTrip()throws Exception {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        var item=decide(profile(Map.of(WorkPolicy.Phase.INTAKE,"auto",WorkPolicy.Phase.SPEC,"auto")))
+                .controlled(new WorkControl("TEST-run",new WorkRunBinding("TEST-item",1,UUID.randomUUID(),"a".repeat(64)),
+                        "TEST-branch","900001","900002","TEST-operator","TEST-reviewed changes","b".repeat(40),"TEST-tracker-id"));
+        assertEquals(item,mapper.readValue(mapper.writeValueAsBytes(item),WorkItemEvent.class));
+    }
+    @Test void olderEventWithoutControlStillReplays()throws Exception {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        var item=decide(profile(Map.of(WorkPolicy.Phase.INTAKE,"auto",WorkPolicy.Phase.SPEC,"auto")));
+        var json=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.valueToTree(item);json.remove("control");
+        assertEquals(item,mapper.treeToValue(json,WorkItemEvent.class));
+    }
+    @Test void policyObservationPreservesTheRecordedTrackerIdentityBeforeAnyPhaseStarts() {
+        var previous=decide(profile(Map.of(WorkPolicy.Phase.INTAKE,"auto",WorkPolicy.Phase.SPEC,"auto")))
+                .controlled(new WorkControl(null,null,null,null,null,null,null,null,"TEST-stable-tracker-id"));
+        var next=WorkItemLifecycle.reconcile("TEST-item",source,repository,issue,2,authority(),previous.policy(),previous);
+        assertEquals(previous.control(),next.control());
+    }
     WorkItemEvent.Authority authority(){return new WorkItemEvent.Authority(UUID.randomUUID(),1,1,1);}
     final UUID source=UUID.randomUUID(),repository=UUID.randomUUID();
     final WorkIssueLocation issue=new WorkIssueLocation(new WorkIssueRef(WorkSourceType.GITHUB,"https://tracker.example.test","TEST-project","TEST-issue"),"TEST-42",URI.create("https://tracker.example.test/TEST-42"));

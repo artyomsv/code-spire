@@ -5,7 +5,7 @@ export interface Gate {
   phase: string; generation: number; itemRevision: number; policyRevision: number; artifact: string | null;
   openedAt: string; expiresAt: string; resolver: string | null; channel: string | null; note: string | null;
 }
-export interface Approval { workItemId: string; issueKey: string; gate: Gate }
+export interface Approval { workItemId: string; issueKey: string; gate: Gate; prReviewAvailable?: boolean; prReviewDetail?: string; trackerCommand?: string }
 export async function approvals(history = false): Promise<Approval[]> {
   const response = await apiFetch(`/api/approvals?history=${history}`);
   if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);

@@ -85,6 +85,10 @@ public class RunControlListener {
     }
 
     private void dispatch(RunCommand command) {
+        if(command instanceof RunCommand.HoldWorkRun hold) {
+            workRuns.hold(hold);
+            return;
+        }
         if (command instanceof RunCommand.PublishWorkRun publication) {
             workRuns.publish(publication);
             return;

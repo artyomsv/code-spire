@@ -11,6 +11,7 @@ public enum RepositoryEventKind {
                     || event instanceof IntegrationEvent.ManualCommandReceived
                     || event instanceof IntegrationEvent.AuthorReplied;
             case FACTORY -> event instanceof IntegrationEvent.PullRequestEventReceived
+                    || event instanceof IntegrationEvent.RepositoryActivity
                     || event instanceof IntegrationEvent.PullRequestClosed
                     || event instanceof IntegrationEvent.PushReceived;
             case ISSUE -> false;

@@ -22,10 +22,14 @@ public final class GitLabWorkIngress implements WorkSourceIngress {
     @Override public List<WorkSourceSignal> translate(Map<String,String> headers, byte[] body, String configuredOrigin) {
         if (!signatures.verifySignature(new RawWebhook(headers,body))) throw new WorkSourceException("Invalid GitLab work-source token.");
         String kind = headers.entrySet().stream().filter(e -> e.getKey().equalsIgnoreCase("X-Gitlab-Event")).map(Map.Entry::getValue).findFirst().orElse("");
-        if (!"Issue Hook".equals(kind)) return List.of();
+        if (!Set.of("Issue Hook","Note Hook").contains(kind)) return List.of();
         try {
-            JsonNode root = mapper.readTree(body), project = root.path("project"), issue = root.path("object_attributes");
-            if (!"issue".equals(root.path("object_kind").asText())) throw new IllegalArgumentException("Not an issue hook");
+            JsonNode root = mapper.readTree(body), project = root.path("project"), attributes=root.path("object_attributes");
+            boolean comment="Note Hook".equals(kind);
+            if(comment && !"Issue".equals(attributes.path("noteable_type").asText()))return List.of();
+            if(comment && (attributes.path("system").asBoolean(false) || !"create".equals(attributes.path("action").asText("create"))))return List.of();
+            JsonNode issue=comment?root.path("issue"):attributes;
+            if (!(comment?"note":"issue").equals(root.path("object_kind").asText())) throw new IllegalArgumentException("Not an issue hook");
             String scope = project.path("path_with_namespace").asText();
             if (!scope.matches("[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+")
                     || Arrays.stream(scope.split("/")).anyMatch(s -> s.equals(".") || s.equals(".."))) throw new IllegalArgumentException("Invalid scope");
@@ -34,6 +38,12 @@ public final class GitLabWorkIngress implements WorkSourceIngress {
             WorkIssueRef ref = new WorkIssueRef(WorkSourceType.GITLAB, ForgeOrigin.of(configuredOrigin), projectId, id(issue.path("id")));
             String number = id(issue.path("iid"));
             WorkIssueLocation location = new WorkIssueLocation(ref, number, URI.create(ForgeOrigin.of(configuredOrigin) + "/" + scope + "/-/issues/" + number));
+            if(!comment && "delete".equals(attributes.path("action").asText()))
+                return List.of(new WorkSourceSignal(scope,location,null,new WorkSourceActivity("retired:"+ref.issueId(),root.path("user").path("id").asText(null),null,null,true)));
+            if(comment) {
+                String actor=root.path("user").path("id").isIntegralNumber()?id(root.path("user").path("id")):null;
+                return List.of(new WorkSourceSignal(scope,location,null,WorkSourceActivity.comment(id(attributes.path("id")),actor,attributes.path("note").asText(""))));
+            }
             JsonNode delta = root.path("changes").path("labels");
             if (delta.isMissingNode()) return List.of(new WorkSourceSignal(scope, location, null));
             Set<String> before = labels(delta.path("previous")), after = labels(delta.path("current"));

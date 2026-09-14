@@ -35,13 +35,24 @@ public class FixPermissionService {
 
     @Transactional(Transactional.TxType.NOT_SUPPORTED)
     public FixAuthorization.Decision authorize(UUID repositoryId, String actorId) {
+        return authorize(repositoryId,actorId,false);
+    }
+
+    /** A PR gate requires measured write access; an ALLOW override cannot substitute for it. */
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
+    public FixAuthorization.Decision authorizeApproval(UUID repositoryId,String actorId) {
+        return authorize(repositoryId,actorId,true);
+    }
+
+    private FixAuthorization.Decision authorize(UUID repositoryId,String actorId,boolean measuredRequired) {
         RepositoryPermission unreadable = RepositoryPermission.unknown("Effective repository permission could not be read.");
         if (actorId == null || actorId.isBlank()) return FixAuthorization.decide(actorId, null, unreadable);
         try {
             Snapshot snapshot = QuarkusTransaction.requiringNew().call(() -> snapshot(repositoryId, actorId));
             if (snapshot == null) return unavailableRepository();
             FixAuthorization.Override override = snapshot.registration().override();
-            if (override != null) return FixAuthorization.decide(actorId, override, unreadable);
+            if (override != null && (!measuredRequired || override==FixAuthorization.Override.DENY))
+                return FixAuthorization.decide(actorId, override, unreadable);
 
             // The short transaction has committed and released its connection. Saves and other
             // permission reads can proceed while the forge is slow; no database lock crosses this call.

@@ -57,6 +57,14 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         client.getJson("/projects/" + encodedProject(repo));
     }
 
+    @Override public String fetchBranchHead(RepoRef repo,String branch) {
+        var row=client.getJson("/projects/"+encodedProject(repo)+"/repository/branches/"+URLEncoder.encode(branch,StandardCharsets.UTF_8));
+        String head=row.path("commit").path("id").asText("");
+        if(!branch.equals(row.path("name").asText()) || !head.matches("[0-9a-f]{40}|[0-9a-f]{64}"))
+            throw new IllegalStateException("Current branch identity could not be verified");
+        return head;
+    }
+
     @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode mr = client.getJson(mrPath(repo, prId));

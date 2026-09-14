@@ -97,6 +97,14 @@ public class BitbucketCloudDiffSource implements DiffSource, IdentitySource {
         client.getJson("/repositories/" + repo.full());
     }
 
+    @Override public String fetchBranchHead(RepoRef repo,String branch) {
+        var row=client.getJson("/repositories/"+repo.full()+"/refs/branches/"+java.net.URLEncoder.encode(branch,java.nio.charset.StandardCharsets.UTF_8));
+        String head=row.path("target").path("hash").asText("");
+        if(!branch.equals(row.path("name").asText()) || !head.matches("[0-9a-f]{40}|[0-9a-f]{64}"))
+            throw new IllegalStateException("Current branch identity could not be verified");
+        return head;
+    }
+
     @Override
     public PullRequest fetchPullRequest(RepoRef repo, long prId) {
         JsonNode pr = client.getJson(prPath(repo, prId));

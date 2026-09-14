@@ -45,11 +45,13 @@ function Decision({ row, admin, resolved }: { row: api.Approval; admin: boolean;
     <p>Generation {row.gate.generation} · Policy revision {row.gate.policyRevision} · {row.gate.state}</p>
     <p>Expires: <time dateTime={row.gate.expiresAt}>{row.gate.expiresAt}</time></p>
     <p>{row.gate.artifact ? `Artifact or head: ${row.gate.artifact}` : 'No artifact bound to this decision.'}</p>
+    <p>PR review: {row.prReviewAvailable ? 'Available' : 'Unavailable'}. {row.prReviewDetail ?? 'Use the dashboard.'}</p>
+    {row.gate.state === 'OPEN' && row.trackerCommand && <p>Allowed people may answer on the linked ticket: <code>{row.trackerCommand}</code>. Use /reject with the same binding to refuse.</p>}
     {row.gate.resolver && <p>Decided by {row.gate.resolver} via {row.gate.channel}</p>}
     {row.gate.note && <p>{row.gate.note}</p>}
-    {admin && row.gate.state === 'OPEN' && <fieldset disabled={busy}><legend>Record a decision</legend>
+    {admin && row.gate.state === 'OPEN' && <fieldset className="modal-body" style={{ borderWidth: 0, borderStyle: 'none', margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">Record a decision</legend>
       <label className="field">Decision note<textarea value={note} onChange={event => setNote(event.target.value)} /></label>
-      <button className="btn" onClick={() => void submit(true)}>Approve</button><button className="btn" onClick={() => void submit(false)}>Reject</button>
+      <div className="prov-actions"><button className="btn" onClick={() => void submit(true)}>Approve</button><button className="btn" onClick={() => void submit(false)}>Reject</button></div>
     </fieldset>}
     {error && <p role="alert">{error}</p>}
   </article>;

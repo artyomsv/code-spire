@@ -21,6 +21,7 @@ class WorkDeliveryIT extends WorkPreparedFixture {
     @Inject WorkRunTransport runTransport;
     @Inject RunResultSaga saga;
     @Inject FactoryRunProjection runs;
+    @Inject WorkItemControl control;
     final List<RunCommand.PublishWorkRun> permits=new ArrayList<>();
     final List<String> cancelled=new ArrayList<>();
     RunLaunch.Outcome publicationOutcome=new RunLaunch.Dispatched();
@@ -225,6 +226,44 @@ class WorkDeliveryIT extends WorkPreparedFixture {
         delivery.advance(attempt);assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE work_item_id=? AND state='proposing'",id));
         forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(okJson("["+proposed(false)+"]")));
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());
+        forge.verify(1,postRequestedFor(urlPathEqualTo(pulls())));assertEquals(1,permits.size());
+    }
+    @Test void takeoverCancelsPendingDeliveryAndDurablyRequestsTheExactRunHold() throws Exception {
+        String id=buildForVerification("autonomous");UUID attempt=verify(id);var execution=store.load(id).progress().execution();
+        control.suspend(id,"scm","TEST-takeover-before-permit","900123",execution.head());
+        delivery.advance(attempt);
+        assertEquals("suspended",store.load(id).workflowStatus());assertTrue(permits.isEmpty());
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='refused'",attempt));
+        assertEquals(1,count("SELECT count(*) FROM work_run_hold_outbox WHERE run_id=? AND work_item_id=? AND generation=? AND build_attempt_id=? AND preparation_binding=?",
+                execution.runId(),id,execution.build().generation(),execution.build().buildAttemptId(),execution.build().preparationBinding()));
+        assertFalse(store.load(id).progress().reserved());forge.verify(0,postRequestedFor(urlPathEqualTo(pulls())));
+    }
+    @Test void takeoverPreservesAnInFlightProposalOutcomeWithoutResumingOrPostingAgain() throws Exception {
+        String id=buildForVerification("autonomous");UUID attempt=verify(id);delivery.advance(attempt);publisherFinished(id);
+        forge.stubFor(post(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(503)));
+        delivery.advance(attempt);
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='proposing'",attempt));
+        control.suspend(id,"scm","TEST-takeover-during-proposal","900123","b".repeat(40));
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(okJson("["+proposed(false)+"]")));
+        var target=io.quarkus.arc.ClientProxy.unwrap(delivery);var original=target.runs;
+        var bothObserved=new java.util.concurrent.CountDownLatch(2);
+        target.runs=new FactoryRunProjection(){
+            @Override public Optional<RunView> find(String run){return original.find(run);}
+            @Override public void pullRequestOpened(String run,long number,String url){
+                original.pullRequestOpened(run,number,url);bothObserved.countDown();
+                try{assertTrue(bothObserved.await(20,java.util.concurrent.TimeUnit.SECONDS));}
+                catch(InterruptedException failure){throw new AssertionError(failure);}
+            }
+        };
+        try(var pool=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first=pool.submit(()->delivery.advance(attempt));var second=pool.submit(()->delivery.advance(attempt));
+            first.get(30,java.util.concurrent.TimeUnit.SECONDS);second.get(30,java.util.concurrent.TimeUnit.SECONDS);
+        }finally{target.runs=original;}
+        delivery.advance(attempt);
+        var item=store.load(id);assertEquals("suspended",item.workflowStatus());assertNotNull(item.progress().execution().pullRequest());
+        assertEquals(901,item.progress().execution().pullRequest().number());
+        assertEquals(1,store.history(id).stream().map(e->(WorkItemEvent)e.payload()).filter(e->"PUBLICATION_OBSERVED".equals(e.milestone())).count());
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='delivered'",attempt));
         forge.verify(1,postRequestedFor(urlPathEqualTo(pulls())));assertEquals(1,permits.size());
     }
     @Test void aStalePublicationReaderCannotRearmAClaimedProposal() throws Exception {

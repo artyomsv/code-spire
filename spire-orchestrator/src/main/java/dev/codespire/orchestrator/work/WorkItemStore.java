@@ -62,6 +62,11 @@ public class WorkItemStore {
             WorkItemEvent.Authority authority = new WorkItemEvent.Authority(current.accountId(), current.version().source(),
                     current.version().account(), current.version().repository());
             WorkItemEvent next = WorkItemLifecycle.reconcile(id, current.id(), current.repositoryId(), evidence.issue(), policy.revision(), authority, selection, previous);
+            if(previous==null)try(var ps=c.prepareStatement("SELECT bot_account_id FROM scm_provider WHERE id=?")) {
+                ps.setObject(1,current.accountId());try(var rs=ps.executeQuery()) {
+                    if(rs.next())next=next.controlled(new WorkControl(null,null,null,null,null,null,null,null,rs.getString(1)));
+                }
+            }
             next = transitions.admission(next, history.size());
             if (next.equals(previous)) { sources.health(current.id(), "healthy"); return id; }
             appendDecision(c, history, next, deliveryId);
@@ -110,11 +115,23 @@ public class WorkItemStore {
     }
 
     private void projectExecution(Connection c,WorkItemEvent item) throws SQLException {
-        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED").contains(item.milestone())) {
+        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
+        }
+        if(Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
+            try(var ps=c.prepareStatement("UPDATE work_delivery_effect SET state='refused',reason='publication_held_by_human' WHERE work_item_id=? AND state IN ('pending','publishing','pushed')")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
+            try(var ps=c.prepareStatement("""
+                    INSERT INTO work_run_hold_outbox(run_id,work_item_id,generation,build_attempt_id,preparation_binding)
+                    SELECT run_id,work_item_id,generation,attempt_id,preparation_binding FROM work_run_effect
+                    WHERE work_item_id=? AND run_id IS NOT NULL AND preparation_binding IS NOT NULL ON CONFLICT DO NOTHING
+                    """)) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
         }

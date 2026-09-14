@@ -26,6 +26,7 @@ export interface WorkItemPage {
 }
 
 export interface WorkItemDetail extends WorkItemSummary {
+  control?: { operator: string | null; note: string | null; observedHead: string | null } | null;
   preparation?: Preparation | null;
   builds?: WorkBuild[];
   progress?: { execution?: WorkExecution | null };
@@ -42,9 +43,9 @@ export interface WorkItemDetail extends WorkItemSummary {
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
 }
 
-export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean): Promise<void> {
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<void> {
   const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedRevision: item.revision, readmit }) });
+    body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
   if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
 }
 

@@ -15,6 +15,24 @@ import static io.restassured.RestAssured.given;
 
 @QuarkusTest @TestSecurity(user="TEST-prepared-admin",roles="spire-admin")
 class WorkRunDispatchTest extends WorkPreparedFixture {
+    @Inject WorkItemControl control;
+    @Test void takeoverInvalidatesTheUnstartedBuildBeforeAnyDispatcherRecheck()throws Exception {
+        String id=ready();assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND state='pending'",id));
+        control.suspend(id,"tracker","TEST-before-dispatch","900123",null);
+        assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND state='refused'",id));
+        assertEquals("suspended",store.load(id).workflowStatus());assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
+    }
+    @Test void dispatchRecordsServingIdentityAndPreservesTrackerIdentityFromAdmission() throws Exception {
+        execute("UPDATE scm_provider SET bot_account_id='900001' WHERE id=?",account);
+        String id=ready();assertEquals("900001",store.load(id).control().trackerActor());
+        execute("UPDATE scm_provider SET bot_account_id='900002' WHERE id=?",account);
+        dispatcher.drain();var item=store.load(id);var command=heldCommands.getLast();
+        assertEquals(command.runId(),item.control().runId());assertEquals(command.work(),item.control().build());
+        assertEquals(command.execution().branch(),item.control().branch());
+        assertEquals("900002",item.control().factoryActor());assertEquals("900001",item.control().trackerActor());
+        execute("UPDATE scm_provider SET bot_account_id='900003',bot_username='TEST-renamed-again' WHERE id=?",account);
+        assertEquals("900002",store.load(id).control().factoryActor());
+    }
     @Inject RunResultSaga saga;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly assembly;
     String ready() throws Exception {String id=admit("autonomous",56);register(id);return id;}

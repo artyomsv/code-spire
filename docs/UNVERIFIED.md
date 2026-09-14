@@ -33,6 +33,24 @@ evidence would settle it**.
 
 ---
 
+## External work approvals and takeover (M3 slice 9, 2026-09-14)
+
+Slice 9's native GitHub approval reads and GitHub/GitLab/Bitbucket activity payloads are tested
+against controlled provider responses. Tracker answers exercise the real PostgreSQL aggregate;
+Jira Cloud comment polling has adapter and aggregate tests. No live external gate answer or
+operator resume is claimed. GitLab and Bitbucket native approval channels are explicitly
+unavailable; Jira Data Center comment polling is unavailable. GitHub approval refuses incomplete
+review history after 20 pages. Jira processes individual comments and reports a polling failure
+if its 20-page bound is exceeded. Live provider evidence,
+including token visibility, dismissal delivery, issue transfer payloads and renamed account
+observations, remains necessary to establish those deployment paths.
+
+The publication revocation does have an actual killed-JVM proof against a real local Git origin:
+the hold commits before the process dies, an otherwise valid permit is refused without an M1
+cancel claim, and a fresh worker/watchdog cannot publish it. This is separate from slice 8b's
+accepted live standalone `/fix` proof. It does not establish atomic ordering with a human's remote
+push or guarantee recall of a publication already in progress.
+
 ## Work-source GitHub label audit and tracker writes (2026-09-13)
 
 Slice 5 measures signed issue normalization, repository metadata and stable-ID checks, current

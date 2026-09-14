@@ -44,6 +44,29 @@ it('rechecks the displayed item revision before resuming', async () => {
   await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(detail(), false));
 });
 
+it('requires an operator note to resume suspended work and shows the recorded head', async () => {
+  const suspended = { ...detail(), workflowStatus: 'suspended', control: { operator: '900123', note: 'TEST-human takeover', observedHead: 'b'.repeat(40) } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(suspended);
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue();showDetail();
+  const resume = await screen.findByRole('button', { name: 'Recheck and resume' });expect(resume).toBeDisabled();
+  expect(screen.getByText(/Operator: 900123/)).toHaveTextContent('TEST-human takeover');
+  expect(screen.getByText(/Observed head:/)).toHaveTextContent('b'.repeat(40));
+  fireEvent.change(screen.getByLabelText('Resume note'), { target: { value: 'TEST-reviewed human changes' } });
+  expect(resume).toBeEnabled();fireEvent.click(resume);
+  await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(suspended, false, 'TEST-reviewed human changes'));
+});
+
+it('never offers resume or readmission for a retired identity', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'retired' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Re-admit under current policy' })).not.toBeInTheDocument();
+});
+
 it('shows a refused resume without claiming that work continued', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());

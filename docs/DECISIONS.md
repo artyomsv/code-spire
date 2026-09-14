@@ -49,12 +49,38 @@ request body. Restart sweeps persisted overdue gates; ordinary retries cannot re
 Expiry takes the same local registry, policy and item lock order as an answer: projection foreign
 keys also lock parent rows. It needs no successful remote read to revoke an overdue decision.
 
-**FR-F22 / FR-F25 conflict.** FR-F22 authorizes an explicit `/fix`; FR-F25 says a human comment takes
-over. Classify an authenticated, authorized explicit command and a matching gate answer before
+**FR-F22 / FR-F25 conflict.** FR-F22 treats a person's commenting as takeover; FR-F25 permits
+that same comment channel to carry a gate answer. Gate answers and authorized `/fix` commands
+are deliberate workflow actions. Classify and deduplicate them before
 ordinary comment takeover. An ordinary comment is neither an approval nor a resume instruction.
 A command that fails its authorization checks cannot borrow the gate-answer exception. The tracker
 and PR-review channels must prove their own stable actor and current artifact/head before entering
 the same decision boundary; the dashboard permission does not grant them authority.
+
+All three channels enter `ResolveGate` and persist `GATE_RESOLVED`. Tracker answers require an exact
+`/approve <gate-id> <generation> <artifact>` or `/reject` command (`-` explicitly binds an absent
+artifact), by a person allowed in that source. Signed GitHub/GitLab comments and authenticated Jira
+Cloud comment polling carry only coordinates, the stable actor and parsed command, never prose.
+Jira Data Center cannot prove person identity here. Native PR review answers are restricted to an
+open land gate and the linked PR's current head. GitHub re-reads the named review, the person's
+latest decisive review and open PR state; other forges visibly disable native approval answers.
+An unmatched PR approval is not a resume command and cannot reactivate a suspended item.
+
+Takeover compares stable identities recorded for the item/build, including the tracker writer's
+separate namespace. Display names, commit author text and replacement accounts do not redefine a
+recorded bot. Missing origin suspends conservatively, and unrelated repository/branch/PR activity
+does not target the item. Takeover supersedes gates, releases reservations, refuses unstarted
+effects and durably requests a publication revocation. The worker commits that revocation before
+stopping compute; fresh permits, restart and orphan salvage cannot restore publication authority.
+M1 cancellation alone is insufficient because it can salvage and publish.
+
+An already executing remote publication cannot be recalled. Its observed push/PR remains recorded
+without completing a suspended item's phase. Webhook receipt is not atomically ordered with a
+remote human push. Operator resume requires a verified subject, expected item revision and note,
+re-fetches tracker/repository/head evidence, re-resolves policy and starts a new bounded generation.
+A moved head discards the old preparation and requires fresh artifacts. Any required gate opens
+before execution. Old runs retain their publication revocations. A retired item cannot resume;
+its replacement needs a new identity and admission.
 
 **Consequences.** The UI displays requested profile, ceiling, actual modes, limits and clamp reason;
 it does not invent a profile name for a composite vector. Usage and attempt identities persist across

@@ -27,11 +27,26 @@ class WorkRunStoreTest {
     @AfterEach void deleteExactFixtures() throws Exception {
         try(Connection c=dataSource.getConnection()) {
             for(String id:ids) {
+                try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.work_publication_revocation WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.work_run WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.run_claim WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.run_lease WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
             }
         }
+    }
+
+    @Test void revocationCanCommitBeforeExecutionAndRedeliverIdempotently() {
+        var command=command();var hold=new RunCommand.HoldWorkRun(command.runId(),command.work());
+        store.revoke(hold);store.revoke(hold);assertTrue(store.find(command.runId()).isEmpty());
+        assertTrue(store.revoked(command));assertFalse(claims.taken(command.runId(),RunDispatcher.CANCEL_SLOT));
+        assertTrue(store.claim(command));assertTrue(store.revoked(store.find(command.runId()).orElseThrow().execution()));
+    }
+    @Test void anotherBuildBindingCannotRevokeThisRun() {
+        var command=command();var original=command.work();
+        var other=new WorkRunBinding(original.workItemId(),original.generation()+1,original.buildAttemptId(),original.preparationBinding());
+        store.revoke(new RunCommand.HoldWorkRun(command.runId(),other));assertFalse(store.revoked(command));
+        store.claim(command);store.saveUnit(command.runId(),unit(command.runId()));store.buildResult(ready(command));
+        assertTrue(store.claimPublication(permit(command,command.work(),"b".repeat(40),Instant.now().minusSeconds(1),Instant.now().plusSeconds(60))));
     }
 
     @Test void claimAndEncryptedExecutionAreOneDurableDecision() throws Exception {

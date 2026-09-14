@@ -151,7 +151,8 @@ class ContractSchemaSnapshotTest {
         lines.add("");
         // These nested permit identities cross the bus too; the root renderer does not recurse.
         for(Class<?> nested:List.of(dev.codespire.contract.work.WorkRunBinding.class,dev.codespire.contract.work.WorkPublicationPermit.class,
-                dev.codespire.contract.work.WorkProgress.class,dev.codespire.contract.work.WorkExecution.class,dev.codespire.contract.scm.PullRequestRef.class)) {
+                dev.codespire.contract.work.WorkProgress.class,dev.codespire.contract.work.WorkExecution.class,dev.codespire.contract.scm.PullRequestRef.class,
+                dev.codespire.contract.work.WorkControl.class)) {
             lines.add("# "+nested.getSimpleName());
             lines.add(render(nested,nested.getSimpleName()));
             lines.add("");

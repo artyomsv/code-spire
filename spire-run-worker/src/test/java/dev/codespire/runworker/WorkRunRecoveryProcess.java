@@ -45,6 +45,10 @@ public final class WorkRunRecoveryProcess {
         PublicationRuntime runtime=(PublicationRuntime)Proxy.newProxyInstance(WorkRunRecoveryProcess.class.getClassLoader(),
                 new Class<?>[]{PublicationRuntime.class},(proxy,method,arguments)->{
                     if(method.getName().equals("discoverUnits"))return docker.discoverUnits().stream().filter(unit->unit.runId().equals(id)).toList();
+                    if(method.getName().equals("cancel") && mode.equals("hold")) {
+                        write(mapper,directory,"revoked.json",Map.of("revoked",store.revoked(command),"cancelClaim",claims.taken(id,RunDispatcher.CANCEL_SLOT)));
+                        new CountDownLatch(1).await(); // Kill after the revocation commit, before Docker sees stop.
+                    }
                     if(method.getName().equals("publishHeld") && mode.equals("claim")) {
                         write(mapper,directory,"publishing.json",Map.of("state",store.find(id).orElseThrow().state(),"builds",builds.get()));
                         new CountDownLatch(1).await(); // Parent kills this JVM after the durable permit claim, before publisher IO.
@@ -73,10 +77,11 @@ public final class WorkRunRecoveryProcess {
         } else {
             OrphanWatchdog watchdog=new OrphanWatchdog();watchdog.runtime=runtime;watchdog.leases=leases;watchdog.claims=claims;
             watchdog.registry=registry;watchdog.results=reporter;watchdog.enabled=true;watchdog.staleAfterSeconds=60;
-            watchdog.sweep();
+            if(!mode.equals("hold"))watchdog.sweep(); // The hold probe stops inside explicit control, before any orphan stop.
             write(mapper,directory,"recovered-"+mode+".json",Map.of("held",runtime.publicationHeld(new RunHandle(id,id)),
                     "head",store.find(id).orElseThrow().ready().head(),"builds",builds.get(),"owner",leases.ownerId()));
-            if(Set.of("claim","observe").contains(mode)) {
+            if(mode.equals("hold"))worker.hold(new RunCommand.HoldWorkRun(id,command.work()));
+            else if(Set.of("claim","observe").contains(mode)) {
                 Path permit=directory.resolve("permit.json");long deadline=System.nanoTime()+Duration.ofSeconds(60).toNanos();
                 while(!Files.isRegularFile(permit) && System.nanoTime()<deadline)Thread.sleep(25);
                 worker.publish(mapper.readValue(Files.readAllBytes(permit),RunCommand.PublishWorkRun.class));

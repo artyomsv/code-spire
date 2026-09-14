@@ -69,6 +69,21 @@ public final class JiraWorkSource implements WorkSource {
         for (JsonNode issue : response.path("issues")) result.add(location(issue));
         return new WorkPage<>(result, next);
     }
+
+    @Override public boolean pollsActivities() {return cloud;}
+    @Override public WorkPage<WorkSourceActivity> activities(WorkIssueLocation issue,String cursor) {
+        if(!cloud)throw failure("Jira Data Center comment identities cannot be verified here.");
+        requireIssue(issue);int offset=offset(cursor);
+        var rows=evidence(read,issuePath(issue)+"/comment?startAt="+offset+"&maxResults=100&orderBy=created").body();
+        String next=nextOffset(rows,"comments",offset);List<WorkSourceActivity> result=new ArrayList<>();
+        for(var row:rows.path("comments")) {
+            String actor=row.path("author").path("accountId").asText(null);
+            if(!row.path("body").isTextual())throw failure("Jira comment text could not be verified.");
+            var created=Instant.parse(row.path("created").asText().replaceFirst("([+-][0-9]{2})([0-9]{2})$", "$1:$2"));
+            result.add(WorkSourceActivity.comment(id(row.path("id")),actor,row.path("body").asText()).at(created));
+        }
+        return new WorkPage<>(result,next);
+    }
     @Override public WorkIssueLocation resolve(String issueKey) {
         if (issueKey == null || !issueKey.matches(java.util.regex.Pattern.quote(scope.name()) + "-[1-9][0-9]*"))
             throw failure("Enter an issue key in this source's project.");

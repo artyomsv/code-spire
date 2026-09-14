@@ -8,6 +8,24 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GitLabWorkIngressTest {
+    ObjectNode note() {
+        var root=payload().put("object_kind","note");root.set("issue",root.path("object_attributes"));
+        root.putObject("object_attributes").put("noteable_type","Issue").put("action","create").put("id",70001)
+                .put("note","/approve 10000000-0000-0000-0000-000000000001 1 -");return root;
+    }
+    java.util.List<WorkSourceSignal> comments(ObjectNode root)throws Exception {
+        return ingress.translate(Map.of("X-Gitlab-Event","Note Hook","X-Gitlab-Token","TEST-secret"),mapper.writeValueAsBytes(root),"https://gitlab.example.test");
+    }
+    @Test void signedIssueNoteCarriesStableActorAndBoundAnswer()throws Exception {
+        var signal=comments(note()).getFirst();assertEquals("900123",signal.activity().actorId());
+        assertEquals(1,signal.activity().answer().generation());assertEquals("50001",signal.issue().ref().issueId());
+    }
+    @Test void systemIssueNoteIsNotHumanActivity()throws Exception {
+        var root=note();((ObjectNode)root.path("object_attributes")).put("system",true);assertTrue(comments(root).isEmpty());
+    }
+    @Test void editedIssueNoteCannotBecomeANewGateAnswer()throws Exception {
+        var root=note();((ObjectNode)root.path("object_attributes")).put("action","update");assertTrue(comments(root).isEmpty());
+    }
     final ObjectMapper mapper=new ObjectMapper().findAndRegisterModules();
     final GitLabWorkIngress ingress=new GitLabWorkIngress("TEST-secret",mapper);
     final Map<String,String> headers=Map.of("X-Gitlab-Event","Issue Hook","X-Gitlab-Token","TEST-secret");

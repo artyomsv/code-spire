@@ -13,7 +13,7 @@ public final class WorkItemLifecycle {
                                           long policyRevision, WorkItemEvent.Authority authority, WorkPolicy.Selection policy, WorkItemEvent previous) {
         if(previous!=null && previous.policyRevision()==policyRevision && previous.authority().equals(authority)
                 && previous.policy().equals(policy) && previous.issue().equals(issue))return previous;
-        if (previous != null && (previous.preparation() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
+        if (previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus()) || previous.preparation() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
             return previous.decision(policyRevision,authority,policy,previous.phase(),previous.workflowStatus(),previous.reason(),
                     "POLICY_OBSERVED",previous.gate(),previous.progress());
         String intake = policy.effective().getOrDefault(WorkPolicy.Phase.INTAKE, "off");
@@ -41,7 +41,8 @@ public final class WorkItemLifecycle {
                 policyRevision, previous != null && previous.admittedProfile() != null ? previous.admittedProfile()
                         : policy.selected(), previous != null && previous.admittedProfile() != null ? previous.admittedModes()
                         : policy.effective(), authority, policy, phase, status, reason,
-                previous != null && previous.admittedProfile() != null ? previous.admittedLimits() : policy.limits(), "POLICY_OBSERVED");
+                previous != null && previous.admittedProfile() != null ? previous.admittedLimits() : policy.limits(), "POLICY_OBSERVED")
+                .controlled(previous==null?null:previous.control());
     }
 
     public static boolean clampChanged(WorkItemEvent previous, WorkItemEvent next) {
@@ -65,7 +66,7 @@ public final class WorkItemLifecycle {
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("approve".equals(mode) && !approved) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
-            WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),item.preparation()==null?null:item.preparation().binding(),
+            WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }

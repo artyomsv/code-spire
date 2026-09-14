@@ -18,14 +18,22 @@ public class WorkGateResource {
     @Inject WorkItemTransitions transitions;
     @Inject DataSource dataSource;
     @Inject SecurityIdentity identity;
-    public record View(String workItemId,String issueKey,WorkGate gate) {}
+    @Inject WorkGateChannels channels;
+    @Inject WorkItemStore store;
+    public record View(String workItemId,String issueKey,WorkGate gate,boolean prReviewAvailable,String prReviewDetail,String trackerCommand) {}
     public record Answer(long expectedVersion,String idempotencyKey,boolean approve,String note) {}
 
     @GET public List<View> list(@QueryParam("history") @DefaultValue("false") boolean history) {
         String sql=history?"SELECT g.id,g.work_item_id,w.issue_key FROM work_item_gate g JOIN work_item w ON w.id=g.work_item_id WHERE g.state<>'OPEN' ORDER BY g.opened_at DESC,g.id LIMIT 100"
                 :"SELECT g.id,g.work_item_id,w.issue_key FROM work_item_gate g JOIN work_item w ON w.id=g.work_item_id WHERE g.state='OPEN' ORDER BY g.expires_at,g.id LIMIT 100";
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(sql);ResultSet rs=ps.executeQuery()) {
-            List<View> rows=new ArrayList<>();while(rs.next())rows.add(new View(rs.getString(2),rs.getString(3),transitions.gateFromHistory(rs.getString(2),rs.getObject(1,UUID.class))));return List.copyOf(rows);
+            List<View> rows=new ArrayList<>();while(rs.next()) {
+                var item=store.load(rs.getString(2));var gate=transitions.gateFromHistory(rs.getString(2),rs.getObject(1,UUID.class));
+                boolean available="land".equals(gate.phase()) && channels.approvalAvailable(item.repositoryId());
+                rows.add(new View(rs.getString(2),rs.getString(3),gate,available,
+                        available?"A current human approval of the linked PR head may answer this land gate.":"PR review answers are unavailable for this forge or phase; use dashboard or tracker.",
+                        "/approve "+gate.id()+" "+gate.generation()+" "+(gate.artifact()==null?"-":gate.artifact())));
+            }return List.copyOf(rows);
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
     @POST @Path("/{id}/answer") @RolesAllowed("spire-admin")

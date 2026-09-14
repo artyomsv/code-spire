@@ -50,6 +50,33 @@ public class WorkItemTransitions {
         return advance(id,expectedRevision,observe(item),readmit,null);
     }
 
+    Outcome resumeControlled(String id,long expected,Observation observed,String subject,String note,String head) {
+        return QuarkusTransaction.requiringNew().call(()->{
+            try(Connection c=dataSource.getConnection()) {
+                if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
+                lockItem(c,id);var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
+                if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
+                if(!"suspended".equals(item.workflowStatus()))return new Outcome(409,"resume_requires_suspended_item",item);
+                if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
+                var p=item.progress();
+                var fresh=new WorkProgress(null,null,null,false,null,p.runs(),p.steps(),p.wallSeconds(),p.costMillicents(),p.calls(),p.usageUnknown(),null);
+                var recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
+                var next=item.decision(observed.policy().revision(),authority(observed.source()),select(observed,item),"intake",
+                        "awaiting_input","operator_resumed","OPERATOR_RESUMED",null,fresh).readmit()
+                        .controlled(recorded.action(subject,note,head)).withMilestone("OPERATOR_RESUMED");
+                String expectedHead=item.progress().execution()!=null && item.progress().execution().pullRequest()!=null
+                        ?item.progress().execution().head():item.preparation()==null?null:item.preparation().baseCommit();
+                if(!Objects.equals(head,expectedHead) || observed.artifacts().failure()!=null)
+                    next=next.prepared(null).withMilestone("OPERATOR_RESUMED");
+                store.appendDecision(c,history,next,"operator-resume:"+UUID.randomUUID());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                store.appendDecision(c,history,next,"resume-transition:"+UUID.randomUUID());
+                return new Outcome(200,next.reason(),next);
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist operator resume",failure);}
+        });
+    }
+
     /** Called by a bound integration result, never exposed as a dashboard success switch. */
     public Outcome complete(String id,PhaseResult result) {
         WorkItemEvent item=require(id);
@@ -99,9 +126,9 @@ public class WorkItemTransitions {
                     if("completed".equals(item.progress().attemptState()))return new Outcome(200,"result_already_applied",item);
                     if(!"active".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
                     if(!validExecution(item,result))return new Outcome(409,"phase_evidence_mismatch",item);
-                } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","completed").contains(item.workflowStatus()))
+                } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
                     return new Outcome(409,"explicit_readmission_required",item);
-                if(readmit && Set.of("active","waiting_approval","retired").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
+                if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
                 WorkPolicy.Selection selection=select(observed,readmit?null:item);
                 WorkItemEvent next=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),"POLICY_CHECKED",item.gate(),item.progress());
                 if(readmit) {
@@ -172,7 +199,13 @@ public class WorkItemTransitions {
     }
 
     public Outcome answer(UUID gateId,long expectedVersion,String key,boolean approve,String note,String resolver) {
-        if(key==null || key.isBlank() || resolver==null || resolver.isBlank())throw new IllegalArgumentException("A decision identity is required");
+        WorkGate gate=gateFromHistory(gateItem(gateId),gateId);
+        return answer(new ResolveGate(gateId,expectedVersion,key,approve,note,resolver,ResolveGate.Channel.DASHBOARD,gate.generation(),gate.artifact()));
+    }
+
+    public Outcome answer(ResolveGate command) {
+        UUID gateId=command.gateId();long expectedVersion=command.expectedVersion();String key=command.key();
+        boolean approve=command.approve();String note=command.note(),resolver=command.resolver(),channel=command.channelName();
         String id=gateItem(gateId);WorkItemEvent item=require(id);
         Observation observed=observe(item);
         return QuarkusTransaction.requiringNew().call(()-> {
@@ -180,8 +213,13 @@ public class WorkItemTransitions {
                 if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
                 lockItem(c,id);var history=store.history(id);WorkItemEvent current=(WorkItemEvent)history.getLast().payload();
                 WorkGate gate=gateFromHistory(id,gateId);
-                if(key.equals(gate.answerKey()) && resolver.equals(gate.resolver()) && Objects.equals(note,gate.note())
+                if(key.equals(gate.answerKey()) && resolver.equals(gate.resolver()) && channel.equals(gate.channel()) && Objects.equals(note,gate.note())
                         && (approve?"APPROVED":"REJECTED").equals(gate.state()))return new Outcome(200,"answer_already_applied",current);
+                if(Set.of("suspended","retired").contains(current.workflowStatus()))return new Outcome(409,"item_not_active",current);
+                if(command.channel()==ResolveGate.Channel.TRACKER && !observed.source().allowedActors().contains(resolver))
+                    return new Outcome(403,"tracker_actor_not_allowed",current);
+                if(command.generation()!=gate.generation() || !Objects.equals(command.artifact(),gate.artifact()))return new Outcome(409,"gate_binding_mismatch",current);
+                if(command.channel()==ResolveGate.Channel.PR_REVIEW && !"land".equals(gate.phase()))return new Outcome(409,"pr_review_requires_land_gate",current);
                 if(gate.version()!=expectedVersion || !"OPEN".equals(gate.state()) || current.gate()==null || !gateId.equals(current.gate().id()))
                     return new Outcome(409,"gate_changed",current);
                 Instant now=clock.now();
@@ -189,22 +227,22 @@ public class WorkItemTransitions {
                 if(!now.isBefore(gate.expiresAt())) { next=expire(current,gate);status=409; }
                 else if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),current);
                 else if("artifacts_unavailable".equals(observed.artifacts().failure()))return new Outcome(503,"artifacts_unavailable",current);
-                else if(observed.artifacts().failure()!=null || !Objects.equals(gate.artifact(),current.preparation()==null?null:current.preparation().binding())) {
-                    next=state(current,"awaiting_input","artifacts_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,key,note),current.progress().reserve(false));status=409;
+                else if(observed.artifacts().failure()!=null || !Objects.equals(gate.artifact(),WorkGate.artifactOf(current))) {
+                    next=state(current,"awaiting_input","artifacts_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));status=409;
                 }
                 else if(gate.policyRevision()!=observed.policy().revision() || !gate.authority().equals(authority(observed.source()))
                         || gate.itemRevision()!=history.size() || gate.generation()!=current.generation() || !gate.phase().equals(current.phase())) {
-                    next=state(current,"stopped","policy_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,key,note),current.progress().reserve(false));status=409;
+                    next=state(current,"stopped","policy_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));status=409;
                 } else {
                     WorkPolicy.Selection selection=select(observed,current);
                     // Immutable profile pins and the policy binding above fix the vectors. Re-observe every current applier.
                     if(!selection.applied().equals(current.policy().applied())) {
-                        next=state(current,"stopped","labels_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,key,note),current.progress().reserve(false));
+                        next=state(current,"stopped","labels_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));
                         store.appendDecision(c,history,next,"gate-labels:"+gateId+":"+key);
                         return new Outcome(409,next.reason(),next);
                     }
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
-                            gate.resolve(approve?"APPROVED":"REJECTED",resolver,key,note),current.progress().reserve(false));
+                            gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
                     if(approve) {
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
@@ -289,7 +327,7 @@ public class WorkItemTransitions {
                 if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
                 lockItem(c,id);var history=store.history(id);WorkItemEvent current=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expectedRevision)return new Outcome(409,"work_item_changed",current);
-                if(Set.of("active","retired","completed").contains(current.workflowStatus()))return new Outcome(409,"preparation_unavailable",current);
+                if(Set.of("active","retired","suspended","completed").contains(current.workflowStatus()))return new Outcome(409,"preparation_unavailable",current);
                 try(PreparedStatement ps=c.prepareStatement("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND generation=?")) {
                     ps.setString(1,id);ps.setLong(2,current.generation());try(ResultSet rs=ps.executeQuery()) {
                         rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);

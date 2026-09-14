@@ -181,6 +181,19 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.work-dlq
+      repository-activity-in:
+        connector: smallrye-kafka
+        topic: cs.repository-integration
+        group:
+          id: spire-orchestrator-work-activity
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.work-dlq
       repository-in:
         connector: smallrye-kafka
         topic: cs.repository-integration
@@ -413,6 +426,7 @@ spire:
     work-gate-expiry-interval: "off"
     work-run-interval: "off"
     work-delivery-interval: "off"
+    work-activity-interval: "off"
     work-outbox-interval: "off"
     work-effects-interval: "off"
     work-scan-interval: "off"

@@ -96,9 +96,10 @@ abstract class WorkFixture {
         return new WorkSourceDelivery(repository,source,UUID.randomUUID(),1,"github",forge.baseUrl(),sources.get(source).orElseThrow().repository(),
                 signals.getFirst().hint().eventId(),signals.getFirst());
     }
-    long count(String sql, Object value) throws SQLException {
+    long count(String sql, Object... values) throws SQLException {
         try (Connection c=dataSource.getConnection(); PreparedStatement ps=c.prepareStatement(sql)) {
-            ps.setObject(1,value);try(ResultSet rs=ps.executeQuery()){rs.next();return rs.getLong(1);}
+            for(int index=0;index<values.length;index++)ps.setObject(index+1,values[index]);
+            try(ResultSet rs=ps.executeQuery()){rs.next();return rs.getLong(1);}
         }
     }
     void execute(String sql,Object value) throws SQLException {
@@ -108,6 +109,8 @@ abstract class WorkFixture {
         try {
             Set<String> cleanup=new HashSet<>(extraItems);if(itemId!=null)cleanup.add(itemId);
             for(String owned:cleanup){
+                execute("DELETE FROM work_activity_receipt WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_run_hold_outbox WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_delivery_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM llm_charge WHERE subject_kind='RUN' AND subject_id IN (SELECT run_id FROM factory_run WHERE work_item_id=?)",owned);

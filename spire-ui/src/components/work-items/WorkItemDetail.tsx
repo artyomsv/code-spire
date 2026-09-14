@@ -43,6 +43,8 @@ export default function WorkItemDetail() {
       {item.ignoredLabels.length === 0 ? <p>No labels were ignored.</p> : <ul>{item.ignoredLabels.map(label =>
         <li key={label.label}><strong>{label.label}</strong>: {workReason(label.reason)}</li>)}</ul>}
       <h3>Workflow history</h3>
+      {item.control?.note && <p>Operator: {item.control.operator ?? 'Unknown actor'} · {item.control.note}</p>}
+      {item.control?.observedHead && <p className="mono">Observed head: {item.control.observedHead}</p>}
       <ol>{item.events.map(event => <li key={event.sequence}>{event.type === 'WorkItemEvent' ? 'Workflow updated' : event.type}: {workReason(event.reason)}</li>)}</ol>
       <h3>Current tracker content</h3>
       {tracker.error ? <p role="alert">Tracker unavailable: {tracker.error}. The workflow above remains available.</p> :
@@ -59,15 +61,21 @@ function WorkItemActions({ item, changed }: { item: Detail; changed: () => void 
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [note, setNote] = useState('');
   async function resume(readmit: boolean) {
     setBusy(true); setError('');
-    try { await resumeWorkItem(item, readmit); if (active.current) changed(); }
+    try {
+      if (item.workflowStatus === 'suspended') await resumeWorkItem(item, readmit, note);
+      else await resumeWorkItem(item, readmit);
+      if (active.current) changed();
+    }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(false); }
   }
   if (!canAdminister(me)) return null;
   return <div>
+    {item.workflowStatus === 'suspended' && <label className="field">Resume note<textarea disabled={busy} value={note} onChange={event => setNote(event.target.value)} /></label>}
     {['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus) &&
-      <button className="btn" disabled={busy} onClick={() => void resume(false)}>Recheck and resume</button>}
+      <button className="btn" disabled={busy || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>Recheck and resume</button>}
     {['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus) &&
       <button className="btn" disabled={busy} onClick={() => void resume(true)}>Re-admit under current policy</button>}
     {error && <p role="alert">{error}</p>}

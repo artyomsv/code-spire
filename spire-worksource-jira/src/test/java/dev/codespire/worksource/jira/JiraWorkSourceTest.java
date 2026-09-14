@@ -15,7 +15,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class JiraWorkSourceTest {
-    final ObjectMapper mapper = new ObjectMapper();
+    final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     WireMockServer api;
     JiraWorkSource source;
     WorkIssueLocation issue;
@@ -33,6 +33,25 @@ class JiraWorkSourceTest {
         api.stubFor(get(urlEqualTo(path+"/transitions?expand=transitions.fields")).willReturn(okJson("{\"transitions\":[{\"id\":\"31\",\"name\":\"TEST-complete\",\"to\":{\"id\":\"10003\"},\"fields\":{}}]}")));
     }
     @AfterEach void stop() { api.stop(); }
+    @Test void pollsExplicitAnswersByAccountIdWithoutPersistingCommentProse() {
+        UUID gate=UUID.randomUUID();
+        var row=mapper.createObjectNode().put("id","17").put("created","2026-09-14T12:00:00.000+0000")
+                .put("body","/approve "+gate+" 3 "+"a".repeat(64));
+        row.putObject("author").put("accountId","900123").put("displayName","TEST-renamed-person");
+        api.stubFor(get(urlEqualTo(path+"/comment?startAt=0&maxResults=100&orderBy=created"))
+                .willReturn(okJson(page("comments",0,1,List.of(row)).toString())));
+        var page=source.activities(issue,null);assertTrue(source.pollsActivities());assertNull(page.nextCursor());
+        var answer=page.items().getFirst();assertEquals("900123",answer.actorId());assertEquals(gate,answer.answer().gateId());
+        assertEquals(java.time.Instant.parse("2026-09-14T12:00:00Z"),answer.occurredAt());
+        assertFalse(mapper.valueToTree(answer).has("body"));
+    }
+    @Test void ordinaryJiraCommentRemainsActivityWithNoApproval() {
+        var row=mapper.createObjectNode().put("id","17").put("created","2026-09-14T12:00:00.000+0000").put("body","TEST looks approved to me");
+        row.putObject("author").put("accountId","900123");
+        api.stubFor(get(urlEqualTo(path+"/comment?startAt=0&maxResults=100&orderBy=created"))
+                .willReturn(okJson(page("comments",0,1,List.of(row)).toString())));
+        var activity=source.activities(issue,null).items().getFirst();assertNull(activity.answer());assertEquals("900123",activity.actorId());
+    }
     JiraConfig config() { return new JiraConfig(api.baseUrl(),"basic","TEST-account@example.invalid","TEST-token",Set.of("TEST")); }
     ObjectNode ticket() {
         ObjectNode node=mapper.createObjectNode().put("id","50001").put("key","TEST-42");

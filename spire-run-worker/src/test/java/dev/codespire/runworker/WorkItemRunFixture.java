@@ -51,6 +51,7 @@ abstract class WorkItemRunFixture {
         for(String id:ids)TestImages.clearUnit(id);
         try(Connection c=dataSource.getConnection()) {
             for(String id:ids) {
+                try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.work_publication_revocation WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.work_run WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.run_claim WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("DELETE FROM runworker.run_lease WHERE run_id=?")){ps.setString(1,id);ps.executeUpdate();}

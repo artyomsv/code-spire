@@ -281,6 +281,32 @@ public class BitbucketCloudIngress implements ScmIngress {
         }
     }
 
+    @Override public List<IntegrationEvent> activity(RawWebhook raw) {
+        var root=parse(raw.body());String event=header(raw,"x-event-key");
+        String actor=root.path("actor").path("uuid").asText(null);
+        if("repo:push".equals(event)) {
+            List<IntegrationEvent> result=new java.util.ArrayList<>();
+            for(var change:root.path("push").path("changes")) {
+                var branch=change.path("new").isNull()?change.path("old"):change.path("new");
+                if(!"branch".equals(branch.path("type").asText()))continue;
+                result.add(new IntegrationEvent.RepositoryActivity(repo(root),"push",actor,"refs/heads/"+branch.path("name").asText(""),
+                        change.path("new").path("target").path("hash").asText(null),0,null,null,false));
+            }
+            return List.copyOf(result);
+        }
+        if(event==null || !java.util.Set.of("pullrequest:updated","pullrequest:fulfilled","pullrequest:rejected",
+                "pullrequest:comment_created","pullrequest:approved","pullrequest:unapproved").contains(event))return List.of();
+        var pr=root.path("pullrequest");var source=pr.path("source");
+        if(!root.path("repository").path("uuid").asText("").equals(source.path("repository").path("uuid").asText("")))return List.of();
+        boolean comment="pullrequest:comment_created".equals(event);
+        boolean approval=java.util.Set.of("pullrequest:approved","pullrequest:unapproved").contains(event);
+        String body=root.path("comment").path("content").path("raw").asText("").strip();
+        return List.of(new IntegrationEvent.RepositoryActivity(repo(root),comment?"comment":approval?"approval":"push",actor,
+                "refs/heads/"+source.path("branch").path("name").asText(""),source.path("commit").path("hash").asText(null),
+                pr.path("id").asLong(),null,comment?root.path("comment").path("id").asText(null):null,
+                comment && commands.contains("fix") && body.split("\\s+",2)[0].equalsIgnoreCase("/fix")));
+    }
+
     private static String header(RawWebhook raw, String name) {
         for (Map.Entry<String, String> e : raw.headers().entrySet()) {
             if (e.getKey().equalsIgnoreCase(name)) {

@@ -103,7 +103,7 @@ public class RegistryWebhookEdge {
 
         List<IntegrationEvent> events;
         try {
-            events = ingress.translate(raw);
+            events = repo.eventKind()==dev.codespire.contract.event.RepositoryEventKind.FACTORY?ingress.activity(raw):ingress.translate(raw);
         } catch (RuntimeException e) {
             // Authenticated but malformed/invalid payload — client error, not a 500.
             LOG.warnf(e, "%s webhook payload rejected", providerType);
@@ -208,6 +208,7 @@ public class RegistryWebhookEdge {
             case ManualCommandReceived p -> p.repo();
             case AuthorReplied p -> p.repo(); // every SCM emits comment replies
             case PushReceived p -> p.repo();  // future push hooks — scope-guard them too
+            case IntegrationEvent.RepositoryActivity p -> p.repo();
             default -> null;
         };
     }
