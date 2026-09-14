@@ -21,7 +21,7 @@ present at the moment the finding is raised. Handing that to a human to retype i
 
 **Second, the work item is the right unit, not the diff.** Real work arrives as a ticket, not as a
 pull request. A factory that starts from a tracker issue can run the phases a team already runs —
-refine, plan, build, verify, review, deliver — with an agent in each, and a human only where judgment
+refine, plan, build, verify, deliver, review — with an agent in each, and a human only where judgment
 is genuinely required.
 
 The failure mode to avoid is equally clear from the prior art: an unsupervised agent fleet that
@@ -158,7 +158,9 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   "labels the webhook happened to witness", and every label found by polling — after downtime, on a
   backfill, on the first scan of an existing backlog — bypasses the check entirely.
 - **FR-F17 — Eight phases [M3/M4].** A work item moves through `intake → spec → plan → build →
-  verify → review → deliver → land`. Each phase is separately gateable.
+  verify → deliver → review → land`. Each phase is separately gateable. Delivery opens the pushed
+  pull request the existing reviewer needs (ADR-045). M3 can accept a human-prepared specification
+  and single-step plan; it does not claim that M4's generation or verification executors exist.
 - **FR-F18 — Specification phase [M4].** A vague ticket is refined into an outcome, context and
   acceptance criteria, **written back to the tracker as a comment** — never into the repository,
   which would create a second source of truth and a diff the reviewer must review before any code

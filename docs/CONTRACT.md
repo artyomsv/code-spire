@@ -1,5 +1,99 @@
 # Domain Contract (`spire-contract`)
 
+## Work-item channels and policy (M3, ADR-043/045)
+
+Signed issue delivery produces `WorkSourceDelivery` on `cs.work-integration`, keyed by the
+stable `WorkItemIds` digest. Its coordinates bind the registration, repository, source, SCM
+origin and external scope; a webhook hint is not proof of complete current-label history.
+`WorkItemIntake` and the scanner fetch the current issue and bounded audit evidence through
+the explicitly selected source account. Unknown attribution grants nothing, even with an
+otherwise allowed actor hint. Actor membership and missing identity have separate reasons.
+
+`WorkItemLifecycle` is the sole work-event decider. `WorkItemEvent` is stored and decoded as
+its own type, outside the review `DomainEvent` and `IntegrationEvent` hierarchies. One JTA
+transaction appends its encrypted envelope, updates bookkeeping, deduplicates delivery and
+enqueues the encrypted notification. The outbox publishes the stable envelope ID on
+`cs.work-events` and marks it published only after broker acknowledgement; delivery is at least
+once. Work ingress failures use `cs.work-dlq`. Review history does not consume work events.
+
+Profiles have immutable versions and an operator-defined unique precedence. Every eligible
+current label contributes a component-wise restriction; the repository ceiling and the full
+mode vector retained at admission also bound later decisions. The selected profile name is a
+display choice, not the whole effective policy. Events retain applied/ignored evidence and the
+source, account, repository and policy revisions. Humans register fetched specification and plan
+references; their versions bind later decisions. Dashboard answers, explicit tracker commands
+and supported current native PR approvals enter `ResolveGate` and persist `GATE_RESOLVED`.
+Production VERIFY and LAND remain unavailable; manual artifact acceptance does not invent an
+executor completion. Tracker status never supplies workflow status.
+
+`ExecuteWorkRun` uses `cs.run-commands` and yields a durable `RunWorkReady` checkpoint without
+publishing. `PublishWorkRun` on `cs.run-control` carries the exact current delivery permit;
+only the trusted publisher resumes. `HoldWorkRun` uses that same control topic and durably revokes
+the exact run binding before stopping compute. The revocation survives restart and orphan salvage
+independently of M1 cancellation. Ordinary `ExecuteRun` and standalone /fix retain their automatic
+publication path. Readiness and terminal results use `cs.run-results`; transcript facts remain
+on `cs.run-events` and do not become work-item domain events.
+
+Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
+effects. Deliberate authorized commands are classified before generic comment takeover. Resume
+requires the server-derived operator subject, expected revision and note, fresh issue/repository/
+head/policy evidence, and a new generation. Retired items cannot resume. See the
+[acceptance record](factory/M3-ACCEPTANCE.md) for measured journeys and remaining live limits.
+
+## Repository metadata and ingress channels (M3 slices 1–2, ADR-042)
+
+`cs.registry-integration` carries `RepositoryRegistration`, keyed by registration UUID (not a
+review id). Its `type` discriminator is `RepositoryRegistration`; fields are `registrationId`,
+positive monotonic `revision`, `providerType`, nullable `forgeOrigin`, `scope` (`repo`/`org`),
+`target`, `enabled`, `deleted`, nullable `repositoryId`, `eventKind` (legacy default REVIEWER),
+and nullable `sourceId`. The gateway outbox publishes only after its SQL transaction
+commits and marks sent only after broker acknowledgement. The orchestrator accepts newer
+revisions transactionally. New records reject blank origins while allowing null. At legacy
+ingress the bridge converts blank origins to null before strict record decoding, then records
+`registration_origin_unknown` and acknowledges the snapshot. Missing origins are never inferred
+from account workspace equality; they remain operator-visible pending mappings for repair.
+
+This is an integration snapshot, not a domain event or a new aggregate. Webhook keys and secrets
+never cross the channel. Failed processing uses `cs.dlq`; the discriminator routes manual replay
+back to cs.registry-integration.
+
+Slice 2 sends signed SCM ingress on cs.repository-integration as RepositoryDelivery, with the
+RepositoryDelivery discriminator, repositoryId (nullable for legacy/org hooks), registrationId,
+registrationRevision, providerType, forgeOrigin, eventKind, deliveryId and the existing typed
+IntegrationEvent. Gateway deliveryId is the SHA-256 of the signed request bytes. A manual review
+uses its explicit repository UUID. The consumer resolves full forge identity, verifies any
+explicit UUID and repository state, then applies REVIEWER lifecycle handling or forwards FACTORY
+activity to cs.repository-activity for the existing activity publication. M3's `WorkActivityConsumer`
+independently consumes FACTORY `RepositoryActivity` envelopes directly from cs.repository-integration
+under the `spire-orchestrator-work-activity` group, rechecking registration and repository identity.
+It does not consume cs.repository-activity. ISSUE routes through the bound work-source ingress to
+cs.work-integration rather than the SCM review path.
+
+New deliveries for unknown repositories produce Attention with their incoming registration and
+prefilled coordinates. Unknown origins remain repairable, never inferred from namespace equality.
+Old raw SCM messages on cs.integration fail with a provenance reason and enter cs.dlq; operators
+must redeliver through a verified webhook. DLQ replay of RepositoryDelivery returns to its new
+topic with provenance intact. Worker integration-result channels and old review IDs stay intact.
+
+**Upgrade order:** provision cs.registry-integration, cs.repository-integration and
+cs.repository-activity and their producer/consumer ACLs when auto-creation is disabled. Upgrade
+gateway first: new ingress can wait durably on its new topic while the old orchestrator runs.
+Then upgrade orchestrator (the new input begins at earliest), then the UI. Upgrading orchestrator
+first would dead-letter still-legacy gateway deliveries. Retain database/keyset backups; an
+application-only downgrade is not an ingress rollback because the wire topic changed.
+
+**API cutover:** account ProviderInput/ProviderView have no workspace. Account create/update
+accept an optional validationRepositoryId query parameter for account-less token validation;
+it must name the same forge kind and origin and creates no binding. Stored account checks may
+use one of that account's explicit repository bindings as validation scope. Scope introspection
+remains advisory; an unobserved report never establishes permission.
+
+Manual registration without a URL and POST /api/runs require repositoryId. Supplied coordinates
+must agree with it; URL preview resolves complete forge identity. Serving views take repositoryId
+and read the selected REVIEWER/FACTORY accounts. Missing, disabled and unmapped configurations
+cannot dispatch. The repository screen owns coordinates, role bindings and optional per-kind
+hooks; legacy organization hooks and origin repair remain at /settings/webhooks.
+
 > The shared kernel every service depends on: identifiers, the event envelope, the event & command
 > catalog, the `ReviewLifecycle` decider, the SPI ports, the context-aggregation policy, topics, and
 > the Bitbucket **Cloud** mapping. Companion to [EVENT-MODEL.md](EVENT-MODEL.md) (the narrative slices)
@@ -247,18 +341,28 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
    referenced by `contextRef` on `ContextAssembled`/`GenerateReview`. **Jira is the first live provider**
    (`spire-context-jira`).
 
-## 9. Kafka topics (keyed by `reviewId`)
+## 9. Kafka topics
 
 | Topic | Carries |
 |---|---|
-| `cs.integration` | ingress events (`PullRequestEventReceived`, `PullRequestClosed`, `ManualCommandReceived`, `AuthorReplied`, `PushReceived`) |
+| `cs.registry-integration` | Revisioned registration metadata; keyed by registration UUID |
+| `cs.repository-integration` | Verified `RepositoryDelivery` envelopes around SCM ingress; keyed by the existing event key |
+| `cs.repository-activity` | Existing FACTORY activity publication, keyed by repository UUID; M3 takeover instead consumes the verified original envelope on cs.repository-integration |
+| `cs.work-integration` | Bound tracker deliveries, keyed by stable work-item identity |
+| `cs.work-events` | Durable work-item event notifications from the encrypted outbox |
+| `cs.work-dlq` | Failed tracker and factory-activity processing |
+| `cs.run-commands` | Standalone ExecuteRun and held ExecuteWorkRun, keyed by run ID |
+| `cs.run-control` | CancelRun, SteerRun, PublishWorkRun and HoldWorkRun; each worker consumes control independently |
+| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunFailed facts |
+| `cs.run-events` | Bounded run transcript facts, independent of workflow decisions |
+| `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
 | `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
-All keyed by `reviewId` so a PR's messages are strictly ordered within a partition. (Topic split is a
-starting point; can be refined — the keying discipline is the important invariant.)
+Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and
+factory activity use the explicit UUID keys shown above.
 
 ## 10. Bitbucket **Cloud** mapping
 
@@ -291,3 +395,42 @@ REST (`api.bitbucket.org/2.0`), auth = bot **App Password** (Basic) or OAuth, sc
 ## 11. Versioning
 `eventVersion` starts at 1 per type. Additive fields don't bump it; breaking changes bump it and ship an
 upcaster (`vN → vN+1`) in `spire-contract`. Consumers tolerate unknown fields. Published events are immutable.
+
+## Resolved people and repository fix overrides (M3 slice 3)
+
+All person endpoints require `spire-admin` and use the explicitly selected account. A resolution
+response contains status, candidates (`providerUserId`, observed `handle`, `displayName`) and a
+safe capability explanation. It never contains credentials or email fields.
+
+| Endpoint | Behavior |
+|---|---|
+| `POST /api/providers/{id}/actors/resolve` | Resolve `{handle, repositoryId?}`; repository scope must be bound to this account. |
+| `GET /api/providers/{id}/actors?refresh=true` | Read account policy; optional refresh resolves each stored ID, never its old handle. |
+| `POST /api/providers/{id}/actors` | Save `{handle, providerUserId, revision, repositoryId?}` after repeating lookup and by-ID verification. |
+| `DELETE /api/providers/{id}/actors/{actorId}?revision=` | Remove an account entry with optimistic policy revision. |
+| `/api/repositories/{id}/fix-actors` | Corresponding list/save/delete operations using its reviewer; save additionally requires `effect: ALLOW|DENY`, and the existing actor revision (zero for creation). |
+| `POST /api/repositories/{id}/fix-actors/resolve` | Resolve through that repository's selected reviewer. |
+
+Not-found, ambiguous or unsupported identity input returns 422 without writing; upstream
+unavailability returns 503. A stale policy, disabled account or missing reviewer returns 409.
+GitHub/GitLab support exact handles. Bitbucket/Jira return `SELECTION_REQUIRED`; the browser
+must name a returned candidate, and the server repeats that selection check on save. Candidate
+IDs are disambiguators in selection controls, not an operator input requirement.
+
+Account create no longer accepts a raw author list: save credentials first, then resolve people.
+An ordinary account update can omit `authors` to preserve policy; a supplied list must match the
+current list under the account lock. A policy edit during token validation makes the old form
+return 409 and rolls back its credential/configuration changes. It cannot replace the list with
+unresolved text. Account views include `actorDisplays` for cached labels and stale states. Legacy
+unresolved entries are labelled for repair. Repository fix overrides are separate from account
+review/conversation policy; /fix uses explicit overrides and measured push access.
+
+## Effective repository permission (M3 slice 4)
+
+RepositoryPermissionSource.permission(RepoRef, providerUserId) returns CAN_PUSH, CANNOT_PUSH or
+UNKNOWN with a safe explanation. It reads through the repository's selected reviewer account.
+FixAuthorization evaluates unknown identity, DENY, ALLOW, then measured permission. UNKNOWN
+records PERMISSION_UNAVAILABLE and refuses dispatch; a prior successful read gives no authority.
+The saga records the exact reason as FixAuthorization in the timeline, with the reason and safe
+capability detail in the durable refusal. Allowed commands still pass the existing dispatch guards.
+The full lookup, including identity, redirects and pagination, is bounded to 20 seconds.

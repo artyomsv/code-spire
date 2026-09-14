@@ -194,6 +194,14 @@ class RetryingDiffSourceTest {
         }
     }
 
+    @Test
+    void branchHeadDelegationPreservesCoordinatesResultAndRetry() {
+        FailingDiffSource delegate = new FailingDiffSource(1, 503);
+        assertEquals("a".repeat(40), source(delegate).fetchBranchHead(REPO, "TEST-resume"));
+        assertEquals(2, delegate.calls);
+        assertEquals(1, slept.size());
+    }
+
     /** A fresh breaker per test, so one test's failures cannot open a circuit for the next. */
     private RetryingDiffSource source(DiffSource delegate) {
         // fixed seed: jitter is not the subject
@@ -236,6 +244,13 @@ class RetryingDiffSourceTest {
         @Override
         public Diff fetchDiff(RepoRef repo, long prId, String commit) {
             return guard(() -> new Diff(commit, List.of(), false));
+        }
+
+        @Override
+        public String fetchBranchHead(RepoRef repo, String branch) {
+            assertEquals(REPO, repo);
+            assertEquals("TEST-resume", branch);
+            return guard(() -> "a".repeat(40));
         }
 
         private <T> T guard(java.util.function.Supplier<T> success) {

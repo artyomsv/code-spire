@@ -36,13 +36,19 @@ public final class PublisherMain {
     }
 
     public static void main(String[] args) throws Exception {
+        run(PublicationPolicy.Mode.AUTOMATIC);
+    }
+
+    static void run(PublicationPolicy.Mode mode) throws Exception {
         // Before the config, so a corporate deployment gets the same transport the init clone
         // got. The push is the other git call that meets the proxy, and it is the one whose
         // failure costs an entire agent run.
         CorporateTransport.apply(System.getenv());
         PublisherConfig config;
+        PublicationPolicy publication;
         try {
             config = PublisherConfig.fromEnv(System.getenv());
+            publication = PublicationPolicy.fromEnv(mode, System.getenv());
         } catch (IllegalStateException e) {
             // A refusal names the variable, never its value.
             new OutcomeWriter().failed("PUBLISHER_MISCONFIGURED", e.getMessage());
@@ -56,11 +62,11 @@ public final class PublisherMain {
                 Files.createTempDirectory("spire-publish-clone-"), config.credential())) {
 
             PublishCycle cycle = new PublishCycle(repo, config.baseCommit(), config.branch(),
-                    config.protectedPaths(), config.bundleMaxBytes(), config.credential(), outcome);
+                    config.protectedPaths(), config.bundleMaxBytes(), config.credential(), outcome, publication);
 
             HandoffWatcher watcher = new HandoffWatcher(config.handoffDir());
             boolean carryOn = true;
-            while (carryOn && agentStillRunning(config.handoffDir())) {
+            while (mode != PublicationPolicy.Mode.PERMITTED && carryOn && agentStillRunning(config.handoffDir())) {
                 carryOn = drain(watcher, cycle);
                 if (carryOn) {
                     Thread.sleep(POLL_MILLIS);
@@ -68,7 +74,10 @@ public final class PublisherMain {
             }
             if (carryOn) {
                 // The agent is gone; take whatever it wrote in its last moments before exiting.
-                drain(watcher, cycle);
+                carryOn = drain(watcher, cycle);
+            }
+            if (!carryOn || !cycle.finish()) {
+                exitCode = 1;
             }
         } catch (IOException | GitAPIException | InterruptedException | RuntimeException e) {
             // The process boundary: every failure that reaches here is reported on stdout as the

@@ -26,14 +26,14 @@ describe('serving accounts api', () => {
    * A GitLab workspace is a group path, and a subgroup puts a slash inside one parameter. Unescaped
    * it reads as another path segment and the route no longer matches, so the owner here is nested.
    */
-  it('sends the forge type and the workspace as encoded query parameters', async () => {
+  it('sends the selected repository id as the query parameter', async () => {
     const fetchMock = ok(accounts);
     vi.stubGlobal('fetch', fetchMock);
 
-    await fetchServingAccounts('github', 'TEST-group/sub');
+    await fetchServingAccounts('TEST-repository');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/providers/serving?type=github&workspace=TEST-group%2Fsub',
+      '/api/providers/serving?repositoryId=TEST-repository',
       scripted,
     );
   });
@@ -53,7 +53,7 @@ describe('serving accounts api', () => {
       } as Response),
     );
 
-    await expect(fetchServingAccounts('github', 'TEST-acme')).rejects.toThrow(
+    await expect(fetchServingAccounts('TEST-repository')).rejects.toThrow(
       /Failed to load the accounts serving this workspace/,
     );
   });

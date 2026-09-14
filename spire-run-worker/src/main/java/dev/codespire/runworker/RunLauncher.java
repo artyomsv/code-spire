@@ -81,11 +81,24 @@ public class RunLauncher {
      * the leaking direction. Silence therefore means "still there", which is the safe default.
      */
     public RunResult launch(RunCommand.ExecuteRun command, RunObserver observer) {
+        return launch(command, null, observer, unit -> {});
+    }
+
+    public RunResult launchHeld(RunCommand.ExecuteWorkRun command, RunObserver observer,
+                                java.util.function.Consumer<RunUnitSpec> prepared) {
+        return launch(command.execution(), command, observer, prepared);
+    }
+
+    private RunResult launch(RunCommand.ExecuteRun command, RunCommand.ExecuteWorkRun work,
+                             RunObserver observer, java.util.function.Consumer<RunUnitSpec> prepared) {
         HarnessAdapter adapter;
         RunUnitSpec unit;
         try {
             adapter = harnesses.forName(command.harness());
-            unit = builder.build(command, adapter);
+            if (work != null && !(runtime instanceof dev.codespire.runtime.PublicationRuntime)) {
+                throw new IllegalArgumentException("The runtime cannot retain publication");
+            }
+            unit = work == null ? builder.build(command, adapter) : builder.buildHeld(work, adapter);
         } catch (RuntimeException e) {
             // Nothing was created, so nothing needs salvaging. Not retryable: the same command
             // would be rejected identically, and retrying a malformed dispatch is a loop.
@@ -93,8 +106,14 @@ public class RunLauncher {
         }
 
         RunHandle handle;
+        long activeStarted = System.nanoTime();
         try {
-            handle = runtime.create(unit);
+            // Persist the exact topology before any resource exists; a resumed publisher must
+            // neither rebuild an agent invocation nor depend on today's deployment image settings.
+            prepared.accept(unit);
+            handle = work == null ? runtime.create(unit)
+                    : ((dev.codespire.runtime.PublicationRuntime) runtime).createHeld(unit,
+                            new dev.codespire.runtime.PublicationKey(work.work().publicationKey()));
         } catch (RuntimeException e) {
             // RUNTIME_UNAVAILABLE, not SANDBOX_LOST: nothing has started yet, so nothing was lost.
             // The daemon is down or refusing, which is a different person looking in a different
@@ -111,7 +130,7 @@ public class RunLauncher {
         // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
         announce(command, handle, watchers);
-        return observe(command, adapter, handle, watchers);
+        return observe(command, adapter, handle, watchers, work, activeStarted);
     }
 
     /**
@@ -146,7 +165,7 @@ public class RunLauncher {
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
     private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
-                              Watchers watchers) {
+                              Watchers watchers, RunCommand.ExecuteWorkRun work, long activeStarted) {
         RunEventStream transcript = watchers.transcript();
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
@@ -200,11 +219,25 @@ public class RunLauncher {
             }
         }
 
-        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization));
+        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization), work != null);
+        if (work != null && result instanceof RunResult.RunFinished finished && !finished.refused()
+                && !finished.agentUnobserved()) {
+            if (finished.pushedRef() != null) {
+                result = failure(command, "PUBLISHER_FAILED", "Publication escaped the initial hold at " + finished.pushedRef())
+                        .withUsage(finished.tokenUsage());
+            } else if (outcome.checkpointHead().isPresent()) {
+                long wall = (System.nanoTime() - activeStarted + 999_999_999L) / 1_000_000_000L;
+                result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
+                        finished.changedPaths(), finished.tokenUsage(), wall);
+            } else {
+                result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
+                        .withUsage(finished.tokenUsage());
+            }
+        }
 
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
         // can read what the agent was doing — throwing that away is the loss salvage prevents.
-        if (finalization.salvaged()) {
+        if (finalization.salvaged() && work == null) {
             // Guarded for the same reason its sibling below is, and the reason is sharper here:
             // by this line the run's outcome AND its measured spend are already decided, so a
             // daemon blip during teardown would propagate out of launch, be caught by the
@@ -223,7 +256,7 @@ public class RunLauncher {
                         + " and keeps its lease, because it is still there",
                         command.runId(), e.getClass().getSimpleName());
             }
-        } else {
+        } else if (!finalization.salvaged()) {
             // Preserved, and STOPPED. That an overrun kills the agent is one arm's private promise,
             // not something the SPI states — and a run now reported finished makes an operator rely
             // on it. cancel() is an idempotent kill, and the publisher has already had its drain
@@ -322,13 +355,14 @@ public class RunLauncher {
         }
     }
 
-    private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed) {
+    private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {
         PublisherOutcome outcome = observed.outcome();
         Finalization finalization = observed.finalization();
         if (!finalization.salvaged()) {
             return unobserved(command, adapter, observed);
         }
-        if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()) {
+        if (outcome.failureCause().isPresent() && outcome.pushedRef().isEmpty() && !outcome.refused()
+                && (!held || outcome.checkpointHead().isEmpty())) {
             // The publisher failed, but the AGENT ran to completion first and bought its tokens.
             return failure(command, outcome.failureCause().orElseThrow(), outcome.failureDetail())
                     .withUsage(usageOf(adapter, observed.seen().summary()));

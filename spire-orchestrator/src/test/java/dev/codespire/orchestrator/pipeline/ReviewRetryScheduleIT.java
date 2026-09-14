@@ -25,6 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestSecurity(user = "test-admin", roles = {"spire-viewer", "spire-admin"})
 class ReviewRetryScheduleIT {
 
+    // Exercise the explicit clock parameter beyond the live scheduler's horizon. It must not steal
+    // a fixture between schedule and claim, which made these cases fail once every five seconds.
+    private final Instant testClock = Instant.now().plusSeconds(86400);
+
     @Inject
     ReviewProjection projection;
 
@@ -51,10 +55,10 @@ class ReviewRetryScheduleIT {
     @Test
     void onlyOneClaimWinsSoAnAttemptCannotBeDispatchedTwice() {
         String reviewId = seedReview(9002L);
-        projection.scheduleRetry(reviewId, 2, "waiting", Instant.now().minusSeconds(1));
+        projection.scheduleRetry(reviewId, 2, "waiting", testClock.minusSeconds(1));
 
-        List<String> first = projection.claimDueRetries(Instant.now());
-        List<String> second = projection.claimDueRetries(Instant.now());
+        List<String> first = projection.claimDueRetries(testClock);
+        List<String> second = projection.claimDueRetries(testClock);
 
         assertTrue(first.contains(reviewId), "the first sweep claims it");
         assertFalse(second.contains(reviewId), "the second finds nothing — the claim cleared the due time");
@@ -63,23 +67,23 @@ class ReviewRetryScheduleIT {
     @Test
     void aCancelledRetryIsNeverClaimed() {
         String reviewId = seedReview(9003L);
-        projection.scheduleRetry(reviewId, 2, "waiting", Instant.now().minusSeconds(1));
+        projection.scheduleRetry(reviewId, 2, "waiting", testClock.minusSeconds(1));
         projection.clearScheduledRetry(reviewId);
 
-        assertFalse(projection.claimDueRetries(Instant.now()).contains(reviewId),
+        assertFalse(projection.claimDueRetries(testClock).contains(reviewId),
                 "a run that went terminal before its retry came due must not be resurrected");
     }
 
     @Test
     void aFailedDispatchCanBePutBackOnTheClock() {
         String reviewId = seedReview(9004L);
-        projection.scheduleRetry(reviewId, 2, "waiting", Instant.now().minusSeconds(1));
-        assertTrue(projection.claimDueRetries(Instant.now()).contains(reviewId));
+        projection.scheduleRetry(reviewId, 2, "waiting", testClock.minusSeconds(1));
+        assertTrue(projection.claimDueRetries(testClock).contains(reviewId));
 
         // The claim already cleared the due time, so a dispatch failing afterwards would otherwise leave
         // the review waiting on a retry nobody sends.
-        projection.rescheduleRetry(reviewId, Instant.now().minusSeconds(1));
-        assertTrue(projection.claimDueRetries(Instant.now()).contains(reviewId), "claimable again");
+        projection.rescheduleRetry(reviewId, testClock.minusSeconds(1));
+        assertTrue(projection.claimDueRetries(testClock).contains(reviewId), "claimable again");
     }
 
     @Test

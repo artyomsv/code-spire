@@ -42,8 +42,19 @@ public final class PublishCycle {
 
     private final OutcomeWriter outcome;
 
+    private final PublicationPolicy publication;
+
+    private boolean published;
+
     public PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                         long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome) {
+        this(repo, baseCommit, branch, profileGlobs, bundleMaxBytes, credential, outcome,
+                PublicationPolicy.automatic());
+    }
+
+    PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
+                 long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome,
+                 PublicationPolicy publication) {
         this.repo = repo;
         this.baseCommit = baseCommit;
         this.branch = branch;
@@ -51,6 +62,7 @@ public final class PublishCycle {
         this.bundleMaxBytes = bundleMaxBytes;
         this.credential = credential;
         this.outcome = outcome;
+        this.publication = publication;
     }
 
     /**
@@ -62,6 +74,11 @@ public final class PublishCycle {
         String sha;
         try {
             sha = repo.fetchBundle(bundle, bundleMaxBytes);
+            // A fresh permitted publisher sees every old checkpoint. Only its exact authorized
+            // head is relevant, even when an earlier checkpoint would fail today's path gate.
+            if (!publication.selects(sha)) {
+                return true;
+            }
             changes = repo.changesSince(baseCommit, sha);
         } catch (GitAPIException | IOException | BundleTooLargeException | EmptyBundleException
                  | AmbiguousBundleException | UnsafeTreePathException e) {
@@ -81,8 +98,20 @@ public final class PublishCycle {
             return false;
         }
 
+        if (publication.mode() == PublicationPolicy.Mode.HELD) {
+            outcome.checkpoint(sha, changes.paths());
+            return true;
+        }
+        // Check after reading/diffing/gating, immediately before the network write. A permit
+        // that expired during an expensive bundle read is no longer authority to publish it.
+        if (!publication.validNow()) {
+            outcome.failed("PUBLICATION_PERMIT_EXPIRED", "The publication permit is not currently valid");
+            return false;
+        }
+
         try {
             outcome.pushed(repo.pushRef(sha, branch, credential), changes.paths());
+            published = true;
             return true;
         } catch (PushRefusedException refusal) {
             // The forge answering no, which JGit reports as a per-ref status rather than by
@@ -102,5 +131,14 @@ public final class PublishCycle {
                     transport.getClass().getSimpleName() + ": " + transport.getMessage());
             return false;
         }
+    }
+
+    /** No agent will produce another bundle during permitted publication. Missing work is visible. */
+    boolean finish() {
+        if (publication.mode() == PublicationPolicy.Mode.PERMITTED && !published) {
+            outcome.failed("PERMITTED_HEAD_UNAVAILABLE", "The retained handoff has no publishable permitted head");
+            return false;
+        }
+        return true;
     }
 }

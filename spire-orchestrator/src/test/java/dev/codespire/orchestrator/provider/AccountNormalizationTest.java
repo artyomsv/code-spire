@@ -123,11 +123,13 @@ class AccountNormalizationTest {
         assertTrue(ProviderClients.scopesNeedAttention("gitlab", ProviderRole.REVIEWER, ""));
     }
 
-    @Test void duplicateForgeAccountIsAReadableConflict() {
+    @Test void multipleAccountsAtOneForgeCanBeSelectedIndependently() {
         server.stubFor(get(urlEqualTo("/user")).willReturn(okJson("{\"id\":123,\"login\":\"bot\"}")));
         var body = input("github", "REVIEWER");
-        given().contentType("application/json").body(body).post("/api/providers").then().statusCode(201);
-        given().contentType("application/json").body(body).post("/api/providers")
-                .then().statusCode(409).body(containsString("already exists"));
+        String first = given().contentType("application/json").body(body).post("/api/providers")
+                .then().statusCode(201).extract().path("id");
+        String second = given().contentType("application/json").body(body).post("/api/providers")
+                .then().statusCode(201).extract().path("id");
+        org.junit.jupiter.api.Assertions.assertNotEquals(first, second);
     }
 }

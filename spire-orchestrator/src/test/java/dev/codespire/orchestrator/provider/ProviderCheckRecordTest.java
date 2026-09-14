@@ -25,8 +25,7 @@ class ProviderCheckRecordTest {
     ProviderRegistry registry;
 
     private ProviderView created() {
-        return registry.create(new ProviderInput("TEST-provider", "stub", "https://scm.example.invalid",
-                "TEST-WS-" + UUID.randomUUID(), "bearer", null, "TEST-SECRET", "acct-1", true,
+        return registry.create(new ProviderInput("TEST-provider", "stub", "https://scm.example.invalid", "bearer", null, "TEST-SECRET", "acct-1", true,
                 List.of(), "test-bot", null));
     }
 
@@ -69,7 +68,7 @@ class ProviderCheckRecordTest {
     // per ProviderResourceResolveTest's established pattern — no live SCM call, no HTTP layer.
 
     private ProviderInput githubInput(String workspace, String secret, String name) {
-        return new ProviderInput(name, "github", "https://scm.example.invalid", workspace,
+        return new ProviderInput(name, "github", "https://scm.example.invalid",
                 "bearer", null, secret, "acct-1", true, List.of(), "test-bot", null);
     }
 

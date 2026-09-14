@@ -69,10 +69,13 @@ public class GitLabPullRequestSink implements PullRequestSink {
         return ScmType.GITLAB;
     }
 
+    @Override public boolean supportsDrafts() { return true; }
+
     @Override
     public PullRequestRef open(RepoRef repo, NewPullRequest request) {
-        return findByHead(repo, request.headBranch(), request.baseBranch())
-                .orElseGet(() -> create(repo, request));
+        requireSupported(request);
+        return PullRequestSink.requireObservedDraft(request, findByHead(repo, request.headBranch(), request.baseBranch())
+                .orElseGet(() -> create(repo, request)));
     }
 
     private PullRequestRef create(RepoRef repo, NewPullRequest request) {
@@ -81,7 +84,7 @@ public class GitLabPullRequestSink implements PullRequestSink {
             return read(client.postJson(path, Map.of(
                     "source_branch", request.headBranch(),
                     "target_branch", request.baseBranch(),
-                    "title", request.title(),
+                    "title", request.draft() ? "Draft: " + request.title() : request.title(),
                     "description", request.bodyMd())), "POST", path);
         } catch (GitLabApiException e) {
             return recover(repo, request, e);
@@ -145,7 +148,7 @@ public class GitLabPullRequestSink implements PullRequestSink {
             throw new GitLabApiException(200, method, path,
                     "response carried no merge request iid or web_url");
         }
-        return new PullRequestRef(number, url);
+        return new PullRequestRef(number, url, node.path("draft").isBoolean() ? node.path("draft").booleanValue() : null);
     }
 
     private static void requireBranch(String branch, String which) {

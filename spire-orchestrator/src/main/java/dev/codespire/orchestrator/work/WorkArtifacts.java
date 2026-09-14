@@ -1,0 +1,74 @@
+package dev.codespire.orchestrator.work;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.work.WorkPreparation;
+import dev.codespire.worksource.*;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.util.concurrent.*;
+
+/** Bounded transient reads through the selected tracker account; no artifact body is persisted here. */
+@ApplicationScoped
+public class WorkArtifacts {
+    @Inject WorkSourceRegistry sources;
+    @Inject ObjectMapper mapper;
+    public record Reference(WorkPreparation.Artifact artifact,String title) {}
+    public record Evidence(String failure,String specification,String instruction) {
+        public static Evidence absent() { return new Evidence(null,null,null); }
+    }
+    public Reference resolve(WorkSourceRegistry.Source source,String key) {
+        return bounded(()-> {
+            WorkSource client=sources.client(source);
+            WorkIssueLocation location=client.resolve(key);
+            WorkTicket ticket=fetch(client,source,location);
+            return new Reference(new WorkPreparation.Artifact(ticket.location(),WorkPreparation.digest(ticket.body())),ticket.title());
+        });
+    }
+    public Evidence observe(WorkSourceRegistry.Source source,WorkPreparation preparation) {
+        if(preparation==null)return Evidence.absent();
+        try {
+            return bounded(()-> {
+                WorkSource client=sources.client(source);
+                WorkTicket specification=fetch(client,source,preparation.specification().location());
+                WorkTicket plan=fetch(client,source,preparation.plan().location());
+                if(!preparation.specification().sha256().equals(WorkPreparation.digest(specification.body()))
+                        || !preparation.plan().sha256().equals(WorkPreparation.digest(plan.body())))
+                    return new Evidence("artifacts_changed",null,null);
+                com.fasterxml.jackson.databind.JsonNode root;
+                try { root=mapper.readTree(plan.body()); }
+                catch(com.fasterxml.jackson.core.JsonProcessingException invalid) { return new Evidence("single_step_plan_required",null,null); }
+                if(root==null || !root.isObject() || !root.path("schemaVersion").isInt() || root.path("schemaVersion").asInt()!=1
+                        || !preparation.specification().sha256().equals(root.path("specificationSha256").asText())
+                        || !root.path("steps").isArray() || root.path("steps").size()!=1)
+                    return new Evidence("single_step_plan_required",null,null);
+                var step=root.path("steps").get(0);
+                if(!step.path("id").isTextual() || step.path("id").asText().isBlank()
+                        || !step.path("instruction").isTextual() || step.path("instruction").asText().isBlank())
+                    return new Evidence("single_step_plan_required",null,null);
+                return new Evidence(null,specification.body(),step.path("instruction").asText());
+            });
+        } catch(ArtifactUnavailable unavailable) { return new Evidence("artifacts_unavailable",null,null); }
+    }
+    private WorkTicket fetch(WorkSource client,WorkSourceRegistry.Source source,WorkIssueLocation location) {
+        if(location==null || location.ref()==null || location.ref().type()!=source.type()
+                || !source.origin().equals(location.ref().origin()) || !source.projectId().equals(location.ref().projectId()))
+            throw new ArtifactUnavailable();
+        if(!(client.fetch(location) instanceof WorkSource.Fetch.Found found))throw new ArtifactUnavailable();
+        WorkTicket ticket=found.ticket();
+        if(!ticket.location().ref().equals(location.ref()) || ticket.body()==null || ticket.body().isBlank() || ticket.body().length()>48*1024)
+            throw new ArtifactUnavailable();
+        return ticket;
+    }
+    private static <T> T bounded(Callable<T> operation) {
+        FutureTask<T> task=new FutureTask<>(operation);Thread.ofVirtual().start(task);
+        try { return task.get(20,TimeUnit.SECONDS); }
+        catch(Exception failure) {
+            task.cancel(true);
+            if(failure instanceof InterruptedException)Thread.currentThread().interrupt();
+            throw new ArtifactUnavailable();
+        }
+    }
+    public static final class ArtifactUnavailable extends RuntimeException {
+        ArtifactUnavailable() { super("Tracker artifacts are unavailable; check the references and selected source account"); }
+    }
+}

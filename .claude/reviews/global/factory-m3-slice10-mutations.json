@@ -1,0 +1,55 @@
+{
+  "summary": {
+    "checks": 4,
+    "distinctProductionMutations": 4,
+    "productionMigration": 1,
+    "productionJava": 3
+  },
+  "method": "Exactly one selected assertion failure; restore exact scratch bytes and rerun green. Architecture mutants also compile the production orchestrator. Migration mutation applies the production resource to a private populated schema, never dev.",
+  "checks": [
+    {
+      "id": "workspace_drop",
+      "file": "spire-orchestrator/src/main/resources/db/migration/V72__drop_account_workspace.sql",
+      "from": "ALTER TABLE scm_provider DROP COLUMN workspace;",
+      "to": "SELECT 1;",
+      "module": "spire-orchestrator",
+      "test": "dev.codespire.orchestrator.provider.AccountWorkspaceDropMigrationTest.dropsOnlyLegacyWorkspaceAfterPreservingEveryOtherAccountFieldAndReference",
+      "sourceSha256": "a22b61075bb31f61fb6ac471fb0b297dbe87d730771f2246a7bf9cc10ad69425",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "workspace_read",
+      "file": "spire-orchestrator/src/main/java/dev/codespire/orchestrator/provider/ProviderRegistry.java",
+      "from": "role, reported_scopes, scopes_checked_at FROM scm_provider ORDER BY created_at",
+      "to": "role, reported_scopes, scopes_checked_at, workspace FROM scm_provider ORDER BY created_at",
+      "module": "spire-arch",
+      "test": "dev.codespire.arch.AccountWorkspaceIsUnusedTest.noProductionCodeReadsLegacyAccountWorkspace",
+      "sourceSha256": "6709c44aaaba55020c21e2674536655a5d85a2d4045716c7cb16d21c467e0ceb",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "workspace_insert",
+      "file": "spire-orchestrator/src/main/java/dev/codespire/orchestrator/provider/ProviderRegistry.java",
+      "from": "auth_username, auth_secret, bot_account_id, bot_username, conversation_level, enabled,",
+      "to": "workspace, auth_secret, bot_account_id, bot_username, conversation_level, enabled,",
+      "module": "spire-arch",
+      "test": "dev.codespire.arch.AccountWorkspaceIsUnusedTest.noProductionCodeReadsLegacyAccountWorkspace",
+      "sourceSha256": "6709c44aaaba55020c21e2674536655a5d85a2d4045716c7cb16d21c467e0ceb",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "workspace_update",
+      "file": "spire-orchestrator/src/main/java/dev/codespire/orchestrator/provider/ProviderRegistry.java",
+      "from": "UPDATE scm_provider SET name=?, type=?, base_url=?, auth_kind=?, ",
+      "to": "UPDATE scm_provider SET workspace=NULL, name=?, type=?, base_url=?, auth_kind=?, ",
+      "module": "spire-arch",
+      "test": "dev.codespire.arch.AccountWorkspaceIsUnusedTest.noProductionCodeReadsLegacyAccountWorkspace",
+      "sourceSha256": "6709c44aaaba55020c21e2674536655a5d85a2d4045716c7cb16d21c467e0ceb",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    }
+  ]
+}

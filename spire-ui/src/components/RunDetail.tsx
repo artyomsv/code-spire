@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router';
 import { useRunDetail } from '../hooks/useRunDetail';
-import RunCard from './RunCard';
+import RunCard, { RunFields } from './RunCard';
 import RunPhases from './RunPhases';
 import RunRuntimeCard from './RunRuntimeCard';
 import RunSpendCard from './RunSpendCard';
@@ -35,6 +35,14 @@ function RunDetailPage({ runId }: { runId: string }) {
       <div className="run-detail-grid">
         <div className="run-main">
           <RunPhases run={run} />
+          {run.publication && <RunCard title="Build checkpoint">
+            <p><Link to={`/work-items/${encodeURIComponent(run.publication.workItemId)}`}>Work item</Link></p>
+            {run.status === 'awaiting_delivery' && <p>Build complete. Compute has stopped; the workspace is retained while the work item waits for delivery permission.</p>}
+            <RunFields rows={[
+              ['Checkpoint', run.publication.checkpointHead],
+              ['Active compute', run.publication.activeWallSeconds == null ? null : `${run.publication.activeWallSeconds} seconds`],
+            ]} />
+          </RunCard>}
           <RunEventStream runId={runId} />
           {run.status === 'push_gate_refused' && <RunCard title="Blocked paths">
             <ul>{run.blocked.map((change, index) => <li key={`${change.path}-${index}`}>

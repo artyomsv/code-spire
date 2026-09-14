@@ -36,4 +36,10 @@ public final class EventTypes {
         }
         return type;
     }
+
+    /** Work payloads use the same encrypted store, while remaining outside the review hierarchy. */
+    public static Class<?> storedType(String eventType) {
+        if ("WorkItemEvent".equals(eventType)) return dev.codespire.contract.work.WorkItemEvent.class;
+        return domainType(eventType);
+    }
 }

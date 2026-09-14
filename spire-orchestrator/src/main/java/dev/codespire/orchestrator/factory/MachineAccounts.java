@@ -15,7 +15,7 @@ import java.util.Optional;
  * <p><b>Empty means "cannot dispatch", never "use the reviewer".</b> The reviewer's own author
  * allowlist skips pull requests it opened itself — so a run that fell back to the review bot would
  * produce a branch nobody reviews, silently. Failing closed here is the whole point of the class
- * existing as something separate from {@link ProviderRegistry#resolve}.
+ * existing as a dedicated role selector over repository bindings.
  *
  * <p><b>An account with no resolved login is EMPTY too, and that is why the check lives here.</b>
  * The login is what the forge authenticates the push as. A blank one is stored as SQL null by
@@ -32,15 +32,15 @@ import java.util.Optional;
 public class MachineAccounts {
 
     @Inject
-    ProviderRegistry providers;
+    dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
 
-    public Optional<ScmProvider> resolve(ScmType scmType, String workspace) {
-        return providers.resolve(scmType.providerType(), workspace, ProviderRole.FACTORY)
+    public Optional<ScmProvider> resolve(java.util.UUID repositoryId) {
+        return accounts.resolve(repositoryId, ProviderRole.FACTORY)
                 .filter(MachineAccounts::canAuthenticateAPush);
     }
 
     /**
-     * The registration behind {@link #resolve}, usable or not — for saying WHY it was empty.
+     * The enabled compatible registration behind {@link #resolve}, before its push-login check.
      *
      * <p><b>Never for dispatch.</b> {@code resolve} is the only method that answers "can this
      * account push", and this one exists because its two empty answers have different cures: an
@@ -48,15 +48,15 @@ public class MachineAccounts {
      * message would send half the readers to the wrong screen. Only the REST arm calls it, on the
      * failure path, where a second read costs nothing anyone is waiting on.
      */
-    public Optional<ScmProvider> registration(ScmType scmType, String workspace) {
-        return providers.resolve(scmType.providerType(), workspace, ProviderRole.FACTORY);
+    public Optional<ScmProvider> registration(java.util.UUID repositoryId) {
+        return accounts.resolve(repositoryId, ProviderRole.FACTORY);
     }
 
     /**
      * The one rule behind {@link #resolve}: a push is authenticated as the login, so a registration
      * without one cannot push. Public and over the string so a caller holding only a view can judge
      * a registration without decrypting its token — the Repositories screen asks this once per
-     * workspace on every load, and a display read must not depend on the keyset being current.
+     * repository on every load, and a display read must not depend on the keyset being current.
      */
     public static boolean canAuthenticateAPush(String botUsername) {
         return botUsername != null && !botUsername.isBlank();

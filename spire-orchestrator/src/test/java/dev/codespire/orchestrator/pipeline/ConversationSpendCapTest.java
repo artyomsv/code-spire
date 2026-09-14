@@ -248,15 +248,14 @@ class ConversationSpendCapTest {
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
-                return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x",
-                        "TEST-WS", "bearer", null, "secret", "acct", true, List.of(), "code-spire",
+                return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "bearer", null, "secret", "acct", true, List.of(), "code-spire",
                         "EXPLAIN", ProviderRole.REVIEWER));
             }
         };
         saga.levels = fixedLevel();
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
+            public String pack(ScmProvider p, String repositoryWorkspace) {
                 return "TEST-PACKED-CREDENTIAL";
             }
         };
@@ -279,7 +278,7 @@ class ConversationSpendCapTest {
     private static ConversationLevels fixedLevel() {
         return new ConversationLevels() {
             @Override
-            public ConversationLevel effectiveLevel(String type, String workspace) {
+            public ConversationLevel effectiveLevel(ScmProvider provider) {
                 return ConversationLevel.INTERACTIVE;
             }
 

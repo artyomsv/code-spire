@@ -45,6 +45,10 @@ COPY spire-scm-bitbucket/build.gradle.kts spire-scm-bitbucket/
 COPY spire-scm-github/build.gradle.kts spire-scm-github/
 COPY spire-scm-gitlab/build.gradle.kts spire-scm-gitlab/
 COPY spire-secrets/build.gradle.kts spire-secrets/
+COPY spire-worksource/build.gradle.kts spire-worksource/
+COPY spire-worksource-github/build.gradle.kts spire-worksource-github/
+COPY spire-worksource-jira/build.gradle.kts spire-worksource-jira/
+COPY spire-worksource-gitlab/build.gradle.kts spire-worksource-gitlab/
 COPY spire-workspace/build.gradle.kts spire-workspace/
 
 # A Windows checkout gives gradlew CRLF and /bin/sh then rejects the shebang with

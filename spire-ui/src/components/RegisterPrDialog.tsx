@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { registerPr, resolvePrUrl, type ResolvedUrl } from '../api';
+import { fetchRepositories, type Repository } from './repositories/repositoriesApi';
 
 /**
  * Parse the PR # field into a positive integer, or null when it isn't one —
@@ -24,6 +25,8 @@ export default function RegisterPrDialog({
   const [slug, setSlug] = useState('');
   const [pr, setPr] = useState('');
   const [resolved, setResolved] = useState<ResolvedUrl | null>(null);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [repositoryId, setRepositoryId] = useState('');
   const [urlUnrecognised, setUrlUnrecognised] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +34,12 @@ export default function RegisterPrDialog({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const resolveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const resolveSeq = useRef(0);
+  useEffect(() => {
+    let active = true;
+    fetchRepositories().then(rows => { if (active) setRepositories(rows); })
+      .catch(() => { if (active) setError('Could not load registered repositories. Retry opening this dialog.'); });
+    return () => { active = false; };
+  }, []);
   useEffect(
     () => () => {
       if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -57,6 +66,7 @@ export default function RegisterPrDialog({
         .then((r) => {
           if (seq !== resolveSeq.current) return; // superseded by a newer keystroke
           setResolved(r);
+          setRepositoryId(r.repositoryId ?? '');
           setUrlUnrecognised(false);
           setWorkspace(r.workspace);
           setSlug(r.slug);
@@ -81,6 +91,10 @@ export default function RegisterPrDialog({
       setError('PR # must be a positive whole number.');
       return;
     }
+    if (!repositoryId) {
+      setError('Select a registered repository. Register it under Settings → Repositories if it is missing.');
+      return;
+    }
     setBusy(true);
     setError(null);
     setOk(null);
@@ -92,7 +106,7 @@ export default function RegisterPrDialog({
         resolved && resolved.workspace === workspace.trim() && resolved.slug === slug.trim()
           ? (resolved.providerType ?? undefined)
           : undefined;
-      const result = await registerPr({ workspace: workspace.trim(), slug: slug.trim(), pr: prNumber, providerType });
+      const result = await registerPr({ repositoryId, workspace: workspace.trim(), slug: slug.trim(), pr: prNumber, providerType });
       setOk(result.reviewId);
       onRegistered?.();
       // let the live list show the new row, then close
@@ -132,7 +146,7 @@ export default function RegisterPrDialog({
               </div>
             ) : (
               <div className="resolve-hint warn">
-                No provider registered for “{resolved.workspace}” — add one under Settings → Accounts
+                No enabled reviewer account selected for “{resolved.workspace}/{resolved.slug}” — configure it under Settings → Repositories
               </div>
             ))}
           {!resolved && urlUnrecognised && (
@@ -141,6 +155,15 @@ export default function RegisterPrDialog({
               …/pull-requests/1
             </div>
           )}
+          <label className="field"><span>Registered repository</span>
+            <select aria-label="Registered repository" value={repositoryId} onChange={event => {
+              const selected = repositories.find(row => row.id === event.target.value);
+              setRepositoryId(selected?.id ?? ''); setWorkspace(selected?.workspace ?? ''); setSlug(selected?.slug ?? ''); setResolved(null);
+            }}>
+              <option value="">Select repository</option>
+              {repositories.map(row => <option key={row.id} value={row.id}>{row.forgeOrigin} · {row.workspace}/{row.slug}</option>)}
+            </select>
+          </label>
           <div className="field-row">
             <label className="field">
               <span>Workspace</span>
@@ -148,7 +171,7 @@ export default function RegisterPrDialog({
                 className="mono"
                 placeholder="workspace"
                 value={workspace}
-                onChange={(e) => setWorkspace(e.target.value)}
+                readOnly
               />
             </label>
             <label className="field">
@@ -157,7 +180,7 @@ export default function RegisterPrDialog({
                 className="mono"
                 placeholder="repo-slug"
                 value={slug}
-                onChange={(e) => setSlug(e.target.value)}
+                readOnly
               />
             </label>
             <label className="field field-pr">

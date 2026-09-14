@@ -41,12 +41,12 @@ class PureModulesAreFrameworkFreeTest {
 
     /** Modules whose build files declare them framework-free. */
     private static final List<String> PURE_MODULES =
-            List.of("spire-contract", "spire-diff", "spire-harness", "spire-runtime");
+            List.of("spire-contract", "spire-diff", "spire-harness", "spire-runtime", "spire-worksource");
 
     /** What a pure module may always import: the JDK, and the pure modules themselves. */
     private static final List<String> DOMAIN_PREFIXES =
             List.of("java.", "dev.codespire.contract.", "dev.codespire.diff.",
-                    "dev.codespire.harness.", "dev.codespire.runtime.");
+                    "dev.codespire.harness.", "dev.codespire.runtime.", "dev.codespire.worksource.");
 
     /**
      * Third-party imports permitted anyway, each with the reason. An entry here is a deliberate,

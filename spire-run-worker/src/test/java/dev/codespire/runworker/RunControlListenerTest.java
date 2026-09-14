@@ -36,6 +36,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * once the run it cancels had already finished. Control has its own topic and its own listener.
  */
 class RunControlListenerTest {
+    @Test void heldWorkControlReachesDurableRevocationInsteadOfM1Cancel() {
+        var hold=new RunCommand.HoldWorkRun("TEST-held-run",new dev.codespire.contract.work.WorkRunBinding(
+                "TEST-item",1,java.util.UUID.randomUUID(),"a".repeat(64)));
+        var received=new ArrayList<RunCommand.HoldWorkRun>();
+        var listener=new RunControlListener();listener.workRuns=new WorkRunWorker(){
+            @Override public void hold(RunCommand.HoldWorkRun command){received.add(command);}
+        };
+        listener.onControl(hold);assertEquals(List.of(hold),received);
+    }
 
     private static final String RUN_ID = "run::github:TEST-acme/app:s:1";
 

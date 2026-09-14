@@ -57,6 +57,10 @@ public final class PublisherOutcome {
 
     private String pushedRef;
 
+    private String checkpointHead;
+
+    private boolean failedAfterCheckpoint;
+
     private String failureCause;
 
     private String failureDetail;
@@ -80,6 +84,19 @@ public final class PublisherOutcome {
             return;
         }
         switch (node.path("event").asText("")) {
+            case "checkpoint" -> {
+                String head = node.path("head").asText("");
+                if (!head.matches("[0-9a-f]{40}")) {
+                    checkpointHead = null;
+                    failureCause = "PUBLISHER_FAILED";
+                    failureDetail = "The publisher checkpoint did not carry a full head";
+                    failedAfterCheckpoint = true;
+                    break;
+                }
+                checkpointHead = head;
+                collect(node.path("changed"), changedPaths);
+                failedAfterCheckpoint = false;
+            }
             case "pushed" -> {
                 pushedRef = node.path("ref").asText(null);
                 collect(node.path("changed"), changedPaths);
@@ -93,6 +110,7 @@ public final class PublisherOutcome {
                 failureCause = node.path("cause").asText("PUBLISHER_FAILED");
                 failureDetail = node.path("detail").asText("");
                 failedAfterPush = pushedRef != null && !NON_TERMINAL_CAUSES.contains(failureCause);
+                failedAfterCheckpoint = checkpointHead != null && !NON_TERMINAL_CAUSES.contains(failureCause);
             }
             default -> {
             }
@@ -167,6 +185,10 @@ public final class PublisherOutcome {
 
     public Optional<String> pushedRef() {
         return refused() || failedAfterPush ? Optional.empty() : Optional.ofNullable(pushedRef);
+    }
+
+    public Optional<String> checkpointHead() {
+        return refused() || failedAfterCheckpoint ? Optional.empty() : Optional.ofNullable(checkpointHead);
     }
 
     public List<String> changedPaths() {

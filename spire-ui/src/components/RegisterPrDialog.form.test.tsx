@@ -1,13 +1,17 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import RegisterPrDialog, { parsePrNumber } from './RegisterPrDialog';
 import * as api from '../api';
+import * as repos from './repositories/repositoriesApi';
+const repository: repos.Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.invalid', workspace: 'acme', slug: 'widgets', enabled: true, revision: 1, reviewer: null, factory: null };
+beforeEach(() => { vi.spyOn(repos, 'fetchRepositories').mockResolvedValue([repository, {...repository, id: 'TEST-second', slug: 'gadgets', scmType: 'gitlab'}]); });
 
 const noop = () => {};
 
 const renderDialog = () => render(<RegisterPrDialog onClose={noop} />);
 
 const resolved: api.ResolvedUrl = {
+  repositoryId: 'TEST-repository',
   workspace: 'acme',
   slug: 'widgets',
   pr: 7,
@@ -30,9 +34,9 @@ async function pasteUrlAndSettle(url: string) {
   vi.useRealTimers();
 }
 
-const fillManually = (workspace: string, slug: string, pr: string) => {
-  fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: workspace } });
-  fireEvent.change(screen.getByLabelText('Repository'), { target: { value: slug } });
+const fillManually = async (_workspace: string, _slug: string, pr: string) => {
+  await screen.findByRole('option', { name: /acme\/widgets/ });
+  fireEvent.change(screen.getByLabelText('Registered repository'), { target: { value: 'TEST-repository' } });
   fireEvent.change(screen.getByLabelText(/pr #/i), { target: { value: pr } });
 };
 
@@ -72,7 +76,7 @@ describe('RegisterPrDialog — form', () => {
     const register = vi.spyOn(api, 'registerPr').mockResolvedValue({ reviewId: 'r-1' } as never);
     renderDialog();
 
-    fillManually('acme', 'widgets', 'twenty-four');
+    await fillManually('acme', 'widgets', 'twenty-four');
     clickRegister();
 
     expect(await screen.findByText(/pr # must be a positive whole number/i)).toBeInTheDocument();
@@ -124,11 +128,11 @@ describe('RegisterPrDialog — form', () => {
     renderDialog();
 
     await pasteUrlAndSettle('https://github.example.invalid/acme/widgets/pull/7');
-    fireEvent.change(screen.getByLabelText('Repository'), { target: { value: 'gadgets' } });
+    fireEvent.change(screen.getByLabelText('Registered repository'), { target: { value: 'TEST-second' } });
     clickRegister();
 
     await waitFor(() => expect(register).toHaveBeenCalled());
-    expect(register.mock.calls[0][0].providerType).toBeUndefined();
+    expect(register.mock.calls[0][0]).toMatchObject({ repositoryId: 'TEST-second', slug: 'gadgets' });
   });
 
   /**
@@ -146,7 +150,7 @@ describe('RegisterPrDialog — form', () => {
 
     await pasteUrlAndSettle('https://github.example.invalid/acme/widgets/pull/7');
 
-    expect(screen.getByText(/no provider registered for/i)).toBeInTheDocument();
+    expect(screen.getByText(/no enabled reviewer account selected/i)).toBeInTheDocument();
   });
 
   /** An unparseable URL leaves the fields blank; without this hint the dialog just looks broken. */
@@ -164,10 +168,10 @@ describe('RegisterPrDialog — form', () => {
     vi.spyOn(api, 'registerPr').mockRejectedValue(new Error('No provider is registered for acme.'));
     renderDialog();
 
-    fillManually('acme', 'widgets', '7');
+    await fillManually('acme', 'widgets', '7');
     clickRegister();
 
     expect(await screen.findByText(/no provider is registered for acme/i)).toBeInTheDocument();
-    expect(screen.queryByText(/^registered /i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^registered r-/i)).not.toBeInTheDocument();
   });
 });

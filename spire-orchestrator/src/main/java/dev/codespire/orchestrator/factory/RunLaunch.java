@@ -86,6 +86,14 @@ public class RunLaunch {
      * us nothing about whether the record left — which is the whole rule here.
      */
     public Outcome launch(RunCommand.ExecuteRun command) {
+        return dispatch(command);
+    }
+
+    public Outcome launch(RunCommand.ExecuteWorkRun command) {
+        return dispatch(command);
+    }
+
+    private Outcome dispatch(RunCommand command) {
         String runId = command.runId();
         try {
             emitter.dispatch(command);

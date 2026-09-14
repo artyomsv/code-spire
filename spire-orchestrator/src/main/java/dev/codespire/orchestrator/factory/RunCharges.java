@@ -134,7 +134,7 @@ public class RunCharges {
      * actual question and defaults to charging, so only a cause that provably precedes the agent is
      * skipped. A failure that DID report usage is charged whatever its cause says.
      */
-    private static boolean nothingWasBought(RunResult result) {
+    public static boolean nothingWasBought(RunResult result) {
         return result instanceof RunResult.RunFailed failed
                 && !failed.usageIsKnown()
                 && !RunFailureCause.of(failed.cause()).agentMayHaveSpent();

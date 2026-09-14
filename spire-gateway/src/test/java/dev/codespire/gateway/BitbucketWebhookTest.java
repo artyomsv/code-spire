@@ -87,7 +87,7 @@ class BitbucketWebhookTest {
     void signedWebhookLandsKeyedAndTypedOnIntegrationTopic() throws Exception {
         // Captured before the POST so the assertion reads OUR record, not one an earlier test class
         // left on this shared topic (see TopicWatermark).
-        var from = TopicWatermark.of(companion, "cs.integration");
+        var from = TopicWatermark.of(companion, "cs.repository-integration");
         byte[] body = PR_CREATED.getBytes(StandardCharsets.UTF_8);
         RestAssured.given()
                 .header("X-Event-Key", "pullrequest:created")

@@ -5,6 +5,7 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.PullImageCmd;
 import com.github.dockerjava.api.command.PullImageResultCallback;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.exception.ConflictException;
 import com.github.dockerjava.api.exception.NotModifiedException;
 import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.AuthConfig;
@@ -28,6 +29,8 @@ import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RegistryCredential;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
+import dev.codespire.runtime.PublicationKey;
+import dev.codespire.runtime.PublicationRuntime;
 import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
@@ -51,6 +54,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -74,7 +78,7 @@ import java.util.function.Consumer;
  * under Docker's default seccomp profile, and does not fail fast when it cannot. The container is
  * the boundary, so the default seccomp profile is KEPT and never relaxed here.
  */
-public final class DockerRunRuntime implements RunRuntime {
+public final class DockerRunRuntime implements PublicationRuntime {
 
     /**
      * The JDK's own logger, not a framework one.
@@ -90,6 +94,10 @@ public final class DockerRunRuntime implements RunRuntime {
 
     static final String ROLE_LABEL = "dev.codespire.role";
 
+    static final String PUBLICATION_HOLD_LABEL = "dev.codespire.publicationHold";
+
+    static final String PUBLICATION_PERMIT_LABEL = "dev.codespire.publicationPermit";
+
     /** The unit wall clock, recorded so a restarted worker can enforce it with no memory. */
     static final String WALL_CLOCK_LABEL = "dev.codespire.wallClockSeconds";
 
@@ -98,6 +106,8 @@ public final class DockerRunRuntime implements RunRuntime {
     private static final String AGENT = "agent";
 
     private static final String PUBLISHER = "publisher";
+
+    private static final String DELIVERY = "delivery-publisher";
 
     /** How long the publisher is given to drain after the agent exits, before it is stopped. */
     /**
@@ -215,14 +225,33 @@ public final class DockerRunRuntime implements RunRuntime {
 
     @Override
     public RunHandle create(RunUnitSpec spec) {
+        if (publicationHeld(new RunHandle(spec.runId(), spec.runId()))) {
+            throw new IllegalStateException("A retained publication hold already owns run " + spec.runId());
+        }
+        return create(spec, null);
+    }
+
+    @Override
+    public RunHandle createHeld(RunUnitSpec spec, PublicationKey binding) {
+        java.util.Objects.requireNonNull(binding);
+        if (!resourceLabels(spec.runId()).isEmpty()) {
+            throw new IllegalStateException("Run resources already exist; a held build cannot be recreated");
+        }
+        return create(spec, binding);
+    }
+
+    private RunHandle create(RunUnitSpec spec, PublicationKey binding) {
+        Map<String, String> volumeLabels = new LinkedHashMap<>();
+        volumeLabels.put(RUN_ID_LABEL, spec.runId());
+        if (binding != null) volumeLabels.put(PUBLICATION_HOLD_LABEL, binding.value());
         for (String volume : volumeNamesOf(spec)) {
             client.createVolumeCmd()
                     .withName(volume)
-                    .withLabels(Map.of(RUN_ID_LABEL, spec.runId()))
+                    .withLabels(volumeLabels)
                     .exec();
         }
 
-        String initId = createContainer(spec, spec.init(), INIT);
+        String initId = createContainer(spec, spec.init(), INIT, binding, null);
         client.startContainerCmd(initId).exec();
         int initExit;
         try {
@@ -243,8 +272,8 @@ public final class DockerRunRuntime implements RunRuntime {
                     + " for run " + spec.runId() + initReport(initId));
         }
 
-        String publisherId = createContainer(spec, spec.publisher(), PUBLISHER);
-        String agentId = createContainer(spec, spec.agent(), AGENT);
+        String publisherId = createContainer(spec, spec.publisher(), PUBLISHER, binding, null);
+        String agentId = createContainer(spec, spec.agent(), AGENT, binding, null);
         // Publisher first, but ONLY as a defensive habit — nothing depends on it. The handoff is a
         // FILE, so it persists: a publisher that started late still sees every bundle already
         // written, which HandoffWatcher covers directly. A mutation swapping these two lines was
@@ -460,7 +489,8 @@ public final class DockerRunRuntime implements RunRuntime {
         return Optional.of(Map.of(TMPFS_MOUNT, TMPFS_OPTIONS + spec.diskBytes()));
     }
 
-    private String createContainer(RunUnitSpec spec, ContainerSpec container, String role) {
+    private String createContainer(RunUnitSpec spec, ContainerSpec container, String role,
+                                   PublicationKey binding, UUID permit) {
         HostConfig host = hostConfigFor(spec, container);
 
         List<String> env = new ArrayList<>();
@@ -469,13 +499,16 @@ public final class DockerRunRuntime implements RunRuntime {
         spec.environmentFor(container).forEach((name, value) -> env.add(name + "=" + value));
 
         ensureImage(container.image());
-        return client.createContainerCmd(container.image())
+        Map<String, String> labels = new LinkedHashMap<>(labelsFor(spec, role));
+        if (binding != null) labels.put(PUBLICATION_HOLD_LABEL, binding.value());
+        if (permit != null) labels.put(PUBLICATION_PERMIT_LABEL, permit.toString());
+        var create = client.createContainerCmd(container.image())
                 .withCmd(container.argv())
                 .withEnv(env)             // credentials live HERE, never in a label
-                .withLabels(labelsFor(spec, role))
-                .withHostConfig(host)
-                .exec()
-                .getId();
+                .withLabels(labels)
+                .withHostConfig(host);
+        if (permit != null) create.withName(volumeName(spec.runId(), "publish-" + permit));
+        return create.exec().getId();
     }
 
     /**
@@ -667,6 +700,9 @@ public final class DockerRunRuntime implements RunRuntime {
         for (String role : List.of(AGENT, PUBLISHER)) {
             containerOf(handle.runId(), role).ifPresent(this::killQuietly);
         }
+        for (Container container : containersOf(handle.runId())) {
+            if (DELIVERY.equals(container.getLabels().get(ROLE_LABEL))) killQuietly(container.getId());
+        }
     }
 
     private void killAgent(RunHandle handle) {
@@ -791,6 +827,9 @@ public final class DockerRunRuntime implements RunRuntime {
 
     @Override
     public void destroy(RunHandle handle) {
+        if (publicationHeld(handle)) {
+            throw new IllegalStateException("Publication is held; ordinary teardown cannot discard run " + handle.runId());
+        }
         for (Container container : containersOf(handle.runId())) {
             try {
                 client.removeContainerCmd(container.getId()).withForce(true).exec();
@@ -809,6 +848,116 @@ public final class DockerRunRuntime implements RunRuntime {
                         // already gone
                     }
                 });
+    }
+
+    @Override
+    public boolean publicationHeld(RunHandle handle) {
+        // Presence, not validity: damaged hold metadata must preserve work rather than authorize deletion.
+        return resourceLabels(handle.runId()).stream().anyMatch(labels -> labels.containsKey(PUBLICATION_HOLD_LABEL));
+    }
+
+    private List<Map<String, String>> resourceLabels(String runId) {
+        List<Map<String, String>> labels = new ArrayList<>();
+        containersOf(runId).forEach(container -> labels.add(container.getLabels()));
+        client.listVolumesCmd().withFilter("label", List.of(RUN_ID_LABEL + "=" + runId))
+                .exec().getVolumes().forEach(volume -> labels.add(volume.getLabels()));
+        return labels;
+    }
+
+    private void requireHeld(RunHandle handle, PublicationKey binding) {
+        java.util.Objects.requireNonNull(binding);
+        List<Map<String, String>> resources = resourceLabels(handle.runId());
+        if (resources.isEmpty() || resources.stream()
+                .anyMatch(labels -> !binding.value().equals(labels.get(PUBLICATION_HOLD_LABEL)))) {
+            throw new IllegalStateException("The retained resources do not match the publication binding");
+        }
+    }
+
+    @Override
+    public Finalization publishHeld(RunHandle handle, PublicationKey binding, UUID permitId,
+                                     RunUnitSpec publication, Consumer<String> lines,
+                                     java.util.function.BooleanSupplier mayStart) {
+        java.util.Objects.requireNonNull(permitId);
+        if (!handle.runId().equals(publication.runId())) {
+            throw new IllegalArgumentException("A publication must name its retained run");
+        }
+        requireHeld(handle, binding);
+        // This operation only resumes a publisher. Both original processes must have stopped,
+        // and its mounts must still be those of the trusted publisher, never the agent workspace.
+        for (String role : List.of(AGENT, PUBLISHER)) {
+            var state = client.inspectContainerCmd(containerOf(handle.runId(), role).orElseThrow()).exec().getState();
+            if (!"exited".equals(state.getStatus())) {
+                throw new IllegalStateException("Publication requires stopped build processes");
+            }
+        }
+        var original = client.inspectContainerCmd(containerOf(handle.runId(), PUBLISHER).orElseThrow()).exec();
+        if (!Set.copyOf(Arrays.asList(original.getHostConfig().getBinds()))
+                .equals(Set.copyOf(bindsFor(publication, publication.publisher())))) {
+            throw new IllegalArgumentException("Publication cannot change the retained publisher mounts");
+        }
+        String name = volumeName(handle.runId(), "publish-" + permitId);
+        String id;
+        try {
+            id = client.inspectContainerCmd(name).exec().getId();
+        } catch (NotFoundException absent) {
+            if (!mayStart.getAsBoolean()) return publicationCancelledBeforeStart(lines);
+            try {
+                id = createContainer(publication, publication.publisher(), DELIVERY, binding, permitId);
+            } catch (ConflictException raced) {
+                id = client.inspectContainerCmd(name).exec().getId();
+            }
+        }
+        var publisher = client.inspectContainerCmd(id).exec();
+        Map<String, String> labels = publisher.getConfig().getLabels();
+        if (!handle.runId().equals(labels.get(RUN_ID_LABEL))
+                || !binding.value().equals(labels.get(PUBLICATION_HOLD_LABEL))
+                || !permitId.toString().equals(labels.get(PUBLICATION_PERMIT_LABEL))) {
+            throw new IllegalStateException("The publisher instance does not match its permit");
+        }
+        if ("created".equals(publisher.getState().getStatus())) {
+            if (!mayStart.getAsBoolean()) return publicationCancelledBeforeStart(lines);
+            try {
+                client.startContainerCmd(id).exec();
+            } catch (NotModifiedException alreadyStarted) {
+                // Another observer of this same durable permit reached the same created instance.
+            }
+        }
+        // A cancel may have met a created-but-not-running container just before start. This
+        // second read closes that window; an already exited publisher is still read below.
+        if (!mayStart.getAsBoolean()) killQuietly(id);
+        try {
+            int exit = client.waitContainerCmd(id).exec(new WaitContainerResultCallback())
+                    .awaitStatusCode(PUBLISHER_DRAIN_SECONDS, TimeUnit.SECONDS);
+            logLinesOf(id).forEach(lines);
+            return Finalization.salvaged(exit, "publication exited " + exit);
+        } catch (RuntimeException | IOException unobserved) {
+            stopQuietly(id);
+            return Finalization.faulted("publication could not be observed; retained for recovery ("
+                    + unobserved.getClass().getSimpleName() + ")");
+        }
+    }
+
+    private static Finalization publicationCancelledBeforeStart(Consumer<String> lines) {
+        lines.accept("{\"event\":\"failed\",\"cause\":\"PUBLICATION_CANCELLED\",\"detail\":\"The publisher was not started\"}");
+        return Finalization.faulted("publication was cancelled before its publisher started");
+    }
+
+    @Override
+    public void destroyHeld(RunHandle handle, PublicationKey binding) {
+        requireHeld(handle, binding);
+        // Explicit ownership is required even when only volumes survived a partial teardown.
+        // A daemon refusal is not success: callers retain cleanup work until every removal succeeds.
+        for (Container container : containersOf(handle.runId())) {
+            try {
+                client.removeContainerCmd(container.getId()).withForce(true).exec();
+            } catch (NotFoundException gone) { /* idempotent removal */ }
+        }
+        for (var volume : client.listVolumesCmd().withFilter("label", List.of(RUN_ID_LABEL + "=" + handle.runId()))
+                .exec().getVolumes()) {
+            try {
+                client.removeVolumeCmd(volume.getName()).exec();
+            } catch (NotFoundException gone) { /* idempotent removal */ }
+        }
     }
 
     /**

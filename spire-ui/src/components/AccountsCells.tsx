@@ -14,6 +14,7 @@ import { CopyableValue } from '../render';
 import { lastCheckedTitle, type LastChecked } from './lastChecked';
 import { type AccountKind } from './accounts';
 import { conversationLabel } from './ProviderFormModal';
+import { actorLabel } from './actorsApi';
 
 /**
  * The cells of the machine-accounts table. Split out of `AccountsTable` when three rounds of
@@ -188,26 +189,17 @@ export function StoredBadge({ stored }: { stored: LastChecked }) {
   );
 }
 
-/**
- * What this bot is allowed to do, in two marks: how many stable ids may command it, and how far it
- * converses. Both were sentences — "0 ids · Inherit (global)" — for two settings whose value an
- * operator compares down the column rather than reads. The count keeps a head-count icon instead of
- * the word "ids", the level drops the parenthesis the form needs, and each says itself in full on
- * its own tooltip and as its accessible name.
- *
- * <p>A Factory account has neither: they are read through the REVIEWER lookup, so a number here
- * would be dead data with an edit control implied beside it.
- */
+/** Observed people and policy effects; a count never substitutes for identity. */
 export function PolicyCell({ provider }: { provider: ProviderView }) {
   if (provider.role !== 'REVIEWER') return <span className="prov-sub">—</span>;
-  const ids = provider.authors.length;
-  const commanders = `${ids} stable ids may command this bot`;
+  const people = provider.actorDisplays ?? provider.authors.map(providerUserId => ({ providerUserId, handle: null, displayName: null, stale: true }));
+  const commanders = people.length ? people.map(actor => `${actorLabel(actor)} · Allowed${actor.stale ? ' · stale display' : ''}`).join(', ') : 'No person restriction';
   const conversation = `Conversation: ${conversationLabel(provider.conversationLevel)}`;
   return (
     <span className="policy-cell">
       <span className="policy-bit" role="img" aria-label={commanders} title={commanders}>
         <UsersRound size={12} aria-hidden="true" />
-        {ids}
+        {commanders}
       </span>
       <span className="policy-bit" role="img" aria-label={conversation} title={conversation}>
         {shortConversation(provider.conversationLevel)}

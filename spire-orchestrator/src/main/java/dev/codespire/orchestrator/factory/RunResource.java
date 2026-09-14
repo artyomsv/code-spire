@@ -36,7 +36,7 @@ import java.util.Map;
  * that makes re-run and DLQ replay admin-only.
  *
  * <p>Never falls back to the reviewer's credential. With no FACTORY-role registration for the
- * workspace this answers 409 naming what is missing, because the alternative is a branch pushed as
+ * repository this answers 409 naming what is missing, because the alternative is a branch pushed as
  * the review bot — whose pull requests the reviewer's own author allowlist then skips, so the run
  * would produce work nobody reviews and nobody is told about.
  *
@@ -72,6 +72,9 @@ public class RunResource {
 
     @Inject
     MachineAccounts machineAccounts;
+
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
 
     @Inject
     FactoryRunProjection projection;
@@ -113,14 +116,27 @@ public class RunResource {
      */
     public record DispatchRequest(String workspace, String slug, String providerType, String baseBranch,
                                   String baseCommit, String prompt, String harness, String model,
-                                  String subject, String llmProviderId) {
+                                  String subject, String llmProviderId, java.util.UUID repositoryId) {
     }
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     public Response dispatch(DispatchRequest req) {
+        if (req == null || req.repositoryId() == null) {
+            throw new BadRequestException("Select a registered repository (repositoryId is required)");
+        }
+        dev.codespire.orchestrator.repository.RepositoryView repository = repositories.get(req.repositoryId())
+                .orElseThrow(() -> new NotFoundException("Repository is not registered"));
+        if ((req.workspace() != null && !req.workspace().equals(repository.workspace()))
+                || (req.slug() != null && !req.slug().equals(repository.slug()))
+                || (req.providerType() != null && !req.providerType().equals(repository.scmType()))) {
+            throw new BadRequestException("Request coordinates do not match the selected repository");
+        }
+        req = new DispatchRequest(repository.workspace(), repository.slug(), repository.scmType(),
+                req.baseBranch(), req.baseCommit(), req.prompt(), req.harness(), req.model(), req.subject(),
+                req.llmProviderId(), repository.id());
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(req, config);
-        ScmProvider account = machineAccount(in);
+        ScmProvider account = machineAccount(repository.id());
         refusePinnedProvider(req.llmProviderId());
         refuseAnUnpriceableModel(in.model());
         refuseOverTheSpendCap();
@@ -153,7 +169,7 @@ public class RunResource {
         // the worker's claim as a redelivery — a 201 for a run that never runs. So: 409, naming it.
         if (!projection.queued(new FactoryRunProjection.QueuedRun(runId, in.harness(), in.model(),
                 in.baseBranch(), in.baseCommit(), branch, account.botUsername(), credential.id()),
-                FactoryPullRequestBody.summaryOf(in.prompt()))) {
+                FactoryPullRequestBody.summaryOf(in.prompt()), repository.id())) {
             throw conflict(alreadyExists(runId));
         }
         dispatch(runId, command);
@@ -161,13 +177,13 @@ public class RunResource {
     }
 
     /**
-     * The FACTORY-role account for the workspace, with a resolved login. The login is what the forge
+     * The repository's selected FACTORY account, with a resolved login. The login is what the forge
      * authenticates the push as and what every commit is authored by; the registry stores a blank
      * one as null, and packing a null login was a 500 AFTER the row existed — a subject burned.
      */
-    private ScmProvider machineAccount(DispatchRequestParser.Parsed in) {
-        return machineAccounts.resolve(in.scmType(), in.workspace())
-                .orElseThrow(() -> conflict(whyNoUsableAccount(in)));
+    private ScmProvider machineAccount(java.util.UUID repositoryId) {
+        return machineAccounts.resolve(repositoryId)
+                .orElseThrow(() -> conflict(whyNoUsableAccount(repositoryId)));
     }
 
     /**
@@ -179,15 +195,15 @@ public class RunResource {
      * escapes and the record is redelivered in silence. The cost of moving it is that "empty" no
      * longer names its cause, so this reads the registration back to name it.
      */
-    private String whyNoUsableAccount(DispatchRequestParser.Parsed in) {
-        String where = in.scmType().providerType() + "/" + in.workspace();
-        if (machineAccounts.registration(in.scmType(), in.workspace()).isPresent()) {
+    private String whyNoUsableAccount(java.util.UUID repositoryId) {
+        String where = "repository " + repositoryId;
+        if (machineAccounts.registration(repositoryId).isPresent()) {
             return "The Factory account for " + where + " has no resolved login. Re-save it "
                     + "with a token the forge can identify, or set the bot username by hand: the "
                     + "login is what the push is authenticated as.";
         }
-        return "No Factory account is registered for " + where + ". Register the machine "
-                + "account under Settings -> Accounts with role Factory (ADR-038). "
+        return "No usable Factory account is selected for " + where + ". Under Settings -> Repositories, "
+                + "enable the repository and select an enabled, compatible Factory account (ADR-038). "
                 + "The factory never pushes as the review bot.";
     }
 

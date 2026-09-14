@@ -42,6 +42,8 @@ class OperatorAuthTest {
      */
     private static final String[] CONFIGURATION_READS = {
             "/api/providers",
+            "/api/work-sources",
+            "/api/work-policy/profiles",
             "/api/llm-providers",
             "/api/llm-models",
             "/api/context-providers",
@@ -56,6 +58,7 @@ class OperatorAuthTest {
     @Test
     void anUnauthenticatedCallerReachesNothing() {
         given().when().get("/api/reviews").then().statusCode(401);
+        given().when().get("/api/work-items").then().statusCode(401);
         given().when().get("/api/providers").then().statusCode(401);
         given().when().get("/api/attention").then().statusCode(401);
     }
@@ -66,9 +69,16 @@ class OperatorAuthTest {
     }
 
     @Test
+    @TestSecurity(user = "TEST-unrelated-operator", roles = "TEST-unrelated-role")
+    void anUnrelatedRoleCannotReadWorkItems() {
+        given().when().get("/api/work-items").then().statusCode(403);
+    }
+
+    @Test
     @TestSecurity(user = "dev-viewer", roles = "spire-viewer")
     void aViewerCanReadTheDashboard() {
         given().when().get("/api/reviews").then().statusCode(200);
+        given().when().get("/api/work-items").then().statusCode(200);
         given().when().get("/api/attention").then().statusCode(200);
     }
 

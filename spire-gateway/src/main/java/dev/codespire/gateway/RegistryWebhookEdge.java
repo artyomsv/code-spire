@@ -50,15 +50,23 @@ public class RegistryWebhookEdge {
     @Inject
     IntegrationPublisher publisher;
 
+    @Inject WorkIngressPublisher workPublisher;
+
     /** Builds the provider ingress from the decrypted per-repo secret — the only per-provider difference. */
     public interface IngressFactory extends Function<String, ScmIngress> {
     }
 
     public Response handle(String providerType, String key, IngressFactory ingressFactory,
                            HttpHeaders headers, byte[] body) {
+        return handle(providerType, key, ingressFactory, null, headers, body);
+    }
+
+    public Response handle(String providerType, String key, IngressFactory ingressFactory,
+                           Function<String, dev.codespire.worksource.WorkSourceIngress> workFactory,
+                           HttpHeaders headers, byte[] body) {
         MDC.put("provider", providerType);
         try {
-            return route(providerType, key, ingressFactory, headers, body);
+            return route(providerType, key, ingressFactory, workFactory, headers, body);
         } finally {
             MDC.remove("provider");
             MDC.remove("reviewId");
@@ -66,6 +74,7 @@ public class RegistryWebhookEdge {
     }
 
     private Response route(String providerType, String key, IngressFactory ingressFactory,
+                           Function<String, dev.codespire.worksource.WorkSourceIngress> workFactory,
                            HttpHeaders headers, byte[] body) {
         Optional<Resolved> found = registry.findByKey(key);
         if (found.isEmpty()) {
@@ -88,9 +97,13 @@ public class RegistryWebhookEdge {
             return Response.status(Response.Status.UNAUTHORIZED).build();
         }
 
+        if (repo.eventKind() == dev.codespire.contract.event.RepositoryEventKind.ISSUE) {
+            return routeWork(key, repo, workFactory, raw);
+        }
+
         List<IntegrationEvent> events;
         try {
-            events = ingress.translate(raw);
+            events = repo.eventKind()==dev.codespire.contract.event.RepositoryEventKind.FACTORY?ingress.activity(raw):ingress.translate(raw);
         } catch (RuntimeException e) {
             // Authenticated but malformed/invalid payload — client error, not a 500.
             LOG.warnf(e, "%s webhook payload rejected", providerType);
@@ -109,6 +122,10 @@ public class RegistryWebhookEdge {
         // means a misconfigured or spoofed hook. Fail closed: an event whose repo cannot
         // be determined (an unmapped type) is refused, not waved through.
         for (IntegrationEvent event : events) {
+            if (!repo.eventKind().accepts(event)) {
+                registry.recordRejection(key, "event_kind_mismatch");
+                return Response.status(Response.Status.BAD_REQUEST).build();
+            }
             RepoRef eventRepo = repoOf(event);
             if (eventRepo != null && inScope(repo, eventRepo)) {
                 continue;
@@ -121,7 +138,7 @@ public class RegistryWebhookEdge {
         }
 
         MDC.put("reviewId", EventKeys.of(events.getFirst()));
-        if (!publisher.publishAllAwait(events)) {
+        if (!publisher.publishAllAwait(repo, events, deliveryId(raw))) {
             return Response.serverError().build();
         }
         // A verified, in-scope, published delivery proves the registration works.
@@ -134,6 +151,41 @@ public class RegistryWebhookEdge {
         headers.getRequestHeaders().forEach((name, values) ->
                 headerMap.put(name, values.isEmpty() ? "" : values.getFirst()));
         return new RawWebhook(headerMap, body);
+    }
+
+    private Response routeWork(String key, Resolved registration,
+                               Function<String, dev.codespire.worksource.WorkSourceIngress> factory, RawWebhook raw) {
+        if (factory == null || registration.repositoryId() == null || registration.sourceId() == null
+                || registration.forgeOrigin() == null || registration.forgeOrigin().isBlank()
+                || !"repo".equals(registration.scope())) {
+            registry.recordRejection(key, "work_registration_incomplete");
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        List<dev.codespire.worksource.WorkSourceSignal> signals;
+        try {
+            signals = factory.apply(registration.secret()).translate(raw.headers(), raw.body(), registration.forgeOrigin());
+        } catch (RuntimeException malformed) {
+            registry.recordRejection(key, "malformed_payload");
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        for (dev.codespire.worksource.WorkSourceSignal signal : signals) {
+            if (!registration.target().equals(signal.externalScope())) {
+                registry.recordRejection(key, "out_of_scope");
+                return Response.status(Response.Status.BAD_REQUEST).build();
+            }
+        }
+        if (!workPublisher.publishAwait(registration, signals, deliveryId(raw))) return Response.serverError().build();
+        registry.clearRejections(key);
+        return signals.isEmpty() ? Response.noContent().build() : Response.accepted().build();
+    }
+
+    private static String deliveryId(RawWebhook raw) {
+        // A content digest is stable across redelivery, including providers without a delivery id.
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw.body()));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     /** repo scope → exact owner/repo; org scope → any repo whose top group/owner matches the registration. */
@@ -156,6 +208,7 @@ public class RegistryWebhookEdge {
             case ManualCommandReceived p -> p.repo();
             case AuthorReplied p -> p.repo(); // every SCM emits comment replies
             case PushReceived p -> p.repo();  // future push hooks — scope-guard them too
+            case IntegrationEvent.RepositoryActivity p -> p.repo();
             default -> null;
         };
     }

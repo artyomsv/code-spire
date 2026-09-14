@@ -64,19 +64,30 @@ class ConversationE2ETest {
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    @Inject dev.codespire.orchestrator.readmodel.ReviewProjection reviewProjection;
+    private UUID repositoryId;
     private KafkaProducer<String, String> producer;
+    private String delivery(IntegrationEvent event) throws Exception {
+        return mapper.writeValueAsString(new dev.codespire.contract.event.RepositoryDelivery(repositoryId,
+                null, 0, "github", "https://api.github.com", dev.codespire.contract.event.RepositoryEventKind.REVIEWER,
+                UUID.randomUUID().toString(), event));
+    }
 
     @BeforeEach
     void seed() throws Exception {
         // EXPLAIN provider on the reply's workspace, empty allowlist (answers everyone), a bot id that is
         // NOT the reply author (so the ADR-013 self-loop guard doesn't drop it).
-        try {
-            providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
-                    "convo", "github", "https://api.github.com", "convo-ws", "bearer", null, "tok",
+        var account = providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
+                    "convo", "github", "https://api.github.com", "bearer", null, "tok",
                     "bot-account-1", true, List.of(), null, "EXPLAIN"));
-        } catch (RuntimeException alreadyRegistered) {
-            // one provider per (type, workspace)
-        }
+        var input = new dev.codespire.orchestrator.repository.RepositoryInput("github", "https://api.github.com",
+                REPO.workspace(), REPO.slug(), true, UUID.fromString(account.id()), null);
+        var existing = repositories.find("github", "https://api.github.com", REPO.workspace(), REPO.slug());
+        repositoryId = existing.isPresent() ? repositories.update(existing.get().id(), existing.get().revision(), input).id()
+                : repositories.create(input).id();
+        reviewProjection.claimRepository(REVIEW_ID, repositoryId, REPO, 5);
+
         // planFollowUp needs a default LLM provider to pack a credential (else it skips). The model
         // must also be catalogued — the registry now refuses to create a provider naming one it
         // cannot price. UNMETERED, since this is a fake test model, not a real vendor.
@@ -127,8 +138,8 @@ class ConversationE2ETest {
             props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
             producer = new KafkaProducer<>(props);
         }
-        String json = mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
-        producer.send(new ProducerRecord<>("cs.integration", REVIEW_ID, json)).get();
+        String json = delivery(event);
+        producer.send(new ProducerRecord<>("cs.repository-integration", REVIEW_ID, json)).get();
     }
 
     /** Polls cs.commands for a record matching both markers (robust to other tests' traffic on the topic). */

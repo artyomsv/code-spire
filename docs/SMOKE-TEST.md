@@ -1,5 +1,111 @@
 # Smoke Test Runbook
 
+## M3 final upgrade (slice 10)
+
+**Production VERIFY and LAND remain unavailable. No live item-build proof is claimed.** The
+standalone /fix proof on TEST PR #32 is separate from the real-container/local-origin item tests.
+The automated GitLab run-unit network gap remains open, both factory images remain absent from
+GHCR, and per-forge identity/permission limits remain in [UNVERIFIED](UNVERIFIED.md). The
+[acceptance record](factory/M3-ACCEPTANCE.md) names all seven independently verified criteria.
+
+V72 explicitly drops scm_provider.workspace, retained through slice 9 as rollback evidence.
+Before that migration reaches an existing database:
+
+1. Run `:spire-arch:test --tests dev.codespire.arch.AccountWorkspaceIsUnusedTest --rerun-tasks`
+   with Java 25. It checks production reads, INSERTs, UPDATEs, aliases and account models.
+2. Take a **fresh** custom-format backup to the worktree's git-ignored .handoff directory, validate
+   its archive listing and record its hash. Keep the matching encryption keysets outside git.
+   The old slice 1 backup does not satisfy this final-upgrade prerequisite. This PowerShell command
+   preserves binary bytes and refuses to overwrite an existing file:
+
+```powershell
+$m3Handoff = Join-Path (Get-Location).Path '.handoff'
+[void](New-Item -ItemType Directory -Force -Path $m3Handoff)
+$m3Dump = Join-Path $m3Handoff ('m3-before-slice10-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
+$m3Process = [Diagnostics.Process]::new()
+$m3Process.StartInfo = [Diagnostics.ProcessStartInfo]::new('docker')
+$m3Process.StartInfo.UseShellExecute = $false
+$m3Process.StartInfo.RedirectStandardOutput = $true
+@('exec','spire-postgres','sh','-c','exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc') | ForEach-Object { $m3Process.StartInfo.ArgumentList.Add($_) }
+$m3File = [IO.File]::Open($m3Dump, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+try { [void]$m3Process.Start(); $m3Process.StandardOutput.BaseStream.CopyTo($m3File); $m3Process.WaitForExit(); if ($m3Process.ExitCode -ne 0) { throw 'pg_dump failed' } } finally { $m3File.Dispose(); $m3Process.Dispose() }
+Get-FileHash -LiteralPath $m3Dump -Algorithm SHA256
+docker run --rm --mount "type=bind,source=$m3Handoff,target=/backup,readonly" postgres:18.4-alpine pg_restore --list "/backup/$([IO.Path]::GetFileName($m3Dump))"
+if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed' }
+```
+
+3. Record the actual counts of orchestrator.scm_provider, review_status, review_finding,
+   factory_run and gateway.webhook_repo before the upgrade. Compare the original encrypted
+   credential/reference and webhook baselines with scripts/verify-dev-credential-continuity.ps1
+   in Compare mode. Do not replace those baselines or delete accepted proof history to match
+   an older count. The accepted PR #32 proof accounts for +1 review, +8 findings and +1 run.
+4. Upgrade the gateway, orchestrator, review worker and UI using the tested source. External Kafka
+   deployments must provision the work/run topics and ACLs in [CONTRACT](CONTRACT.md). Keep the
+   development run worker stopped while Docker-driving test tiers run. No compose down is needed.
+5. Require V72 success in orchestrator.flyway_schema_history and zero information_schema.columns
+   rows for orchestrator.scm_provider.workspace. Re-run the five counts and both encrypted
+   continuity comparisons; inspect readiness and startup errors before declaring the upgrade done.
+
+AccountWorkspaceDropMigrationTest applies the real V71→V72 migration to a populated private schema.
+It checks every remaining account field, unchanged ciphertext/AAD, repository bindings, context
+references and legacy mapping evidence. Replacing the production DROP with SELECT 1 fails the
+column-absence assertion. The shared dev database is never a mutation target.
+
+For supported journey checks, use the existing repository/source/policy screens and inspect actual
+phase, gate, decision and run fields. Suggest stops before BUILD; assisted opens PLAN approval;
+autonomous admits a prepared build. Missing artifacts, unavailable capabilities and suspended
+items must remain visible. Tracker answers require `/approve <gate-id> <generation> <artifact>`
+or `/reject` with the same bindings; `-` explicitly binds no artifact. Ordinary comments do not
+approve. A suspended item's resume needs a note and fresh evidence; a retired item cannot resume.
+Any new live TEST canary requires its exact identity and cleanup to be recorded before insertion.
+
+## M3 repository cutover upgrade (slices 1–2)
+
+Before rebuilding dev, follow slice 1 in
+[`2026-09-12-factory-m3-work-items.md`](superpowers/plans/2026-09-12-factory-m3-work-items.md).
+The verified `.handoff/spire-dev-pre-m3-2026-09-13.dump` satisfied that historical cutover prerequisite;
+slice 10 requires the fresh backup above. `.handoff/m3-real-credentials.bin` holds encrypted baseline evidence
+for 9 real credential/reference entries. Keep the matching keysets outside git. Slice 2 must
+rerun the probe's Compare mode on the real upgraded rows.
+
+The first upgraded gateway enqueues existing registrations in V3. Legacy registrations with no
+recorded origin require explicit mapping; workspace alone is not host evidence. The gateway API
+accepts an optional `forgeOrigin`, preserving it when an old client edits other fields.
+The orchestrator applies V60,
+consumes `cs.registry-integration`, and sweeps existing history. Topic auto-creation works in the
+bundled broker; external brokers must provision the topic and ACLs first. Inspect pending broker
+records in the existing DLQ screen and replay after fixing the reported cause.
+
+Open Settings → Repositories → Registered repositories and accounts. Confirm the real workspace,
+forge origin and explicit reviewer/factory selections. Pending mappings name the registration and
+target; verify the host, register the matching repository if needed, then explicitly link it.
+Slice 2 switches pipeline routing to explicit repository bindings. Do not invent accounts or runs in this live stack to
+test registration: `RepositoryResourceTest` exercises the real HTTP API in Dev Services.
+
+The migration tests upgrade populated private schemas and prove ciphertext/UUID/reference/key
+preservation. Broker tests separately exercise the gateway publisher and orchestrator consumer;
+they do not claim a live multi-service rollout. The production account workspace remains populated
+through slice 2 as rollback evidence and is removed only in slice 10.
+
+For slice 2, provision `cs.repository-integration` and `cs.repository-activity` with their ACLs
+alongside the metadata topic. Rebuild **gateway first**, then orchestrator, then UI, using the
+same Compose overlays and `--build --no-deps`. New gateway deliveries wait on the new topic
+until the upgraded orchestrator consumes them. Raw old-topic SCM messages enter the DLQ with
+a provenance reason; redeliver through their verified registration after repair.
+
+Accounts no longer have workspace. Register the repository's kind, canonical forge origin,
+workspace and slug, then select REVIEWER and FACTORY accounts on that repository. Save the UUID
+returned by `/api/repositories`; manual registration without a URL and `POST /api/runs` require
+`repositoryId`. Hooks are optional. A repository has one hook per event kind; the existing
+REVIEWER key and secret survive upgrade. Pending gateway registration repair updates that
+retained registration's origin and repository association; history-only repair stays in the
+orchestrator. Confirm the real origin before selecting it. An unknown origin cannot route.
+
+After rebuilding, compare `.handoff/m3-real-credentials.bin` using the existing probe and compare
+`.handoff/m3-real-webhooks.bin` with `-Scope Webhooks`. Assert counts 6/37/85/14/3 for accounts,
+reviews, findings, runs and hooks, plus unchanged retained workspaces and hook rejection metadata.
+No run worker is needed for this slice; the live run proof waits until slice 8b.
+
 **A** stub pipeline, zero external accounts; **B** real Bitbucket Cloud PR (webhook);
 **C** real GitHub PR via manual Register PR (no webhook); **D** real GitLab MR via manual Register
 PR (no webhook); **E** real GitHub PR via webhook (Tailscale Funnel); **F** real GitLab MR via
@@ -30,7 +136,10 @@ docker ps --filter name=spire   # both should show (healthy)
 ```
 
 Open **http://localhost:34080**, flip the **Review-mode** slider in the sidebar to **active**
-(a fresh DB seeds to *observe*), then press **Simulate PR**.
+(a fresh DB seeds to *observe*). On this disposable stub stack, register a `TEST-` reviewer account
+and repository with a workspace beginning `TEST-`, and bind that reviewer. Then call
+`POST /dev/simulate-pr?repositoryId=<registered-test-repository-uuid>`. The simulator refuses
+real SCM mode, an absent repository UUID and namespaces without that test prefix.
 
 **Expected:** the timeline animates through
 `PullRequestEventReceived -> ReviewRequested -> FetchDiff -> DiffFetched -> GatherContext ->
@@ -190,13 +299,14 @@ summary comments — but the PR is registered manually through the dashboard ins
 arriving on a webhook. Works for any registered provider (used here with GitHub).
 
 **Gateway is not needed** — the orchestrator's `POST /api/reviews/register` publishes the
-same `PullRequestEventReceived` the gateway webhook would, onto the same `cs.integration`
+same `PullRequestEventReceived` in a provenance envelope, onto `cs.repository-integration`
 topic. Minimal set: Postgres + Redpanda + **orchestrator + worker**.
 
 ### 1. One-time prerequisites
 
-1. Register a **GitHub account** in Settings → Accounts (role Reviewer; workspace = repo owner, e.g.
-   `artyomsv`) with a token scoped **Contents: Read** + **Pull requests: Read and write**.
+1. Register a **GitHub account** in Settings → Accounts (role Reviewer) with a token scoped
+   **Contents: Read** + **Pull requests: Read and write**. Register the repository separately with
+   forge origin `https://api.github.com`, workspace = repo owner and its slug, then select that account.
    Leave "Bot account id" blank — it is resolved from the token on save (`IdentitySource`).
 2. In Settings → LLM (ADR-018): first **add a model** (e.g. name `gpt-4o`, input `$2.50` / output
    `$10.00` per 1M tokens — from OpenAI's pricing page), then register an **LLM provider**: type
@@ -232,7 +342,7 @@ nothing to anchor inline comments to — the summary still posts). Then either:
   ```bash
   curl -s -X POST http://localhost:34080/api/reviews/register \
     -H 'Content-Type: application/json' \
-    -d '{"workspace":"<owner>","slug":"<repo>","pr":<number>}'
+    -d '{"repositoryId":"<registered-repository-uuid>","pr":<number>}'
   # → {"reviewId":"review::<owner>/<repo>#<number>", ...}
   ```
 
@@ -1650,13 +1760,13 @@ against a forge, authenticated as a machine account.
 
    ```bash
    curl -sS -X POST http://localhost:34080/api/providers -H 'content-type: application/json' -d '{
-     "name":"factory-bot","type":"github","baseUrl":"https://api.github.com","workspace":"<owner>",
+     "name":"factory-bot","type":"github","baseUrl":"https://api.github.com",
      "authKind":"bearer","secret":"<machine-account token>","enabled":true,"authors":[],
      "botUsername":"<machine-account login>","role":"FACTORY"}'
    ```
 
-   A workspace may hold a `REVIEWER` row and a `FACTORY` row side by side; the role is part of every
-   lookup's key, so neither path can be handed the other's token.
+   Select that account in the registered repository's FACTORY slot. The REVIEWER and FACTORY
+   bindings are independent, so neither dispatch path can be handed the other's token.
 
 5. **The harness credential pool.** The run's model key comes from the factory's OWN pool, never
    from the LLM provider registry the reviewer uses. There is no fallback: with an empty pool the
@@ -1696,7 +1806,7 @@ against a forge, authenticated as a machine account.
 
    ```bash
    curl -sS -X POST http://localhost:34080/api/runs -H 'content-type: application/json' -d '{
-     "workspace":"<owner>","slug":"<repo>","providerType":"github","baseCommit":"<head sha>",
+     "repositoryId":"<registered-repository-uuid>","baseCommit":"<head sha>",
      "subject":"m0-ordinary","harness":"codex","model":"gpt-5.6",
      "prompt":"Add a file NOTES.md containing one line: hello from the factory. Commit it."}'
    ```

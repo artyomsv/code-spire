@@ -1808,3 +1808,286 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
     scope-query wrapper and unconditional scope-write overload were removed so future call sites
     cannot silently choose the old path. Disabled migration rows intentionally remain in Attention
     because their legacy credential columns must be retired too; that intent is now commented.
+
+- **Factory M3 slice 1 (2026-09-13, PR #153; ADR-042) — repository registration before resolver cutover.**
+  Repositories own explicit forge origin, workspace and slug plus reviewer/factory account bindings.
+  The settings view and admin API expose those choices, disabled or missing accounts, identity
+  conflicts and stale edits. Existing review/run callers retain their legacy resolution until
+  slice 2; the account workspace and its constraints remain intact.
+  - V60 expands the orchestrator schema without changing account ids, ciphertext or context
+    references. Gateway V3 queues versioned metadata snapshots in a transactional outbox; broker
+    acknowledgement precedes completion, and failed snapshots have a registry DLQ replay route.
+    Replays preserve operator rebindings. Automatic migration requires explicit registration
+    origin or stored PR URL evidence; unknown/mismatched origins produce named attention rows
+    and explicit mapping repair. Historical review and run coordinates are linked together.
+  - The reviewed backup command now targets persistent, git-ignored `.handoff/` in the worktree.
+    The existing 182-object, 492,480-byte archive was reused; no second dump was taken for the
+    review correction. A read-only encrypted continuity probe matched 9 real credential/reference
+    entries. This remains pre-upgrade evidence: no dev deployment or live migration was performed.
+  - M2's live proof is recorded for `artyomsv/spire-test#31`, runs `3987682681:1` and
+    `3987682176:1`, resolved threads and persisted verdicts. The automated GitLab networking gap
+    remains separate. Slice 8b retains the standalone live `/fix` publication regression proof.
+  - Review evidence and the per-guard mutation ledger are in
+    `.claude/reviews/global/factory-m3-slice1.md`.
+  - Final sequential forced gates: 3005 Java tests across 348 suites, zero failures and one
+    existing Windows symlink privilege skip; 620 UI tests across 76 files and the UI build passed.
+    Forty distinct mutations each failed one targeted test and passed after scratch restoration.
+    Docker-driving tests passed with the live run workers stopped; none was started for this slice.
+  - **Slice 1 review correction:** reject blank origins in the wire record while preserving null;
+    constrain the gateway and repository columns; normalize legacy blank payloads to unknown at
+    the bridge boundary. The broker test requires both the durable `registration_origin_unknown`
+    mapping/revision and a committed consumer offset. Removing the blank-safe check failed the
+    mapping assertion after the offset committed, so DLQ delivery cannot stand in for repair.
+    Four additional isolated mutations bring the total to 44. Final forced gates passed 3009 Java
+    tests across 348 suites, zero failures and the same Windows symlink skip. The archived-review
+    retry fixture now uses a future test clock to prevent its background scheduler stealing the
+    live-row precondition; production timing is unchanged. Dev Services startup timeouts on a
+    parallel retry were cleared by the final invocation's `--no-parallel --max-workers=2`.
+  - **CI correction:** replace the private history-link table-name concatenation with two complete
+    literal SQL constants, preserving the four bound values without suppressing Semgrep. The
+    existing history-bridge suite passed all 11 tests. The failed full scan and separate OSS check
+    each named the same single finding.
+  - **Reviewed bridge rollout:** orchestrator V60 and gateway V3 from `a956532` reached dev before
+    the new CI hold. All 37 reviews and 14 runs mapped to six repositories with eight bindings;
+    all three existing gateway snapshots were acknowledged and remain origin-unknown repair rows.
+    The real encrypted baseline comparison passed all 9 entries after V60. Runtime account
+    resolution remains on the legacy path; slice 2's later cutover comparison is still required.
+
+- **M3 slice 2 — repository cutover (PR #153, 2026-09-13; awaiting review):** all active SCM
+  dispatch uses explicit repository/role bindings. Account workspace leaves DTOs, forms and
+  runtime SQL; V61 drops its old constraints while retaining populated rollback evidence.
+  Gateway V4 preserves hook keys/secrets/rejection history and adds one hook per kind. Verified
+  provenance uses a new topic, FACTORY activity is separate, and unknown repositories produce
+  Attention instead of auto-enrollment. The repository screen supports optional hooks, missing
+  roles, partial-save retry and legacy repair at the gateway owner. Nested GitLab paths preserve
+  old review IDs and transport AADs. Criterion 7 has its exact named tests and production-schema
+  mutation; 62 distinct mutations are recorded. 3048 Java tests across 357 suites, zero failures and 1 existing Windows symlink privilege skip; 630 UI tests and packaging passed.
+  The real gateway-first V4/V61 rollout preserved 6/37/85/14/3 rows, all retained workspaces and
+  hook rejection metadata; 9 account/context and 12 webhook entries matched after decryption.
+  The three missing origins remain explicit repairs, not inferred mappings. No live run worker,
+  new spend, synthetic live row or second dump was used. Later M3 criteria remain pending.
+
+- **Factory M3 slice 3 — resolved people and editable overrides (PR #153, 2026-09-13).**
+  Account person entry resolves with the selected credential, repeats lookup and stable-ID
+  verification on save, and renders cached handles after reload. Raw-author writes through the
+  older account endpoint are refused; ordinary credential edits retain policy and observations.
+  GitHub/GitLab exact matching and Bitbucket/Jira explicit selection have separate capability
+  notes. Identity redirects cannot cross origin. V62 adds display observations, durable stale
+  flags, optimistic revisions and one ALLOW/DENY row per repository actor. Its legacy-grant
+  filters and constraints are measured against fresh V61 schemas. The account/workspace write
+  guard now covers INSERT and UPDATE; the startup reconciler omits the retained column.
+  The HTTP/DB and fresh-reader-JVM proof plus UI round trip establish automated criterion 6;
+  work-source screen wiring follows in slice 5/6 and effective push authorization in slice 4.
+  Tests caught a refresh failure that vanished on reload, an ambiguity fixture that could
+  pass on a 404 and an old account form overwriting a concurrent policy during token validation.
+  The locked registry write now owns the compatibility check and rolls back the stale edit. 3118 Java tests,
+  636 UI tests, packaging and pinned Semgrep passed; 92 production mutations
+  have selected failures and scratch-restored passes. See the slice 3 review notes for boundaries
+  and the exact ledger. Live V62 preserves the approved row and credential baselines; the existing
+  GitHub person resolves by stable ID and keeps its observed handle across a full service restart.
+
+- **Factory M3 slice 4 — effective push authorization (PR #153, 2026-09-13).**
+  /fix applies repository DENY, ALLOW, then a fresh effective permission read through the selected
+  reviewer. Unknown refuses with a named capability error. GitHub effective collaborator roles,
+  GitLab inherited active membership and Bitbucket effective paginated rights have fixture proofs;
+  live token limits remain explicit. The total read budget is 20 seconds and cancels unfinished
+  work. Repository/account locks prevent a credential edit or rebind from splitting a decision.
+  Self-loop, observe/archive, finding, target, spending and both fix-cap guards remain in force.
+  Account review policy now matches only stable IDs: a numeric username cannot impersonate another
+  actor's stored ID. 64 compiling production mutations have exactly one selected assertion
+  failure each and byte-identical scratch restoration with a passing baseline. A malformed-user
+  fixture initially masked its guard with a second missing field; the repaired fixture preserves
+  valid repository metadata and kills exactly the intended identity mutant. 3186 Java tests,
+  packaging and pinned Semgrep passed. Criteria 6 and 7 were independently accepted; criterion 5
+  has automated proof. No production migration, live credential elevation or second dump was needed.
+
+- **Factory M3 slice 5 — first durable tracker ticket (PR #153, 2026-09-13).**
+  The GitHub work-source arm shares the existing pinned read transport and authentication, with
+  writes on a separate facade. The Apache-2.0 SPI remains framework-free. Explicit source and
+  repository bindings, source-owned resolved actor IDs, immutable profiles and a repository
+  ceiling govern signed issue intake and scans. Current-label authority requires complete audit
+  evidence; an allowed actor hint with UNATTRIBUTED origin still grants nothing. Membership,
+  attribution and genuinely missing identity have separate service cases. Deleting membership
+  or attribution fails only its named test across the complete intake class.
+  Events, projection, dedupe and encrypted outbox commit together. The rollback mutant commits
+  an orphan event on a separate transaction, which the test detects after an injected projection
+  failure. Real Kafka tests require committed consumer offsets before cleanup, including the
+  duplicate delivery; merely seeing the first row had allowed cleanup to race redelivery.
+  Work events have their own topics and cannot become review history. Work items displays
+  durable workflow, effective/admitted modes and label evidence; current title/body/status comes
+  from a separate tracker fetch. Removing a restrictive label cannot widen the combined policy
+  retained at admission. Missing specification/approval execution stays visibly unavailable.
+  Round 7 independently accepted criterion 5 and found that a 20-second permission read held
+  repository/account locks. Short revision snapshots now bracket the bounded remote call;
+  rotation/rebinding completes while the forge is still waiting and invalidates its answer.
+  The carry has seven mutation proofs, including deleting the re-read. No shared dev database,
+  live token privileges, backup or run worker was changed. Live tracker/token behavior, parity,
+  uncertain remote writes and bounded recovery of slow scan pages remain explicit later work.
+  Validation: 3371 Java tests / 393 suites / 28 modules, zero failures and 1
+  existing Windows skip; 650 full UI tests plus 12 final targeted tests; packaging and pinned
+  Semgrep passed. 154 mutation checks cover 153 distinct production changes, including
+  Java, schema and UI guards. Scope validation also accepts valid dot-prefixed GitHub names
+  while refusing dot path segments. Criterion 3 awaits independent review.
+
+- **M3 round 8 — route smoke-test correction (2026-09-13).** Criterion 3 was independently
+  accepted, bringing the count to four of seven. Dashboard CI exposed a route fixture missing
+  required policy fields; the test could pass against its initial wrapper before the payload
+  rendered because it awaited the shell loading text rather than the detail responses. The
+  same exception was reproduced in isolation, so a single isolated pass did not establish
+  mock leakage. The fixture now satisfies the API type and both response headings must render
+  before the unchanged `.content` assertion. Each case gets fresh session/storage/globals and
+  unmounts before global teardown. The complete file passed 35/35 in normal order and with
+  shuffle seeds 42, 99 and 5191448392. Removing the production wrapper failed exactly the
+  retained assertion; scratch-byte restoration passed. Final full UI: 650/650, no unhandled
+  errors, production build passed. The prior full UI run predated the last display additions;
+  targeted tests had missed this fixture. Evidence: `.claude/reviews/global/factory-m3-round8.md`.
+
+- **Factory M3 slice 6 — source parity and recovery (PR #153, 2026-09-13).**
+  Round 9 independently accepted the pending-effects teardown correction on d426501c, with
+  650 UI tests and the retained mutation-verified route wrapper assertion. Criteria 3, 5, 6
+  and 7 remain four of seven. GitLab and Jira now share the work-source contract through the
+  existing pinned context transports and separate writers. GitLab has authenticated issue hooks;
+  Jira polls, binds actual Cloud accountIds and refuses unsupported Data Center attribution.
+  Both new arms separately prove unlisted and unattributed labels grant nothing, with the
+  unattributed hint deliberately passing membership. Source settings expose explicit mapping,
+  resolved actor entry, enablement, rescans and measured capabilities.
+  V65 stages coordinates and commits each reconciliation with its checkpoint. Actual packaged
+  JVMs are killed between pages and mid-page; restart admits each item exactly once without
+  rereading completed coordinates. V66 encrypts tracker effects separately from Kafka outbox
+  events. It commits uncertainty before HTTP, checks current policy/local revisions and never
+  blindly resends. A successful remote POST followed by client timeout recovers through its
+  marker with exactly one POST. A second connection observes the durable claim during HTTP.
+  Mutation work exposed a Jira offset fixture whose second inconsistent completion field
+  masked its guard; every other completion fact now agrees. An explicit Java-test Semgrep
+  scan exposed a computed ProcessBuilder executable; literal java plus the Gradle-selected
+  toolchain PATH removed the pattern without a suppression. 3545 Java tests, 675 UI tests,
+  packaging and pinned Semgrep passed. 142 checks cover 140 distinct production mutations.
+  No dev database, backup, live tracker write or run worker was used. Per-arm live forge/token
+  limits and the exact TEST cleanup remain explicit in UNVERIFIED and the slice review notes.
+
+- **Factory M3 slice 7 — visible policy bounds and durable approvals (PR #153, 2026-09-14).**
+  Round 10 accepted slice 6. GitHub now inherits the shared parity cases; an architecture test
+  derives adapter modules and fails when Jira loses inheritance. Profiles bound every mode and
+  numeric cap by all eligible labels, admission and the current ceiling, with cumulative protected
+  paths. ADR-045 states the invariant and resolves the FR-F22/F25 classification conflict.
+  V67 persists visible clamp milestones. Separate meet, silent-write and empty-message mutants
+  fail the named criterion 2 tests. A running SPEC result under a newly disabled PLAN persists
+  plan_off without another attempt or PR; a gate policy revision change requires a new decision
+  even when every mode and cap remains identical. Both criterion 4 mutants are discriminating.
+  V68 binds versioned gates and attempts, encrypted notes, usage and reservations. Dashboard
+  answers and expiry serialize on the aggregate; late/conflicting answers refuse, winning retries
+  are idempotent, and expiry releases the reservation and invalidates pending effects. One child
+  JVM itself opens the gate, is killed while OPEN, and a second expires it. Approvals, policy
+  settings, detail and current attention conditions expose the durable results.
+  3649 Java tests, 701 UI tests, packaging and pinned Semgrep passed. 123 mutation checks
+  cover 120 distinct production changes and the authorized inheritance check. Criteria 2 and 4
+  are ready for independent review; 3, 5, 6 and 7 remain verified. Artifact/build handoff remains
+  slice 8. No dev data, backup, live tracker write or live run worker was used.
+
+- **Factory M3 slice 8a — prepared tasks and distinct build journeys (PR #153, 2026-09-14).**
+  Round 11 accepted slice 7 with no findings and independently verified criteria 2 and 4,
+  bringing the count to six of seven. Humans register actual tracker specification and single-step
+  plan versions. The dashboard reads the specification digest before the plan exists and supplies
+  its JSON format; all three tracker arms resolve stable scoped identities through their selected
+  source. Artifact bodies remain transient. The existing phase policy accepts manual evidence,
+  binds approvals to artifact versions and build coordinates, and keeps its real approval branch.
+  Suggest stops before build with zero runs; assisted opens a durable plan gate with zero runs,
+  then records its human answer and admits one build; autonomous admits one build without a gate.
+  The UI proof receives no profile names and exposes actual phases, gates, decisions and runs.
+  V69 joins a phase attempt to its M2 run and commits uncertainty before broker dispatch. Dispatch
+  compares current authority with the original attempt decision, so intake redelivery cannot
+  authorize a pending build after a lowered ceiling. Encrypted terminal-result inboxes recover
+  across the completion/acknowledgement boundary; duplicate old results cannot change a new phase
+  attempt. Usage survives readmission, unknown potential spend blocks, and M2's narrow pre-agent
+  failure classification permits repair without inventing a purchased call. Associated runs cannot
+  enter standalone automatic PR creation. Verification caught an overflowing JSON schema version,
+  the pending-dispatch policy race, absent-charge accounting that would block a proven pre-agent
+  failure, and a late deployment validation error that could escape instead of refusing a pending
+  build durably. Production item execution remains unavailable until the slice 8b publication hold;
+  the policy proof explicitly supplies a test transport. No M4 verifier, real-container item build,
+  draft delivery or live-forge journey is claimed by 8a. 3739 Java tests, 711 UI tests, packaging and
+  pinned Semgrep passed. 92 checks cover 92 distinct production mutations. Criterion 1 is ready
+  for independent review. Evidence is in `.claude/reviews/global/factory-m3-slice8a.md`. No dev data,
+  second backup or live worker was used.
+
+- **Factory M3 slice 8b — held publication and observed delivery (PR #153, 2026-09-14).**
+  Round 12 independently verified criterion 1 on d9861bc3; all seven acceptance criteria are
+  proved. The review accepted five independent journey axes and the assertions that history
+  persists artifact references while manual acceptance cannot invent executor completion.
+  Item execution now uses a distinct held command and publisher entry point. The worker persists
+  encrypted execution, topology and independent readiness/terminal acknowledgements. It checkpoints
+  the real head without pushing, stops active compute and retains its workspace through restart and
+  orphan recovery. A current short-lived delivery permit resumes only the trusted publisher with
+  fresh SCM credentials, exact head and both original/current protected-path floors. Production
+  VERIFY and LAND remain unavailable. Native draft delivery is requested and observed across all
+  three adapters; REVIEW consumes the existing review at the exact reviewed and posted head.
+  An ambiguous PR creation recovers only by reading; a stale publisher reader cannot rewind its
+  durable proposal claim. Late paid usage survives stop/readmission without completing a newer
+  attempt. Separate worker results share the existing M2 charge identity.
+  Real local-origin execution and three worker JVMs prove recovery after readiness, after a
+  durable publication claim before IO, and after a real push before terminal commit, with one
+  build. Verification exposed missing late accounting, checkpoint loss after an early terminal
+  result, a stale proposal race, rotated-credential failure redaction and two unmapped publisher
+  causes. The producer-derived cause inventory caught the last pair during the full fast suite;
+  both now retain paid-build accounting and refuse retry of the same publication permit.
+  Forced fast/service suites and packaging passed sequentially: 3970 Java tests, 714 UI tests,
+  248 checks covering 245 distinct production mutations, and zero pinned Semgrep findings across
+  98 files. The live orchestrator was refreshed from the tested source after Docker tests exited;
+  its repository/account inventory is unchanged. Live ingress required an explicit repair of the
+  GitHub webhook's missing origin. Two older PRs refused missing historical finding/fork metadata
+  without dispatch or cap changes. Fresh TEST PR #32 then completed the standalone `/fix` chain:
+  run `4003204361:1` automatically pushed `264ff858b538a3c779cf94161d3bc601bcfcf69a`, the next
+  review completed on that head, and both GitHub and the persisted finding recorded resolution.
+  The user started the worker after the service tier exited and was notified when the proof ended.
+  Cleanup closed the TEST PR and deleted its exact source branch, retaining the review/run audit.
+  Evidence: `.claude/reviews/global/factory-m3-slice8b.md`. No second backup was taken.
+
+- **Factory M3 final implementation and handoff (PR #153, 2026-09-14).**
+  All seven acceptance criteria were independently verified through round 12; round 16 accepted
+  slice 9 with no findings. The consolidated acceptance record maps each criterion to its slice,
+  exact witnesses and mutation ledger. Shared table/form/empty-state styling was accepted after
+  operator inspection, with route-derived guards and save lock-out preserved.
+  External gate answers share ResolveGate while retaining distinct channel authority. Ordinary
+  approving prose cannot approve. Current named native reviews bind the linked head, human ID and
+  measured push permission; dismissed/stale approvals refuse. Recorded bot IDs survive renames
+  and rotation, while a human wearing the bot's display name still takes over. Takeover supersedes
+  gates, invalidates unstarted effects and durably holds publication. A real worker JVM is killed
+  after revocation commits but before compute stops; a fresh permit and watchdog cannot publish
+  without an M1 cancel claim masking the proof. Concurrent in-flight PR recovery records one
+  observed outcome and keeps the item suspended. Operator resume requires current evidence and
+  an authenticated, versioned action with a note. Retired items cannot resume.
+  Slice 10 ran AccountWorkspaceIsUnusedTest before the drop and independently re-killed its read,
+  INSERT and UPDATE arms. V72 explicitly removes only scm_provider.workspace. A populated private
+  V71→V72 migration preserves every other account field, ciphertext/AAD, bindings, context
+  references and immutable legacy mapping rows; replacing DROP with SELECT 1 fails its assertion.
+  The fresh .handoff backup was verified at 2026-09-14T14:10:32.6500742+00:00 before dev migration.
+  Dev's full inventory remains 6 accounts / 38 reviews / 93 findings / 15 runs / 3 hooks.
+  The accepted PR #32 audit explains +1 review, findings 152–159 and run 4003204361:1; excluding
+  only those recorded proof rows, the original 6/37/85/14/3 baseline still matches. All 9 encrypted
+  credential/reference entries and 12 webhook entries remain identical after decryption.
+  Final forced fast/service tiers and packaging passed sequentially: 4076 Java tests in
+  452 suites and 30 modules, zero failures/errors and 1 existing Windows symlink skip.
+  The full UI passed 730 tests in 92 files, TypeScript and production build. Slice 9 records
+  78 distinct production mutations; slice 10 records four. Pinned Semgrep reports zero findings
+  across 5 changed code files. Earlier per-slice counts remain in
+  docs/factory/M3-ACCEPTANCE.md without an inflated cross-slice distinct total.
+  **Production VERIFY and LAND remain unavailable. M4 owns the verifier; M3 does not ship one.**
+  **No live item-build proof:** the accepted TEST PR #32 run proves standalone /fix only.
+  **The automated GitLab run-unit gap remains open:** RunUnitSpec has no network field and cannot
+  reach the e2e stack's GitLab; a live GitHub run does not close it. **Both factory images remain
+  absent from GHCR.** Separate per-forge identity/permission UNVERIFIED entries remain unchanged.
+  No warm GitLab e2e stack was available for this handoff. No new live canary or dev run worker
+  was started. PR #153 remains draft for final operator review; no merge is claimed.
+  Evidence: .claude/reviews/global/factory-m3-slice10.md.
+
+- **Factory M3 operator setup usability (PR #153, round 18, 2026-09-14).**
+  Work policy/source pages now open on lists with Add actions, and saved records appear with
+  confirmation. Source repository choices explain account prerequisites and origin mismatches;
+  configured-account pickers reuse accountOptionLabel. Field help, required/optional/automatic
+  markers and the policy nav icon complete the operator setup fixes while preserving save locks.
+  WIDGETS.md inventories shared controls. Route-derived guards now preserve quoted wildcard paths;
+  a previously surviving profile-table mutation exposed that comment-parser gap and now fails.
+  Measured 742 UI tests in 93 files, shuffled setup/routes, TypeScript/build, 28 production
+  mutations and clean Semgrep. Eight browser screenshots use intercepted TEST-only data.
+  All seven accepted criteria and the separate production/live-proof limits remain unchanged.
+  Evidence: .claude/reviews/global/factory-m3-round18.md.

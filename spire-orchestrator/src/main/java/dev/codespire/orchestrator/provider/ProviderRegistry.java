@@ -35,6 +35,8 @@ public class ProviderRegistry {
     @Inject
     EncryptionService encryption;
 
+    @Inject ActorPolicyRegistry actorPolicies;
+
     /** A panel row derives from last_check_ok, so recording one is exactly when to re-push. */
     @Inject
     dev.codespire.orchestrator.attention.AttentionBroadcaster attention;
@@ -45,7 +47,7 @@ public class ProviderRegistry {
         try (Connection c = dataSource.getConnection()) {
             Map<UUID, List<String>> authors = allAuthors(c);
             List<ProviderView> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider ORDER BY created_at");
+            try (PreparedStatement ps = c.prepareStatement("SELECT id, name, type, base_url, auth_kind, auth_username, auth_secret, bot_account_id, enabled, created_at, bot_username, conversation_level, last_check_at, last_check_ok, last_check_error, role, reported_scopes, scopes_checked_at FROM scm_provider ORDER BY created_at");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     out.add(toView(c, rs, authors.getOrDefault(rs.getObject("id", UUID.class), List.of())));
@@ -73,29 +75,28 @@ public class ProviderRegistry {
         String secret = require(in.secret(), "secret");
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind,
+                    INSERT INTO scm_provider (id, name, type, base_url, auth_kind,
                             auth_username, auth_secret, bot_account_id, bot_username, conversation_level, enabled,
                             role)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
                 ps.setObject(1, id);
                 ps.setString(2, in.name());
                 ps.setString(3, in.type());
                 ps.setString(4, in.baseUrl());
-                ps.setString(5, in.workspace());
-                ps.setString(6, in.authKind());
-                ps.setString(7, blankToNull(in.authUsername()));
-                ps.setString(8, encryption.encryptString(secret, aad(id)));
-                ps.setString(9, in.botAccountId() == null ? "" : in.botAccountId());
-                ps.setString(10, blankToNull(in.botUsername()));
-                ps.setString(11, blankToNull(in.conversationLevel()));
-                ps.setBoolean(12, in.enabled() == null || in.enabled());
-                ps.setString(13, ProviderRole.of(in.role()).name());
+                ps.setString(5, in.authKind());
+                ps.setString(6, blankToNull(in.authUsername()));
+                ps.setString(7, encryption.encryptString(secret, aad(id)));
+                ps.setString(8, in.botAccountId() == null ? "" : in.botAccountId());
+                ps.setString(9, blankToNull(in.botUsername()));
+                ps.setString(10, blankToNull(in.conversationLevel()));
+                ps.setBoolean(11, in.enabled() == null || in.enabled());
+                ps.setString(12, ProviderRole.of(in.role()).name());
                 ps.executeUpdate();
             }
             replaceAuthors(c, id, in.authors());
         } catch (SQLException e) {
-            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account already exists for this kind, workspace and role.");
+            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account with this identity already exists.");
             throw new IllegalStateException("Failed to create provider", e);
         }
         return get(id).orElseThrow();
@@ -115,13 +116,15 @@ public class ProviderRegistry {
                 }
             }
             validateSourceReferences(c, id, in);
+            validateRepositoryReferences(c, id, in);
+            validateActorReferences(c, id, in);
             boolean rotateSecret = in.secret() != null && !in.secret().isBlank();
             // bot_username is refreshed only when the token was (re)validated; a token-less
             // update leaves the stored login intact (mirrors the rotateSecret conditional).
             boolean updateBotUsername = in.botUsername() != null && !in.botUsername().isBlank();
-            String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, workspace=?, auth_kind=?, "
+            String sql = "UPDATE scm_provider SET name=?, type=?, base_url=?, auth_kind=?, "
                     + "auth_username=?, bot_account_id=?, conversation_level=?, enabled=?, "
-                    + "role=COALESCE(?, role), updated_at=now()"
+                    + "role=COALESCE(?, role), revision=revision+1, updated_at=now()"
                     + (rotateSecret ? ", auth_secret=?, reported_scopes=NULL, scopes_checked_at=NULL" : "")
                     + (updateBotUsername ? ", bot_username=?" : "")
                     + " WHERE id=?";
@@ -129,17 +132,16 @@ public class ProviderRegistry {
                 ps.setString(1, in.name());
                 ps.setString(2, in.type());
                 ps.setString(3, in.baseUrl());
-                ps.setString(4, in.workspace());
-                ps.setString(5, in.authKind());
-                ps.setString(6, blankToNull(in.authUsername()));
-                ps.setString(7, in.botAccountId() == null ? "" : in.botAccountId());
-                ps.setString(8, blankToNull(in.conversationLevel()));
-                ps.setBoolean(9, in.enabled() == null || in.enabled());
+                ps.setString(4, in.authKind());
+                ps.setString(5, blankToNull(in.authUsername()));
+                ps.setString(6, in.botAccountId() == null ? "" : in.botAccountId());
+                ps.setString(7, blankToNull(in.conversationLevel()));
+                ps.setBoolean(8, in.enabled() == null || in.enabled());
                 // An absent role keeps the stored one (COALESCE above); a present one was checked
                 // equal to it just above, so this write can only ever repeat the stored value. The
                 // dashboard's edit form sends the stored role; older clients send none.
-                ps.setString(10, in.role() == null || in.role().isBlank() ? null : ProviderRole.of(in.role()).name());
-                int idx = 11;
+                ps.setString(9, in.role() == null || in.role().isBlank() ? null : ProviderRole.of(in.role()).name());
+                int idx = 10;
                 if (rotateSecret) {
                     ps.setString(idx++, encryption.encryptString(in.secret(), aad(id)));
                 }
@@ -149,9 +151,13 @@ public class ProviderRegistry {
                 ps.setObject(idx, id);
                 ps.executeUpdate();
             }
-            replaceAuthors(c, id, in.authors());
+            // Recheck under the account lock: remote token validation may have allowed a
+            // versioned policy edit after the resource read the submitted legacy author list.
+            if (in.authors() != null && !new java.util.HashSet<>(authorsOf(c, id)).equals(new java.util.HashSet<>(in.authors()))) {
+                throw new AccountConflict("Edit people through the resolved policy editor, then reload this account.");
+            }
         } catch (SQLException e) {
-            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account already exists for this kind, workspace and role.");
+            if ("23505".equals(e.getSQLState())) throw new AccountConflict("An account with this identity already exists.");
             throw new IllegalStateException("Failed to update provider " + id, e);
         }
         return get(id);
@@ -196,68 +202,10 @@ public class ProviderRegistry {
 
     // ---- resolution (internal — carries the decrypted secret) --------------
 
-    /** The enabled REVIEWER provider for a (type, workspace), with its secret decrypted. */
-    public Optional<ScmProvider> resolve(String type, String workspace) {
-        return resolve(type, workspace, ProviderRole.REVIEWER);
-    }
-
-    /**
-     * The enabled provider for a (type, workspace, role), with its secret decrypted.
-     *
-     * <p>The role is part of the key, not a filter that is nice to have. Since V44 one workspace may
-     * hold a REVIEWER row and a FACTORY row, and an unfiltered {@code SELECT *} returns whichever
-     * the planner yields first — which could hand the review path the factory's push token. That
-     * is the identity confusion ADR-038 exists to prevent, arriving through a query that used to
-     * be unambiguous.
-     */
-    public Optional<ScmProvider> resolve(String type, String workspace, ProviderRole role) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND role = ? AND enabled = TRUE")) {
-            ps.setString(1, type);
-            ps.setString(2, workspace);
-            ps.setString(3, role.name());
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decryptedProvider(c, rs)) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to resolve " + role + " provider for " + type + "/" + workspace, e);
-        }
-    }
-
-    /**
-     * The enabled provider for a workspace REGARDLESS of SCM type, with its secret
-     * decrypted — the resolution used by the manual-register and saga paths, which
-     * know a PR's workspace but not (without threading it through the event) its
-     * provider type. Assumes one enabled provider per workspace name; if a workspace
-     * is registered on more than one SCM, the oldest wins and a warning is logged.
-     */
-    public Optional<ScmProvider> resolveByWorkspace(String workspace) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM scm_provider WHERE workspace = ? AND role = 'REVIEWER' AND enabled = TRUE"
-                             + " ORDER BY created_at")) {
-            ps.setString(1, workspace);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                ScmProvider provider = decryptedProvider(c, rs);
-                if (rs.next()) {
-                    LOG.warnf("Workspace '%s' has providers on multiple SCM types; using the oldest (%s). "
-                            + "Register distinct workspace names per SCM to disambiguate.", workspace, provider.type());
-                }
-                return Optional.of(provider);
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to resolve provider for workspace " + workspace, e);
-        }
-    }
-
     /** A single provider by id, with its secret decrypted — for the connectivity check (enabled or not). */
     public Optional<ScmProvider> resolveById(UUID id) {
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?")) {
+             PreparedStatement ps = c.prepareStatement("SELECT id, name, type, base_url, auth_kind, auth_username, auth_secret, bot_account_id, enabled, created_at, bot_username, conversation_level, last_check_at, last_check_ok, last_check_error, role, reported_scopes, scopes_checked_at FROM scm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(decryptedProvider(c, rs)) : Optional.empty();
@@ -267,37 +215,10 @@ public class ProviderRegistry {
         }
     }
 
-    /**
-     * The registration for a (type, workspace, role), <b>enabled or not</b>, as a view — for saying
-     * which account WOULD serve and in what state, never for acting as it. {@link #resolve} is the
-     * only method that hands out a usable credential, and it filters {@code enabled}; this one exists
-     * so a disabled row can be reported as "disabled" rather than confused with "missing", which
-     * an operator fixes differently.
-     */
-    public Optional<ProviderView> registration(String type, String workspace, ProviderRole role) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT * FROM scm_provider WHERE type = ? AND workspace = ? AND role = ?")) {
-            ps.setString(1, type);
-            ps.setString(2, workspace);
-            ps.setString(3, role.name());
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                UUID id = rs.getObject("id", UUID.class);
-                return Optional.of(toView(c, rs, authorsOf(c, id)));
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to read the " + role + " registration for "
-                    + type + "/" + workspace, e);
-        }
-    }
-
     private ScmProvider decryptedProvider(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         return new ScmProvider(id, rs.getString("name"), rs.getString("type"),
-                rs.getString("base_url"), rs.getString("workspace"), rs.getString("auth_kind"),
+                rs.getString("base_url"), rs.getString("auth_kind"),
                 rs.getString("auth_username"),
                 encryption.decryptString(rs.getString("auth_secret"), aad(id)),
                 rs.getString("bot_account_id"), rs.getBoolean("enabled"), authorsOf(c, id),
@@ -311,7 +232,7 @@ public class ProviderRegistry {
 
     /** Map the row inside try-with-resources — never hand out a live ResultSet. */
     private Optional<ProviderView> findView(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT * FROM scm_provider WHERE id = ?")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT id, name, type, base_url, auth_kind, auth_username, auth_secret, bot_account_id, enabled, created_at, bot_username, conversation_level, last_check_at, last_check_ok, last_check_error, role, reported_scopes, scopes_checked_at FROM scm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(toView(c, rs, authorsOf(c, id))) : Optional.empty();
@@ -333,8 +254,7 @@ public class ProviderRegistry {
         String secret = rs.getString("auth_secret");
         return new ProviderView(
                 rs.getObject("id", UUID.class).toString(),
-                rs.getString("name"), rs.getString("type"), rs.getString("base_url"),
-                rs.getString("workspace"), rs.getString("auth_kind"), rs.getString("auth_username"),
+                rs.getString("name"), rs.getString("type"), rs.getString("base_url"), rs.getString("auth_kind"), rs.getString("auth_username"),
                 secret != null && !secret.isBlank(),
                 rs.getString("bot_account_id"), rs.getBoolean("enabled"), authors,
                 rs.getTimestamp("created_at").toInstant(),
@@ -345,7 +265,8 @@ public class ProviderRegistry {
                 rs.getString("last_check_error"),
                 rs.getString("role"), rs.getString("reported_scopes"),
                 rs.getTimestamp("scopes_checked_at") == null ? null : rs.getTimestamp("scopes_checked_at").toInstant(),
-                usedBy(c, rs.getObject("id", UUID.class), rs.getString("role")));
+                usedBy(c, rs.getObject("id", UUID.class), rs.getString("role")),
+                actorPolicies.account(rs.getObject("id", UUID.class)).actors());
     }
 
     private List<String> authorsOf(Connection c, UUID id) throws SQLException {
@@ -412,16 +333,52 @@ public class ProviderRegistry {
 
     private List<String> usedBy(Connection c, UUID id, String role) throws SQLException {
         List<String> uses = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM work_source WHERE account_id=? ORDER BY name,id")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) { while (rs.next()) uses.add(rs.getString(1)); }
+        }
         if ("REVIEWER".equals(role)) uses.add("Reviewer");
         if ("FACTORY".equals(role)) uses.add("Factory");
         try (var ps = c.prepareStatement("SELECT name FROM context_provider WHERE account_id = ? ORDER BY name, id")) {
             ps.setObject(1, id);
             try (var rs = ps.executeQuery()) { while (rs.next()) uses.add(rs.getString(1)); }
         }
+        try (PreparedStatement ps = c.prepareStatement("SELECT r.forge_origin,r.workspace,r.slug FROM repository r "
+                + "JOIN repository_account a ON a.repository_id=r.id WHERE a.account_id=? ORDER BY r.id")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) uses.add(rs.getString(1) + "/" + rs.getString(2) + "/" + rs.getString(3));
+            }
+        }
         return uses;
     }
 
+    private void validateRepositoryReferences(Connection c, UUID id, ProviderInput in) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT r.scm_type,r.forge_origin FROM repository r "
+                + "JOIN repository_account a ON a.repository_id=r.id WHERE a.account_id=?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    if (!rs.getString(1).equals(in.type()) || !rs.getString(2).equals(
+                            dev.codespire.contract.scm.ForgeOrigin.of(in.baseUrl()))) {
+                        throw new AccountConflict("Reassign the referencing repositories before changing account kind or origin");
+                    }
+                }
+            }
+        }
+    }
+
     private void validateSourceReferences(Connection c, UUID id, ProviderInput in) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT type,origin,name FROM work_source WHERE account_id=?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    if (!ProviderClients.supportsWorkAccount(dev.codespire.worksource.WorkSourceType.valueOf(rs.getString(1)), in.type(), in.authKind())
+                            || !rs.getString(2).equals(dev.codespire.contract.scm.ForgeOrigin.of(in.baseUrl())))
+                        throw new AccountConflict("Repoint this work source before changing account kind, origin or auth: " + rs.getString(3));
+                }
+            }
+        }
         try (var ps = c.prepareStatement("SELECT name, type, base_url FROM context_provider WHERE account_id = ?")) {
             ps.setObject(1, id);
             try (var rs = ps.executeQuery()) {
@@ -435,6 +392,19 @@ public class ProviderRegistry {
                 }
                 if (!invalid.isEmpty()) throw new AccountConflict("Repoint these sources before changing account kind or origin: "
                         + String.join(", ", invalid));
+            }
+        }
+    }
+
+    private void validateActorReferences(Connection c, UUID id, ProviderInput input) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT type,base_url FROM scm_provider WHERE id=? "
+                + "AND EXISTS (SELECT 1 FROM provider_author WHERE provider_id=?)")) {
+            ps.setObject(1, id); ps.setObject(2, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && (!rs.getString(1).equals(input.type()) || !dev.codespire.contract.scm.ForgeOrigin.of(rs.getString(2))
+                        .equals(dev.codespire.contract.scm.ForgeOrigin.of(input.baseUrl())))) {
+                    throw new AccountConflict("Remove the account's policy people before changing forge kind or origin.");
+                }
             }
         }
     }

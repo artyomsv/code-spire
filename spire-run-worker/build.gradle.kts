@@ -62,8 +62,24 @@ tasks.named<io.quarkus.gradle.tasks.QuarkusDev>("quarkusDev") {
 
 tasks.test {
     useJUnitPlatform()
+    // Fixed child-JVM commands resolve the same JDK selected for this Test task.
+    val pathVariable = System.getenv().keys.firstOrNull { it.equals("PATH", ignoreCase = true) } ?: "PATH"
+    environment(pathVariable, javaLauncher.get().executablePath.asFile.parent + System.getProperty("path.separator") + System.getenv(pathVariable))
     // M0WalkingSkeletonTest builds spire-publisher:latest from the installed distribution and the
     // two test images from src/test/docker, so it needs the distribution and the repository root.
     dependsOn(":spire-publisher:installDist")
+    // A separate plain JVM consumes actual worker results with the production charge ledger.
+    // This is test execution wiring, not an application dependency between deployables.
+    dependsOn(":spire-orchestrator:testClasses")
+    doFirst {
+        val classpathFile = layout.buildDirectory.file("test-support/orchestrator-classpath.txt").get().asFile
+        classpathFile.parentFile.mkdirs()
+        classpathFile.writeText(project(":spire-orchestrator")
+            .extensions.getByType<SourceSetContainer>()["test"].runtimeClasspath.asPath)
+        systemProperty("spire.orchestratorTestClasspathFile", classpathFile.absolutePath)
+        val workerClasspath = layout.buildDirectory.file("test-support/worker-classpath.txt").get().asFile
+        workerClasspath.writeText(sourceSets["test"].runtimeClasspath.asPath)
+        systemProperty("spire.workerTestClasspathFile", workerClasspath.absolutePath)
+    }
     systemProperty("spire.repoRoot", rootDir.absolutePath)
 }

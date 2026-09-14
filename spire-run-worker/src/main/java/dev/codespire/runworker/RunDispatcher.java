@@ -98,6 +98,8 @@ public class RunDispatcher {
     @Inject
     RunLauncher launcher;
 
+    @Inject WorkRunWorker workRuns;
+
     @Inject
     WorkspaceLeases leases;
 
@@ -144,6 +146,7 @@ public class RunDispatcher {
     }
 
     private CompletionStage<Void> handle(Message<RunCommand> message, RunCommand command) {
+        if (command instanceof RunCommand.ExecuteWorkRun work) return workRuns.execute(message, work);
         if (command instanceof RunCommand.CancelRun cancel) {
             // Loud, because this branch cannot cancel anything: control rides cs.run-control into a
             // listener beside this executor, and a cancel read HERE queues behind the very run it

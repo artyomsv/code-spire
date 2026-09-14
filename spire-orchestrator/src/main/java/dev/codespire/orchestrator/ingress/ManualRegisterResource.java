@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 /**
  * Manually register a pull request for review without a webhook: fetch the PR's
  * metadata from the SCM and emit a {@link PullRequestEventReceived} onto
- * cs.integration — the exact same signal the gateway produces from a webhook, so
+ * cs.repository-integration with the selected repository's provenance, so
  * the allowlist, observe-mode and read-model registration all apply unchanged.
  */
 @Path("/api/reviews/register")
@@ -42,13 +42,11 @@ public class ManualRegisterResource {
 
     private static final Logger LOG = Logger.getLogger(ManualRegisterResource.class);
 
-    // A single path segment's charset (same as the webhook ingress guard), used to
-    // validate the explicit workspace + slug JSON path. URL parsing is delegated to
-    // the per-provider PrUrlParsers, which own their own grammar.
-    private static final Pattern SLUG = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?");
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
 
     @Inject
-    ProviderRegistry providers;
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
 
     @Inject
     ProviderClients clients;
@@ -57,18 +55,16 @@ public class ManualRegisterResource {
     PrUrlParsers urlParsers;
 
     @Inject
-    IntegrationEmitter integration;
+    dev.codespire.orchestrator.repository.RepositoryDeliveryEmitter integration;
 
     @Inject
     ReviewProjection projection;
 
     /**
-     * Either {@code url}, or {@code workspace} + {@code slug} + {@code pr}. When the
-     * caller registers by fields (the UI fills them from a resolved URL), it passes
-     * {@code providerType} so a workspace name shared across SCMs still resolves the
-     * right provider; null/blank falls back to workspace-only resolution.
+     * Either {@code url}, resolved by full forge identity, or {@code repositoryId} + {@code pr}.
+     * Optional coordinates must agree with the selected repository.
      */
-    public record RegisterRequest(String url, String workspace, String slug, Long pr, String providerType) {
+    public record RegisterRequest(String url, String workspace, String slug, Long pr, String providerType, java.util.UUID repositoryId) {
     }
 
     @POST
@@ -77,18 +73,23 @@ public class ManualRegisterResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Map<String, Object> register(RegisterRequest req) {
         Target target = resolve(req);
-        RepoRef repo = new RepoRef(target.workspace, target.slug);
+        String requestedReviewId = ReviewIds.reviewId(new RepoRef(target.workspace, target.slug), target.pr);
+        RepoRef repo = ReviewIds.parse(requestedReviewId).repo();
+        if (projection.archived(requestedReviewId)) {
+            throw new ClientErrorException(Response.status(409)
+                    .entity("This pull request's review is archived. Unarchive it to review again.").build());
+        }
+        if (projection.registered(requestedReviewId)
+                && !projection.repositoryIdOf(requestedReviewId).filter(id -> id.equals(target.repositoryId)).isPresent()) {
+            throw new ClientErrorException(Response.status(409)
+                    .entity("This review has no matching repository mapping. Repair its mapping before dispatch.").build());
+        }
 
-        // Resolve the registered provider and use ITS (decrypted) credentials — no
-        // .env token needed. When the PR URL named a provider type (bitbucket-cloud |
-        // github | gitlab) we resolve by (type, workspace) so a GitHub org and a
-        // Bitbucket workspace of the same name don't collide; the provider's own type
-        // selects the adapter.
+        // The repository's explicit reviewer binding selects the credential and adapter.
         ScmProvider provider = resolveProvider(target)
-                .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
-                        + target.workspace + "'"
-                        + (target.providerType == null ? "" : " on " + target.providerType)
-                        + ". Add one under Settings -> Accounts."));
+                .orElseThrow(() -> new NotFoundException("No usable Reviewer account is selected for repository "
+                        + target.workspace + "/" + target.slug
+                        + ". Register and enable the repository, then select an enabled Reviewer under Settings -> Repositories."));
         DiffSource diffSource = clients.diffSource(provider);
 
         PullRequest pr;
@@ -127,7 +128,9 @@ public class ManualRegisterResource {
                 pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
                 pr.sourceBranch(), pr.targetBranch(), pr.headCommit(), pr.author(), pr.htmlUrl(),
                 provider.type());
-        integration.send(event);
+        integration.send(new dev.codespire.contract.event.RepositoryDelivery(target.repositoryId, null, 0,
+                target.providerType, target.forgeOrigin, dev.codespire.contract.event.RepositoryEventKind.REVIEWER,
+                java.util.UUID.randomUUID().toString(), event));
 
         LOG.infof("Manually registered %s (author @%s)", reviewId,
                 pr.author() == null ? "unknown" : pr.author().username());
@@ -135,15 +138,14 @@ public class ManualRegisterResource {
                 "slug", target.slug, "pr", pr.prId());
     }
 
-    /** {@code providerType} is set when the target came from a URL (which names the SCM), else null. */
-    private record Target(String workspace, String slug, long pr, String providerType) {
+    /** Full forge identity from the parsed URL or explicitly selected repository. */
+    private record Target(String workspace, String slug, long pr, String providerType, String forgeOrigin, java.util.UUID repositoryId) {
     }
 
-    /** The enabled provider for a target — by (type, workspace) when the URL named an SCM, else workspace alone. */
+    /** The selected repository's usable reviewer account. */
     private Optional<ScmProvider> resolveProvider(Target target) {
-        return target.providerType == null
-                ? providers.resolveByWorkspace(target.workspace)
-                : providers.resolve(target.providerType, target.workspace);
+        return Optional.ofNullable(target.repositoryId)
+                .flatMap(id -> accounts.resolve(id, dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
     }
 
     /** Request + result of the URL-preview endpoint (parse without registering). */
@@ -151,7 +153,7 @@ public class ManualRegisterResource {
     }
 
     public record ResolvedUrl(String workspace, String slug, long pr,
-                              boolean providerRegistered, String providerType, String providerName) {
+                              boolean providerRegistered, String providerType, String providerName, java.util.UUID repositoryId, String forgeOrigin) {
     }
 
     /**
@@ -175,50 +177,35 @@ public class ManualRegisterResource {
         return new ResolvedUrl(target.workspace, target.slug, target.pr,
                 provider.isPresent(),
                 provider.map(ScmProvider::type).orElse(null),
-                provider.map(ScmProvider::name).orElse(null));
+                provider.map(ScmProvider::name).orElse(null), target.repositoryId, target.forgeOrigin);
     }
 
     private Target resolve(RegisterRequest req) {
         if (req != null && req.url() != null && !req.url().isBlank()) {
             return parseUrl(req.url().trim());
         }
-        if (req == null || req.workspace() == null || req.slug() == null || req.pr() == null) {
-            throw new BadRequestException("Provide a pull request 'url', or 'workspace' + 'slug' + 'pr'.");
+        if (req == null || req.repositoryId() == null || req.pr() == null || req.pr() < 1) {
+            throw new BadRequestException("Provide a pull request URL, or repositoryId and a positive pr number.");
         }
-        return validated(req.workspace().trim(), req.slug().trim(), req.pr(), req.providerType());
+        var repository = repositories.get(req.repositoryId())
+                .orElseThrow(() -> new NotFoundException("Repository is not registered"));
+        if ((req.workspace() != null && !req.workspace().equals(repository.workspace()))
+                || (req.slug() != null && !req.slug().equals(repository.slug()))
+                || (req.providerType() != null && !req.providerType().equals(repository.scmType()))) {
+            throw new BadRequestException("Request coordinates do not match the selected repository");
+        }
+        return new Target(repository.workspace(), repository.slug(), req.pr(), repository.scmType(),
+                repository.forgeOrigin(), repository.id());
     }
 
     /** Delegate URL parsing to the per-provider parsers; the first match wins and names the SCM type. */
     private Target parseUrl(String url) {
-        return urlParsers.parse(url)
-                .map(m -> new Target(m.coordinates().repo().workspace(), m.coordinates().repo().slug(),
-                        m.coordinates().prId(), m.type().providerType()))
-                .orElseThrow(() -> new BadRequestException("Unrecognised pull request URL — expected "
-                        + ".../pull-requests/<id>, .../pull/<id>, or .../-/merge_requests/<id>"));
-    }
-
-    private Target validated(String workspace, String slug, long pr, String providerType) {
-        if (!SLUG.matcher(workspace).matches() || !validSlug(slug)) {
-            throw new BadRequestException("Invalid workspace or repository slug.");
-        }
-        if (pr <= 0) {
-            throw new BadRequestException("Pull request number must be positive.");
-        }
-        // A blank type (hand-typed fields with no resolved URL) means workspace-only resolution.
-        String type = providerType == null || providerType.isBlank() ? null : providerType;
-        return new Target(workspace, slug, pr, type);
-    }
-
-    /** A repo slug is one or more path segments (GitLab nested groups); each must be a valid segment. */
-    private static boolean validSlug(String slug) {
-        if (slug.isBlank()) {
-            return false;
-        }
-        for (String segment : slug.split("/", -1)) {
-            if (!SLUG.matcher(segment).matches()) {
-                return false;
-            }
-        }
-        return true;
+        PrUrlParsers.Match match = urlParsers.parse(url)
+                .orElseThrow(() -> new BadRequestException("Unrecognised pull request URL"));
+        String origin = ProviderClients.repositoryForgeOrigin(match.type().providerType(), url);
+        RepoRef repo = match.coordinates().repo();
+        java.util.UUID repositoryId = repositories.find(match.type().providerType(), origin, repo.workspace(), repo.slug())
+                .map(dev.codespire.orchestrator.repository.RepositoryView::id).orElse(null);
+        return new Target(repo.workspace(), repo.slug(), match.coordinates().prId(), match.type().providerType(), origin, repositoryId);
     }
 }

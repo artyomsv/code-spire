@@ -29,24 +29,24 @@ public class WorkerCredentials {
     ObjectMapper mapper;
 
     /** Encrypt an already-resolved provider's credential (IntegrationSaga path). */
-    public String pack(ScmProvider provider) {
+    public String pack(ScmProvider provider, String repositoryWorkspace) {
         ScmCredential cred = new ScmCredential(provider.type(), provider.baseUrl(), provider.authKind(),
                 provider.authUsername(), provider.secret(), provider.botAccountId(), provider.botUsername());
         try {
-            return encryption.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(provider.workspace()));
+            return encryption.encryptString(mapper.writeValueAsString(cred), ScmCredential.aad(repositoryWorkspace));
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to pack worker credential for " + provider.workspace(), e);
+            throw new IllegalStateException("Failed to pack worker credential for " + repositoryWorkspace, e);
         }
     }
 
     /**
      * Resolve the enabled provider for a REVIEW and pack its credential (ResultSaga /
-     * rerun / retry path). The provider is disambiguated by the SCM type persisted with
-     * the review, so a workspace name registered on more than one SCM still brokers the
-     * right provider — unlike resolving by workspace alone. Empty if the provider was
-     * disabled/removed mid-review, so the caller skips rather than emit uncredentialed.
+     * rerun / retry path). The persisted repository id selects the account. The workspace
+     * encoded in the existing review address remains the transport AAD. Empty means an unmapped
+     * review or an unusable selected account, so no uncredentialed command may leave.
      */
     public Optional<String> packForReview(String reviewId) {
-        return reviewProviders.resolveForReview(reviewId).map(this::pack);
+        return reviewProviders.resolveForReview(reviewId).map(provider -> pack(provider,
+                dev.codespire.contract.event.ReviewIds.parse(reviewId).repo().workspace()));
     }
 }

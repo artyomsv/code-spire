@@ -11,6 +11,7 @@ import java.util.Objects;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunResult.RunStarted.class, name = "RunStarted"),
+        @JsonSubTypes.Type(value = RunResult.RunWorkReady.class, name = "RunWorkReady"),
         @JsonSubTypes.Type(value = RunResult.RunFinished.class, name = "RunFinished"),
         @JsonSubTypes.Type(value = RunResult.RunFailed.class, name = "RunFailed")
 })
@@ -22,6 +23,28 @@ public sealed interface RunResult {
 
         public RunStarted {
             Objects.requireNonNull(runId, "runId");
+        }
+    }
+
+    /**
+     * A completed build whose checkpoint remains unpublished. This is not a terminal publication
+     * result. The same measured token map rides the eventual terminal result under the same charge
+     * key; active wall time excludes the human hold between these two observations.
+     */
+    record RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
+                        List<String> changedPaths, Map<String, Long> tokenUsage,
+                        long activeWallSeconds) implements RunResult {
+        public RunWorkReady {
+            if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A ready run needs its identity");
+            Objects.requireNonNull(work, "A ready run needs its work binding");
+            if (head == null || !head.matches("[0-9a-f]{40}"))
+                throw new IllegalArgumentException("A ready run needs its full checkpoint head");
+            changedPaths = List.copyOf(Objects.requireNonNull(changedPaths, "changedPaths"));
+            if (tokenUsage != null) {
+                if (tokenUsage.isEmpty()) throw new IllegalArgumentException("An empty usage map is not a measurement");
+                tokenUsage = Map.copyOf(tokenUsage);
+            }
+            if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
         }
     }
 

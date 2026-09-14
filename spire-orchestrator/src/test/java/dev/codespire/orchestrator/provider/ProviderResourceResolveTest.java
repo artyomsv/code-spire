@@ -38,7 +38,7 @@ class ProviderResourceResolveTest {
     }
 
     private static ProviderInput input(String secret, String botAccountId) {
-        return new ProviderInput("GitHub", "github", "https://api.github.com", "artyomsv",
+        return new ProviderInput("GitHub", "github", "https://api.github.com",
                 "bearer", null, secret, botAccountId, true, List.of(), null, null);
     }
 
@@ -48,7 +48,6 @@ class ProviderResourceResolveTest {
         ProviderInput out = resource.resolveIdentity(input("ghp_realtoken", ""));
         assertEquals("40727", out.botAccountId(), "resolved from whoami");
         assertEquals("ghp_realtoken", out.secret(), "token preserved");
-        assertEquals("artyomsv", out.workspace());
     }
 
     @Test

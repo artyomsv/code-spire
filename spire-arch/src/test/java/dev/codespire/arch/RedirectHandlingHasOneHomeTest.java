@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * {@code IllegalArgumentException} that escapes every caller's classification. Each of those was a
  * real defect at some point, and each had to be fixed in every copy.
  *
- * <p>{@code spire-http}'s {@code PinnedJsonClient} is that one place. This check does not force every
+ * <p>{@code spire-http}'s internal {@code PinnedHttpTransport} is that one place. This check does not force every
  * caller onto it — the SCM clients legitimately need more than it offers (see {@link #ALLOWED}) — it
  * makes a NEW copy fail the build, so the count can only go down.
  *
@@ -37,7 +37,7 @@ class RedirectHandlingHasOneHomeTest {
 
     /** Where the shared implementation lives; everything else is measured against it. */
     private static final String ONE_HOME =
-            "spire-http/src/main/java/dev/codespire/http/PinnedJsonClient.java";
+            "spire-http/src/main/java/dev/codespire/http/PinnedHttpTransport.java";
 
     /**
      * Hand-rolled loops that predate the shared client, each with what blocks the migration.
@@ -50,9 +50,9 @@ class RedirectHandlingHasOneHomeTest {
 
     private static Map<String, String> allowlist() {
         Map<String, String> allowed = new LinkedHashMap<>();
-        String scmNeeds = "Predates spire-http and needs more than PinnedJsonClient offers: POST/PUT with "
-                + "JSON bodies for comment posting, non-JSON GETs, and per-provider Retry-After "
-                + "extraction. Migrating means growing the shared client first — tracked in techdebt.";
+        String scmNeeds = "Predates spire-http and retains provider-specific write retries and error "
+                + "contracts. Migration needs a tested cutover of those semantics, not another shared "
+                + "redirect implementation — tracked in techdebt.";
         allowed.put("spire-scm-bitbucket/src/main/java/dev/codespire/scm/bitbucket/BitbucketCloudClient.java",
                 scmNeeds);
         allowed.put("spire-scm-github/src/main/java/dev/codespire/scm/github/GitHubClient.java",

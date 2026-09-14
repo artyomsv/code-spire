@@ -67,7 +67,7 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
               </td>
               <td className="mono nowrap" style={MONO}>
                 <div className="cell-cap">
-                  <CopyableValue text={p.workspace ?? hostOf(p.baseUrl)} mono copyTitle="Copy the workspace" />
+                  <CopyableValue text={hostOf(p.baseUrl)} mono copyTitle="Copy the forge host" />
                 </div>
               </td>
               <td className="nowrap">

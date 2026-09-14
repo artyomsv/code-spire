@@ -26,13 +26,22 @@ class MachineAccountsTest {
     @Inject
     ProviderRegistry providers;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    @Inject dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+
+    private UUID repository(String workspace, String reviewer, String factory) {
+        return repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput("github",
+                "https://api.github.com", workspace, "TEST-repo", true,
+                reviewer == null ? null : UUID.fromString(reviewer), factory == null ? null : UUID.fromString(factory))).id();
+    }
+
     private static ProviderInput input(String workspace, String name, String secret, String role) {
         return login(workspace, name, secret, role, name);
     }
 
     private static ProviderInput login(String workspace, String name, String secret, String role,
                                        String botUsername) {
-        return new ProviderInput(name, "github", "https://api.github.com", workspace, "bearer",
+        return new ProviderInput(name, "github", "https://api.github.com", "bearer",
                 null, secret, "", true, List.of(), botUsername, null, role);
     }
 
@@ -40,7 +49,7 @@ class MachineAccountsTest {
     void aDeploymentWithNoFactoryAccountCannotDispatch() {
         // Failing closed here is the point: the alternative is silently pushing as the review bot,
         // whose pull requests the reviewer's own author allowlist then skips.
-        assertTrue(accounts.resolve(ScmType.GITHUB, "TEST-nobody-" + UUID.randomUUID()).isEmpty());
+        assertTrue(accounts.resolve(UUID.randomUUID()).isEmpty());
     }
 
     @Test
@@ -48,9 +57,8 @@ class MachineAccountsTest {
         // The same workspace with only a REVIEWER row: still empty. A reviewer registration must
         // never be promoted to a push identity by the absence of a factory one.
         String workspace = "TEST-rev-only-" + UUID.randomUUID();
-        providers.create(input(workspace, "reviewer", "TEST-reviewer-token", null));
-
-        assertTrue(accounts.resolve(ScmType.GITHUB, workspace).isEmpty());
+        String reviewer = providers.create(input(workspace, "reviewer", "TEST-reviewer-token", null)).id();
+        assertTrue(accounts.resolve(repository(workspace, reviewer, null)).isEmpty());
     }
 
     @Test
@@ -60,20 +68,18 @@ class MachineAccountsTest {
         // handed the factory's push token, and the factory the reviewer's. That is the identity
         // confusion ADR-038 exists to prevent, arriving through a query that used to be unambiguous.
         String workspace = "TEST-both-" + UUID.randomUUID();
-        providers.create(input(workspace, "reviewer-bot", "TEST-reviewer-token", null));
-        providers.create(input(workspace, "factory-bot", "TEST-factory-token", "FACTORY"));
+        String reviewerId = providers.create(input(workspace, "reviewer-bot", "TEST-reviewer-token", null)).id();
+        String factoryId = providers.create(input(workspace, "factory-bot", "TEST-factory-token", "FACTORY")).id();
+        UUID repositoryId = repository(workspace, reviewerId, factoryId);
 
-        Optional<ScmProvider> factory = accounts.resolve(ScmType.GITHUB, workspace);
-        Optional<ScmProvider> reviewer = providers.resolve("github", workspace);
-        Optional<ScmProvider> byWorkspace = providers.resolveByWorkspace(workspace);
+        Optional<ScmProvider> factory = accounts.resolve(repositoryId);
+        Optional<ScmProvider> reviewer = repositoryAccounts.resolve(repositoryId, ProviderRole.REVIEWER);
 
         assertEquals("factory-bot", factory.orElseThrow().name());
         assertEquals("reviewer-bot", reviewer.orElseThrow().name(),
                 "the review path must get the reviewer, whatever else the workspace holds");
-        assertEquals("reviewer-bot", byWorkspace.orElseThrow().name(),
-                "and so must the saga path, which resolves by workspace alone");
         assertEquals("factory-bot",
-                providers.resolve("github", workspace, ProviderRole.FACTORY).orElseThrow().name());
+                repositoryAccounts.resolve(repositoryId, ProviderRole.FACTORY).orElseThrow().name());
     }
 
     /**
@@ -93,19 +99,19 @@ class MachineAccountsTest {
     @Test
     void anAccountWithNoLoginCannotAuthenticateAPushSoItIsNotResolved() {
         String blank = "TEST-blank-login-" + UUID.randomUUID();
-        providers.create(login(blank, "factory-bot", "TEST-factory-token", "FACTORY", ""));
-        assertTrue(accounts.resolve(ScmType.GITHUB, blank).isEmpty(),
+        String blankId = providers.create(login(blank, "factory-bot", "TEST-factory-token", "FACTORY", "")).id();
+        assertTrue(accounts.resolve(repository(blank, null, blankId)).isEmpty(),
                 "a blank login is stored as SQL null and would be packed as a null push identity");
 
         String absent = "TEST-null-login-" + UUID.randomUUID();
-        providers.create(login(absent, "factory-bot", "TEST-factory-token", "FACTORY", null));
-        assertTrue(accounts.resolve(ScmType.GITHUB, absent).isEmpty(),
+        String absentId = providers.create(login(absent, "factory-bot", "TEST-factory-token", "FACTORY", null)).id();
+        assertTrue(accounts.resolve(repository(absent, null, absentId)).isEmpty(),
                 "and an absent one is the same account with the same missing push identity");
 
         // The discriminating half: the filter must not swallow a usable account.
         String usable = "TEST-has-login-" + UUID.randomUUID();
-        providers.create(login(usable, "factory-bot", "TEST-factory-token", "FACTORY", "factory-bot"));
-        assertEquals("factory-bot", accounts.resolve(ScmType.GITHUB, usable).orElseThrow().botUsername());
+        String usableId = providers.create(login(usable, "factory-bot", "TEST-factory-token", "FACTORY", "factory-bot")).id();
+        assertEquals("factory-bot", accounts.resolve(repository(usable, null, usableId)).orElseThrow().botUsername());
     }
 
     @Test

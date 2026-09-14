@@ -34,13 +34,13 @@ class WorkerCredentialsTest {
 
     private static ScmProvider provider() {
         return new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud",
-                "https://api.bitbucket.org/2.0", "acme", "bearer", null,
+                "https://api.bitbucket.org/2.0", "bearer", null,
                 "sk-secret-token", "acct-1", true, List.of(), null, null, ProviderRole.REVIEWER);
     }
 
     @Test
     void packsAnEncryptedCredentialTheWorkerCanDecrypt() throws Exception {
-        String cipher = packer().pack(provider());
+        String cipher = packer().pack(provider(), "acme");
         assertFalse(cipher.contains("sk-secret-token"), "the secret must not appear in cleartext");
 
         // worker side: same keyset, workspace-bound AAD
@@ -53,7 +53,7 @@ class WorkerCredentialsTest {
 
     @Test
     void aCredentialForOneWorkspaceCannotBeReplayedAgainstAnother() {
-        String cipher = packer().pack(provider());
+        String cipher = packer().pack(provider(), "acme");
         assertThrows(IllegalStateException.class, () -> encryption.decryptString(cipher, ScmCredential.aad("other-ws")));
     }
 

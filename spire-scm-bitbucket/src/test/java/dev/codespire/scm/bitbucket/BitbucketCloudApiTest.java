@@ -28,6 +28,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** DiffSource + CommentSink against a WireMock Bitbucket (request shapes per SCM-MAPPING). */
 class BitbucketCloudApiTest {
 
+    @Test void readsTheExactEncodedBranchHeadForResume() {
+        server.stubFor(get(urlEqualTo("/repositories/TEST-owner/TEST-repo/refs/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/branch\",\"target\":{\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}")));
+        assertEquals("b".repeat(40),diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+    @Test void anotherBranchCannotSupplyTheResumeHead() {
+        server.stubFor(get(urlEqualTo("/repositories/TEST-owner/TEST-repo/refs/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/other\",\"target\":{\"hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}")));
+        assertThrows(IllegalStateException.class,()->diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+    @Test void malformedCommitCannotSupplyTheResumeHead() {
+        server.stubFor(get(urlEqualTo("/repositories/TEST-owner/TEST-repo/refs/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/branch\",\"target\":{\"hash\":\"TEST-not-a-commit\"}}")));
+        assertThrows(IllegalStateException.class,()->diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+
     private static WireMockServer server;
     private static BitbucketCloudDiffSource diffSource;
     private static BitbucketCloudCommentSink commentSink;

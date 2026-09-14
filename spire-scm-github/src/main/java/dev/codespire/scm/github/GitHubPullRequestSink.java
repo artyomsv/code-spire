@@ -60,14 +60,17 @@ public class GitHubPullRequestSink implements PullRequestSink {
         return ScmType.GITHUB;
     }
 
+    @Override public boolean supportsDrafts() { return true; }
+
     @Override
     public PullRequestRef open(RepoRef repo, NewPullRequest request) {
         // Find FIRST, because the record that triggers this is redelivered on every consumer
         // restart and by then the branch is already pushed. GitHub happens to refuse the duplicate,
         // but the other two forges do not, so the guard belongs here rather than in one forge's
         // behaviour -- and a refusal would be an exception where the caller needs a number.
-        return findByHead(repo, request.headBranch(), request.baseBranch())
-                .orElseGet(() -> create(repo, request));
+        requireSupported(request);
+        return PullRequestSink.requireObservedDraft(request, findByHead(repo, request.headBranch(), request.baseBranch())
+                .orElseGet(() -> create(repo, request)));
     }
 
     private PullRequestRef create(RepoRef repo, NewPullRequest request) {
@@ -75,6 +78,7 @@ public class GitHubPullRequestSink implements PullRequestSink {
         try {
             return read(client.postJson(path, Map.of(
                     "title", request.title(),
+                    "draft", request.draft(),
                     "head", request.headBranch(),
                     "base", request.baseBranch(),
                     "body", request.bodyMd())), "POST", path);
@@ -152,7 +156,7 @@ public class GitHubPullRequestSink implements PullRequestSink {
             throw new GitHubApiException(200, method, path,
                     "response carried no pull request number or URL");
         }
-        return new PullRequestRef(number, url);
+        return new PullRequestRef(number, url, node.path("draft").isBoolean() ? node.path("draft").booleanValue() : null);
     }
 
     private static void requireBranch(String branch, String which) {

@@ -95,7 +95,7 @@ class ConversationSagaTest {
     }
 
     private static ScmProvider githubProvider() {
-        return new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
+        return new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x",
                 "bearer", null, "secret", "acct", true, List.of(), "code-spire", "EXPLAIN",
                 ProviderRole.REVIEWER);
     }
@@ -106,7 +106,7 @@ class ConversationSagaTest {
      * every answer-path test needs one — a real {@link ReviewProjection} would hit the database.
      */
     private static ReviewProjection projectionWith(List<PriorFinding> findings) {
-        return new ReviewProjection() {
+        return new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.of("sum-1");
@@ -136,7 +136,7 @@ class ConversationSagaTest {
     private static ConversationLevels fixedLevel(ConversationLevel level) {
         return new ConversationLevels() {
             @Override
-            public ConversationLevel effectiveLevel(String type, String workspace) {
+            public ConversationLevel effectiveLevel(ScmProvider provider) {
                 return level;
             }
 
@@ -192,8 +192,8 @@ class ConversationSagaTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
-                return "packed:" + p.workspace();
+            public String pack(ScmProvider p, String repositoryWorkspace) {
+                return "packed:" + repositoryWorkspace;
             }
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
@@ -254,8 +254,8 @@ class ConversationSagaTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
-                return "packed:" + p.workspace();
+            public String pack(ScmProvider p, String repositoryWorkspace) {
+                return "packed:" + repositoryWorkspace;
             }
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
@@ -331,7 +331,7 @@ class ConversationSagaTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
+            public String pack(ScmProvider p, String repositoryWorkspace) {
                 return "packed";
             }
         };
@@ -410,7 +410,7 @@ class ConversationSagaTest {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<PriorRun> priorRunFor(String reviewId) {
                 return Optional.empty();
@@ -450,7 +450,7 @@ class ConversationSagaTest {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<PriorRun> priorRunFor(String reviewId) {
                 return Optional.empty();
@@ -539,8 +539,8 @@ class ConversationSagaTest {
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override
-            public String pack(ScmProvider p) {
-                return "packed:" + p.workspace();
+            public String pack(ScmProvider p, String repositoryWorkspace) {
+                return "packed:" + repositoryWorkspace;
             }
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
@@ -646,7 +646,7 @@ class ConversationSagaTest {
                 details.add(detail);
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void setNote(String reviewId, String note) {
                 dashboardNotes.add(note);
@@ -675,7 +675,7 @@ class ConversationSagaTest {
                 return DefaultLlm.noDefaultProvider();
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public void setNote(String reviewId, String note) {
                 dashboardNotes.add(note);
@@ -696,7 +696,7 @@ class ConversationSagaTest {
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
-                return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x", "acme",
+                return Optional.of(new ScmProvider(UUID.randomUUID(), "GH", "github", "https://x",
                         "bearer", null, "secret", "", true, List.of(), "code-spire", "EXPLAIN",
                         ProviderRole.REVIEWER));
             }
@@ -719,7 +719,7 @@ class ConversationSagaTest {
                 throw new AssertionError("blank bot identity must short-circuit before thread resolution");
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 throw new AssertionError("blank bot identity must short-circuit before summary lookup");
@@ -749,7 +749,7 @@ class ConversationSagaTest {
                 notes.add(type);
             }
         };
-        saga.projection = new ReviewProjection() {
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
             @Override
             public Optional<String> summaryRefOf(String reviewId) {
                 return Optional.empty();

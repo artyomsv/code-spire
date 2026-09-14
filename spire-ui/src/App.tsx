@@ -1,6 +1,9 @@
+import Approvals from './components/work-items/Approvals';
+import WorkPolicies from './components/work-items/WorkPolicies';
+import WorkSources from './components/work-items/WorkSources';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Bot, Brain, FileText, GitPullRequest, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -13,6 +16,7 @@ import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
 import SettingsContextProviders from './components/SettingsContextProviders';
 import SettingsWebhookRepos from './components/SettingsWebhookRepos';
+import RepositoryRegistryPage from './components/repositories/RepositoryRegistryPage';
 import SettingsDlq from './components/SettingsDlq';
 import PromptsSettings from './components/PromptsSettings';
 import PromptDetail from './components/PromptDetail';
@@ -20,6 +24,8 @@ import RequireRole from './components/RequireRole';
 import RedirectKeepingQuery from './components/RedirectKeepingQuery';
 import Runs from './components/Runs';
 import RunDetail from './components/RunDetail';
+import WorkItems from './components/work-items/WorkItems';
+import WorkItemDetail from './components/work-items/WorkItemDetail';
 import { AnalyticsOverview, AnalyticsRepo, MyAnalytics } from './components/Analytics';
 import { SettingsOperators } from './components/SettingsOperators';
 import { SettingsMemory } from './components/SettingsMemory';
@@ -46,6 +52,10 @@ function toggleTheme() {
  * <p>Order is significant: `/analytics/me` must precede `/analytics`.
  */
 const TITLES: ReadonlyArray<readonly [string, string]> = [
+  ['/work-items/', 'Work item detail'],
+  ['/work-items', 'Work items'],
+  ['/approvals', 'Approvals'],
+  ['/settings/work-policy', 'Work policy'],
   ['/runs/', 'Run detail'],
   ['/runs', 'Runs'],
   ['/r/', 'Review detail'],
@@ -56,7 +66,9 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/settings/general', 'General'],
   ['/settings/llm', 'LLM'],
   ['/settings/context', 'Context'],
+  ['/settings/work-sources', 'Work sources'],
   ['/settings/repositories', 'Repositories'],
+  ['/settings/webhooks', 'Webhooks'],
   ['/settings/prompts', 'Prompts'],
   ['/settings/dlq', 'Dead-letter'],
 ];
@@ -75,6 +87,7 @@ export default function App() {
   const onAccounts = location.pathname.startsWith('/settings/accounts');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
+  const onWorkSources = location.pathname.startsWith('/settings/work-sources');
   const onRepositories = location.pathname.startsWith('/settings/repositories');
   const onDlq = location.pathname.startsWith('/settings/dlq');
   const onPrompts = location.pathname.startsWith('/settings/prompts');
@@ -84,6 +97,7 @@ export default function App() {
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
   const onRuns = location.pathname.startsWith('/runs');
+  const onWorkItems = location.pathname.startsWith('/work-items');
   // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
   // "not settings", which was right while the rail had two sections and silently wrong the moment
   // Analytics arrived: both entries lit up at once.
@@ -214,6 +228,11 @@ export default function App() {
             <Bot className="ic" size={16} />
             Runs
           </a>
+          <a className={location.pathname.startsWith('/approvals') ? 'active' : ''} href="#/approvals">Approvals</a>
+          <a className={onWorkItems ? 'active' : ''} href="#/work-items">
+            <ListTodo className="ic" size={16} />
+            Work items
+          </a>
           <a className={onMyActivity ? 'active' : ''} href="#/analytics/me">
             <UserRound className="ic" size={16} />
             My activity
@@ -241,6 +260,15 @@ export default function App() {
               <circle cx="9" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.4" />
             </svg>
             General
+          </a>
+          <a className={location.pathname.startsWith('/settings/work-policy') ? 'active' : ''} href="#/settings/work-policy">
+            <SlidersHorizontal className="ic" size={16} aria-hidden="true" />Work policy</a>
+          <a className={onWorkSources ? 'active' : ''} href="#/settings/work-sources">
+            <svg className="ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="3" y="3" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M6 2h4v3H6zM6 8h4M6 11h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+            Work sources
           </a>
           <a className={onContext ? 'active' : ''} href="#/settings/context">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
@@ -369,6 +397,10 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/*" element={<RunDetail />} />
+          <Route path="/approvals" element={<Approvals />} />
+          <Route path="/settings/work-policy" element={configure(<WorkPolicies />)} />
+          <Route path="/work-items" element={<WorkItems />} />
+          <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />
           {/* Before the :workspace/:slug route, or "me" would be read as a workspace. */}
           <Route path="/analytics/me" element={<MyAnalytics subject={me?.subject} />} />
@@ -377,14 +409,16 @@ export default function App() {
           <Route path="/settings/accounts/people" element={configure(<SettingsOperators />)} />
           <Route path="/settings/memory" element={configure(<SettingsMemory />)} />
           <Route path="/settings/general" element={configure(<SettingsGeneral />)} />
-          <Route path="/settings/repositories" element={configure(<SettingsWebhookRepos />)} />
+          <Route path="/settings/repositories" element={configure(<RepositoryRegistryPage />)} />
+          <Route path="/settings/repositories/registry" element={<RedirectKeepingQuery to="/settings/repositories" />} />
           {/* The three screens moved on 2026-09-07. Old addresses live in bookmarks and in attention
               rows emitted by a service not yet upgraded; the query rides along because ?edit=<id> is
               what opens the named record. */}
           <Route path="/settings/providers" element={<RedirectKeepingQuery to="/settings/accounts" />} />
           <Route path="/settings/operators" element={<RedirectKeepingQuery to="/settings/accounts/people" />} />
-          <Route path="/settings/webhooks" element={<RedirectKeepingQuery to="/settings/repositories" />} />
+          <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
           <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
+          <Route path="/settings/work-sources" element={configure(<WorkSources />)} />
           <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
           <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />
           <Route path="/settings/prompts/:kind" element={configure(<PromptDetail />)} />

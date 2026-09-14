@@ -79,10 +79,20 @@ public final class ReviewFixtures {
      */
     private static String seedHeader(ReviewProjection projection, long pr, String status, int stage) {
         String reviewId = reviewIdFor(pr);
+        projection.claimRepository(reviewId, repositoryId(), REPO_REF, pr);
         projection.registerHeader(reviewId, REPO_REF, pr, "TEST-TITLE", "TEST-AUTHOR", "TEST-AUTHOR-ID",
                 "TEST-SOURCE", "TEST-TARGET", "TESTSHA" + pr, "http://example.invalid/pr/" + pr,
                 "github", status, stage);
         projection.updateStatus(reviewId, status, stage);
         return reviewId;
+    }
+
+    /** Explicit repository shared by the retention fixtures; no account is inferred from its namespace. */
+    public static java.util.UUID repositoryId() {
+        var repositories = jakarta.enterprise.inject.spi.CDI.current()
+                .select(dev.codespire.orchestrator.repository.RepositoryRegistry.class).get();
+        return repositories.find("github", "http://example.invalid", WS, REPO)
+                .orElseGet(() -> repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                        "github", "http://example.invalid", WS, REPO, true, null, null))).id();
     }
 }

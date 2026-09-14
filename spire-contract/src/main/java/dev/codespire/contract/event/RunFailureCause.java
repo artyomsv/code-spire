@@ -173,6 +173,10 @@ public enum RunFailureCause {
             Map.entry("SANDBOX_UNREACHABLE", SANDBOX_LOST),
             Map.entry("PUSH_GATE_REFUSED", GATE_REFUSED),
             // spire-publisher outcome JSON.
+            // Held publication failed its authority/head gate after the build already ran.
+            // Repeating the same permit cannot repair either refusal; measured usage still counts.
+            Map.entry("PUBLICATION_PERMIT_EXPIRED", GATE_REFUSED),
+            Map.entry("PERMITTED_HEAD_UNAVAILABLE", GATE_REFUSED),
             Map.entry("PUSH_FAILED", PUSH_TRANSPORT_FAILED),
             Map.entry("PUBLISHER_FAILED", WORKER_FAILED));
 

@@ -1,0 +1,45 @@
+package dev.codespire.worksource;
+
+import java.util.Set;
+
+/** A source instance is bound to one registered scope and explicit account by composition. */
+public interface WorkSource {
+    enum Capability { CANDIDATES, LABEL_AUDIT, COMMENT, TRANSITION }
+
+    Set<Capability> capabilities();
+    default String capabilityDetail() { return "Consult the selected source's supported operations."; }
+    WorkPage<WorkIssueLocation> candidates(String cursor);
+    Fetch fetch(WorkIssueLocation issue);
+    /** Resolve an operator-entered key inside this source, then use the stable identity for later reads. */
+    default WorkIssueLocation resolve(String issueKey) {
+        throw new WorkSourceException("Ticket reference resolution is unavailable for this source");
+    }
+    WorkPage<LabelEvent> labelEvents(WorkIssueLocation issue, String cursor);
+
+    /** Authenticated polling alternative to signed comment deliveries. No prose crosses this boundary. */
+    default WorkPage<WorkSourceActivity> activities(WorkIssueLocation issue,String cursor) {
+        throw new WorkSourceException("Tracker answer polling is unavailable for this source");
+    }
+    default boolean pollsActivities() {return false;}
+
+    /** Writes use a distinct facade from the context provider's read-only interface. */
+    String comment(WorkIssueLocation issue, String text, String effectId);
+    void transition(WorkIssueLocation issue, String transitionId, String effectId);
+
+    /** Read-only recovery after an uncertain write. Absence never authorizes an automatic resend. */
+    default String findComment(WorkIssueLocation issue, String text, String effectId) {
+        throw new WorkSourceException("Comment recovery is unavailable");
+    }
+    default boolean transitionApplied(WorkIssueLocation issue, String transitionId, String effectId) {
+        throw new WorkSourceException("Transition recovery is unavailable");
+    }
+
+    sealed interface Fetch {
+        record Found(WorkTicket ticket) implements Fetch {}
+        record Unavailable(String reason) implements Fetch {}
+        /** Use only for confirmed deletion; a hidden issue or token outage is Unavailable. */
+        record Deleted() implements Fetch {}
+        /** Confirmed move; the workflow must explicitly re-admit under the destination policy. */
+        record Transferred(WorkIssueLocation destination) implements Fetch {}
+    }
+}

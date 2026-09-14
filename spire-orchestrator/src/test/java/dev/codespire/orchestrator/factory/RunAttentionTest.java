@@ -29,7 +29,7 @@ class RunAttentionTest {
 
     private String run() {
         String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
-        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null);
+        projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
         return runId;
     }
@@ -84,7 +84,7 @@ class RunAttentionTest {
     void anUncertainDispatchRaisesARowUntilItIsResolved() {
         String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/x", "spire-bot", null), null);
+                "abc1234", "spire/x", "spire-bot", null), null, null);
         projection.dispatchUncertain(runId, "TEST-no ack");
 
         given().when().get("/api/attention")
@@ -110,7 +110,7 @@ class RunAttentionTest {
     void aRunThatStartsAfterAllClearsItsOwnRow() {
         String runId = "run::github:TEST-acme/app:att-" + UUID.randomUUID() + ":1";
         projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main",
-                "abc1234", "spire/x", "spire-bot", null), null);
+                "abc1234", "spire/x", "spire-bot", null), null, null);
         projection.dispatchUncertain(runId, "TEST-no ack");
 
         projection.apply(new RunResult.RunStarted(runId, "container-1"));

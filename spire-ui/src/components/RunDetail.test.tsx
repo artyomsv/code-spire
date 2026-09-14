@@ -69,6 +69,20 @@ it('shows two unrecorded phases for a queued run', async () => {
   expect(within(strip).getAllByText('not recorded')).toHaveLength(2);
 });
 
+it('shows the retained checkpoint and stopped compute while publication waits', async () => {
+  show(runView({ status: 'awaiting_delivery', pushedRef: null, endedAt: null,
+    publication: { workItemId: 'TEST-work', checkpointHead: 'a'.repeat(40), readyAt: '2026-09-14T02:00:00Z', activeWallSeconds: 17 } }));
+  await loaded();
+  const checkpoint = screen.getByRole('region', { name: 'Build checkpoint' });
+  expect(checkpoint).toHaveTextContent('Compute has stopped; the workspace is retained');
+  expect(checkpoint).toHaveTextContent('a'.repeat(40));
+  expect(checkpoint).toHaveTextContent('17 seconds');
+  expect(within(checkpoint).getByRole('link', { name: 'Work item' })).toHaveAttribute('href', '/work-items/TEST-work');
+  const ready = within(screen.getByRole('list', { name: 'Run phases' })).getByText('Build ready').closest('li');
+  expect(ready?.querySelector('time')).toHaveAttribute('dateTime', '2026-09-14T02:00:00Z');
+  expect(screen.queryByText('Succeeded')).toBeNull();
+});
+
 it('does not invent an agent start for an older finished run', async () => {
   show(runView({ status: 'succeeded', endedAt: '2026-09-11T10:03:00Z' }));
   await loaded();

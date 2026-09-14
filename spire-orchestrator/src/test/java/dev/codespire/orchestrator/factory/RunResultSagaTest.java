@@ -50,6 +50,10 @@ class RunResultSagaTest {
         // fake opens a real database connection from a plain unit test -- a trap this repository
         // has hit four times in one milestone.
         saga.charges = charges;
+        // This fixture represents standalone runs; item lookup is asserted by the work bridge service tests.
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override public boolean accept(RunResult result) { return false; }
+        };
         // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
         // reads the run's row to find which pool member to mark, so leaving it null is an NPE and
         // leaving it real is a database call from a unit test.
@@ -108,6 +112,16 @@ class RunResultSagaTest {
         saga(projection).on(failed);
 
         assertEquals(List.of(started, failed), projection.applied);
+    }
+    @Test void itemResultsAreProjectedAndChargedBeforeTheirExclusiveContinuation() {
+        RecordingProjection projection=new RecordingProjection();RecordingCharges charges=new RecordingCharges();RunResultSaga saga=saga(projection,charges);
+        List<RunResult> continued=new ArrayList<>(),proposed=new ArrayList<>();
+        saga.workItems=new dev.codespire.orchestrator.work.WorkItemRunBridge(){@Override public boolean accept(RunResult result){
+            assertEquals(List.of(result),projection.applied);assertEquals(List.of(result),charges.charged);continued.add(result);return true;
+        }};
+        saga.pullRequests=new FactoryPullRequests(){@Override public void propose(RunResult result){proposed.add(result);}};
+        var result=new RunResult.RunFinished(RUN_ID,"refs/heads/spire/TEST-item",List.of("TEST-file"),List.of(),Map.of("INPUT",1L),false);saga.on(result);
+        assertEquals(List.of(result),continued);assertTrue(proposed.isEmpty(),"An associated result belongs exclusively to the item continuation");
     }
 
     @Test

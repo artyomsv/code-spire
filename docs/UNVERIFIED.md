@@ -33,6 +33,274 @@ evidence would settle it**.
 
 ---
 
+## External work approvals and takeover (M3 slice 9, 2026-09-14)
+
+Slice 9's native GitHub approval reads and GitHub/GitLab/Bitbucket activity payloads are tested
+against controlled provider responses. Tracker answers exercise the real PostgreSQL aggregate;
+Jira Cloud comment polling has adapter and aggregate tests. No live external gate answer or
+operator resume is claimed. GitLab and Bitbucket native approval channels are explicitly
+unavailable; Jira Data Center comment polling is unavailable. GitHub approval refuses incomplete
+review history after 20 pages. Jira processes individual comments and reports a polling failure
+if its 20-page bound is exceeded. Live provider evidence,
+including token visibility, dismissal delivery, issue transfer payloads and renamed account
+observations, remains necessary to establish those deployment paths.
+
+The publication revocation does have an actual killed-JVM proof against a real local Git origin:
+the hold commits before the process dies, an otherwise valid permit is refused without an M1
+cancel claim, and a fresh worker/watchdog cannot publish it. This is separate from slice 8b's
+accepted live standalone `/fix` proof. It does not establish atomic ordering with a human's remote
+push or guarantee recall of a publication already in progress.
+
+## Work-source GitHub label audit and tracker writes (2026-09-13)
+
+Slice 5 measures signed issue normalization, repository metadata and stable-ID checks, current
+labels, remove/re-add audit across pages, origin-bound pagination, incomplete-history refusal,
+separate comment/transition writes and acknowledgements against WireMock. The real PostgreSQL
+intake and real gateway Kafka route have automated proof; no dev work source or live tracker
+write was created for this slice. The shared client retains its existing `2022-11-28` API pin.
+[Issue timeline events](https://docs.github.com/en/rest/issues/timeline?apiVersion=2022-11-28)
+and [repository issues](https://docs.github.com/en/rest/issues/issues?apiVersion=2022-11-28)
+are the contracts checked on 2026-09-13. Token-family visibility, Enterprise variants, deletion/
+transfer confirmation and real label attribution still need live evidence. A 404/410 is treated
+as unavailable, not proof of deletion. A partial audit never grants authority.
+
+Slice 6 adds a real PostgreSQL tracker outbox and a WireMock write that succeeds remotely before
+the client times out. A fresh dispatcher reads the durable uncertain claim and finds the exact
+comment marker, with one POST in the server journal. Missing recovery evidence leaves the effect
+uncertain; it never authorizes another write. This has not been measured against a live GitHub
+token. Admission still emits only work notifications; later phase decisions enqueue tracker effects.
+
+## Work-source GitLab label audit, hooks and writes (2026-09-13)
+
+Measured against local WireMock GitLab REST v4 responses, real PostgreSQL intake and real gateway
+Kafka delivery: nested project scope, global issue identity, current labels, paginated additions/
+removals, authenticated Issue Hook deltas, allowed-person lookup, separate comment POST and
+close/reopen PUT. The unattributed intake fixture retains allowed actor hint 900123; incomplete
+audit selects nothing. No live GitLab ticket, token family or installation version was measured.
+The [label-event API](https://docs.gitlab.com/api/resource_label_events/),
+[issue API](https://docs.gitlab.com/api/issues/) and
+[Issue Hook contract](https://docs.gitlab.com/user/project/integrations/webhook_events/)
+were checked on 2026-09-13. Private/confidential visibility, PAT/project/group token permissions,
+self-hosted payload variants and real marker retention still need recorded live measurements.
+
+The shared context client supplies pinned authenticated reads; a separate writer uses the same
+connection configuration. A full page without completion evidence refuses rather than truncates.
+404/410 means unavailable. Transition recovery observes the requested state, so it proves the
+desired outcome, not which person changed it. A timeout with no confirming state remains uncertain.
+
+## Work-source Jira Cloud label audit and writes (2026-09-13)
+
+Measured against local WireMock Jira Cloud REST v2 responses and real PostgreSQL intake: explicit
+project-to-SCM mapping across origins, opaque search cursors, complete paginated changelog reads,
+actual label-set differences and author accountIds. Retained labels never acquire the editor's
+identity. Missing or incomplete audit selects nothing, including allowed actor hint 900123.
+The existing person directory requires explicit selection when a query is ambiguous; neither
+display name nor issue reporter supplies missing attribution. No live Jira Cloud site was measured.
+
+The [current search API](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-search/)
+uses `/search/jql`; the [issue API](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/)
+documents changelog label sets, real transition IDs, required fields, history metadata and 204
+transition success. Fixtures exercise separate comment writes and effect/transition metadata
+recovery. Real classic API-token/PAT permissions, changelog completeness under privacy restrictions,
+historyMetadata retention, workflow validators, rate limits and marker rendering remain unproven.
+Opaque search-token lifetime across long downtime still needs a real Cloud measurement; an
+expired/unusable cursor reports unavailable and does not advance.
+Jira uses polling; no unauthenticated webhook channel or approval parser is exposed.
+Scoped Atlassian gateway tokens remain unsupported by the existing site-host configuration.
+
+## Work-source Jira Data Center boundary (2026-09-13)
+
+WireMock Server/Data Center responses exercise project-scoped legacy search and ticket fetch.
+Capabilities expose polling and comments, but omit label audit and recoverable transitions.
+The existing identity adapter cannot confirm Cloud accountIds on this deployment; no DC username,
+user key or display-name fallback is invented. Thus polling can retain an unattributed work item
+but cannot select a profile. This is an explicit unsupported attribution path, not Cloud parity.
+No real Data Center version or token was measured. A versioned complete changelog contract,
+stable person lookup and live write/recovery evidence are required to expand these capabilities.
+
+## Work-item process recovery and execution boundary (2026-09-13)
+
+Slice 5 rebuilds a fresh store instance from the real encrypted event log, verifies no tracker
+content in the projection, and injects a PostgreSQL projection failure after event append. The
+separate-transaction mutant leaves an event behind and fails the rollback assertion. This is
+automated persistence/transaction evidence. Slice 6 additionally launches the packaged orchestrator
+in separate JVMs against isolated test PostgreSQL/Kafka and a WireMock GitHub tracker, forcibly kills it
+between pages and mid-page, and resumes from durable coordinates. Both tests assert two items,
+one history entry each, no skipped coordinate and no re-fetch of the committed page/item. This
+is an actual process-kill proof on a test stack, not a dev-stack restart or a live forge measurement.
+Candidate reconciliation and checkpoint removal share one transaction. A sweep processes at most
+ten coordinates and stops at a committed boundary after its 20-second loop deadline; an in-flight
+observation has its own 20-second bound. Listing is separately bounded to 20 seconds. No global
+20/30-second sweep duration is claimed. Live tracker deletion/reordering during pagination remains
+unproven; scheduled full rescans provide eventual revisitation, not a remote snapshot guarantee.
+
+Slice 7 adds numeric caps, cumulative protected paths and dashboard gates. A packaged child JVM
+admits the TEST ticket and opens its gate; the test kills that JVM while the gate is OPEN. A second
+packaged JVM expires the persisted gate and releases its reservation. Real test-stack HTTP reads
+prove the gate's open view, disappearance after expiry and durable detail reason. This proves
+process recovery against isolated PostgreSQL/Kafka and WireMock, not live OIDC or a live tracker.
+Recovery children use separate TEST incoming topics and consumer groups so a killed child cannot
+retain the parent test's partitions. Kafka Admin verifies actual assignments while both gate JVMs
+are alive; the normal work-consumer duplicate-acknowledgement test remains separate and unchanged.
+
+Policy tests explicitly supply a test execution capability to record phase attempts and deliver
+their results through the internal transition service. Production reports missing executors as
+unavailable. Slice 8a fetches and validates manual tracker specifications and single-step plans,
+binds their identities/digests and build coordinates to approvals, and reuses M2 assembly for one
+prepared build. Local GitHub/GitLab/Jira fixtures establish reference resolution; they establish
+no live tracker-artifact journey. Generated specification, multi-step planning and verification
+executors remain M4.
+
+The three-profile slice 8a proof replaces the final broker emitter. It runs the real state machine,
+encrypted PostgreSQL history, M2 assembly, launcher and durable dispatch/result association. That
+test does not execute an agent or push a branch. Slice 8b separately exercises actual held builds
+in `WorkItemRunJourneyIT` against real containers and a local smart-HTTP origin, with an isolated
+orchestrator JVM and provider fixture. It observes the checkpoint and one charge; the remote branch
+is absent and production VERIFY remains capability-unavailable. Draft/regular delivery tests use
+an explicitly TEST-only verification driver and real sink adapters against WireMock. They establish
+native request/response handling, not live draft support or a shipped verifier. No live tracker-artifact
+journey, live item publication, M4 verification or merge follows from these local proofs.
+
+Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
+PostgreSQL and recover without another completion or charge. Those are staged durable-state tests.
+`WorkRunProcessRecoveryIT` separately kills real worker JVMs after readiness, after the publisher
+claim before IO, and after remote publication before terminal commit. New owners retain the hold,
+resume only the original publisher and observe one build on the actual local remote. Runtime tests
+also retain the hold after partial creation and after containers are lost while volumes survive.
+A claimed send with no known outcome stays uncertain until a result or explicit never-ran resolution
+arrives. The standalone `/fix` live regression passed on 2026-09-14: TEST PR #32, run
+`4003204361:1`, automatic source-branch push `264ff858b538a3c779cf94161d3bc601bcfcf69a`,
+then a completed review, persisted `RESOLVED` verdict and resolved GitHub thread. The TEST PR was
+closed and its branch deleted. This does not establish live item publication or draft behavior.
+M2 reports one aggregate agent call per run;
+it does not count internal model calls. Proven pre-agent failures reuse M2's existing zero-call
+classification and can be readmitted. Unmeasured potential spend blocks continuation, including
+after readmission, until accounting can be repaired; no automated usage-repair workflow is supplied.
+The user started the live worker after the Docker service tier finished and was notified when
+the proof completed. Legacy preflight limits remain: PR #26 has an old finding row without a
+thread reference, and PR #27 has unknown fork metadata. Both refused without a run; neither row
+was manually rewritten. The GitHub webhook's missing origin was repaired through its gateway API
+to the existing repository and origin; GitLab/Bitbucket's two origin repairs remain pending.
+
+## Repository push permission — GitHub (2026-09-13)
+
+Measured against a local WireMock GitHub API: by-ID handle refresh followed by effective
+collaborator permission, matching returned user ID, inherited write access, reader refusal,
+unknown/custom base-role refusal, and 403/404/429/503 after a prior success. The real service
+uses its repository's selected reviewer credential; a stronger factory token is never tried.
+The [effective permission API](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user)
+reports the base role; custom role names do not establish write capability. A real token's
+metadata visibility, inherited organizational roles and Enterprise variants still need live
+permission measurements. Slice 3's live identity refresh establishes identity only.
+
+## Repository push permission — GitLab (2026-09-13)
+
+Measured against a local WireMock GitLab API: the all-members endpoint (including inherited
+membership), matching stable ID, active known Developer/Maintainer/Owner levels, reader refusal,
+expired membership, integer overflow, unknown roles, malformed responses and failed reads.
+[Project members](https://docs.gitlab.com/api/project_members/#retrieve-a-member-of-a-project)
+is the endpoint contract; [membership expiration](https://docs.gitlab.com/user/project/members/)
+removes access from the expiry date. The adapter compares that date in UTC. No live permission
+measurement on gitlab.com, git.epam.com or gitbud.epam.com is claimed; installation-specific
+custom roles, invited/private-group visibility and expiration timezone behavior need proof.
+
+## Repository push permission — Bitbucket Cloud (2026-09-13)
+
+Measured against a local WireMock Bitbucket Cloud API: account_id-to-UUID identity binding,
+effective repository rights across server-provided pagination cursors, inherited write access,
+reader refusal, foreign-origin page rejection, contradictory/malformed/incomplete pages and
+403/404/429/503 after a prior success. The [effective repository permission endpoint](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-workspace-permissions-repositories-repo-slug-get)
+requires a repository-admin caller. A failure reports that capability requirement explicitly;
+no factory-token fallback or token authority change occurs. Ten pages and the service's
+20-second total lookup budget are hard limits: reaching either without a complete answer is
+UNKNOWN and refuses. Live token families, group inheritance and account_id/UUID visibility
+remain unmeasured. An explicit override still cannot bypass target or spending guards.
+
+## People directory — GitHub identity behavior (2026-09-13)
+
+Measured against a local WireMock GitHub API with TEST-prefixed people and credentials:
+exact login matching, stable numeric ID selection, by-ID rename refresh, malformed/refused
+responses and rejection of foreign-origin redirects. The resource persistence test also uses
+this fixture through the configured account and actual PostgreSQL. The dev GitHub reviewer at
+api.github.com also refreshed its existing actor 3218389 by ID and resolved @artyomsv back to
+that ID on 2026-09-13; policy and revision were unchanged. A subsequent full orchestrator restart
+preserved the identical cached policy and observations without another refresh. This measures that configured credential,
+not other token families or Enterprise Managed User visibility. The documented
+[login and durable-ID endpoints](https://docs.github.com/en/rest/users/users) are the contract;
+a 404 can also mean the selected account cannot see the person.
+
+## People directory — GitLab identity behavior (2026-09-13)
+
+Measured against local WireMock, including the configured /api/v4 prefix in the resource suite:
+exact username filtering, ambiguous result refusal, stable-ID refresh and foreign-origin
+redirect refusal. No live measurement against gitlab.com, git.epam.com or gitbud.epam.com is
+claimed. [GitLab Users API](https://docs.gitlab.com/api/users/) distinguishes exact username
+filtering from fuzzy search; installation-specific visibility remains unmeasured.
+
+## People directory — Bitbucket Cloud identity behavior (2026-09-13)
+
+Measured against local WireMock: matching workspace members across pages, duplicate nickname
+selection, missing-scope capability errors, by-account-ID verification and foreign-origin redirect
+refusal. No live token was given more authority. [Workspace membership](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/#api-workspaces-workspace-members-get)
+requires workspace-read access; [user reads](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-users/)
+require user-read access. These operations and account_id availability still need live proof for
+each token family. Nicknames are not treated as exact handles. Ten member pages is a hard limit;
+exceeding it refuses selection. Effective push-permission reads additionally require repository-admin
+access and belong to slice 4, not to this identity proof.
+
+Atlassian's [identity privacy contract](https://developer.atlassian.com/cloud/bitbucket/bitbucket-api-changes-gdpr/)
+specifies account_id or UUID in user URLs and defines nicknames as non-unique. The adapter uses
+account_id consistently with the existing webhook author identity.
+
+## People directory — Jira Cloud identity behavior (2026-09-13)
+
+Measured against local WireMock: disambiguated accountId selection, refusal of responses without
+Cloud account IDs, inactive-user refusal, by-ID refresh and foreign-origin redirect refusal.
+The [search contract](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-user-search/#api-rest-api-3-user-search-get)
+and [by-ID contract](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-users/#api-rest-api-3-user-get)
+require the applicable user-read scopes and Browse users and groups permission. Privacy can hide
+results; an empty search proves no visible match, not absence from the site. Up to 50 candidates
+are shown and the operator must select one. No live Jira Cloud installation was measured.
+Work-source UI wiring is a slice 5/6 dependency; it must use the source's explicit account.
+
+## People directory — Jira Data Center identity behavior (2026-09-13)
+
+Not implemented or measured against a live Data Center installation. The current person adapter
+uses Cloud accountId endpoints; it never treats a Data Center username or display name as a
+Cloud account ID. The UI states this capability limit. Existing Data Center context reads do
+not establish support for person lookup, and are unchanged.
+
+## Repository cutover — boundaries of the proof (ADR-042, 2026-09-13)
+
+- **Real-row continuity is measured.** Dev was rebuilt gateway first (V4), then orchestrator
+  (V61), then UI. All 9 account/context credential/reference entries and all 12 webhook entries
+  matched their encrypted baselines after cutover. Counts stayed 6 accounts, 37 reviews, 85
+  findings, 14 runs and 3 hooks; retained workspace values and rejection metadata were unchanged.
+  Authenticated serving reads matched all eight selected bindings. This establishes local
+  migration and credential continuity, not successful live forge commands from every entry point.
+- **Three webhook origins remain unconfirmed.** The Bitbucket artyomsv/pr-test, GitHub
+  artyomsv/spire-test and GitLab artyomsv-group/code-review-poc registrations still lack origin
+  metadata. A read-only webhook-settings probe returned 403, 404 and 403 respectively; none
+  establishes the host associated with a retained key. The UI can repair the owning gateway
+  registration after explicit origin selection. Until that confirmation, verified deliveries
+  remain Attention events and cannot dispatch. Matching a namespace alone is insufficient.
+- **The dispatch matrix is observed at the credential boundary.** Its decoys and real database
+  decryption establish repository/role selection for manual, rerun, conversation, prompt, run,
+  fix and proposal entry points. Separate choreography suites test later commands. No live
+  run worker or new spend was used in this slice; slice 8b retains its live proof.
+- **FACTORY and ISSUE consumers are later work.** FACTORY activity is isolated on
+  cs.repository-activity; the later work-item slice consumes it. ISSUE hooks require source
+  metadata and SCM ingress rejects them; native work-source intake is not claimed implemented.
+- **Token validation is not repository permission proof.** Bitbucket account-less validation
+  uses the selected repository's namespace for the existing fallback request. WireMock tests
+  establish same-kind/origin selection and account binding use; a successful workspace listing
+  does not prove access to every repository. The separate reviewer-access check targets the
+  chosen full repository path. Existing per-token-family scope gaps remain below.
+- **Custom forge URL mappings still need installation evidence.** Local tests map GitHub and
+  Bitbucket public web URLs to their API origins and preserve self-hosted origins; GitLab nested
+  namespaces preserve old review IDs and transport AADs. Custom web/API proxies must be checked
+  against the actual installation. No new native permission endpoint behavior is claimed.
+
 ## Accounts normalization — live evidence still needed (ADR-041, 2026-09-12)
 
 Sources below were retrieved **2026-09-11**. WireMock checks prove how the application handles
@@ -271,14 +539,15 @@ Not work. Written down because each has been rediscovered at least once.
   matches, a no-diff run reports the forge's own error, which is honest; the status gate makes a
   wrong match much harder. One measurement against a live GitLab (SMOKE-TEST Mode G) settles it,
   and nothing should depend on this arm until then.
-- **The M2 loop is covered in three places and joined in none.** Finding → fix run → push →
-  reconciliation is what M2 exists to close. `FixRunDispatcherTest` proves the dispatch,
-  `Adr040ExistingBranchTest` proves the push against a real remote with real containers, and
-  `ReviewChainTest` proves review and reconciliation against a real GitLab. **Nothing proves the
-  halves meet**, and it is not a matter of effort: a run unit lands on the default bridge and
-  cannot resolve the e2e stack's `gitlab` service, because `RunUnitSpec` has no network and
-  `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a deliberate
-  security control in `compose.e2e.yml`, so it is not the answer.
+- **~~The M2 loop has no joined live proof~~ — CLOSED 2026-09-12.** On the live GitHub pull
+  request `artyomsv/spire-test#31`, runs `3987682681:1` and `3987682176:1` traversed finding → fix
+  run → push → reconciliation. The review threads were resolved and verdicts persisted. This
+  observation closes the live-chain claim; it does not establish an automated GitLab loop.
+- **The automated GitLab M2 loop still cannot join dispatch, push and reconciliation.**
+  `FixRunDispatcherTest`, `Adr040ExistingBranchTest` and `ReviewChainTest` cover those legs
+  separately. A run unit cannot resolve the e2e stack's `gitlab` service: `RunUnitSpec` has no
+  network field and `DockerRunRuntime` never sets one. Rebinding GitLab off loopback would undo a
+  deliberate security control in `compose.e2e.yml`, so it is not the answer.
   — `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
 - **~~The publisher's trunk floor is not exercised end to end~~ — CLOSED 2026-09-11.**
   It now is. This entry said the run died as `RUNTIME_UNAVAILABLE, init container failed with exit 1`

@@ -1,4 +1,78 @@
 import { apiFetch } from './auth';
+import type { Preparation, WorkBuild, WorkExecution } from './components/work-items/workPreparationApi';
+
+export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
+export interface WorkItemSummary {
+  id: string;
+  sourceId: string;
+  repositoryId: string;
+  repository: string;
+  issueKey: string;
+  trackerUrl: string;
+  generation: number;
+  phase: string;
+  workflowStatus: string;
+  reason: string;
+  profile: { id: string; name: string; version: number } | null;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface WorkItemPage {
+  items: WorkItemSummary[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface WorkItemDetail extends WorkItemSummary {
+  control?: { operator: string | null; note: string | null; observedHead: string | null } | null;
+  preparation?: Preparation | null;
+  builds?: WorkBuild[];
+  progress?: { execution?: WorkExecution | null };
+  effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
+  admittedLimits?: import('./components/work-items/workPolicyApi').Limits;
+  gate?: import('./components/work-items/approvalsApi').Gate | null;
+  effectiveModes: Record<string, string>;
+  admittedModes: Record<string, string>;
+  policyReason: string;
+  ceiling: WorkItemSummary['profile'];
+  appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
+  ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
+  events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
+    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
+}
+
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<void> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
+  if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
+}
+
+/** Fetched for the current detail request; these fields are never workflow projection columns. */
+export interface WorkItemTracker {
+  title: string;
+  body: string;
+  trackerStatus: string;
+}
+
+export async function getWorkItems(offset = 0, limit = 50, status?: WorkWorkflowStatus): Promise<WorkItemPage> {
+  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`);
+  if (!response.ok) return throwResponse(response, 'Failed to load work items');
+  return response.json();
+}
+
+export async function getWorkItem(id: string): Promise<WorkItemDetail> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(id)}`);
+  if (!response.ok) return throwResponse(response, 'Failed to load work item');
+  return response.json();
+}
+
+export async function getWorkItemTracker(id: string): Promise<WorkItemTracker> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(id)}/tracker`);
+  if (!response.ok) return throwResponse(response, 'Tracker unavailable');
+  return response.json();
+}
 
 export type ReviewStatus =
   | 'reviewing'
@@ -263,6 +337,7 @@ export interface RegisterResult {
 
 /** Manually register a PR for review (no webhook). Body is a URL or ws+slug+pr. */
 export async function registerPr(body: {
+  repositoryId?: string;
   url?: string;
   workspace?: string;
   slug?: string;
@@ -281,6 +356,8 @@ export async function registerPr(body: {
 }
 
 export interface ResolvedUrl {
+  repositoryId?: string | null;
+  forgeOrigin?: string | null;
   workspace: string;
   slug: string;
   pr: number;
@@ -312,11 +389,11 @@ export type AuthKind = 'bearer' | 'basic';
 export type ProviderRole = 'REVIEWER' | 'FACTORY' | 'CONTEXT';
 
 export interface ProviderView {
+  actorDisplays?: import('./components/actorsApi').ActorDisplay[];
   id: string;
   name: string;
   type: string; // 'bitbucket-cloud' | 'github'
   baseUrl: string;
-  workspace: string | null;
   authKind: AuthKind;
   authUsername: string | null;
   hasSecret: boolean; // whether a token is stored (the token itself is never returned)
@@ -343,13 +420,12 @@ export interface ProviderInput {
   name: string;
   type: string;
   baseUrl: string;
-  workspace: string | null;
   authKind: AuthKind;
   authUsername?: string | null;
   secret?: string; // omit/empty on edit = keep the stored token
   botAccountId?: string; // blank = auto-resolved server-side from the token owner
   enabled: boolean;
-  authors: string[];
+  authors?: string[];
   conversationLevel?: string; // omit/'' = inherit the global default
   role?: ProviderRole; // sent on create; on edit the stored role, never another — a change is a 409
 }
@@ -385,8 +461,9 @@ export async function fetchProviders(): Promise<ProviderView[]> {
   return res.json();
 }
 
-export async function createProvider(input: ProviderInput): Promise<ProviderView> {
-  const res = await apiFetch('/api/providers', {
+export async function createProvider(input: ProviderInput, validationRepositoryId?: string): Promise<ProviderView> {
+  const query = validationRepositoryId ? `?validationRepositoryId=${encodeURIComponent(validationRepositoryId)}` : '';
+  const res = await apiFetch('/api/providers' + query, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -395,8 +472,9 @@ export async function createProvider(input: ProviderInput): Promise<ProviderView
   return res.json();
 }
 
-export async function updateProvider(id: string, input: ProviderInput): Promise<ProviderView> {
-  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}`, {
+export async function updateProvider(id: string, input: ProviderInput, validationRepositoryId?: string): Promise<ProviderView> {
+  const query = validationRepositoryId ? `?validationRepositoryId=${encodeURIComponent(validationRepositoryId)}` : '';
+  const res = await apiFetch(`/api/providers/${encodeURIComponent(id)}` + query, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -464,8 +542,8 @@ export interface ServingAccounts {
 
 // Which accounts would review and push for this forge + workspace, decided by the orchestrator's own
 // resolvers. Nothing on a repository row stores this; the screen asks rather than infers.
-export async function fetchServingAccounts(type: string, workspace: string): Promise<ServingAccounts> {
-  const query = new URLSearchParams({ type, workspace });
+export async function fetchServingAccounts(repositoryId: string): Promise<ServingAccounts> {
+  const query = new URLSearchParams({ repositoryId });
   const res = await apiFetch(`/api/providers/serving?${query.toString()}`);
   if (!res.ok) return throwResponse(res, 'Failed to load the accounts serving this workspace');
   return res.json();
@@ -474,9 +552,14 @@ export async function fetchServingAccounts(type: string, workspace: string): Pro
 // ---- Webhook repositories (per-repo webhook registrations) ----
 
 export type WebhookScope = 'repo' | 'org';
+export type WebhookEventKind = 'REVIEWER' | 'FACTORY' | 'ISSUE';
 
 export interface WebhookRepoView {
   id: string;
+  repositoryId?: string | null;
+  eventKind?: WebhookEventKind;
+  sourceId?: string | null;
+  forgeOrigin?: string | null; // absent on older gateways; explicit registration evidence when known
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope; // 'repo' (target = owner/repo) | 'org' (target = owner)
   target: string; // owner/repo (repo scope) | owner (org scope)
@@ -487,6 +570,10 @@ export interface WebhookRepoView {
 }
 
 export interface WebhookRepoInput {
+  repositoryId?: string | null;
+  eventKind?: WebhookEventKind;
+  sourceId?: string | null;
+  forgeOrigin?: string | null; // omitted legacy edits preserve the stored origin
   providerType: string; // 'github' | 'gitlab' | 'bitbucket-cloud'
   scope: WebhookScope;
   target: string; // owner/repo (repo scope) | owner (org scope)
@@ -921,6 +1008,7 @@ export type RunStatus =
   | 'push_gate_refused'
   // Published and never acknowledged. Deliberately NOT retried: the record may be on the topic.
   | 'dispatch_uncertain'
+  | 'awaiting_delivery'
   // Finished, pushed nothing. An honest outcome, not an error.
   | 'delivered_nothing'
   | 'delivered_unfinished';
@@ -964,6 +1052,8 @@ export interface RunListEntry {
   cost: RunCost;
   prUrl: string | null;
   prError: string | null;
+  /** Absent on standalone runs and older servers; these are observed held-build facts. */
+  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null } | null;
 }
 
 export interface RunFilter {

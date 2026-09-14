@@ -58,13 +58,61 @@ class ProviderIdentityResolverTest {
     }
 
     private static ProviderInput input(String type, String authKind, String authUsername, String secret) {
-        return new ProviderInput("P", type, scm.baseUrl(), "ws", authKind, authUsername, secret,
+        return new ProviderInput("P", type, scm.baseUrl(), authKind, authUsername, secret,
                 "", true, List.of(), null, null);
     }
 
     private void stubUser(String body) {
         scm.stubFor(get(urlEqualTo("/user"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(body)));
+    }
+
+    @Test void validationRepositoryMustBelongToTheAccountsForgeOrigin() {
+        assertValidationScope("bitbucket-cloud", "https://other.example.test");
+    }
+
+    @Test void storedAccountChecksUseAnExplicitRepositoryBinding() {
+        var id = java.util.UUID.randomUUID();
+        var selected = new dev.codespire.orchestrator.repository.RepositoryView.Account(id, "TEST-bot", "REVIEWER", null, "no-identity");
+        var decoy = new dev.codespire.orchestrator.repository.RepositoryView.Account(java.util.UUID.randomUUID(), "TEST-decoy", "REVIEWER", null, "no-identity");
+        resolver.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
+            @Override public List<dev.codespire.orchestrator.repository.RepositoryView> list() {
+                return List.of(new dev.codespire.orchestrator.repository.RepositoryView(java.util.UUID.randomUUID(), "bitbucket-cloud", scm.baseUrl(), "TEST-decoy", "TEST-repo", true, 1, decoy, null),
+                        new dev.codespire.orchestrator.repository.RepositoryView(java.util.UUID.randomUUID(), "bitbucket-cloud", scm.baseUrl(), "TEST-selected", "TEST-repo", true, 1, selected, null));
+            }
+        };
+        scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401)));
+        scm.stubFor(get(urlEqualTo("/repositories/TEST-selected?pagelen=1")).willReturn(aResponse().withHeader("Content-Type", "application/json").withBody("{\"values\":[]}")));
+        Author owner = org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> resolver.resolveForCheck(
+                new ScmProvider(id, "TEST-bot", "bitbucket-cloud", scm.baseUrl(),
+                "bearer", null, "TEST-token", "", true, List.of(), null, null, ProviderRole.REVIEWER)));
+        assertEquals("", owner.providerUserId());
+        scm.verify(getRequestedFor(urlEqualTo("/repositories/TEST-selected?pagelen=1")).withHeader("Authorization", equalTo("Bearer TEST-token")));
+        scm.verify(0, getRequestedFor(urlEqualTo("/repositories/TEST-decoy?pagelen=1")));
+    }
+
+    @Test void validationRepositoryMustBelongToTheAccountsForgeKind() {
+        assertValidationScope("github", scm.baseUrl());
+    }
+
+    private void assertValidationScope(String wrongType, String wrongOrigin) {
+        stubUser("{\"account_id\":\"TEST-user\",\"nickname\":\"TEST-bot\"}");
+        java.util.UUID id = java.util.UUID.randomUUID();
+        resolver.repositories = validationRepository(id, "bitbucket-cloud", scm.baseUrl());
+        assertEquals("TEST-user", resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "TEST-token"), id).providerUserId());
+        scm.resetRequests();
+        resolver.repositories = validationRepository(id, wrongType, wrongOrigin);
+        assertThrows(IllegalArgumentException.class, () -> resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "TEST-token"), id));
+        scm.verify(0, getRequestedFor(urlEqualTo("/user")));
+    }
+
+    private static dev.codespire.orchestrator.repository.RepositoryRegistry validationRepository(java.util.UUID id, String type, String origin) {
+        return new dev.codespire.orchestrator.repository.RepositoryRegistry() {
+            @Override public java.util.Optional<dev.codespire.orchestrator.repository.RepositoryView> get(java.util.UUID requested) {
+                assertEquals(id, requested);
+                return java.util.Optional.of(new dev.codespire.orchestrator.repository.RepositoryView(id, type, origin, "TEST-ws", "TEST-repo", true, 1, null, null));
+            }
+        };
     }
 
     // --- bitbucket-cloud ---
@@ -119,7 +167,7 @@ class ProviderIdentityResolverTest {
     }
 
     @Test
-    void bitbucketAccessToken_cannotCallUser_isValidatedAgainstTheWorkspaceInstead() {
+    void bitbucketAccessTokenUsesTheSelectedRepositoryForValidation() {
         // A workspace/repository access token can't call /user (it has no user
         // account) — Bitbucket returns 401 "not supported for this endpoint".
         scm.stubFor(get(urlEqualTo("/user")).willReturn(aResponse().withStatus(401).withBody(
@@ -130,7 +178,15 @@ class ProviderIdentityResolverTest {
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{ \"values\": [], \"pagelen\": 1 }")));
 
-        Author owner = resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "wtok"));
+        var repositoryId = java.util.UUID.randomUUID();
+        resolver.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
+            @Override public java.util.Optional<dev.codespire.orchestrator.repository.RepositoryView> get(java.util.UUID id) {
+                assertEquals(repositoryId, id);
+                return java.util.Optional.of(new dev.codespire.orchestrator.repository.RepositoryView(id,
+                        "bitbucket-cloud", scm.baseUrl(), "ws", "TEST-repo", true, 1, null, null));
+            }
+        };
+        Author owner = resolver.resolveForRegistration(input("bitbucket-cloud", "bearer", null, "wtok"), repositoryId);
 
         assertEquals("", owner.providerUserId(), "an access token has no user account_id to auto-derive");
         scm.verify(getRequestedFor(urlEqualTo("/repositories/ws?pagelen=1"))

@@ -239,8 +239,23 @@ images, two credentials, no overlap.
 
 **Purpose.** Read a tracker as a work queue and write back to it.
 
-**Owns.** `WorkSource`, `WorkSourceType`, `WorkSourceCapabilities`, `WorkItemRef`, `WorkItem`,
-`WorkQuery`.
+**Owns (M3 slices 5–6).** `WorkSource`, `WorkSourceType`, nested capability/fetch/write result
+records, `WorkIssueRef`, `WorkIssueLocation`, `WorkTicket`, `WorkPage`, `LabelEvent`,
+`CurrentLabel`, `LabelReconciler`, `WorkSourceIngress` and `WorkSourceSignal`. The SPI is
+JDK-only and Apache-2.0; build purity checks reject framework imports. `WorkTicket` is transient
+tracker content. Durable workflow events and the pure lifecycle/policy are in `spire-contract`.
+
+`spire-worksource-github`, `spire-worksource-gitlab` and `spire-worksource-jira` are Apache-2.0
+reference arms. Each reuses its existing context client and API connection configuration; the
+distinct `PinnedJsonWriter` shares pinned transport and authentication without granting writes
+to the context interface. `WorkEffectMarker` binds comment recovery to one opaque effect identity.
+Read-only `findComment` and `transitionApplied` inspect an uncertain outcome without resending it.
+
+The orchestrator owns durable coordinate pages and the encrypted tracker outbox. Admission and
+candidate removal commit together; scan progress survives process death inside a page. Tracker
+effects claim `uncertain` before HTTP and re-read current policy before a pending write. Recovery
+can confirm an outcome or retain uncertainty; absent evidence never authorizes another send.
+Work-source settings select accounts, repositories and confirmed people and report capabilities.
 
 **Relationship to `spire-context-*`.** The context modules already hold credentials for Jira,
 Confluence, GitHub Issues and GitLab Issues and already speak those APIs through the SSRF-guarded
@@ -248,9 +263,11 @@ Confluence, GitHub Issues and GitLab Issues and already speak those APIs through
 transport**: a context provider reads an issue as context; a work source also claims, comments and
 transitions it. That distinction is what makes Knowledge and Build separate product packs.
 
-**Capability flags matter here.** Jira has transitions and a workflow; GitHub Issues has labels and
-state; GitLab has both plus epics. The domain reads capabilities and degrades, rather than assuming
-a workflow exists.
+**Capability flags matter here.** GitHub and GitLab expose issue audit, comments and state changes.
+Jira Cloud exposes complete changelog reads and real workflow transition IDs. The Data Center arm
+exposes polling and comments while attribution and recoverable transitions remain unavailable.
+Jira uses polling; GitHub and GitLab also normalize authenticated issue webhooks. These are
+implemented operation sets, not permission grants. Per-forge live gaps are in `docs/UNVERIFIED.md`.
 
 ---
 
@@ -293,6 +310,11 @@ delivered there would be read only after the run it cancels had finished.
 
 ### `spire-contract` (Apache-2.0, framework-free)
 
+**Implemented through M3 slice 7.** `WorkPolicy` selects the displayed profile by declared
+precedence and bounds every mode and numeric cap by all eligible labels, admission and the current
+ceiling. `WorkPolicyLimits` unions protected paths. `WorkItemLifecycle` is the pure phase decider;
+`WorkItemEvent`, `WorkGate` and `WorkProgress` carry durable policy, approval and usage facts.
+
 New sealed hierarchy members for the commands, results and domain events in
 [ARCHITECTURE.md](./ARCHITECTURE.md) §6, plus value types shared across services: `AutonomyProfile`,
 `GateMode`, `PhaseName`, `Entitlements`, `RefusalReason`, and the `ArchivedNotice`-style constant
@@ -304,6 +326,13 @@ entry that has already let two changes through. Every new *nested* type introduc
 reviewed by hand until that gate recurses.
 
 ### `spire-orchestrator` (FSL)
+
+**Implemented through M3 slice 7.** `WorkItemTransitions` observes tracker evidence outside database
+locks, then checks registry revisions and serializes each aggregate decision. Intake, resume,
+phase results, dashboard answers and pending tracker writes use that policy boundary. The store
+atomically appends encrypted history, query projections and Kafka outbox rows. Gate expiry also
+releases reservations and cancels pending tracker effects. `WorkPhaseCapability` refuses execution
+until a real executor is bound; slice 8 supplies the prepared artifact/build integration.
 
 `WorkItemLifecycle` decider; `RunSaga` owning staleness and retry; gate open/resolve/expire; the
 entitlement check placed **beside** `SpendGate` and the priceability check, so every reason a

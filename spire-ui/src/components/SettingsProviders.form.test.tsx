@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
+import * as repositories from './repositories/repositoriesApi';
 
 const renderPage = () =>
   render(
@@ -16,7 +17,6 @@ const existing: api.ProviderView = {
   name: 'Acme Bitbucket',
   type: 'bitbucket-cloud',
   baseUrl: 'https://api.bitbucket.org/2.0',
-  workspace: 'acme',
   authKind: 'bearer',
   authUsername: null,
   hasSecret: true,
@@ -46,7 +46,6 @@ async function openFilledAddForm(): Promise<HTMLElement> {
   const dialog = await openAddForm();
   const form = within(dialog);
   fireEvent.change(form.getByLabelText('Name'), { target: { value: 'Acme' } });
-  fireEvent.change(form.getByLabelText('Workspace'), { target: { value: 'acme' } });
   return dialog;
 }
 
@@ -59,6 +58,49 @@ const typeSecret = (dialog: HTMLElement) =>
   });
 
 describe('SettingsProviders — provider form', () => {
+  it('validates an account-less token against an explicit same-origin repository', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    const repository: repositories.Repository = { id: 'TEST-selected', scmType: 'bitbucket-cloud',
+      forgeOrigin: 'https://api.bitbucket.org', workspace: 'TEST-team', slug: 'TEST-project',
+      enabled: true, revision: 1, reviewer: null, factory: null };
+    vi.spyOn(repositories, 'fetchRepositories').mockResolvedValue([repository,
+      { ...repository, id: 'TEST-other-origin', forgeOrigin: 'https://other.example.test', slug: 'TEST-other-origin' },
+      { ...repository, id: 'TEST-other-kind', scmType: 'github', slug: 'TEST-other-kind' }]);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Choose validation repository' }));
+    const selector = await within(dialog).findByRole('combobox', { name: 'Validation repository' });
+    expect(within(selector).getAllByRole('option')).toHaveLength(2);
+    fireEvent.change(selector, { target: { value: repository.id } });
+    typeSecret(dialog);
+    submit(dialog);
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.not.objectContaining({ workspace: expect.anything() }), repository.id));
+  });
+
+  it('clears the validation repository when the account origin changes', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    vi.spyOn(repositories, 'fetchRepositories').mockResolvedValue([{ id: 'TEST-selected', scmType: 'bitbucket-cloud',
+      forgeOrigin: 'https://api.bitbucket.org', workspace: 'TEST-team', slug: 'TEST-project',
+      enabled: true, revision: 1, reviewer: null, factory: null }]);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Choose validation repository' }));
+    fireEvent.change(await within(dialog).findByRole('combobox', { name: 'Validation repository' }), { target: { value: 'TEST-selected' } });
+    fireEvent.change(within(dialog).getByLabelText('Base URL'), { target: { value: 'https://other.example.test' } });
+    typeSecret(dialog);
+    submit(dialog);
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: 'https://other.example.test' })));
+  });
+  it('does not offer workspace on an account', async () => {
+    const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
+    renderPage();
+    const dialog = await openFilledAddForm();
+    expect(within(dialog).queryByRole('textbox', { name: /^workspace$/i })).not.toBeInTheDocument();
+    typeSecret(dialog);
+    submit(dialog);
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0]).not.toHaveProperty('workspace');
+  });
   beforeEach(() => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
     vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([]);
@@ -85,7 +127,7 @@ describe('SettingsProviders — provider form', () => {
     fireEvent.change(form.getByLabelText('Username'), { target: { value: 'bot@example.test' } });
     typeSecret(dialog);
     submit(dialog);
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ type: 'atlassian', role: 'CONTEXT', workspace: null, authKind: 'basic' })));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ type: 'atlassian', role: 'CONTEXT', authKind: 'basic' })));
   });
 
   it('refuses to submit without the required fields and does not call the API', async () => {
@@ -94,7 +136,7 @@ describe('SettingsProviders — provider form', () => {
 
     submit(await openAddForm());
 
-    expect(await screen.findByText(/name, base url and workspace are required/i)).toBeInTheDocument();
+    expect(await screen.findByText(/name and base url are required/i)).toBeInTheDocument();
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -137,6 +179,15 @@ describe('SettingsProviders — provider form', () => {
 
     await waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][1]).not.toHaveProperty('secret');
+  });
+
+  it('keeps person policy out of factory account edits', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([{ ...existing, role: 'FACTORY' }]);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /edit/i }));
+    const form = within(await screen.findByRole('dialog'));
+    expect(form.queryByLabelText('Person')).not.toBeInTheDocument();
+    expect(form.queryByRole('region', { name: 'Allowed people' })).not.toBeInTheDocument();
   });
 
   it('swaps the base URL to the new type default when it has not been customised', async () => {
@@ -235,7 +286,6 @@ describe('SettingsProviders — provider form', () => {
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /conversation level/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Explain' }));
-    fireEvent.change(within(dialog).getByPlaceholderText('stable user id'), { target: { value: '3218389' } });
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
     fireEvent.click(await screen.findByRole('option', { name: 'Factory' }));
@@ -243,7 +293,7 @@ describe('SettingsProviders — provider form', () => {
 
     await waitFor(() => expect(create).toHaveBeenCalled());
     expect(create.mock.calls[0][0].role).toBe('FACTORY');
-    expect(create.mock.calls[0][0].authors).toEqual([]);
+    expect(create.mock.calls[0][0].authors).toBeUndefined();
     expect(create.mock.calls[0][0].conversationLevel).toBeUndefined();
   });
 
@@ -280,7 +330,7 @@ describe('SettingsProviders — provider form', () => {
   it('hides the reviewer-only fields once Factory is chosen', async () => {
     renderPage();
     const dialog = await openFilledAddForm();
-    expect(within(dialog).getByText(/may command this bot/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Save the account first/)).toBeInTheDocument();
     expect(within(dialog).getByRole('combobox', { name: /conversation level/i })).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: /^role$/i }));
@@ -291,23 +341,19 @@ describe('SettingsProviders — provider form', () => {
     expect(within(dialog).getByText(/must resolve to a login/i)).toBeInTheDocument();
   });
 
-  /**
-   * /fix matches the stable id only; a field that says "username" leads to a list /fix refuses.
-   * This also covers the flush: typing an allowlist entry and pressing Save without pressing Add is
-   * the obvious operator mistake, and the form must not drop the draft silently.
-   */
-  it('asks for a stable user id in the allowlist, and flushes a typed one on submit', async () => {
+  /** People are resolved only after credentials have a durable account identity. */
+  it('requires saving credentials before resolving policy people', async () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
     renderPage();
     const dialog = await openFilledAddForm();
     typeSecret(dialog);
 
-    const field = within(dialog).getByPlaceholderText('stable user id');
-    fireEvent.change(field, { target: { value: '3218389' } });
+    expect(within(dialog).queryByPlaceholderText('stable user id')).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/Save the account first/)).toBeVisible();
     submit(dialog);
 
     await waitFor(() => expect(create).toHaveBeenCalled());
-    expect(create.mock.calls[0][0].authors).toEqual(['3218389']);
+    expect(create.mock.calls[0][0].authors).toBeUndefined();
   });
 });
 

@@ -1,5 +1,74 @@
 # Data Model
 
+## Work-item bookkeeping (M3)
+
+V63 adds `scm_provider.revision` for credential-authority rechecks. V64 introduces `work_source`
+(explicit account/repository, immutable tracker scope, health and scan cursor), source-owned
+stable actor IDs, immutable `autonomy_profile_version` definitions, repository ceilings and
+label mappings. It also introduces `work_item`, delivery dedupe, encrypted work outbox and the
+reserved work gate table, plus nullable work coordinates on `factory_run`.
+
+`work_item` contains coordinates, generation, admission profile/version, workflow phase/status,
+policy revision and reason. It contains no title, body or tracker status. Those are fetched for
+each detail request and are not copied into events or outbox payloads. `WorkItemEvent` retains
+the combined mode vector at admission, effective modes, applied/ignored label provenance and
+authority revisions. Its event-store and outbox encryption use distinct AADs.
+
+The item ID is a versioned SHA-256 digest of eight length-prefixed, normalized SCM/repository
+and tracker identity components. Mutable issue keys, account credentials and display names do
+not change identity. Redelivery records, event append, projection and outbox share one JTA
+transaction; a failed projection rolls all of them back. A scan page advances its cursor only
+with the reconciled page. Source failure records health and preserves existing workflow.
+
+V65–V71 add staged source pages and recoverable tracker effects, clamp and gate projections,
+phase attempts and reservations, prepared artifact references, run dispatch/result inboxes and
+delivery claims. Preparation records references, digests and base coordinates, never artifact
+bodies. WorkControl preserves recorded factory/reviewer/tracker IDs and takeover/resume facts
+inside encrypted workflow history. V71's work_activity_receipt deduplicates channel deliveries;
+work_run_hold_outbox durably repeats exact-binding revocations until the run ends.
+
+The runworker schema separately stores encrypted work execution, retained topology, readiness,
+publication permits and terminal acknowledgements. V4 adds work_publication_revocation keyed by
+run ID and binding digest. It deliberately has no execution-row FK: a hold may arrive before the
+execution command. Its durable refusal is independent of the M1 cancel claim. In-flight publication
+outcomes remain recorded without completing a suspended work-item phase.
+
+## M3 repository ownership (ADR-042, slices 1–2)
+
+V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)
+with unique `(scm_type, forge_origin, workspace, slug)`, and `repository_account` with a repository
+FK, account FK and one row per REVIEWER/FACTORY role. `review_status.repository_id` and
+`factory_run.repository_id` are nullable during the bridge. Existing history keys stay intact.
+
+`repository_legacy_account` is immutable migration evidence: account UUID, kind, base URL,
+workspace and role, without credentials or an FK that would erase evidence on deletion.
+`repository_registration_bridge` stores the latest registration revision, metadata, selected
+repository or named reconciliation problem. Duplicate/stale revisions cannot overwrite it.
+Operators repair pending mappings through `/api/repositories/pending`.
+
+Gateway V3 adds nullable `webhook_repo.forge_origin` and `repository_snapshot_outbox`. Triggers
+enqueue create/change/delete metadata atomically, including a bootstrap row for each existing
+registration. The outbox stores a global monotonic revision, registration id, JSON and `sent_at`;
+it contains neither `webhook_key` nor `webhook_secret`. Account/context ciphertext and UUID/AAD
+are unchanged. The gateway API accepts/returns an optional canonical `forgeOrigin`; old clients
+that omit it on update preserve the recorded origin.
+
+Gateway V4 adds repository UUID, event kind, optional work-source UUID and current revision.
+UNIQUE(repository_id,event_kind) enforces one hook per kind through the real registry; a partial
+legacy index retains scoped uniqueness for registrations awaiting explicit association. Revision
+triggers include these metadata fields. Existing webhook keys, encrypted secrets and rejection
+counters are unchanged. ISSUE is a reserved source-bound kind, not an SCM review route.
+
+Orchestrator V61 drops the former account (type,workspace,role) UNIQUE and workspace-by-role
+CHECK while retaining scalar role checks and, through slice 9, the populated scm_provider.workspace
+column. Account DTOs and runtime reads/writes stopped using it in the cutover. V72 explicitly drops
+only that column after the final pre-migration backup. Account IDs, ciphertext/AAD, bindings,
+context references and repository_legacy_account evidence remain. repository_unregistered_event
+records verified but unregistered deliveries without payload
+or secrets, coalesced by registration and full repository identity; its Attention action prefills
+registration. Review dispatch requires review_status.repository_id; factory_run.repository_id
+is written atomically with queueing. Unmapped legacy rows remain readable but cannot dispatch.
+
 > Defines the actual data: (1) the **domain value types** that flow through events & ports, and (2) the
 > **persistence model** — the event store (the versioned source of truth), the blob store, and the
 > read-model projections, with relationships and encryption. Companion to [CONTRACT.md](CONTRACT.md)
@@ -193,9 +262,9 @@ Operational state (not projections — ADR-013 guards):
 ### Machine accounts and context sources (V59, ADR-041)
 
 `scm_provider` owns machine credentials for GitHub, GitLab, Bitbucket Cloud and Atlassian.
-`role` is non-null (`REVIEWER | FACTORY | CONTEXT`); `workspace` is NULL exactly for CONTEXT.
-The existing `(type, workspace, role)` uniqueness still limits forge workspace roles to one
-account; PostgreSQL's distinct NULLs permit multiple context accounts, including Atlassian.
+`role` is non-null (`REVIEWER | FACTORY | CONTEXT`). V61 removes the former workspace-by-role
+constraint and `(type,workspace,role)` uniqueness; repositories explicitly select accounts.
+The populated legacy workspace column is retained without runtime use until slice 10.
 `reported_scopes TEXT NULL` distinguishes unknown from an empty report; `scopes_checked_at
 TIMESTAMPTZ NULL` records the last completed registration/Check scope observation. Failed probes
 preserve both values; they do not replace a prior report with NULL. Both are advisory metadata.
@@ -260,3 +329,25 @@ includes the account platform separately from the source type.
   `provider:<id>`); LLM and harness credentials retain their separate registries and boundaries.
 - **Never stored:** diffs/source (re-fetched by commit). Bootstrap encryption and service secrets
   come from the deployment secret store; registered account tokens are encrypted in PostgreSQL.
+
+## Resolved policy actors (orchestrator V62)
+
+`provider_author.author` remains the stable-id account policy key. V62 adds `observed_handle`,
+`display_name`, `resolved_at` and `refresh_failed` as display observations; `scm_provider.actor_policy_revision`
+protects account list edits. Credential-only updates preserve these observations and policy.
+
+`repository_fix_actor` has primary key `(repository_id,actor_id)`, closed `ALLOW|DENY` effect,
+observed display metadata and a sequence-assigned revision. Contradictory edits compare the
+stored revision; deletion followed by recreation cannot reuse an earlier revision. Repository
+binding changes and actor writes serialize on the repository row. Account writes serialize on
+the account row so resolution cannot race credential/origin replacement.
+
+An unresolved observation, one older than 24 hours, or a failed refresh is labelled stale.
+Refresh failure persists across reloads; a successful read of the same stable ID clears it.
+Display freshness never supplies authorization evidence.
+
+Migration grants only legacy numeric GitHub/GitLab ids or ids already observed as stable review
+authors on that exact registered repository. Other legacy strings remain in the account list for
+explicit re-resolution and do not acquire new fix authority. The account workspace rollback
+column and all credential ciphertext are untouched. No runtime INSERT or UPDATE may name that
+retained column, as enforced by `AccountWorkspaceIsUnusedTest` alongside its read checks.

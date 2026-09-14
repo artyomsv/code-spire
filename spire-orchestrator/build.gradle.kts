@@ -23,6 +23,10 @@ val quarkusPlatformVersion: String by project
 dependencies {
     implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
     implementation(project(":spire-contract"))
+    implementation(project(":spire-workspace")) // reuse the immutable publisher protected-path floor
+    implementation(project(":spire-worksource-github"))
+    implementation(project(":spire-worksource-jira"))
+    implementation(project(":spire-worksource-gitlab"))
     implementation(project(":spire-diff")) // prompt sample preview: render a real review's diff like the worker does
     implementation(project(":spire-llm")) // prompt sample preview: PromptRenderer (real clipping/fencing)
     implementation(project(":spire-encryption")) // AES-GCM encryption at rest (ADR-009 / ADR-015)
@@ -50,10 +54,19 @@ dependencies {
     testImplementation("io.quarkus:quarkus-test-kafka-companion")
     testImplementation("io.rest-assured:rest-assured")
     testImplementation("org.wiremock:wiremock:3.13.2")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
+    testImplementation("org.flywaydb:flyway-database-postgresql")
 }
 
 tasks.test {
     useJUnitPlatform()
+    // Run only inside the worker's real-container journey proof, under its Docker task lock.
+    exclude("**/WorkItemRunJourneyDriver.class")
+    val pathVariable = System.getenv().keys.firstOrNull { it.equals("PATH", ignoreCase = true) } ?: "PATH"
+    environment(pathVariable, javaLauncher.get().executablePath.asFile.parent + System.getProperty("path.separator") + System.getenv(pathVariable))
+    // Recovery tests kill and restart the actual packaged scanner on isolated Dev Services.
+    dependsOn("quarkusBuild")
+    systemProperty("spire.test.packaged-app", layout.buildDirectory.file("quarkus-app/quarkus-run.jar").get().asFile.absolutePath)
 }
 
 // quarkusDev runs with the module dir as CWD, but the single dev-env .env lives

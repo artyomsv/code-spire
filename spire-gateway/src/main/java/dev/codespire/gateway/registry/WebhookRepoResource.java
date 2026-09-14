@@ -43,7 +43,7 @@ public class WebhookRepoResource {
     // A single path segment; leading/trailing-alphanumeric blocks '.'/'..' traversal.
     private static final String SEG = "[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?";
     private static final Pattern OWNER = Pattern.compile(SEG);
-    private static final Pattern OWNER_REPO = Pattern.compile(SEG + "/" + SEG);
+    private static final Pattern OWNER_REPO = Pattern.compile(SEG + "(?:/" + SEG + ")+");
 
     @Inject
     WebhookRepoRegistry registry;
@@ -62,15 +62,38 @@ public class WebhookRepoResource {
     @POST
     public Response create(WebhookRepoInput in) {
         validate(in);
-        return Response.status(Response.Status.CREATED).entity(registry.create(in)).build();
+        if ((SCOPE_REPO.equals(in.scope()) && in.repositoryId() == null) || in.forgeOrigin() == null || in.eventKind() == null) {
+            throw new BadRequestException("Select a repository, forge origin and event kind for the webhook");
+        }
+        if (in.eventKind() == dev.codespire.contract.event.RepositoryEventKind.ISSUE && in.sourceId() == null) {
+            throw new BadRequestException("Issue webhooks require a work source registration");
+        }
+        return Response.status(Response.Status.CREATED).entity(write(() -> registry.create(in))).build();
     }
 
     @PUT
     @Path("/{id}")
     public WebhookRepoView update(@PathParam("id") String id, WebhookRepoInput in) {
         validate(in);
-        return registry.update(uuid(id), in)
+        WebhookRepoView existing = get(id);
+        dev.codespire.contract.event.RepositoryEventKind kind = in.eventKind() == null ? existing.eventKind() : in.eventKind();
+        UUID sourceId = in.sourceId() == null ? existing.sourceId() : in.sourceId();
+        if (kind == dev.codespire.contract.event.RepositoryEventKind.ISSUE && sourceId == null) {
+            throw new BadRequestException("Issue webhooks require a work source registration");
+        }
+        return write(() -> registry.update(uuid(id), in))
                 .orElseThrow(() -> new NotFoundException("No webhook repo " + id));
+    }
+
+    private static <T> T write(java.util.function.Supplier<T> action) {
+        try { return action.get(); }
+        catch (IllegalStateException failure) {
+            if (failure.getCause() instanceof java.sql.SQLException sql && "23505".equals(sql.getSQLState())) {
+                throw new jakarta.ws.rs.ClientErrorException(Response.status(409)
+                        .entity("A webhook for this repository and event kind already exists. Reload the repository to manage it.").build());
+            }
+            throw failure;
+        }
     }
 
     /** Mint and return a fresh secret for this registration — the one time it is visible. */

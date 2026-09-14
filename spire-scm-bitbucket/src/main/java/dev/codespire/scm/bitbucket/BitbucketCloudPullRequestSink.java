@@ -54,10 +54,13 @@ public class BitbucketCloudPullRequestSink implements PullRequestSink {
         return ScmType.BITBUCKET_CLOUD;
     }
 
+    @Override public boolean supportsDrafts() { return true; }
+
     @Override
     public PullRequestRef open(RepoRef repo, NewPullRequest request) {
-        return findByHead(repo, request.headBranch(), request.baseBranch())
-                .orElseGet(() -> create(repo, request));
+        requireSupported(request);
+        return PullRequestSink.requireObservedDraft(request, findByHead(repo, request.headBranch(), request.baseBranch())
+                .orElseGet(() -> create(repo, request)));
     }
 
     private PullRequestRef create(RepoRef repo, NewPullRequest request) {
@@ -65,6 +68,7 @@ public class BitbucketCloudPullRequestSink implements PullRequestSink {
         try {
             return read(client.postJson(path, Map.of(
                     "title", request.title(),
+                    "draft", request.draft(),
                     "description", request.bodyMd(),
                     "source", Map.of("branch", Map.of("name", request.headBranch())),
                     "destination", Map.of("branch", Map.of("name", request.baseBranch())))),
@@ -129,7 +133,7 @@ public class BitbucketCloudPullRequestSink implements PullRequestSink {
             throw new BitbucketApiException(200, method, path,
                     "response carried no pull request id or html link");
         }
-        return new PullRequestRef(number, url);
+        return new PullRequestRef(number, url, node.path("draft").isBoolean() ? node.path("draft").booleanValue() : null);
     }
 
     private static void requireBranch(String branch, String which) {

@@ -129,6 +129,36 @@ public class GitHubIngress implements ScmIngress {
         };
     }
 
+    @Override public List<IntegrationEvent> activity(RawWebhook raw) {
+        JsonNode root=parse(raw.body());String event=header(raw,"x-github-event");
+        if(event==null)return List.of();
+        String actor=root.path("sender").path("id").asText(null),kind,branch=null,head=null,review=null,comment=null;
+        long pr=0;boolean fix=false;
+        if("push".equals(event)) {
+            kind="push";branch=root.path("ref").asText("");head=root.path("after").asText(null);
+        } else if("pull_request".equals(event) || "pull_request_review".equals(event)) {
+            var pull=root.path("pull_request");pr=pull.path("number").asLong();
+            branch="refs/heads/"+pull.path("head").path("ref").asText("");head=pull.path("head").path("sha").asText(null);
+            if("pull_request_review".equals(event)) {
+                if(!java.util.Set.of("submitted","dismissed").contains(root.path("action").asText()))return List.of();
+                var nativeReview=root.path("review");review=nativeReview.path("id").asText(null);
+                kind="commented".equalsIgnoreCase(nativeReview.path("state").asText())?"comment":"approval";
+                if("comment".equals(kind))comment=review;
+            } else {
+                if(!java.util.Set.of("synchronize","edited","closed").contains(root.path("action").asText()))return List.of();
+                kind="push";
+            }
+        } else if("issue_comment".equals(event) || "pull_request_review_comment".equals(event)) {
+            if(!"created".equals(root.path("action").asText()))return List.of();
+            if("issue_comment".equals(event) && !root.path("issue").has("pull_request"))return List.of();
+            pr=("issue_comment".equals(event)?root.path("issue"):root.path("pull_request")).path("number").asLong();
+            kind="comment";comment=root.path("comment").path("id").asText(null);
+            String body=root.path("comment").path("body").asText("").strip();
+            var parsed=parseCommand(body);fix=parsed!=null && "fix".equals(parsed.command());
+        } else return List.of();
+        return List.of(new IntegrationEvent.RepositoryActivity(repo(root),kind,actor,branch,head,pr,review,comment,fix));
+    }
+
     /**
      * Draft-PR policy (config {@code spire.review.draft-prs}): with
      * {@link #reviewDrafts} false (default), a draft never triggers a review on

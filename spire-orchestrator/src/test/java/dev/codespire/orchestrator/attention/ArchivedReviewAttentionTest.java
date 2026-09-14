@@ -68,18 +68,20 @@ class ArchivedReviewAttentionTest {
         long pr = ReviewFixtures.newPr();
         ReviewFixtures.seedCompletedReviewWithCharges(projection, pr);
         String reviewId = ReviewFixtures.reviewIdFor(pr);
-        projection.scheduleRetry(reviewId, 2, "TEST retry", Instant.now().minusSeconds(1));
-        assertTrue(projection.claimDueRetries(Instant.now()).contains(reviewId),
+        // Keep the background wall-clock sweep from claiming this fixture before our assertion.
+        Instant testClock = Instant.now().plusSeconds(86_400);
+        projection.scheduleRetry(reviewId, 2, "TEST retry", testClock.minusSeconds(1));
+        assertTrue(projection.claimDueRetries(testClock).contains(reviewId),
                 "a due review is swept while live");
 
         projection.updateStatus(reviewId, "completed", ReviewProjection.STAGE_DONE);
         projection.archiveReview(WS, REPO, pr);
         // Set retry_at directly, AFTER archiving, so this tests the sweep's own filter and not just
         // archive's clearing. A test that only exercised the clearing would pass with the filter gone.
-        setRetryAtDirectly(reviewId, Instant.now().minusSeconds(1));
+        setRetryAtDirectly(reviewId, testClock.minusSeconds(1));
 
         // NOT isEmpty(): this module shares one database, and a sweep claims other suites' due rows.
-        assertFalse(projection.claimDueRetries(Instant.now()).contains(reviewId));
+        assertFalse(projection.claimDueRetries(testClock).contains(reviewId));
     }
 
     /** Whether the panel currently names this PR in a REVIEW_FAILED row. */

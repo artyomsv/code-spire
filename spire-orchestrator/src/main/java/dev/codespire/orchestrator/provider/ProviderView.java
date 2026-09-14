@@ -12,7 +12,6 @@ public record ProviderView(
         String name,
         String type,
         String baseUrl,
-        String workspace,
         String authKind,
         String authUsername,
         boolean hasSecret,
@@ -29,5 +28,6 @@ public record ProviderView(
         String role,
         String reportedScopes,
         Instant scopesCheckedAt,
-        List<String> usedBy) {
+        List<String> usedBy,
+        List<ActorDisplay> actorDisplays) {
 }

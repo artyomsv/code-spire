@@ -61,6 +61,18 @@ public class RunFailures {
                 RunFailureCause.of(cause).isRetryable(), null);
     }
 
+    /** Publication may use a rotated identity. Redact it as well as the original build secrets. */
+    public RunResult.RunFailed ofPublication(RunCommand.ExecuteRun command, RunCommand.PublishWorkRun publication,
+                                             String cause, String detail) {
+        Credentials.Scm scm = credentials.scm(command.runId(), publication.scmCredential());
+        SecretScrub current = SecretScrub.of(List.of(
+                new SecretScrub.Credential(scm.readUsername(), scm.readSecret()),
+                new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret())));
+        // A failed current-credential read propagates to retained publication recovery. It must
+        // never turn potentially credential-bearing publisher text into an emitted failure.
+        return of(command, cause, current.clean(detail));
+    }
+
     /**
      * Every credential this run was given, decrypted only to redact it from a failure detail.
      *

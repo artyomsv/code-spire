@@ -44,13 +44,13 @@ class RunAgentStartedTest {
     void theFirstStartRecordsAgentTimeWithoutMovingQueueTime() {
         String runId = queuedRun();
         exec("UPDATE factory_run SET started_at = TIMESTAMPTZ '2026-01-01 00:00:00Z' WHERE run_id = ?", runId);
-        Instant before = Instant.now();
+        Instant before = databaseNow();
 
         projection.apply(new RunResult.RunStarted(runId, "TEST-unit"));
 
         Instant at = projection.find(runId).orElseThrow().agentStartedAt();
         assertFalse(at.isBefore(before.minusMillis(1)), "the start is observed now, not copied from queue time");
-        assertFalse(at.isAfter(Instant.now()));
+        assertFalse(at.isAfter(databaseNow()));
         assertEquals(at, listed(runId).agentStartedAt());
         assertEquals(Instant.parse("2026-01-01T00:00:00Z"), listed(runId).startedAt());
     }
@@ -111,8 +111,15 @@ class RunAgentStartedTest {
     private String queuedRun() {
         String runId = "run::github:TEST-agent-start/app:" + UUID.randomUUID() + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL",
-                "main", "TEST-SHA", "spire/test", "TEST-bot", null), null));
+                "main", "TEST-SHA", "spire/test", "TEST-bot", null), null, null));
         return runId;
+    }
+
+    private Instant databaseNow() {
+        // The timestamp is generated in Postgres. Host and container clocks can differ under load.
+        try (var c = dataSource.getConnection(); var st = c.createStatement(); var rows = st.executeQuery("SELECT clock_timestamp()")) {
+            assertTrue(rows.next()); return rows.getTimestamp(1).toInstant();
+        } catch (SQLException failure) { throw new IllegalStateException(failure); }
     }
 
     private FactoryRunProjection.RunListEntry listed(String runId) {

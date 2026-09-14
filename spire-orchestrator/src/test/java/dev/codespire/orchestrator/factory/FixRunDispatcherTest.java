@@ -80,6 +80,7 @@ class FixRunDispatcherTest {
                 return plan;
             }
         };
+        dispatcher.reviews = new dev.codespire.orchestrator.TestRepositoryProjection();
         dispatcher.runs = new FactoryRunProjection() {
             @Override
             protected void push(String runId) {
@@ -96,7 +97,7 @@ class FixRunDispatcherTest {
             }
 
             @Override
-            public boolean queued(QueuedRun row, String taskSummary) {
+            public boolean queued(QueuedRun row, String taskSummary, java.util.UUID repositoryId) {
                 order.add("row");
                 rows.add(row);
                 return rowAccepted;
@@ -127,7 +128,7 @@ class FixRunDispatcherTest {
         };
         dispatcher.machineAccounts = new MachineAccounts() {
             @Override
-            public Optional<ScmProvider> resolve(dev.codespire.contract.port.ScmType type, String workspace) {
+            public Optional<ScmProvider> resolve(java.util.UUID repositoryId) {
                 return account;
             }
         };
@@ -203,8 +204,7 @@ class FixRunDispatcherTest {
     }
 
     private static ScmProvider machineAccount() {
-        return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com",
-                "acme", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
+        return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
                 null, null, ProviderRole.FACTORY);
     }
 

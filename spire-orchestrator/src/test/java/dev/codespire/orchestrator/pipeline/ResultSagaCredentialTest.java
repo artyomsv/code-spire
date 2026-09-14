@@ -43,7 +43,7 @@ class ResultSagaCredentialTest {
     private static final RepoRef REPO = new RepoRef("TEST-WS", "TEST-REPO");
     private static final String REVIEW_ID = ReviewIds.reviewId(REPO, 1L);
     private static final ScmProvider PROVIDER = new ScmProvider(UUID.randomUUID(), "test provider", "stub",
-            null, "TEST-WS", "token", null, "secret", "bot-1", true, List.of(), null, null,
+            null, "token", null, "secret", "bot-1", true, List.of(), null, null,
             ProviderRole.REVIEWER);
 
     /** Recorded against the review's OWN provider, resolved by its stored provider type. */

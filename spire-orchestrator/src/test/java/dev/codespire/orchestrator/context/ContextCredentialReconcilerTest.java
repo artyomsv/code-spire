@@ -163,9 +163,8 @@ class ContextCredentialReconcilerTest {
         assertThrows(SQLException.class, () -> execute("UPDATE context_provider SET auth_secret = NULL WHERE id = ?", source));
         assertEquals(1, reconciler.reconcile());
         assertThrows(SQLException.class, () -> execute("UPDATE context_provider SET auth_secret = 'extra' WHERE id = ?", source));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET workspace = 'illegal' WHERE id = ?", account(source)));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'REVIEWER' WHERE id = ?", account(source)));
-        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'FACTORY' WHERE id = ?", account(source)));
+        // V72's populated upgrade test owns rollback-column continuity; the current schema has no account workspace.
+        assertThrows(SQLException.class, () -> execute("UPDATE scm_provider SET role = 'TEST-UNKNOWN' WHERE id = ?", account(source)));
     }
 
     private UUID legacy(String type, String url, String secret) throws Exception {
@@ -191,7 +190,6 @@ class ContextCredentialReconcilerTest {
                 assertTrue(rs.next());
                 assertEquals(type, rs.getString("type"));
                 assertEquals("CONTEXT", rs.getString("role"));
-                assertNull(rs.getString("workspace"));
                 String encrypted = rs.getString("auth_secret");
                 assertFalse(encrypted.contains(secret));
                 assertEquals(secret, encryption.decryptString(encrypted, "provider:" + account));

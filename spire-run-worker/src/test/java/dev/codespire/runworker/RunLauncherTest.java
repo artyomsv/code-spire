@@ -123,7 +123,7 @@ class RunLauncherTest {
     }
 
     /** Replays canned lines on each channel, reports a canned exit, and records what was destroyed. */
-    static final class FakeRuntime implements RunRuntime {
+    static class FakeRuntime implements RunRuntime {
         List<String> agentLines = List.of();
         List<String> publisherLines = List.of();
         Finalization finalization = Finalization.salvaged(0, "exited");
@@ -287,7 +287,7 @@ class RunLauncherTest {
         };
     }
 
-    private static RunLauncher launcher(FakeRuntime runtime, FakeAdapter adapter) {
+    static RunLauncher launcher(FakeRuntime runtime, FakeAdapter adapter) {
         RunLauncher launcher = new RunLauncher();
         launcher.runtime = runtime;
         launcher.harnesses = new HarnessRegistry() {

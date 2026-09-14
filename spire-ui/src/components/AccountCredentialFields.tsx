@@ -2,7 +2,7 @@ import { type AuthKind, type ProviderRole, type ProviderView } from '../api';
 import Select from './Select';
 const BEARER_ONLY = new Set(['github', 'gitlab']);
 export interface AccountFields {
-  name: string; type: string; baseUrl: string; workspace: string; authKind: AuthKind;
+  name: string; type: string; baseUrl: string; authKind: AuthKind;
   authUsername: string; secret: string; botAccountId: string; enabled: boolean;
 }
 export default function AccountCredentialFields({ fields, patch, initial, role }: {
@@ -65,7 +65,7 @@ export default function AccountCredentialFields({ fields, patch, initial, role }
             <small className="field-hint">
               Leave blank — it's resolved from the token when you save (which also validates the token).
               A Bitbucket workspace/repo access token has no user account, so it stays blank; the token
-              is still validated against the workspace.
+              needs a repository access check when the forge cannot identify an account.
               {role === 'FACTORY' && (
                 <>
                   {' '}

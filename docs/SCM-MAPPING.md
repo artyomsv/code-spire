@@ -171,6 +171,52 @@ worse than no mark, because a consumer learns to trust it and is then silently w
 The mark is a fixed marker at the top of the description instead, written by the orchestrator, and
 it is identical on all four.
 
+## People directories (M3 slice 3)
+
+| Forge | Lookup and refresh | Capability |
+|---|---|---|
+| GitHub | GET /users/{login}; GET /user/{id} | Exact login, then durable numeric ID; visibility depends on selected credential. |
+| GitLab | GET /users?username=; GET /users/{id} | Exact username, refuse ambiguous/incomplete replies. |
+| Bitbucket Cloud | Workspace members; GET /users/{account_id} | Explicit member selection across bounded pages; workspace/user-read access required. Nicknames are not unique. |
+| Jira Cloud | GET /rest/api/3/user/search; GET /rest/api/3/user?accountId= | Explicit candidate selection; Browse users and groups plus user-read access. |
+| Jira Data Center | Unsupported person lookup | Existing context-read support does not imply Cloud accountId support. |
+
+Every save repeats resolution through the same configured account, verifies the returned stable
+ID, and stores observed labels separately. Identity reads reject redirects to another origin.
+Per-forge documentation links and measured-versus-live limits are recorded separately in
+UNVERIFIED. No source allowlist inheritance is implied by reusable account person controls.
+
+## Effective repository push permission (M3 slice 4)
+
+| Forge | Read | Binding and interpretation |
+|---|---|---|
+| GitHub | GET /repos/{owner}/{repo}/collaborators/{username}/permission | Resolve username afresh by stable ID; verify response user.id. Base write/admin allows; read/none refuses; other base roles are unknown. |
+| GitLab | GET /projects/{encoded namespace/repo}/members/all/{id} | Verify returned ID and active state. Known 30/40/50 allows; known read levels refuse. Expired membership refuses; unfamiliar shapes/levels are unknown. |
+| Bitbucket Cloud | GET /workspaces/{workspace}/permissions/repositories/{slug} | Verify account_id via user read, match UUID and repository full_name across all pages. write/admin allows, read refuses. Caller requires repository-admin access. |
+
+Permission reads pin the configured origin and never try another credential. Unknown, forbidden,
+rate-limited, timed-out or incomplete reads refuse; a 404 is not treated as known absence. A
+complete Bitbucket list without the actor is known no-write. The permission says general code
+write, not that a protected target branch will accept a push. Per-forge live limitations are in
+UNVERIFIED; fixture measurements do not establish live token capability.
+
+## External work answers and activity (M3 slice 9)
+
+| Channel | Implemented evidence | Limit |
+|---|---|---|
+| GitHub native PR review | Re-read named review, complete bounded chronological review history and current open PR/head; stable user ID, human type and measured push permission without DENY | Can answer an open linked LAND gate only; production LAND remains unavailable. Controlled-response tests, no live gate proof |
+| GitLab / Bitbucket native PR review | Capability unavailable in the current approval port composition | Visibly disabled; dashboard and tracker remain usable |
+| GitHub / GitLab tracker comment | Authenticated created-comment delivery with stable actor ID, source membership and explicit gate/generation/artifact command | Ordinary approving text is not an approval; system/edited GitLab notes are excluded |
+| Jira Cloud tracker comment | Authenticated REST v2 comment polling using accountId, timestamp and explicit command | Ignore undated/pre-admission comments; bounded pages report a polling failure when incomplete |
+| Jira Data Center tracker comment | Unavailable | Context-read support does not establish Cloud person identity |
+
+SCM takeover adapters use signed actor fields, not commit-author or display text. Repository and
+linked PR/branch coordinates must match. Recorded factory/reviewer identities remain authoritative
+after rename or rotation; tracker identity is a separate namespace. Unknown actors suspend
+conservatively. Gate answers and authorized /fix commands precede generic comment takeover.
+No native approval can resume a suspended item. These are automated provider-response proofs;
+the separate identity/permission and live activity limits remain in UNVERIFIED.
+
 ## Sources
 Bitbucket Cloud: developer.atlassian.com/cloud/bitbucket/rest + support.atlassian.com event-payloads ·
 GitHub: docs.github.com/rest/pulls · GitLab: docs.gitlab.com/api/merge_requests, /discussions ·

@@ -64,6 +64,7 @@ class AttentionQueriesTest {
         sql("DELETE FROM llm_model_rate");
         sql("DELETE FROM llm_model");
         sql("DELETE FROM provider_author");
+        sql("DELETE FROM repository_account");
         sql("DELETE FROM scm_provider");
         sql("DELETE FROM context_provider");
         sql("DELETE FROM dlq_entry");
@@ -537,16 +538,16 @@ class AttentionQueriesTest {
 
     /** A provider row with the given role and NO resolved identity (blank id, null username). */
     private void insertScmProviderWithRole(String name, String role) {
-        sql("INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind, auth_secret, "
+        sql("INSERT INTO scm_provider (id, name, type, base_url, auth_kind, auth_secret, "
                 + "bot_account_id, bot_username, enabled, role) VALUES ('" + UUID.randomUUID() + "', '" + name
-                + "', 'stub', 'https://scm.example.invalid', 'TEST-WS', 'bearer', 'TEST-SECRET', '', NULL, TRUE, '"
+                + "', 'stub', 'https://scm.example.invalid', 'bearer', 'TEST-SECRET', '', NULL, TRUE, '"
                 + role + "')");
     }
 
     private void insertScmProvider(String name, String botAccountId, String botUsername) {
-        sql("INSERT INTO scm_provider (id, name, type, base_url, workspace, auth_kind, auth_secret, "
+        sql("INSERT INTO scm_provider (id, name, type, base_url, auth_kind, auth_secret, "
                 + "bot_account_id, bot_username, enabled) VALUES ('" + UUID.randomUUID() + "', '" + name
-                + "', 'stub', 'https://scm.example.invalid', 'TEST-WS', 'bearer', 'TEST-SECRET', '"
+                + "', 'stub', 'https://scm.example.invalid', 'bearer', 'TEST-SECRET', '"
                 + botAccountId + "', " + (botUsername == null ? "NULL" : "'" + botUsername + "'") + ", TRUE)");
     }
 

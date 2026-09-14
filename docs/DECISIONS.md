@@ -4,6 +4,233 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-045 — Declared profile precedence and bounded phase decisions
+
+**Status:** implemented through slices 7–9, including artifact handoff, held publication,
+external gate answers and takeover. All seven M3 criteria are independently verified.
+Production VERIFY and LAND remain unavailable; M4 owns the verifier.
+
+**Decision.** Operators assign distinct nonnegative precedence numbers to profile identities and
+create immutable profile versions. Names select no code path. The lowest-precedence eligible label
+selects the displayed profile. An eligible label is current, mapped and attributed to a person on
+that work source's allowlist. Missing attribution grants nothing.
+
+The effective vector is never above any applied label in any component.
+
+Meet every eligible label, the pinned admission vector and the current repository ceiling, component
+by component: ordinary phases use `off < approve < auto`, delivery uses `off < draft_pr < pr`, and
+land uses `off < approve < auto_if_green`. Omitted phases are off. Numeric maxima take the minimum;
+zero stops execution. Protected paths take the union, including the publisher's existing immutable
+CI floor. Incomparable vectors are valid and compose without widening either one. Precedence is a
+selection/display rule and never substitutes for these bounds. A higher-precedence request or a
+restricted vector records a durable clamp milestone and a current attention condition.
+
+Gate lifetime is an integer from 1 through 2,147,483,647 seconds. Reject larger values at profile
+creation so an accepted policy cannot overflow the persisted deadline during admission.
+
+Admission pins the profile version and effective bounds. Later label edits, allowed-person changes,
+account/source changes and ceiling edits are checked at each continuation. Raising authority cannot
+widen an admitted generation; an operator must explicitly re-admit. Remote observations happen before
+registry locks, and the commit compares source/account/repository and policy revisions. A concurrent
+edit or unavailable observation cannot grant permission. This is a fresh check at a phase boundary,
+not instantaneous cancellation of an effect already accepted by a remote service.
+
+The phase order is `intake → spec → plan → build → verify → deliver → review → land`. Delivery must
+precede the existing PR reviewer because that reviewer needs a pushed PR. Slice 8a corrects the
+published diagrams and binds fetched tracker artifact digests and build coordinates. A policy permitting a phase does not supply
+its implementation. Tests identify their execution capability explicitly; production does not turn a
+missing specification, verifier or publisher hold into a successful no-op.
+
+Dashboard gates are encrypted aggregate facts with synchronous query rows. Bind an answer to the
+item/generation, phase, policy, authority, item revision and artifact/head. One open gate holds a
+dispatch slot. At `now >= expiresAt`, expiry wins, persists refusal
+and releases the slot. A stale answer requires a new decision. The winning answer key is idempotent;
+a conflicting answer is 409. Resolver identity comes from the verified operator session, never the
+request body. Restart sweeps persisted overdue gates; ordinary retries cannot reopen a refused gate.
+Expiry takes the same local registry, policy and item lock order as an answer: projection foreign
+keys also lock parent rows. It needs no successful remote read to revoke an overdue decision.
+
+**FR-F22 / FR-F25 conflict.** FR-F22 treats a person's commenting as takeover; FR-F25 permits
+that same comment channel to carry a gate answer. Gate answers and authorized `/fix` commands
+are deliberate workflow actions. Classify and deduplicate them before
+ordinary comment takeover. An ordinary comment is neither an approval nor a resume instruction.
+A command that fails its authorization checks cannot borrow the gate-answer exception. The tracker
+and PR-review channels must prove their own stable actor and current artifact/head before entering
+the same decision boundary; the dashboard permission does not grant them authority.
+
+All three channels enter `ResolveGate` and persist `GATE_RESOLVED`. Tracker answers require an exact
+`/approve <gate-id> <generation> <artifact>` or `/reject` command (`-` explicitly binds an absent
+artifact), by a person allowed in that source. Signed GitHub/GitLab comments and authenticated Jira
+Cloud comment polling carry only coordinates, the stable actor and parsed command, never prose.
+Jira Data Center cannot prove person identity here. Native PR review answers are restricted to an
+open land gate and the linked PR's current head. GitHub re-reads the named review, the person's
+latest decisive review and open PR state; other forges visibly disable native approval answers.
+An unmatched PR approval is not a resume command and cannot reactivate a suspended item.
+
+Takeover compares stable identities recorded for the item/build, including the tracker writer's
+separate namespace. Display names, commit author text and replacement accounts do not redefine a
+recorded bot. Missing origin suspends conservatively, and unrelated repository/branch/PR activity
+does not target the item. Takeover supersedes gates, releases reservations, refuses unstarted
+effects and durably requests a publication revocation. The worker commits that revocation before
+stopping compute; fresh permits, restart and orphan salvage cannot restore publication authority.
+M1 cancellation alone is insufficient because it can salvage and publish.
+
+An already executing remote publication cannot be recalled. Its observed push/PR remains recorded
+without completing a suspended item's phase. Webhook receipt is not atomically ordered with a
+remote human push. Operator resume requires a verified subject, expected item revision and note,
+re-fetches tracker/repository/head evidence, re-resolves policy and starts a new bounded generation.
+A moved head discards the old preparation and requires fresh artifacts. Any required gate opens
+before execution. Old runs retain their publication revocations. A retired item cannot resume;
+its replacement needs a new identity and admission.
+
+**Consequences.** The UI displays requested profile, ceiling, actual modes, limits and clamp reason;
+it does not invent a profile name for a composite vector. Usage and attempt identities persist across
+re-admission. Dispatch reservations constrain local work and do not erase the existing documented
+softness of monetary limits while remote work is in flight. M3's accepted journey proof remains at
+the prepared plan/build boundary, with actual publication hold proved separately in slice 8b.
+
+---
+## ADR-044 — Stable identities for person policy and repository fix overrides
+
+**Status:** identity and override editing implemented in M3 slice 3; effective push authorization
+implemented in slice 4. Criteria 7, 6 and 5 are independently verified.
+
+**Decision.** Resolve people with the selected account's credential. GitHub/GitLab handle lookup
+must match exactly; Bitbucket/Jira use explicit selection where their API exposes candidates.
+Repeat resolution and stable-ID verification on save. Lock the account through the write so
+credential/origin edits cannot replace the resolving identity midway. Cache only display metadata,
+refresh by ID and report stale labels without assigning a new ID after a handle changes hands.
+A policy-bearing account cannot change forge kind or origin until its people are removed.
+
+Repository ALLOW/DENY overrides have one row per stable actor and optimistic revisions. Legacy
+numeric GitHub/GitLab IDs, or stable IDs observed on that repository's actual review history,
+become grants. Other strings need repair. These grants never replace target, branch, observe-mode
+or spending checks. The shared person control is reusable by work-source registration, which
+is introduced in slice 5; source authority must remain scoped to that source.
+
+For /fix, reject an unknown actor or unusable repository/reviewer first. Then apply an explicit
+deny, an explicit grant, or a fresh effective push measurement, in that order. Unknown permission
+refuses. Slice 5 replaces the initial pessimistic lock: a short transaction snapshots repository,
+account and actor-policy revisions, the bounded remote read holds no database transaction, and a
+second short transaction checks the revisions. Rotation, rebinding or an override edit discards the
+measurement as PERMISSION_UNAVAILABLE. Operator saves do not wait for the forge. The total identity/redirect/
+pagination budget is 20 seconds and cancellation stops unfinished work; successes are not cached.
+Only /fix leaves the legacy common author-list gate. Review, finding and conversation eligibility
+continue to use that account list, matching stable IDs only. A numeric username cannot impersonate
+a different actor's stored ID. Target/finding, self-loop, observe/archive, spend and fix caps remain.
+
+No credential elevation or secret response is introduced. Capability prerequisites are visible
+in the person control, with separate per-forge evidence limits in UNVERIFIED.
+
+---
+
+## ADR-043 — Tracker authority and durable work-item bookkeeping
+
+**Status:** implemented through slices 5–9: source parity, tracker effect recovery, policy gates,
+build handoff and external answers. [M3 acceptance](factory/M3-ACCEPTANCE.md) links the measured
+evidence; live tracker behavior remains in UNVERIFIED.
+
+**Decision.** A source names an explicit credential, tracker origin and stable project ID, and one
+target repository. Its stable actor allowlist belongs to that source; account authors and reviewer
+permissions do not grant label authority. Signed ISSUE hooks have a source/repository binding and
+publish normalized control facts on `cs.work-integration`, keyed by the stable work-item ID.
+No raw webhook body or ticket content crosses that durable channel.
+
+The ID hashes versioned, UTF-8 length-prefixed SCM coordinates and stable tracker coordinates.
+Mutable issue keys, credentials and titles are not identity. The bounded subject fits `RunIds`.
+Work events use a separate domain type and `cs.work-events`; they cannot be decoded as review
+domain events. The existing encrypted `event_log` stores both kinds under separate stream IDs.
+
+Current labels are reconciled with the complete bounded audit, including removals and re-additions.
+An incomplete or ambiguous history cannot establish an applier. A verified actor hint may remain
+visible with origin UNATTRIBUTED; it grants nothing even when the hinted actor is allowed.
+Missing ID, unknown attribution and unlisted actor have separate refusal reasons and mutations.
+Webhook intake and scans use the same evidence and policy path. A second current-label fetch
+detects changes during the observation; external revocation cannot be globally atomic with a
+local commit. Source, account, repository and policy revisions are checked under a short lock
+after the remote reads, and stale observations are discarded.
+
+Profiles have immutable numbered versions and operator-owned unique precedence. Names select no
+behavior. Missing phases are off; the effective vector meets every eligible label, the combined
+mode vector at admission and the current ceiling. Admission retains the selected version and
+every effective mode, so removing another restrictive label cannot widen the original grant.
+Events retain applied-label provenance and all local authority revisions. The detail screen
+shows these restrictions separately from the display profile. Automatic specification waits
+for real input; disabled and approval modes remain stopped or explicitly unavailable.
+Missing M4 executors never become successful no-op phases. Slice 7 completes caps, approval gates
+and the transition policy surface; slice 8 supplies the explicit artifact/build handoff.
+
+**Atomicity.** The lifecycle alone decides work domain events. JDBC event append, projection,
+delivery dedupe and encrypted notification outbox participate in one JTA transaction. A scan
+page advances its cursor in that transaction only after all observations reconcile. Notifications
+are at least once, with stable event IDs; no run command is emitted by this admission slice.
+The injected projection-failure test proves rollback after append, and its separate-transaction
+mutant proves that a surfaced exception alone is insufficient.
+
+`work_item` retains coordinates, profile/version, phase, workflow status, reason and revisions.
+It has no title, body or tracker-status mirror. Detail retrieves tracker content separately, so
+an inaccessible tracker cannot hide durable workflow history or masquerade as deletion. Gates
+and later effects retain item/generation references; ticket-derived sensitive payloads stay under
+the existing Tink encryption boundary with stream/effect associated data.
+
+---
+
+## ADR-042 — Repositories own coordinates and explicitly bind role accounts
+
+**Status:** implemented through M3 slice 2. Runtime resolution uses explicit repository bindings.
+The old account key and workspace-by-role check are removed; the populated workspace column
+remains rollback evidence until slice 10.
+
+**Decision.** A repository is identified by `(scm_type, forge_origin, workspace, slug)` and has
+its own UUID. Forge origin is the canonical HTTP(S) scheme, host and non-default port, with no
+API path suffix. Nested namespaces stay in workspace. `repository_account` binds at most one
+REVIEWER and one FACTORY account. Configuration may leave either role empty or select a disabled
+account; resolution requires an enabled repository and enabled account of the matching kind,
+origin and role. Known reviewer/factory identities must differ at binding time and at resolution,
+including after credential rotation. Account UUIDs,
+ciphertexts, `provider:<id>` AADs and context source references are preserved.
+
+**Why.** The former `(type, workspace, role)` account key conflates credentials with repository
+selection and cannot distinguish hosts. Explicit references support credential rotation without
+reassigning repositories. Repository edits use revision checks; account deletion names its
+referencing repositories, and changing a referenced account's kind/origin is refused.
+
+**Bridge.** V60 snapshots legacy account assignments without changing existing serving resolvers.
+The gateway retains ownership of webhooks and credentials. Its V3 transactional outbox publishes
+typed, revisioned `RepositoryRegistration` metadata on `cs.registry-integration`, keyed by
+registration UUID. Broker acknowledgement marks an outbox row sent; duplicate delivery and stale
+revisions are harmless. Consumer failures use the existing DLQ with a registry-specific replay
+route. No webhook secret or routing key appears in this event.
+
+An unambiguous legacy match with an evidenced origin creates bindings once; subsequent snapshots
+preserve operator edits. A workspace alone never establishes a host. Conflicting or missing origins
+become attention rows with explicit mapping repair. A bounded history sweep uses persisted review
+URLs as origin evidence and links reviews/runs, including repositories observed through legacy org hooks. Org
+auto-enrollment ends at cutover: verified unregistered deliveries create attention naming the
+repository, origin and source registration, with a prefilled Register action. Registration
+snapshots alone do not create repositories after cutover.
+
+**Rollback evidence.** Keep the old account key and populated workspace in slice 1. Slice 2 drops
+the key/checks and all runtime reads, but retains workspace untouched until slice 10. Before any
+dev upgrade, preserve a verified full database dump and the matching keysets. The repeatable
+commands and real credential continuity probe are in the M3 plan; `.handoff/` survives sessions.
+
+**Cutover.** Signed gateway deliveries carry kind/origin/registration provenance on the new
+`cs.repository-integration` topic. REVIEWER deliveries enter the review lifecycle; FACTORY
+activity is forwarded separately; ISSUE requires a work source and is reserved for its later
+slice. A repository has at most one webhook per kind. Gateway V4 preserves existing keys,
+ciphertexts and rejection history. Raw legacy SCM deliveries are dead-lettered with a repair
+reason, never assigned credentials by a workspace match. Existing review IDs and credential
+transport AADs retain their original namespace split, including nested GitLab paths.
+
+**Proof.** Criterion 7 uses the named resource, fresh-schema gateway and UI tests in the M3
+plan. `RepositoryResolverCutoverTest` observes each dispatch entry at the actual database-backed
+credential boundary; separate choreography suites exercise subsequent commands.
+`AccountWorkspaceIsUnusedTest` scans runtime SQL, including SELECT-star mappings. The mutation
+ledger and real-row rollout measurements are in `.claude/reviews/global/factory-m3-slice2.md`.
+
+---
+
 ## ADR-041 — Credentials live on accounts; context sources reference an account
 
 **Context.** `context_provider` copied the credential shape of `llm_provider`: a key without

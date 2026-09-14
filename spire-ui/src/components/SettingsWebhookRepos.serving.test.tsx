@@ -8,6 +8,7 @@ const renderPage = () => render(<MemoryRouter><SettingsWebhookRepos /></MemoryRo
 
 const repo = (over: Partial<api.WebhookRepoView>): api.WebhookRepoView => ({
   id: 'TEST-w1',
+  repositoryId: 'TEST-repository',
   providerType: 'github',
   scope: 'repo',
   target: 'TEST-acme/widgets',
@@ -48,7 +49,7 @@ describe('SettingsWebhookRepos — who reviews and who pushes', () => {
     );
     renderPage();
 
-    expect(await screen.findByRole('heading', { name: 'Repositories' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Webhooks' })).toBeInTheDocument();
     const row = await rowFor('TEST-acme/widgets');
     const reviewer = await within(row).findByText(/reviewer-bot/);
     const factory = within(row).getByText(/factory-bot/);

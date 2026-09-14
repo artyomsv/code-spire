@@ -15,6 +15,9 @@ import java.util.Objects;
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
+        @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
+        @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
+        @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
         @JsonSubTypes.Type(value = RunCommand.SteerRun.class, name = "SteerRun")
 })
@@ -168,6 +171,40 @@ public sealed interface RunCommand {
                     + ", promptChars=" + prompt.length()
                     + ", scmCredential=" + (scmCredential == null ? "absent" : "***")
                     + ", harnessCredential=" + (harnessCredential == null ? "absent" : "***") + "]";
+        }
+    }
+
+    /** A distinct discriminator prevents an old worker from treating a held build as an automatic push. */
+    record ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) implements RunCommand {
+        public ExecuteWorkRun(ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) {
+            this(execution.runId(),execution,work);
+        }
+        public ExecuteWorkRun {
+            Objects.requireNonNull(execution,"Build execution is required");
+            Objects.requireNonNull(work,"A work binding is required");
+            if(!execution.runId().equals(runId))throw new IllegalArgumentException("The work command must name its execution run");
+            if(execution.existingBranch())throw new IllegalArgumentException("Prepared item builds require their own branch");
+        }
+        @Override public String scmCredential(){return execution.scmCredential();}
+        @Override public String harnessCredential(){return execution.harnessCredential();}
+    }
+
+    /** Resume only the trusted publisher, with the currently selected FACTORY credential. */
+    record PublishWorkRun(String runId,dev.codespire.contract.work.WorkPublicationPermit permit,
+                          String scmCredential) implements RunCommand {
+        public PublishWorkRun {
+            if(runId==null || runId.isBlank())throw new IllegalArgumentException("A publication run is required");
+            Objects.requireNonNull(permit,"A publication permit is required");
+            if(scmCredential==null || scmCredential.isBlank())throw new IllegalArgumentException("A publication credential is required");
+        }
+        @Override public String toString(){return "PublishWorkRun[runId="+runId+", permit="+permit+", scmCredential=***]";}
+    }
+
+    /** Irreversible for this build identity, including permits queued before human takeover. */
+    record HoldWorkRun(String runId,dev.codespire.contract.work.WorkRunBinding work) implements RunCommand {
+        public HoldWorkRun {
+            if(runId==null || runId.isBlank())throw new IllegalArgumentException("A held run is required");
+            Objects.requireNonNull(work,"A hold must bind the exact work generation and build");
         }
     }
 

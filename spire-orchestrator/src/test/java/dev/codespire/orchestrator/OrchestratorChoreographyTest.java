@@ -72,7 +72,15 @@ class OrchestratorChoreographyTest {
     @Inject
     dev.codespire.orchestrator.llm.LlmModelRegistry llmModels;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    @Inject dev.codespire.orchestrator.readmodel.ReviewProjection reviewProjection;
+    private UUID repositoryId;
     private KafkaProducer<String, String> producer;
+    private String delivery(IntegrationEvent event) throws Exception {
+        return mapper.writeValueAsString(new dev.codespire.contract.event.RepositoryDelivery(repositoryId,
+                null, 0, "bitbucket-cloud", "http://localhost", dev.codespire.contract.event.RepositoryEventKind.REVIEWER,
+                UUID.randomUUID().toString(), event));
+    }
 
     /**
      * Where this test's own commands start on cs.commands. The broker is shared by every
@@ -90,13 +98,15 @@ class OrchestratorChoreographyTest {
     @org.junit.jupiter.api.BeforeEach
     void registerProvider() {
         // A PR is only reviewed if its workspace has a registered provider.
-        try {
-            providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
-                    "test", "bitbucket-cloud", "http://localhost", "sandbox",
+        var account = providers.create(new dev.codespire.orchestrator.provider.ProviderInput(
+                    "test", "bitbucket-cloud", "http://localhost",
                     "bearer", null, "tok", "acct", true, List.of(), null, null));
-        } catch (RuntimeException alreadyRegistered) {
-            // fine — one provider per (type, workspace)
-        }
+        var input = new dev.codespire.orchestrator.repository.RepositoryInput("bitbucket-cloud", "http://localhost",
+                REPO.workspace(), REPO.slug(), true, UUID.fromString(account.id()), null);
+        var existing = repositories.find("bitbucket-cloud", "http://localhost", REPO.workspace(), REPO.slug());
+        repositoryId = existing.isPresent() ? repositories.update(existing.get().id(), existing.get().revision(), input).id()
+                : repositories.create(input).id();
+
         // GenerateReview needs a default LLM provider (ADR-018); the worker runs in
         // stub mode here, but the orchestrator still packs the default's credential.
         // The model must also be catalogued — ResultSaga's pre-spend guard now refuses to start a
@@ -223,7 +233,8 @@ class OrchestratorChoreographyTest {
 
     private void produce78(IntegrationEvent event) throws Exception {
         String topic = event instanceof IntegrationEvent.DiffFetched ? "cs.results" : "cs.integration";
-        String json = mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
+        String json = "cs.integration".equals(topic) ? delivery(event) : mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
+        if ("cs.integration".equals(topic)) topic = "cs.repository-integration";
         producer.send(new ProducerRecord<>(topic, "review::sandbox/demo-repo#78", json)).get();
     }
 
@@ -248,7 +259,8 @@ class OrchestratorChoreographyTest {
             producer = new KafkaProducer<>(props);
         }
         // writerFor: root-level polymorphism (the type discriminator)
-        String json = mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
+        String json = "cs.integration".equals(topic) ? delivery(event) : mapper.writerFor(IntegrationEvent.class).writeValueAsString(event);
+        if ("cs.integration".equals(topic)) topic = "cs.repository-integration";
         producer.send(new ProducerRecord<>(topic, key, json)).get();
     }
 

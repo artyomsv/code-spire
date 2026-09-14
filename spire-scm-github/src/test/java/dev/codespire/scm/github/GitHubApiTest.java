@@ -31,6 +31,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** DiffSource + CommentSink against a WireMock GitHub (request shapes per SCM-MAPPING §GitHub). */
 class GitHubApiTest {
 
+    @Test void readsTheExactEncodedBranchHeadForResume() {
+        server.stubFor(get(urlEqualTo("/repos/TEST-owner/TEST-repo/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/branch\",\"commit\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}")));
+        assertEquals("b".repeat(40),diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+    @Test void anotherBranchCannotSupplyTheResumeHead() {
+        server.stubFor(get(urlEqualTo("/repos/TEST-owner/TEST-repo/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/other\",\"commit\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}")));
+        assertThrows(IllegalStateException.class,()->diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+    @Test void malformedCommitCannotSupplyTheResumeHead() {
+        server.stubFor(get(urlEqualTo("/repos/TEST-owner/TEST-repo/branches/TEST%2Fbranch")).willReturn(aResponse().withStatus(200).withBody("{\"name\":\"TEST/branch\",\"commit\":{\"sha\":\"TEST-not-a-commit\"}}")));
+        assertThrows(IllegalStateException.class,()->diffSource.fetchBranchHead(new RepoRef("TEST-owner","TEST-repo"),"TEST/branch"));
+    }
+
     private static WireMockServer server;
     private static GitHubDiffSource diffSource;
     private static GitHubCommentSink commentSink;

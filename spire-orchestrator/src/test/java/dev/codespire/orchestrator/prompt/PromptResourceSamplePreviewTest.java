@@ -55,6 +55,8 @@ class PromptResourceSamplePreviewTest {
     @Inject
     ReviewProjection projection;
 
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+    private static java.util.UUID repositoryId;
     private static WireMockServer scm;
     private boolean providerRegistered;
     private final AtomicLong prCounter = new AtomicLong(1);
@@ -77,8 +79,11 @@ class PromptResourceSamplePreviewTest {
         if (providerRegistered) {
             return;
         }
-        providers.create(new ProviderInput("PRSP", "bitbucket-cloud", scm.baseUrl(), REPO.workspace(),
+        var account = providers.create(new ProviderInput("PRSP", "bitbucket-cloud", scm.baseUrl(),
                 "bearer", null, "provider-tok", "acct", true, List.of(), null, null));
+        repositoryId = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                "bitbucket-cloud", scm.baseUrl(), REPO.workspace(), REPO.slug(), true,
+                java.util.UUID.fromString(account.id()), null)).id();
         providerRegistered = true;
     }
 
@@ -186,6 +191,7 @@ class PromptResourceSamplePreviewTest {
 
     private String registerReview(long pr) {
         String reviewId = ReviewIds.reviewId(REPO, pr);
+        projection.claimRepository(reviewId, repositoryId, REPO, pr);
         projection.registerHeader(reviewId, REPO, pr, "Sample PR " + pr, "alice", "a1",
                 "feature", "main", "commit" + pr, "https://scm.example/" + REPO.full() + "/pull/" + pr,
                 "bitbucket-cloud", "reviewing", ReviewProjection.STAGE_DIFF);

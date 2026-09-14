@@ -122,11 +122,8 @@ public class ConversationLevels {
     }
 
     /** The provider's override if set, else the global default. */
-    public ConversationLevel effectiveLevel(String type, String workspace) {
-        ConversationLevel globalDefault = globalDefault();
-        return providers.resolve(type, workspace)
-                .map(p -> effective(p.conversationLevel(), globalDefault))
-                .orElse(globalDefault);
+    public ConversationLevel effectiveLevel(ScmProvider provider) {
+        return effective(provider.conversationLevel(), globalDefault());
     }
 
     /** Pure decision: a non-blank provider value wins; otherwise the global default. */

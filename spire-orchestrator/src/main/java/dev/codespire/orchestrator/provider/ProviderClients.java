@@ -47,6 +47,14 @@ public class ProviderClients {
     /** Account kinds also include credentials for the context-only adapters. */
     public static final Set<String> ACCOUNT_TYPES = Set.of("bitbucket-cloud", "github", "gitlab", "atlassian");
 
+    /** Translate a persisted repository web URL to the account API origin; host aliases live here. */
+    public static String repositoryForgeOrigin(String type, String webUrl) {
+        String origin = dev.codespire.contract.scm.ForgeOrigin.of(webUrl);
+        if ("github".equals(type) && "https://github.com".equals(origin)) return "https://api.github.com";
+        if ("bitbucket-cloud".equals(type) && "https://bitbucket.org".equals(origin)) return "https://api.bitbucket.org";
+        return origin;
+    }
+
     public static boolean supportsContext(String source, String account) {
         return switch (source) {
             case "jira", "confluence" -> "atlassian".equals(account);
@@ -87,6 +95,65 @@ public class ProviderClients {
 
     @Inject
     ObjectMapper mapper;
+
+    /** Work-source composition shares provider transport but returns only the work SPI. */
+    public dev.codespire.worksource.WorkSource workSource(dev.codespire.worksource.WorkSourceType type,
+                                                          ScmProvider account, String projectId, String scope) {
+        return switch (type) {
+            case GITHUB -> new dev.codespire.worksource.github.GitHubWorkSource(
+                    new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
+            case GITLAB -> new dev.codespire.worksource.gitlab.GitLabWorkSource(
+                    new dev.codespire.context.gitlab.GitLabIssueConfig(gitlabSiteBase(account.baseUrl()), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
+            case JIRA -> new dev.codespire.worksource.jira.JiraWorkSource(
+                    new dev.codespire.context.jira.JiraConfig(account.baseUrl(), account.authKind(), account.authUsername(), account.secret(), Set.of(scope)),
+                    mapper, projectId, scope);
+        };
+    }
+
+    public String workProjectId(dev.codespire.worksource.WorkSourceType type, ScmProvider account, String scope) {
+        return switch (type) {
+            case GITHUB -> dev.codespire.worksource.github.GitHubWorkSource.resolveScope(
+                    new dev.codespire.context.github.GitHubIssueConfig(account.baseUrl(), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
+            case GITLAB -> dev.codespire.worksource.gitlab.GitLabWorkSource.resolveScope(
+                    new dev.codespire.context.gitlab.GitLabIssueConfig(gitlabSiteBase(account.baseUrl()), account.authKind(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
+            case JIRA -> dev.codespire.worksource.jira.JiraWorkSource.resolveScope(
+                    new dev.codespire.context.jira.JiraConfig(account.baseUrl(), account.authKind(), account.authUsername(), account.secret(), Set.of(scope)),
+                    mapper, scope).projectId();
+        };
+    }
+
+    public boolean compatibleWorkAccount(dev.codespire.worksource.WorkSourceType type, ScmProvider account) {
+        return supportsWorkAccount(type, account.type(), account.authKind());
+    }
+
+    public static boolean supportsWorkAccount(dev.codespire.worksource.WorkSourceType type, String accountType, String authKind) {
+        return switch (type) {
+            case GITHUB -> "github".equals(accountType) && "bearer".equals(authKind);
+            case GITLAB -> "gitlab".equals(accountType) && "bearer".equals(authKind);
+            case JIRA -> "atlassian".equals(accountType) && Set.of("basic", "bearer").contains(authKind);
+        };
+    }
+
+    public boolean workScopeMatchesRepository(dev.codespire.worksource.WorkSourceType type, String origin, String scope,
+                                              String scm, String forgeOrigin, String repositoryScope) {
+        return switch (type) {
+            case GITHUB -> "github".equals(scm) && dev.codespire.contract.scm.ForgeOrigin.of(origin).equals(forgeOrigin)
+                    && repositoryScope.equals(scope);
+            case GITLAB -> "gitlab".equals(scm) && dev.codespire.contract.scm.ForgeOrigin.of(origin).equals(forgeOrigin)
+                    && repositoryScope.equals(scope);
+            // Jira project -> SCM repository is an explicit operator mapping. Its tracker
+            // credential stays on Jira; requiring the two forge origins to match is incorrect.
+            case JIRA -> scope != null && scope.matches("[A-Z][A-Z0-9_]{1,99}");
+        };
+    }
+
+    private static String gitlabSiteBase(String base) {
+        return base.replaceAll("/+$", "").replaceFirst("/api/v4$", "");
+    }
 
     private final java.net.http.HttpClient accountHttp = java.net.http.HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(10))
@@ -222,6 +289,33 @@ public class ProviderClients {
             case "github" -> new GitHubDiffSource(new GitHubClient(githubConfig(provider), mapper));
             case "gitlab" -> new GitLabDiffSource(new GitLabClient(gitlabConfig(provider), mapper));
             default -> throw new IllegalStateException("Unsupported provider type: " + provider.type());
+        };
+    }
+
+    public dev.codespire.contract.port.PullRequestApprovalSource pullRequestApprovalSource(ScmProvider provider) {
+        return switch(provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubPullRequestApprovalSource(new GitHubClient(githubConfig(provider),mapper));
+            default -> new dev.codespire.contract.port.PullRequestApprovalSource() {};
+        };
+    }
+
+    public dev.codespire.contract.port.RepositoryPermissionSource repositoryPermissionSource(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubRepositoryPermissionSource(new GitHubClient(githubConfig(provider), mapper));
+            case "gitlab" -> new dev.codespire.scm.gitlab.GitLabRepositoryPermissionSource(new GitLabClient(gitlabConfig(provider), mapper));
+            case "bitbucket-cloud" -> new dev.codespire.scm.bitbucket.BitbucketRepositoryPermissionSource(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            default -> throw new IllegalStateException("Unsupported repository permission source");
+        };
+    }
+
+    public dev.codespire.contract.port.ActorDirectory actorDirectory(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubActorDirectory(new GitHubClient(githubConfig(provider), mapper));
+            case "gitlab" -> new dev.codespire.scm.gitlab.GitLabActorDirectory(new GitLabClient(gitlabConfig(provider), mapper));
+            case "bitbucket-cloud" -> new dev.codespire.scm.bitbucket.BitbucketActorDirectory(new BitbucketCloudClient(bitbucketConfig(provider), mapper));
+            case "atlassian" -> new dev.codespire.context.jira.JiraActorDirectory(new dev.codespire.context.jira.JiraClient(
+                    new dev.codespire.context.jira.JiraConfig(provider.baseUrl(), provider.authKind(), provider.authUsername(), provider.secret(), Set.of()), mapper));
+            default -> throw new IllegalStateException("Unsupported account directory");
         };
     }
 

@@ -47,7 +47,7 @@ public class ReviewRerunService {
     /**
      * @return true if the run was (re)started; false if the aggregate declined it (should not happen
      *         with force=true).
-     * @throws NotFoundException if the review or its workspace provider no longer exists.
+     * @throws NotFoundException if the review has no usable repository/account mapping.
      */
     public boolean rerun(String workspace, String slug, long pr) {
         RepoRef repo = new RepoRef(workspace, slug);
@@ -65,8 +65,8 @@ public class ReviewRerunService {
         // Broker the credential by REVIEW so a workspace shared across SCMs resolves the
         // right provider (the review's stored SCM type), not just the oldest by name.
         String scmCredential = workerCredentials.packForReview(reviewId)
-                .orElseThrow(() -> new NotFoundException("No enabled provider registered for workspace '"
-                        + workspace + "'. Add one under Settings -> Accounts."));
+                .orElseThrow(() -> new NotFoundException("No usable Reviewer account is selected for this review. "
+                        + "Repair its repository mapping and select an enabled Reviewer under Settings -> Repositories."));
 
         // Drop the worker's cached result + comment claims BEFORE re-requesting, so the worker re-runs
         // the LLM instead of re-emitting the stored result. This is what makes a re-run a genuinely

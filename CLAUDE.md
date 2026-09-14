@@ -19,6 +19,9 @@ services — see `LICENSING.md`. Never call the project "open source" in docs or
 
 ## Read first
 
+Before writing a new dashboard widget, check [spire-ui/docs/WIDGETS.md](spire-ui/docs/WIDGETS.md)
+for the existing components, vocabulary and account/person helpers.
+
 The design is fully specified in `docs/` — **treat those files as the source of truth**:
 
 | Doc | Contents |
@@ -32,72 +35,80 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | ADR-001..041 — every locked decision with its why. ADR-029..040 are the software factory's; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..045 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0, M1 and M2 delivered (PRs #95/#96/#119, 2026-09-02/03/04), M3–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3 implemented (PRs #95/#96/#119/#153); M3 final review pending, M4–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-The per-milestone story — what shipped, what each review round found, the traps each one paid for —
-is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-12**.
+Measured on **2026-09-14**. Delivery history is in docs/HISTORY.md; the consolidated
+[M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps all seven verified criteria to their
+proving slices and reviews. **M3 implementation is complete; final operator review is pending.**
+PR #153 remains draft. No merge or promotion to ready is authorized by this handoff.
 
-- **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
-  `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
-  (:34000). Three SCM adapters (Bitbucket Cloud, GitHub, GitLab) at full-flow parity — webhook →
-  review → conversation → ADR-019 reconciliation — verified live on all three (SMOKE-TEST Mode G).
-  Context: Jira, Confluence, GitHub Issues, GitLab Issues, `.codespire` repo rules, and the
-  repository knowledge base at rung 2 (`spire-context-code` + `worker.code_symbol`, ADR-026).
-  Per-repository prompts, `/finding`, learned memory + analytics (ADR-027), operator SCM sign-in
-  (ADR-028).
-- **Operations are delivered.** Hybrid OIDC operator auth with per-service URL prefixes (ADR-022);
-  Tink encryption at rest; the priced charge-line cost ledger (ADR-023), fleet spend caps and the
-  `refused` status (ADR-025), archive-not-delete (ADR-024); the operator attention panel; per-host
-  circuit breakers on SCM and LLM calls; provider-neutrality enforced by the `spire-arch` build check
-  (ADR-020); split licensing (ADR-021). CI/CD: nine GitHub Actions workflows, four production images
-  on GHCR, Compose + Helm + kustomize under `deploy/`, and the nightly `spire-e2e` tier against a
-  real containerised GitLab.
-- **Software factory M0–M2 are delivered (ADR-029..040; PRs #95, #96, #119 — 2026-09-02/03/04).**
-  `POST /api/runs` → `cs.run-commands` → `spire-run-worker` (:34083) → a three-container run unit on
-  Docker → push gate → a branch on the real remote. M1 added the run event stream, cancel over
-  `cs.run-control`, salvage-before-teardown, the orphan watchdog, idempotent dispatch that fails
-  closed, the harness credential pool, the corporate run-unit environment (FR-F14) and the checkable
-  agent image contract (`spire-agent-image verify`). **M2 made the reviewer close its own findings:**
-  `/fix` on a finding dispatches a run that pushes onto the pull request's own source branch
-  (ADR-040), bounded by two caps (per finding AND per review, FR-F32); a `PullRequestSink` port with
-  three adapters, so a run can end at a pull request rather than at a branch; `GET /api/runs`, the
-  run↔review join and the `/runs` screen; and `spire-run-worker` in **both packaged stacks behind
-  the `factory` compose profile** — opt-in because the Docker socket it mounts is root-equivalent
-  on the host. **The loop M2 exists to close has never been run end to end in one place**: the
-  dispatch, the push and the reconciliation are each proved separately, and a run unit cannot
-  reach the e2e stack's GitLab because `RunUnitSpec` has no network field (`docs/UNVERIFIED.md`).
-  **Next is M3** — `docs/factory/ROADMAP.md`. The two factory images are still not on GHCR.
-- **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
-  credentials in one registry. Context sources select a compatible account and retain their own
-  URL, project keys and path allowlists. V59 plus an idempotent startup reconciler moves legacy
-  credentials across Tink AADs atomically per source; failed rows remain recoverable. Account
-  rotation reaches every source, disabling an account stops its context resolution, and referenced
-  deletion returns the source names. Accounts show Used by and advisory scope reports. REVIEWER
-  and FACTORY remain separate scalar roles; CONTEXT has no workspace. Code credentials carry an
-  explicit platform through the worker contract. Repositories still show the existing serving
-  identities through unchanged role resolvers. Live token-family and rollout gaps are recorded in
-  UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 retains workspace
-  remodeling, per-repository push checks and handle-to-id allowlist resolution.
-- **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
-  (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-12):** 2954 Java tests across 336 suites, 0 failures,
-  1 skipped; 613 UI tests across 75 files; TypeScript clean. Java verification uses JDK 25,
-  Docker and Git's shell on PATH. Nine intentional mutations fail their targeted tests, including
-  migration rollback, credential equality, disabled-account filtering, platform dispatch,
-  provider-neutrality, unknown scopes, account-picker compatibility, legacy wire degradation
-  and retaining scope observations through outages. UI table layout was
-  observed in headless Chrome at 1280/1440/1920 widths. The nightly testE2e tier and a production
-  credential migration were not run for this change.
+- **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
+  Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
+  parity. Jira, Confluence, GitHub/GitLab Issues, repository rules and rung-2 code knowledge supply
+  context. Repository prompts, /finding, learned memory, analytics and operator SCM sign-in remain.
+- **Operations are delivered.** Hybrid OIDC uses separate service prefixes and session cookies;
+  stored sensitive content is encrypted with Tink. The charge ledger, fleet caps, refused status,
+  archive policy, attention, circuit breakers, provider-neutral boundaries and split licensing
+  remain. CI, Compose, Helm/kustomize and the separate GitLab e2e tier are present.
+- **M0–M2 execution and standalone /fix are delivered.** The Docker run unit, trusted publisher,
+  durable transcript/control, salvage and orphan watchdog, harness pool, corporate environment
+  and image contract remain. Per-finding and per-review fix caps still apply. The live chain was
+  proved on 2026-09-12 by runs 3987682681:1 and 3987682176:1, then re-proved on TEST PR #32 by
+  run 4003204361:1 on 2026-09-14: automatic push, next review, resolved thread and persisted
+  verdict, with the other six prior findings UNCHANGED. The TEST PR was closed and its exact
+  branch deleted; review/run history was retained. The development run worker remains stopped.
+- **M3 owns repositories, people and work-item policy.** Explicit repository-role bindings replace
+  account workspace lookup. People resolve to stable provider IDs and render observed handles;
+  source actor allowlists remain independent. /fix measures effective push access through the
+  selected reviewer, with explicit ALLOW/DENY overrides. V72 now drops only the unused account
+  workspace column after a fresh validated backup. IDs, ciphertext/AAD, context references,
+  bindings, immutable legacy mapping evidence and live history are preserved.
+- **M3 intake and approvals are durable.** GitHub/GitLab/Jira source parity is derived from adapters
+  and test sources. Unknown label attribution selects nothing. Current labels, pinned admission
+  bounds and the current ceiling restrict each next action. Scanner pages and uncertain tracker
+  writes survive real process death. Humans register actual specification and single-step plan
+  references; bodies stay transient. Suggest stops before BUILD, assisted requires PLAN approval,
+  and autonomous admits one prepared build. UI proofs compare phases, gates, decisions and runs.
+- **M3 item publication and takeover preserve authority through restart.** Item builds checkpoint
+  without pushing and retain their workspace. An exact current permit resumes only the publisher.
+  Dashboard answers, bound tracker commands and supported native PR reviews share ResolveGate.
+  Ordinary approving prose cannot approve; stale/dismissed reviews cannot resolve a gate.
+  Takeover uses recorded stable machine IDs across rename/rotation, supersedes gates, invalidates
+  pending effects and persists publication revocation before stopping compute. Actual JVM death
+  without an M1 cancel claim cannot restore publication authority. In-flight PR recovery records
+  the observed outcome once and keeps the item suspended. Resume requires a verified operator,
+  expected revision, note and fresh evidence; retired items cannot resume.
+- **Measured final validation:** 4076 Java tests across 452 suites and 30 modules,
+  zero failures/errors and 1 existing Windows symlink privilege skip. Forced testFast,
+  testServices and packaging passed sequentially. The full UI passed 742 tests across 93 files,
+  TypeScript and production build. Slice 10 adds four verified production mutations (the real
+  migration and separate read/INSERT/UPDATE guards); slice 9 has 78 distinct production mutations.
+  Earlier per-slice counts and selectors remain in the acceptance record, without claiming a
+  globally deduplicated total. Pinned Semgrep reports zero findings across 5 changed code files.
+  The final scan and rollout evidence are in
+  .claude/reviews/global/factory-m3-slice10.md.
+
+**Limits that remain:**
+
+- **Production VERIFY and LAND remain unavailable.** M4 owns the verifier; M3 does not ship one.
+- **No live item-build proof.** TEST PR #32 proves standalone /fix; real local-origin item tests
+  do not prove an item-linked build against a real forge.
+- **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
+  run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
+- **The two factory images are still not on GHCR.**
+- Per-forge identity and permission limits remain separate UNVERIFIED entries. Native external
+  gate answers and operator resume have no live proof. GitLab/Bitbucket native PR approvals and
+  Jira Data Center comment polling remain unavailable. Publication already in progress cannot
+  be recalled; no atomic ordering with a remote human push is claimed.
 
 ## Build & run
 
@@ -189,8 +200,8 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
   build-enforced for `spire-contract` and `spire-diff` by `PureModulesAreFrameworkFreeTest`
   (`spire-arch`), which permits only the JDK, those modules themselves, and one documented
-  exception: **`jackson-annotations`** (annotations only, no databind) on the sealed
-  `IntegrationEvent` / `ActionCommand` hierarchies, because those types *are* the Kafka wire
+  exception: **`jackson-annotations`** (annotations only, no databind) on the wire
+  event/command hierarchies and repository envelope records, because those types *are* the Kafka wire
   contract and their discriminators belong with them. Per-service mix-ins were considered and
   rejected: they spread one registry across every `ObjectMapper` in three services, where a missed
   site is a runtime wire break rather than a compile error. Adding a second exception means

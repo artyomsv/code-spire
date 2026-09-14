@@ -39,7 +39,7 @@ class ProviderClientsTest {
     }
 
     private static ScmProvider provider(String type, String baseUrl, ProviderRole role) {
-        return new ScmProvider(UUID.randomUUID(), "code-spire-bot", type, baseUrl, "ws", "bearer",
+        return new ScmProvider(UUID.randomUUID(), "code-spire-bot", type, baseUrl, "bearer",
                 null, "secret", "123", true, List.of(), "code-spire-bot", "INTERACTIVE", role);
     }
 

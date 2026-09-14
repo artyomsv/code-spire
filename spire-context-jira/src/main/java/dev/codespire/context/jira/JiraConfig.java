@@ -27,6 +27,7 @@ public record JiraConfig(String baseUrl, String authKind, String username, Strin
     public JiraConfig {
         require(baseUrl, "baseUrl");
         require(authKind, "authKind");
+        if (!Set.of("basic", "bearer").contains(authKind)) throw new IllegalArgumentException("Jira requires basic or bearer authentication");
         require(secret, "secret");
         if ("basic".equals(authKind)) {
             require(username, "username");

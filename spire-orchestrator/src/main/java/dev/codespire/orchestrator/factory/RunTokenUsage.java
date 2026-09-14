@@ -193,6 +193,7 @@ final class RunTokenUsage {
     private static Map<String, Long> usageOf(RunResult result) {
         return switch (result) {
             case RunResult.RunFinished finished -> finished.tokenUsage();
+            case RunResult.RunWorkReady ready -> ready.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
         };
