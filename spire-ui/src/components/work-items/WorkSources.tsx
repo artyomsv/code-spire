@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchProviders, type ProviderView } from '../../api';
 import { actorLabel, type ActorResult } from '../actorsApi';
 import { fetchRepositories, type Repository } from '../repositories/repositoriesApi';
@@ -6,29 +6,13 @@ import * as api from './workSourcesApi';
 import { ListTodo } from 'lucide-react';
 import { accountOptionLabel } from '../accounts';
 import SettingField from '../SettingField';
+import FormDialog from '../FormDialog';
 
 const kinds: Record<api.WorkSourceType, string> = { GITHUB: 'GitHub', GITLAB: 'GitLab', JIRA: 'Jira' };
 function origin(base: string) { try { return new URL(base).origin; } catch { return ''; } }
 function compatible(type: api.WorkSourceType, account: ProviderView) {
   return account.enabled && account.type === (type === 'JIRA' ? 'atlassian' : type.toLowerCase())
     && (account.authKind === 'bearer' || type === 'JIRA' && account.authKind === 'basic');
-}
-
-/**
- * The app's dialog chrome, so a create or edit never renders inline beside the list it mutates.
- * `fieldset disabled` is load-bearing: it locks every control while a save is in flight, so a
- * second click cannot submit twice. `form-lock` only strips the fieldset's native border.
- */
-function FormDialog({ title, busy, onClose, actions, children }:
-  { title: string; busy: boolean; onClose: () => void; actions: ReactNode; children: ReactNode }) {
-  return <div className="modal-overlay">
-    <div className="modal wide" onClick={event => event.stopPropagation()} role="dialog" aria-modal="true">
-      <div className="modal-head"><h3>{title}</h3>
-        <button className="iconbtn" type="button" onClick={onClose} aria-label="Close">✕</button></div>
-      <fieldset className="modal-body scroll form-lock" aria-label={title} disabled={busy}>{children}</fieldset>
-      <div className="modal-actions">{actions}</div>
-    </div>
-  </div>;
 }
 
 export default function WorkSources() {
