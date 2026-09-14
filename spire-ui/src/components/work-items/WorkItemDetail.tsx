@@ -1,4 +1,6 @@
 import WorkItemPolicy from './WorkItemPolicy';
+import WorkItemJourney from './WorkItemJourney';
+import WorkItemPreparation from './WorkItemPreparation';
 import { useEffect, useState, useRef } from 'react';
 import { Link, useParams } from 'react-router';
 import { getWorkItem, getWorkItemTracker, resumeWorkItem, type WorkItemDetail as Detail, type WorkItemTracker } from '../../api';
@@ -27,12 +29,14 @@ export default function WorkItemDetail() {
     {error ? <p role="alert">{error}</p> : !item ? <p>Loading work item…</p> : <>
       <h2>{item.issueKey}</h2>
       <p><a href={item.trackerUrl} target="_blank" rel="noreferrer">Open ticket in tracker</a> · {item.repository}</p>
-      <h3>Workflow</h3><WorkflowStatus status={item.workflowStatus} />
+      {item.preparation ? <WorkItemJourney item={item} /> : <><h3>Workflow</h3><WorkflowStatus status={item.workflowStatus} />
       <p>{workReason(item.reason)}</p>
-      <p>Phase: {item.phase} · Generation: {item.generation}</p>
+      <p>Phase: {item.phase} · Generation: {item.generation}</p></>}
       <WorkItemPolicy item={item} />
       {item.gate && <p>Approval: {item.gate.state} · <Link to="/approvals">Open approvals</Link></p>}
       <WorkItemActions key={`${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
+      <WorkItemPreparation key={`preparation:${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
+      <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh workflow</button>
       <h3>Applied labels</h3>
       <ul>{item.appliedLabels.map(label => <li key={label.label}><strong>{label.label}</strong>: actor {label.actorId}, {label.origin.toLowerCase().split('_').join(' ')}; profile version {label.profileVersion}</li>)}</ul>
       <h3>Ignored labels</h3>

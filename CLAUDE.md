@@ -77,9 +77,9 @@ describe the new current state. Everything below is true as of **2026-09-14**.
   `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
   chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
   `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–7 (PR #153) add repository ownership, explicit role bindings,
+  (`docs/UNVERIFIED.md`). **M3 slices 1–8a (PR #153) add repository ownership, explicit role bindings,
   resolved person entry, effective /fix push authorization and durable GitHub/GitLab/Jira ticket intake.**
-  Criteria 7, 6, 5 and 3 are independently verified, including the separate
+  Criteria 2–7 are independently verified, including the separate
   membership and attribution proofs accepted in round 8. /fix permission reads hold no database transaction across
   the network: short revision snapshots detect rotation and rebinding. Work sources own their
   actor allowlists; incomplete attribution selects nothing. Workflow history and Work items
@@ -88,7 +88,12 @@ describe the new current state. Everything below is true as of **2026-09-14**.
   encrypted tracker effects commit uncertainty before HTTP and recover by reading evidence.
   GitLab hooks and Jira polling have per-arm measured limits. Slice 7 adds current-policy phase
   decisions, numeric caps, visible clamps and durable dashboard approvals. An actual child-JVM
-  kill/restart proves gate expiry and reservation release. Artifact/build handoff remains slice 8.
+  kill/restart proves gate expiry and reservation release. Slice 8a registers fetched specification
+  and single-step plan versions, binds human decisions to them, and joins one M2 build to its phase
+  attempt through durable dispatch and result records. Suggest stops before build, assisted requires
+  plan approval, and autonomous admits a build in the explicit test execution boundary. Production
+  item execution remains unavailable until slice 8b supplies the publication hold; no M4 verifier
+  or live item-build proof is claimed.
   The two factory images are still not on GHCR.
 - **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
   credentials in one registry. Context sources select a compatible account and retain their own
@@ -103,16 +108,18 @@ describe the new current state. Everything below is true as of **2026-09-14**.
   database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
 - **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
   (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-14):** 3649 Java tests across 418 suites and 30 modules,
+- **Measured, not estimated (2026-09-14):** 3739 Java tests across 425 suites and 30 modules,
   zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
-  packaging passed sequentially, including all three actual scanner/gate JVM kill/restart cases.
-  The full UI passed 701 tests across 86 files; all 40 route tests passed in three shuffled orders.
-  Final presentation changes passed 100 targeted tests and the production build. Slice 7 has
-  123 mutation checks covering 120 distinct production changes plus one explicitly requested
-  test-inheritance mutation. Pinned Semgrep reports zero findings over all 55 changed source/test
-  files; the existing api.ts parser warning was separately reproduced on accepted 721f4084.
-  Evidence: .claude/reviews/global/factory-m3-slice7.md. Criteria 3, 5, 6 and 7 remain independently
-  verified; 2 and 4 are ready for review. Live limits remain in UNVERIFIED. No live run worker was started.
+  packaging passed sequentially. The complete orchestrator suite and architecture checks passed again
+  after the final dispatch fix. The full UI passed 711 tests across 88 files; all 40 route tests
+  passed in three shuffled orders. Final form/journey/style checks passed 12 tests and the production
+  build. Slice 8a has 92 checks covering 92 distinct production mutations, each with one isolated
+  assertion failure, scratch-byte restoration and a passing restored case. Pinned Semgrep reports
+  zero findings across 46 changed source/test/configuration/migration files; api.ts's four existing
+  optional-field parser spans were separately reproduced on accepted 2e42ffca with identical text.
+  Evidence: .claude/reviews/global/factory-m3-slice8a.md. Criteria 2–7 are independently verified;
+  criterion 1 is ready for review. Publication hold, real-container item execution and another live
+  standalone /fix proof remain slice 8b. No live run worker was started.
 
 ## Build & run
 

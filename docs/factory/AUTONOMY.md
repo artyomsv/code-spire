@@ -11,7 +11,7 @@ either the typo waits for a human or the auth change does not.
 ## 1. The eight phases
 
 ```
-intake ─► spec ─► plan ─► build ─► verify ─► review ─► deliver ─► land
+intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► review ─► land
 ```
 
 | Phase | What happens | Output |
@@ -21,9 +21,15 @@ intake ─► spec ─► plan ─► build ─► verify ─► review ─► d
 | **plan** | specification → ordered steps, each a vertical slice — *one model call, no sandbox* | plan, ready for a gate |
 | **build** | one sandboxed run per step — *harness* | commits on a branch |
 | **verify** | the repository's own back-pressure runs — *harness* | pass / fail / **unverified** (fails the step, never the item) |
-| **review** | the existing reviewer reviews the branch | findings, reconciled across rounds |
 | **deliver** | push and open a pull request | pull request URL |
+| **review** | the existing reviewer reviews the delivered pull request | findings, reconciled across rounds |
 | **land** | merge and close the work item | merged, or handed to a human |
+
+Delivery precedes review because the existing reviewer consumes an actual pushed pull request
+(ADR-045). M3's [prepared task handoff](PREPARED-TASKS.md) accepts existing specification and
+single-step plan references; generation and verification remain M4 capabilities. Slice 8a proves
+the plan/build policy boundary with an explicit test transport. Production item builds remain
+unavailable until slice 8b supplies the publication hold; missing phases never report completion.
 
 ### Why steps are vertical slices
 
@@ -67,26 +73,29 @@ factory:
   ceiling: assisted                       # no work item in this repository may exceed this
   profiles:
     suggest:
+      intake: auto
       spec: auto
       plan: auto
       build: off
       deliver: off
       land: off
     assisted:
+      intake: auto
       spec: auto
       plan: approve                       # a human approves the plan
       build: auto
       verify: auto
-      review: auto
       deliver: draft_pr
+      review: auto
       land: approve
     autonomous:
+      intake: auto
       spec: auto
       plan: auto
       build: auto
       verify: auto
-      review: auto
       deliver: pr
+      review: auto
       land: auto_if_green                 # top rung; unwired until explicitly enabled
   labels:
     "spire:suggest":   suggest

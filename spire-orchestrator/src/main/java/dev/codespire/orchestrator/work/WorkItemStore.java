@@ -110,10 +110,14 @@ public class WorkItemStore {
     }
 
     private void projectExecution(Connection c,WorkItemEvent item) throws SQLException {
-        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED").contains(item.milestone()))
+        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED").contains(item.milestone())) {
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
+        }
         try(PreparedStatement ps=c.prepareStatement("UPDATE work_item SET slot_reserved=? WHERE id=?")) {
             ps.setBoolean(1,item.progress().reserved());ps.setString(2,item.workItemId());ps.executeUpdate();
         }
@@ -138,5 +142,9 @@ public class WorkItemStore {
             ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());
             ps.setString(4,progress.attemptPhase());ps.setString(5,progress.attemptState());ps.setTimestamp(6,Timestamp.from(progress.startedAt()));ps.executeUpdate();
         }
+        if(item.preparation()!=null && "build".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()))
+            try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_run_effect(attempt_id,work_item_id,generation,state) VALUES (?,?,?,'pending') ON CONFLICT DO NOTHING")) {
+                ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());ps.executeUpdate();
+            }
     }
 }

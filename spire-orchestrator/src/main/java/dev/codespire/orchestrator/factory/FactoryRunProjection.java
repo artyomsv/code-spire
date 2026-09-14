@@ -583,7 +583,10 @@ public class FactoryRunProjection {
      *     wording for an absent task rather than inventing one
      */
     public record PullRequestPlan(String kind, String baseBranch, String branch, String taskSummary,
-                                  Long prNumber) {
+                                  Long prNumber,String workItemId) {
+        public PullRequestPlan(String kind,String baseBranch,String branch,String taskSummary,Long prNumber) {
+            this(kind,baseBranch,branch,taskSummary,prNumber,null);
+        }
 
         /** A run that already has one does not get a second: the forge is asked once. */
         public boolean alreadyProposed() {
@@ -592,7 +595,7 @@ public class FactoryRunProjection {
     }
 
     private static final String PULL_REQUEST_PLAN = """
-            SELECT kind, base_branch, branch, task_summary, pr_number FROM factory_run
+            SELECT kind, base_branch, branch, task_summary, pr_number, work_item_id FROM factory_run
              WHERE run_id = ?
             """;
 
@@ -621,7 +624,7 @@ public class FactoryRunProjection {
                 long number = rs.getLong("pr_number");
                 Long proposed = rs.wasNull() ? null : number;
                 return Optional.of(new PullRequestPlan(rs.getString("kind"), rs.getString("base_branch"),
-                        rs.getString("branch"), rs.getString("task_summary"), proposed));
+                        rs.getString("branch"), rs.getString("task_summary"), proposed,rs.getString("work_item_id")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read the pull-request plan for " + runId, e);

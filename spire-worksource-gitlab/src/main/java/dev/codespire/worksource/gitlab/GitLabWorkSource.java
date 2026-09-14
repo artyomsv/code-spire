@@ -58,6 +58,13 @@ public final class GitLabWorkSource implements WorkSource {
         for (JsonNode issue : response.body()) result.add(location(issue));
         return new WorkPage<>(result, next(response, path, page));
     }
+    @Override public WorkIssueLocation resolve(String issueKey) {
+        if (issueKey == null || !issueKey.matches("[1-9][0-9]*")) throw failure("Enter an issue number in this source.");
+        WorkIssueLocation found = location(evidence(read, projectPath() + "/issues/" + issueKey).body());
+        if (!issueKey.equals(found.issueKey())) throw failure("The resolved issue number changed.");
+        return found;
+    }
+
     @Override public Fetch fetch(WorkIssueLocation issue) {
         try {
             requireIssue(issue);

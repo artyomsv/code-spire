@@ -10,9 +10,11 @@ Slice 5 is locally complete: signed ticket intake, durable bookkeeping, and dist
 membership/attribution mutations pass, with full Java/UI/build/scanner evidence.
 Round 8 independently verified criterion 3; round 9 accepted the route teardown correction.
 Slice 6 is pushed on 721f4084 with source parity, safe writes and actual JVM restart evidence.
-Round 10 accepted slice 6. Slice 7 implements full policy bounds, visible clamps and durable
-dashboard gates, including actual JVM restart evidence. Criteria 2 and 4 are ready for independent
-review; criteria 3, 5, 6 and 7 remain independently verified. Slices 8–10 and criterion 1 remain pending.
+Round 10 accepted slice 6. Round 11 accepted slice 7 on fully green 2e42ffca with no findings;
+criteria 2 and 4 are independently verified. Criteria 2–7 are now verified. Slice 8a implements
+the remaining criterion's prepared-task handoff and plan/build journeys; its verification is
+complete locally and recorded in the slice evidence. Criterion 1 awaits independent review.
+Production publication remains held until slice 8b; slices 8b–10 remain pending.
 Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
@@ -455,28 +457,28 @@ expiry and operator answers.
 ## Slice 8a — prepared task to policy-controlled build
 
 **Files:** artifact reference handoff, dispatcher, run-result bridge, item/run FK metadata,
-`FactoryPullRequests`, `PullRequestSink` and all three arms, work-item UI.
+`FactoryPullRequests`, all three work-source arms, work-item UI. Sink draft support belongs to 8b.
 
 **Produces:** criterion 1's accepted M3 journeys; actual one-task build and policy-aware delivery
 boundaries. No production verifier is invented to reach the delivery test cases.
 
-- [ ] Apply the accepted manual-artifact/plan-build proof boundary. Missing capabilities remain
+- [x] Apply the accepted manual-artifact/plan-build proof boundary. Missing capabilities remain
   waiting. Correct the eight-phase diagram in `docs/factory/AUTONOMY.md` and affected PRD/
   architecture diagrams in this slice: `intake → spec → plan → build → verify → deliver → review
   → land`. Record the order in ADR-045; its acceptance dependency is discharged.
-- [ ] Write `WorkItemJourneyIT.threeProfilesProduceDifferentVisibleJourneys` and UI journey test
+- [x] Write `WorkItemJourneyIT.threeProfilesProduceDifferentVisibleJourneys` and UI journey test
   from the acceptance matrix. Use real persisted policy/source/item data; scripted execution is
   permitted only in tests and identified as such. Also write
   `WorkItemRunBridgeTest.itemRunCannotUseStandaloneAutomaticProposal`,
   `WorkItemRunBridgeTest.duplicateResultAdvancesTheItemOnlyOnce`,
   `WorkItemRunBridgeTest.ceilingChangesBeforeDeliveryPreventTheProposal`.
-- [ ] Fetch human-supplied tracker artifact references/digests and bind gates to them. Missing or
+- [x] Fetch human-supplied tracker artifact references/digests and bind gates to them. Missing or
   changed artifacts require input/new approval. Dispatch through the existing run assembly/caps
   using the repository's selected FACTORY identity and stable item/attempt linkage.
-- [ ] Persist an effect claim before dispatch, recheck current policy before publishing and make
+- [x] Persist an effect claim before dispatch, recheck current policy before publishing and make
   run/result association recoverable after crash. Do not reset attempts on re-admission or charge
   the same run result twice. Existing standalone runs remain outside work-item gates.
-- [ ] Commit the artifact handoff and dispatch/result join for review. Before 8b provides a
+- [x] Commit the artifact handoff and dispatch/result join for review. Before 8b provides a
   trustworthy publication hold, item-linked real execution stays capability-unavailable; the
   runnable 8a policy proof uses the explicit test execution boundary, never an auto-pushing M2
   run advertised as held. Slice 8b closes the real-container execution proof.
@@ -563,7 +565,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-Criteria 7, 6, 5 and 3 are independently verified, with the slice 2–5 mutation ledgers. Round 8 accepted the distinct membership and attribution proofs; criteria 1, 2 and 4 remain for later slices. `O-test`
+Criteria 2–7 are independently verified, with the slice 2–7 mutation ledgers. Round 8 accepted the distinct membership and attribution proofs; round 11 verified both visible clamping and current-ceiling continuation. Criterion 1 remains for slice 8a review. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

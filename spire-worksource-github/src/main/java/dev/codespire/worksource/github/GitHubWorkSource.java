@@ -73,6 +73,15 @@ public final class GitHubWorkSource implements WorkSource {
         } catch (RuntimeException failure) { throw unavailable("GitHub issue candidates could not be read completely."); }
     }
 
+    @Override public WorkIssueLocation resolve(String issueKey) {
+        if (issueKey == null || !issueKey.matches("[1-9][0-9]*")) throw unavailable("Enter an issue number in this source.");
+        JsonNode node = read.getEvidence("/repos/" + scope.name() + "/issues/" + issueKey).body();
+        if (node.has("pull_request")) throw unavailable("An artifact must be a tracker ticket, not a pull request.");
+        WorkIssueLocation found = location(node);
+        if (!issueKey.equals(found.issueKey())) throw unavailable("The resolved issue number changed.");
+        return found;
+    }
+
     @Override public Fetch fetch(WorkIssueLocation issue) {
         try {
             requireIssue(issue);

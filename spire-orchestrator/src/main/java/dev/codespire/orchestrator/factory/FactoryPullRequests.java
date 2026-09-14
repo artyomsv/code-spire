@@ -67,7 +67,7 @@ public class FactoryPullRequests {
             return;
         }
         FactoryRunProjection.PullRequestPlan plan = found.get();
-        if (!RunKind.BUILD.name().equals(plan.kind()) || plan.alreadyProposed()) {
+        if (plan.workItemId()!=null || !RunKind.BUILD.name().equals(plan.kind()) || plan.alreadyProposed()) {
             return;
         }
         try {

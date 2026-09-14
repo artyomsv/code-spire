@@ -34,6 +34,11 @@ class GitHubWorkSourceTest {
         api.stubFor(get(urlEqualTo(path+"/comments?per_page=100&page=1")).willReturn(okJson("[]")));
     }
     @AfterEach void stop() { api.stop(); }
+    @Test void aPullRequestCannotBeRegisteredAsAnArtifact() {
+        ObjectNode pullRequest=ticket();pullRequest.putObject("pull_request").put("url",api.baseUrl()+"/repos/"+scope+"/pulls/42");
+        api.stubFor(get(urlEqualTo(path)).willReturn(okJson(pullRequest.toString())));
+        assertThrows(WorkSourceException.class,()->source.resolve("42"));
+    }
     GitHubIssueConfig config() { return new GitHubIssueConfig(api.baseUrl(),"bearer","TEST-token",Set.of(scope)); }
     ObjectNode ticket() {
         ObjectNode node = mapper.createObjectNode().put("id",50001).put("number",42)

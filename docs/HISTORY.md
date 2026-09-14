@@ -1983,3 +1983,29 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   cover 120 distinct production changes and the authorized inheritance check. Criteria 2 and 4
   are ready for independent review; 3, 5, 6 and 7 remain verified. Artifact/build handoff remains
   slice 8. No dev data, backup, live tracker write or live run worker was used.
+
+- **Factory M3 slice 8a — prepared tasks and distinct build journeys (PR #153, 2026-09-14).**
+  Round 11 accepted slice 7 with no findings and independently verified criteria 2 and 4,
+  bringing the count to six of seven. Humans register actual tracker specification and single-step
+  plan versions. The dashboard reads the specification digest before the plan exists and supplies
+  its JSON format; all three tracker arms resolve stable scoped identities through their selected
+  source. Artifact bodies remain transient. The existing phase policy accepts manual evidence,
+  binds approvals to artifact versions and build coordinates, and keeps its real approval branch.
+  Suggest stops before build with zero runs; assisted opens a durable plan gate with zero runs,
+  then records its human answer and admits one build; autonomous admits one build without a gate.
+  The UI proof receives no profile names and exposes actual phases, gates, decisions and runs.
+  V69 joins a phase attempt to its M2 run and commits uncertainty before broker dispatch. Dispatch
+  compares current authority with the original attempt decision, so intake redelivery cannot
+  authorize a pending build after a lowered ceiling. Encrypted terminal-result inboxes recover
+  across the completion/acknowledgement boundary; duplicate old results cannot change a new phase
+  attempt. Usage survives readmission, unknown potential spend blocks, and M2's narrow pre-agent
+  failure classification permits repair without inventing a purchased call. Associated runs cannot
+  enter standalone automatic PR creation. Verification caught an overflowing JSON schema version,
+  the pending-dispatch policy race, absent-charge accounting that would block a proven pre-agent
+  failure, and a late deployment validation error that could escape instead of refusing a pending
+  build durably. Production item execution remains unavailable until the slice 8b publication hold;
+  the policy proof explicitly supplies a test transport. No M4 verifier, real-container item build,
+  draft delivery or live-forge journey is claimed by 8a. 3739 Java tests, 711 UI tests, packaging and
+  pinned Semgrep passed. 92 checks cover 92 distinct production mutations. Criterion 1 is ready
+  for independent review. Evidence is in `.claude/reviews/global/factory-m3-slice8a.md`. No dev data,
+  second backup or live worker was used.

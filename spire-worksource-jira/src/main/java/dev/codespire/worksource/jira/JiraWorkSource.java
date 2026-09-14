@@ -69,6 +69,14 @@ public final class JiraWorkSource implements WorkSource {
         for (JsonNode issue : response.path("issues")) result.add(location(issue));
         return new WorkPage<>(result, next);
     }
+    @Override public WorkIssueLocation resolve(String issueKey) {
+        if (issueKey == null || !issueKey.matches(java.util.regex.Pattern.quote(scope.name()) + "-[1-9][0-9]*"))
+            throw failure("Enter an issue key in this source's project.");
+        WorkIssueLocation found = location(evidence(read, "/rest/api/2/issue/" + issueKey + "?fields=project").body());
+        if (!issueKey.equals(found.issueKey())) throw failure("The resolved issue key changed.");
+        return found;
+    }
+
     @Override public Fetch fetch(WorkIssueLocation issue) {
         try {
             requireIssue(issue);

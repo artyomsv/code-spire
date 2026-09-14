@@ -23,7 +23,7 @@ own autonomy label says they should.
 tracker issue
      │
      ▼
- intake ─► spec ─► plan ─► build ─► verify ─► review ─► deliver ─► land
+ intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► review ─► land
      │       │       │       │        │         │          │         │
      └───────┴───────┴───────┴────────┴─────────┴──────────┴─────────┘
               each phase is a gate the work item's autonomy profile

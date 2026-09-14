@@ -13,7 +13,7 @@ public final class WorkItemLifecycle {
                                           long policyRevision, WorkItemEvent.Authority authority, WorkPolicy.Selection policy, WorkItemEvent previous) {
         if(previous!=null && previous.policyRevision()==policyRevision && previous.authority().equals(authority)
                 && previous.policy().equals(policy) && previous.issue().equals(issue))return previous;
-        if (previous != null && (previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
+        if (previous != null && (previous.preparation() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
             return previous.decision(policyRevision,authority,policy,previous.phase(),previous.workflowStatus(),previous.reason(),
                     "POLICY_OBSERVED",previous.gate(),previous.progress());
         String intake = policy.effective().getOrDefault(WorkPolicy.Phase.INTAKE, "off");
@@ -61,14 +61,17 @@ public final class WorkItemLifecycle {
         if("complete".equals(item.phase()))return state(item,"completed","all_phases_completed","WORK_ITEM_COMPLETED",item.gate(),item.progress().reserve(false));
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
+        if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("approve".equals(mode) && !approved) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
-            WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),null,
+            WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),item.preparation()==null?null:item.preparation().binding(),
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }
         if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId);
+        if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
+            return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
         return state(item,"active","phase_started","PHASE_STARTED",item.gate(),item.progress().start(decisionId,item.phase(),now));
     }

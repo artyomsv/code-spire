@@ -30,13 +30,16 @@ public class WorkItemResource {
         return jakarta.ws.rs.core.Response.status(result.status()).entity(Map.of("reason",result.reason())).build();
     }
     public record Profile(UUID id, String name, long version) {}
-    public record Milestone(long sequence, String type, String reason, Instant occurredAt) {}
+    public record Milestone(long sequence, String type, String reason, Instant occurredAt,String phase,String workflowStatus,
+                            UUID attemptId,UUID gateId,String gateState,String resolver) {}
+    public record Build(UUID attemptId,String state,String runId,String reason,long generation) {}
     public record View(String id, UUID sourceId, UUID repositoryId, String repository, String issueKey, String trackerUrl,
                        long generation, String phase, String workflowStatus, String reason, Profile profile, long revision,
                        Instant updatedAt, List<WorkPolicy.IgnoredLabel> ignoredLabels, List<Milestone> events,
                        Map<WorkPolicy.Phase,String> effectiveModes, Map<WorkPolicy.Phase,String> admittedModes,
                        String policyReason, Profile ceiling, List<WorkPolicy.AppliedLabel> appliedLabels,
-                       WorkPolicyLimits effectiveLimits,WorkPolicyLimits admittedLimits,WorkGate gate,WorkProgress progress) {}
+                       WorkPolicyLimits effectiveLimits,WorkPolicyLimits admittedLimits,WorkGate gate,WorkProgress progress,
+                       WorkPreparation preparation,List<Build> builds) {}
     public record Page(List<View> items, long total, int offset, int limit) {}
     public record Tracker(String title, String body, String trackerStatus) {}
 
@@ -74,11 +77,20 @@ public class WorkItemResource {
                     WorkItemEvent state = (WorkItemEvent) event.payload();
                     boolean clamp = "POLICY_CLAMPED".equals(state.milestone());
                     return new Milestone(event.sequence(), "POLICY_OBSERVED".equals(state.milestone()) ? event.eventType() : state.milestone(),
-                            clamp ? state.policy().reason() : state.reason(), event.occurredAt());
+                            clamp ? state.policy().reason() : state.reason(), event.occurredAt(),state.phase(),state.workflowStatus(),
+                            state.progress().attemptId(),state.gate()==null?null:state.gate().id(),state.gate()==null?null:state.gate().state(),state.gate()==null?null:state.gate().resolver());
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress());
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id));
+    }
+
+    private List<Build> builds(String id) {
+        try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("SELECT attempt_id,state,run_id,reason,generation FROM work_run_effect WHERE work_item_id=? ORDER BY created_at,attempt_id")) {
+            ps.setString(1,id);try(ResultSet rs=ps.executeQuery()) {
+                List<Build> rows=new ArrayList<>();while(rs.next())rows.add(new Build(rs.getObject(1,UUID.class),rs.getString(2),rs.getString(3),rs.getString(4),rs.getLong(5)));return List.copyOf(rows);
+            }
+        }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
 
     @GET @Path("/{id}/tracker")

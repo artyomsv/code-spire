@@ -10,6 +10,10 @@ public interface WorkSource {
     default String capabilityDetail() { return "Consult the selected source's supported operations."; }
     WorkPage<WorkIssueLocation> candidates(String cursor);
     Fetch fetch(WorkIssueLocation issue);
+    /** Resolve an operator-entered key inside this source, then use the stable identity for later reads. */
+    default WorkIssueLocation resolve(String issueKey) {
+        throw new WorkSourceException("Ticket reference resolution is unavailable for this source");
+    }
     WorkPage<LabelEvent> labelEvents(WorkIssueLocation issue, String cursor);
 
     /** Writes use a distinct facade from the context provider's read-only interface. */

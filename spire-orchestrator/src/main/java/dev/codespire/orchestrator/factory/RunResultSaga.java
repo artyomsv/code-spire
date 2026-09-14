@@ -32,6 +32,9 @@ public class RunResultSaga {
     @Inject
     FactoryPullRequests pullRequests;
 
+    @Inject
+    dev.codespire.orchestrator.work.WorkItemRunBridge workItems;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {
@@ -51,6 +54,7 @@ public class RunResultSaga {
             // first would let a ledger outage delay a terminal status that is already known.
             charges.record(result);
             credentials.reactTo(result);
+            if(workItems.accept(result))return;
             // LAST, and after the projection on purpose: it reads the row the projection just
             // wrote, it talks to a forge, and it must not delay the terminal status an operator is
             // waiting on. It records its own failures and throws none of them back here.

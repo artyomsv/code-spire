@@ -21,9 +21,19 @@ public class WorkItemTransitions {
     @Inject DataSource dataSource;
     @Inject WorkClock clock;
     @Inject WorkPhaseCapability capability;
-    public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence) {}
+    @Inject WorkArtifacts artifacts;
+    @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
+    public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
+        public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
+            this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
+        }
+    }
     public record Outcome(int status,String reason,WorkItemEvent item) {}
-    public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls) {}
+    public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown) {
+        public PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls) {
+            this(attemptId,successful,wallSeconds,costMillicents,calls,true);
+        }
+    }
 
     WorkItemEvent admission(WorkItemEvent next,long historySize) {
         if(next.gate()==null && "capability_unavailable".equals(next.workflowStatus())
@@ -34,13 +44,13 @@ public class WorkItemTransitions {
 
     public Outcome resume(String id,long expectedRevision,boolean readmit) {
         WorkItemEvent item=require(id);
-        return advance(id,expectedRevision,observe(item.sourceId(),item.issue()),readmit,null);
+        return advance(id,expectedRevision,observe(item),readmit,null);
     }
 
     /** Called by a bound integration result, never exposed as a dashboard success switch. */
     public Outcome complete(String id,PhaseResult result) {
         WorkItemEvent item=require(id);
-        return advance(id,-1,observe(item.sourceId(),item.issue()),false,Objects.requireNonNull(result));
+        return advance(id,-1,observe(item),false,Objects.requireNonNull(result));
     }
 
     Outcome advance(String id,long expected,Observation observed,boolean readmit,PhaseResult result) {
@@ -50,6 +60,7 @@ public class WorkItemTransitions {
                 lockItem(c,id);
                 var history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
                 if(expected>=0 && history.size()!=expected)return new Outcome(409,"work_item_changed",item);
+                if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 if(result!=null) {
                     try(PreparedStatement ps=c.prepareStatement("SELECT state FROM work_phase_attempt WHERE id=? AND work_item_id=?")) {
                         ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
@@ -71,15 +82,21 @@ public class WorkItemTransitions {
                     history=store.history(id);
                 }
                 if(result!=null) {
+                    WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
+                    if(!result.usageKnown())progress=progress.unknownUsage();
                     next=state(next,result.successful()?"awaiting_input":"failed",result.successful()?"phase_completed":"phase_failed",
-                            result.successful()?"PHASE_COMPLETED":"PHASE_FAILED",next.gate(),next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls()));
+                            result.successful()?"PHASE_COMPLETED":"PHASE_FAILED",next.gate(),progress);
                     store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
                     next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
                 }
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
-                else next=enter(next,history.size(),false,clock.now());
+                else if(observed.artifacts().failure()!=null)next=state(next,"awaiting_input",observed.artifacts().failure(),"ARTIFACTS_REQUIRED",next.gate(),next.progress().reserve(false));
+                else {
+                    next=enterPrepared(c,history,next,false,clock.now());
+                    history=store.history(id);
+                }
                 store.appendDecision(c,history,next,"transition:"+UUID.randomUUID());
                 return new Outcome(200,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
@@ -92,10 +109,23 @@ public class WorkItemTransitions {
                 capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID());
     }
 
+    /** Accept fetched manual evidence through each actual policy branch; never invent an executor result. */
+    private WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
+                                        WorkItemEvent item,boolean approved,Instant now) throws SQLException,java.io.IOException {
+        WorkItemEvent next=enter(item,history.size(),approved,now);
+        while("ARTIFACT_ACCEPTED".equals(next.milestone())) {
+            store.appendDecision(c,history,next,"artifact:"+next.preparation().binding()+":"+next.phase());
+            history=store.history(next.workItemId());
+            next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(next.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
+            next=enter(next,history.size(),false,now);
+        }
+        return next;
+    }
+
     public Outcome answer(UUID gateId,long expectedVersion,String key,boolean approve,String note,String resolver) {
         if(key==null || key.isBlank() || resolver==null || resolver.isBlank())throw new IllegalArgumentException("A decision identity is required");
         String id=gateItem(gateId);WorkItemEvent item=require(id);
-        Observation observed=observe(item.sourceId(),item.issue());
+        Observation observed=observe(item);
         return QuarkusTransaction.requiringNew().call(()-> {
             try(Connection c=dataSource.getConnection()) {
                 if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
@@ -109,6 +139,10 @@ public class WorkItemTransitions {
                 WorkItemEvent next;int status=200;
                 if(!now.isBefore(gate.expiresAt())) { next=expire(current,gate);status=409; }
                 else if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),current);
+                else if("artifacts_unavailable".equals(observed.artifacts().failure()))return new Outcome(503,"artifacts_unavailable",current);
+                else if(observed.artifacts().failure()!=null || !Objects.equals(gate.artifact(),current.preparation()==null?null:current.preparation().binding())) {
+                    next=state(current,"awaiting_input","artifacts_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,key,note),current.progress().reserve(false));status=409;
+                }
                 else if(gate.policyRevision()!=observed.policy().revision() || !gate.authority().equals(authority(observed.source()))
                         || gate.itemRevision()!=history.size() || gate.generation()!=current.generation() || !gate.phase().equals(current.phase())) {
                     next=state(current,"stopped","policy_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,key,note),current.progress().reserve(false));status=409;
@@ -125,7 +159,8 @@ public class WorkItemTransitions {
                     if(approve) {
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
-                        next=enter(next,history.size(),true,now);
+                        next=enterPrepared(c,history,next,true,now);
+                        history=store.history(id);
                     }
                     else next=state(next,"stopped","gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
                 }
@@ -185,6 +220,44 @@ public class WorkItemTransitions {
         WorkEvidence evidence=source.enabled()?WorkEvidence.collect(()->sources.client(source),issue,null)
                 :new WorkEvidence(issue,List.of(),"source_unavailable");
         return new Observation(source,policy,evidence);
+    }
+
+    public Observation observe(WorkItemEvent item) {
+        Observation observed=observe(item.sourceId(),item.issue());
+        return new Observation(observed.source(),observed.policy(),observed.evidence(),
+                observed.evidence().failure()==null?artifacts.observe(observed.source(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
+    }
+
+    public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation) {
+        WorkItemEvent item=require(id);
+        Observation observed=observe(item.sourceId(),item.issue());
+        WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),preparation);
+        if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),item);
+        if(prepared.failure()!=null)return new Outcome("artifacts_unavailable".equals(prepared.failure())?503:409,prepared.failure(),item);
+        runAssembly.validate(observed.source(),preparation,prepared);
+        return QuarkusTransaction.requiringNew().call(()-> {
+            try(Connection c=dataSource.getConnection()) {
+                if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
+                lockItem(c,id);var history=store.history(id);WorkItemEvent current=(WorkItemEvent)history.getLast().payload();
+                if(history.size()!=expectedRevision)return new Outcome(409,"work_item_changed",current);
+                if(Set.of("active","retired","completed").contains(current.workflowStatus()))return new Outcome(409,"preparation_unavailable",current);
+                try(PreparedStatement ps=c.prepareStatement("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND generation=?")) {
+                    ps.setString(1,id);ps.setLong(2,current.generation());try(ResultSet rs=ps.executeQuery()) {
+                        rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);
+                    }
+                }
+                if(current.gate()!=null && "OPEN".equals(current.gate().state())) {
+                    current=state(current,"awaiting_input","artifacts_replaced","GATE_SUPERSEDED",current.gate().resolve("SUPERSEDED",preparation.registeredBy(),null,null),current.progress().reserve(false));
+                    store.appendDecision(c,history,current,"preparation-replaced:"+UUID.randomUUID());history=store.history(id);
+                }
+                WorkItemEvent next=current.decision(observed.policy().revision(),authority(observed.source()),select(observed,current),"intake","awaiting_input","artifacts_registered","ARTIFACTS_REGISTERED",null,current.progress().reserve(false)).prepared(preparation);
+                store.appendDecision(c,history,next,"preparation:"+UUID.randomUUID());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                store.appendDecision(c,history,next,"prepared-transition:"+UUID.randomUUID());
+                return new Outcome(200,next.reason(),next);
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode preparation",failure);}
+        });
     }
 
     public WorkPolicy.Selection select(Observation observed, WorkItemEvent item) {

@@ -28,6 +28,14 @@ The planes are not services. They are ownership boundaries: the policy plane dec
 sequences, the run plane executes. Only the run plane touches a sandbox, and it never decides
 anything a human would call a policy.
 
+The work-plane cursor is `intake → spec → plan → build → verify → deliver → review → land`.
+Delivery supplies the pushed PR required by the existing reviewer (ADR-045). The
+[prepared task handoff](PREPARED-TASKS.md) stores tracker references and digests, then associates
+one durable build attempt with the existing M2 run record. Slice 8a keeps production item execution
+unavailable until slice 8b supplies trusted publication hold; the standalone run plane above retains
+automatic publication. Missing generation, verification and merge executors never become successful
+phase results.
+
 ## 2. Services
 
 | Service | Today | Added |

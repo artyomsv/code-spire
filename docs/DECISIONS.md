@@ -35,8 +35,8 @@ edit or unavailable observation cannot grant permission. This is a fresh check a
 not instantaneous cancellation of an effect already accepted by a remote service.
 
 The phase order is `intake → spec → plan → build → verify → deliver → review → land`. Delivery must
-precede the existing PR reviewer because that reviewer needs a pushed PR. Slice 8a corrects the older
-published diagrams and binds actual prepared artifacts. A policy permitting a phase does not supply
+precede the existing PR reviewer because that reviewer needs a pushed PR. Slice 8a corrects the
+published diagrams and binds fetched tracker artifact digests and build coordinates. A policy permitting a phase does not supply
 its implementation. Tests identify their execution capability explicitly; production does not turn a
 missing specification, verifier or publisher hold into a successful no-op.
 

@@ -38,6 +38,7 @@ abstract class WorkFixture {
     WireMockServer forge;
     UUID account, repository, source, profile;
     final List<UUID> extraProfiles=new ArrayList<>();
+    final List<String> extraItems=new ArrayList<>();
     String scope, itemId, path;
     WorkIssueLocation issue;
     static final String LABEL = "TEST-autonomous";
@@ -105,14 +106,18 @@ abstract class WorkFixture {
     }
     @AfterEach void cleanWork() throws Exception {
         try {
-            if(itemId!=null){
-                execute("DELETE FROM work_tracker_outbox WHERE work_item_id=?",itemId);
-                execute("DELETE FROM work_item_gate WHERE work_item_id=?",itemId);
-                execute("DELETE FROM work_phase_attempt WHERE work_item_id=?",itemId);
-                execute("DELETE FROM work_item_outbox WHERE work_item_id=?",itemId);
-                execute("DELETE FROM work_item_delivery WHERE work_item_id=?",itemId);
-                execute("DELETE FROM work_item WHERE id=?",itemId);
-                execute("DELETE FROM event_log WHERE stream_id=?",itemId);
+            Set<String> cleanup=new HashSet<>(extraItems);if(itemId!=null)cleanup.add(itemId);
+            for(String owned:cleanup){
+                execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);
+                execute("DELETE FROM llm_charge WHERE subject_kind='RUN' AND subject_id IN (SELECT run_id FROM factory_run WHERE work_item_id=?)",owned);
+                execute("DELETE FROM factory_run WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_tracker_outbox WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_item_gate WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_phase_attempt WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_item_outbox WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_item_delivery WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_item WHERE id=?",owned);
+                execute("DELETE FROM event_log WHERE stream_id=?",owned);
             }
             if(repository!=null){
                 execute("DELETE FROM work_source_actor WHERE source_id IN (SELECT id FROM work_source WHERE repository_id=?)",repository);

@@ -1645,6 +1645,8 @@
 .work-policy-form fieldset > label:has(textarea) { grid-column: 1 / -1; }
 .work-policy-form legend { font-weight: 600; padding: 0; }
 .work-policy-form button { justify-self: start; }
+.work-policy-form pre { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.work-policy-form code, .work-item-journey { overflow-wrap: anywhere; }
 .work-approvals { list-style: none; padding: 0; display: grid; gap: 18px; }
 .work-approvals > li { border-bottom: 1px solid var(--border); padding-bottom: 18px; }
 .work-approvals fieldset { border: 0; padding: 12px 0; }

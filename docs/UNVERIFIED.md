@@ -127,9 +127,29 @@ are alive; the normal work-consumer duplicate-acknowledgement test remains separ
 
 Policy tests explicitly supply a test execution capability to record phase attempts and deliver
 their results through the internal transition service. Production reports missing executors as
-unavailable. Explicit manual artifact handoff and the existing single-task build boundary remain
-slice 8; generated specification, multi-step planning and verification executors remain M4.
-Gate artifact/head binding belongs to that artifact handoff. No run worker was started.
+unavailable. Slice 8a fetches and validates manual tracker specifications and single-step plans,
+binds their identities/digests and build coordinates to approvals, and reuses M2 assembly for one
+prepared build. Local GitHub/GitLab/Jira fixtures establish reference resolution; they establish
+no live tracker-artifact journey. Generated specification, multi-step planning and verification
+executors remain M4.
+
+The three-profile slice 8a proof declares an explicit test publication capability and replaces the
+final broker emitter. It runs the real state machine, encrypted PostgreSQL history, M2 assembly,
+launcher and durable dispatch/result association. It does not execute an agent or push a branch.
+Production item execution stays capability-unavailable until slice 8b implements the publication
+hold. Missing verification remains visibly unavailable after the test-supplied build result.
+Separate delivery tests must identify their test-only prior-phase driver. No production verifier,
+native draft delivery or live-forge journey follows from the plan/build proof.
+
+Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
+PostgreSQL and recover without another completion or charge. They are staged durable-state tests;
+the actual JVM kills above concern scanners and gates. A claimed send with no known outcome stays
+uncertain until a result or explicit never-ran resolution arrives. Item/run worker restart and
+orphan publication safety remain slice 8b obligations. M2 reports one aggregate agent call per run;
+it does not count internal model calls. Proven pre-agent failures reuse M2's existing zero-call
+classification and can be readmitted. Unmeasured potential spend blocks continuation, including
+after readmission, until accounting can be repaired; no automated usage-repair workflow is supplied.
+No live run worker was started.
 
 ## Repository push permission — GitHub (2026-09-13)
 

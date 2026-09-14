@@ -132,6 +132,27 @@ abstract class WorkSourceParityCases extends WorkFixture {
         assertTrue(scanner.scan(source));assertTrue(scanner.scan(source));
         assertEquals(1,count("SELECT count(*) FROM work_item WHERE id=?",itemId));assertEquals(1,store.history(itemId).size());
     }
+    void stubReference(ObjectNode ticket) {
+        forge.stubFor(get(urlEqualTo(jira()?"/rest/api/2/issue/TEST-42?fields=project":path)).willReturn(okJson(ticket.toString())));
+    }
+    @Test void artifactKeysResolveToStableSourceIdentities() {
+        stubReference(ticket());var client=sources.client(sources.get(source).orElseThrow());
+        var resolved=client.resolve(issue.issueKey());assertEquals(issue.ref(),resolved.ref());assertEquals(issue.issueKey(),resolved.issueKey());
+        assertEquals("50001",resolved.ref().issueId(),"A ticket number/key must not become its stable provider id");
+        assertInstanceOf(WorkSource.Fetch.Found.class,client.fetch(resolved));
+    }
+    @Test void invalidArtifactKeysAreRefusedBeforeAnIssueRequest() {
+        var client=sources.client(sources.get(source).orElseThrow());int before=forge.getAllServeEvents().size();
+        String invalid=jira()?"CANARY-42":"0";
+        forge.stubFor(get(urlPathMatching(".*"+(jira()?"/CANARY-42":"/issues/0"))).willReturn(okJson(ticket().toString())));
+        assertThrows(RuntimeException.class,()->client.resolve(invalid));
+        assertEquals(before,forge.getAllServeEvents().size(),"Input scope validation must refuse before sending an issue request, even when a later guard would also throw");
+    }
+    @Test void aDifferentResolvedArtifactKeyIsRefused() {
+        ObjectNode other=ticket();if(jira())other.put("key","TEST-43");else other.put(type()==WorkSourceType.GITHUB?"number":"iid",43);
+        stubReference(other);var client=sources.client(sources.get(source).orElseThrow());
+        assertThrows(RuntimeException.class,()->client.resolve(issue.issueKey()));
+    }
     void noEffects() throws Exception {
         assertEquals(0,count("SELECT count(*) FROM work_item_outbox WHERE work_item_id=? AND effect_type <> 'WORK_EVENT'",itemId));
         assertEquals(0,count("SELECT count(*) FROM work_tracker_outbox WHERE work_item_id=?",itemId));

@@ -22,6 +22,18 @@ export function WorkflowStatus({ status }: { status: string }) {
 
 const REASONS = new Map(Object.entries({
   specification_required: 'A specification is required before work can continue.',
+  artifacts_registered: 'The prepared task references were registered.',
+  specification_supplied: 'The registered specification was fetched and validated.',
+  plan_supplied: 'The registered single-step plan was fetched and validated.',
+  artifacts_changed: 'The tracker artifacts changed. Register their current versions before continuing.',
+  artifacts_unavailable: 'The tracker artifacts could not be read. Check the references and source account.',
+  single_step_plan_required: 'The plan must contain one step and reference this specification version.',
+  artifacts_changed_requires_new_decision: 'The artifacts changed after approval opened. Register their current versions for a new decision.',
+  publication_hold_unavailable: 'Build execution is waiting for publication hold support.',
+  policy_changed_before_dispatch: 'Policy changed before build dispatch. Re-admit under the current policy.',
+  build_configuration_unavailable: 'Build settings, credentials or deployment limits prevented dispatch.',
+  dispatch_uncertain: 'Build dispatch was not acknowledged. The run may have started; its result will resolve this state.',
+  run_usage_unknown: 'Run usage could not be established. Further work is blocked until its spending can be accounted for.',
   actor_not_allowed: 'The person who applied this label is not on the source allowlist.',
   label_unattributed: 'The current label applier could not be confirmed.',
   actor_id_missing: 'The tracker did not identify the person who applied this label.',

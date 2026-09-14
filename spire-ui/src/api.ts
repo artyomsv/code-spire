@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import type { Preparation, WorkBuild } from './components/work-items/workPreparationApi';
 
 export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
 export interface WorkItemSummary {
@@ -25,6 +26,8 @@ export interface WorkItemPage {
 }
 
 export interface WorkItemDetail extends WorkItemSummary {
+  preparation?: Preparation | null;
+  builds?: WorkBuild[];
   effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
   admittedLimits?: import('./components/work-items/workPolicyApi').Limits;
   gate?: import('./components/work-items/approvalsApi').Gate | null;
@@ -34,7 +37,8 @@ export interface WorkItemDetail extends WorkItemSummary {
   ceiling: WorkItemSummary['profile'];
   appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
-  events: { sequence: number; type: string; reason: string; occurredAt: string }[];
+  events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
+    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
 }
 
 export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean): Promise<void> {
