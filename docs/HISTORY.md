@@ -2087,7 +2087,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   markers and the policy nav icon complete the operator setup fixes while preserving save locks.
   WIDGETS.md inventories shared controls. Route-derived guards now preserve quoted wildcard paths;
   a previously surviving profile-table mutation exposed that comment-parser gap and now fails.
-  Measured 742 UI tests in 93 files, shuffled setup/routes, TypeScript/build, 27 production
+  Measured 742 UI tests in 93 files, shuffled setup/routes, TypeScript/build, 28 production
   mutations and clean Semgrep. Eight browser screenshots use intercepted TEST-only data.
   All seven accepted criteria and the separate production/live-proof limits remain unchanged.
   Evidence: .claude/reviews/global/factory-m3-round18.md.

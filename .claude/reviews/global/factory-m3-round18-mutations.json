@@ -1,7 +1,7 @@
 {
   "summary": {
-    "checks": 27,
-    "distinctProductionMutations": 27
+    "checks": 28,
+    "distinctProductionMutations": 28
   },
   "method": "Mutate a production TSX line, isolate one selected assertion failure, restore exact scratch bytes and rerun green. No fixture mutation. Final source hashes verified. The initially surviving profile-table mutation exposed comment stripping of the quoted /runs/* route; both route guards now preserve strings, and all affected contract mutations were rerun.",
   "checks": [
@@ -46,50 +46,6 @@
       "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
       "selector": "opens on the source list",
       "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-list-first",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "[editing, setEditing] = useState<string | null>(null)",
-      "to": "[editing, setEditing] = useState<string | null>('')",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "opens on visible profile versions",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-list-rows",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "data.profiles.map(profile => <tr",
-      "to": "data.profiles.slice(0, 0).map(profile => <tr",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "opens on visible profile versions",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-save-visible",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "profiles: [...current.profiles.filter(value => key(value) !== key(created)), created]",
-      "to": "profiles: current.profiles",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "shows a created profile immediately",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-save-confirmed",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "setNotice(`Profile ${created.name} v${created.version} created.`)",
-      "to": "setNotice('')",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "shows a created profile immediately",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
       "mutant": "one selected assertion failure",
       "restored": "pass"
     },
@@ -171,50 +127,6 @@
       "restored": "pass"
     },
     {
-      "id": "profile-required",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "aria-label=\"Profile name\" required",
-      "to": "aria-label=\"Profile name\"",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "marks required and optional profile fields",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-optional",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "Base profile <span className=\"field-optional\">optional",
-      "to": "Base profile <span className=\"field-optional\">required",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "marks required and optional profile fields",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-help",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "<small className=\"field-hint\">Start fresh",
-      "to": "<small>Start fresh",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "marks required and optional profile fields",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
-      "id": "profile-busy",
-      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
-      "from": "disabled={busy}><legend className=\"field-sep\">{base",
-      "to": "disabled={false}><legend className=\"field-sep\">{base",
-      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
-      "selector": "opens an existing version from its row and locks",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
-      "mutant": "one selected assertion failure",
-      "restored": "pass"
-    },
-    {
       "id": "source-create-busy",
       "file": "spire-ui/src/components/work-items/WorkSources.tsx",
       "from": "disabled={busy}><legend className=\"field-sep\">Add a work source",
@@ -292,13 +204,112 @@
       "restored": "pass"
     },
     {
+      "id": "profile-list-first",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "[editing, setEditing] = useState<string | null>(null)",
+      "to": "[editing, setEditing] = useState<string | null>('')",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens on visible profile versions",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-list-rows",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "data.profiles.map(profile => <tr",
+      "to": "data.profiles.slice(0, 0).map(profile => <tr",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens on visible profile versions",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-save-visible",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "profiles: [...current.profiles.filter(value => key(value) !== key(created)), created]",
+      "to": "profiles: current.profiles",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "shows a created profile immediately",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-save-confirmed",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "setNotice(`Profile ${created.name} v${created.version} created.`)",
+      "to": "setNotice('')",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "shows a created profile immediately",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-required",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "aria-label=\"Profile name\" required",
+      "to": "aria-label=\"Profile name\"",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-optional",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "Base profile <span className=\"field-optional\">optional",
+      "to": "Base profile <span className=\"field-optional\">required",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-help",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "<small className=\"field-hint\">Start fresh",
+      "to": "<small>Start fresh",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-busy",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">{base",
+      "to": "disabled={false}><legend className=\"field-sep\">{base",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens an existing version from its row and locks",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
       "id": "profile-table",
       "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
       "from": "<table className=\"prov-table\"",
       "to": "<table className=\"\"",
       "test": "spire-ui/src/settingsTables.contract.test.ts",
       "selector": "uses the shared table vocabulary",
-      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-form-inset",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "className=\"work-policy-form modal-body\"",
+      "to": "className=\"work-policy-form\"",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "113783cf890aad28531ff6272f98acc8c590985c324893bef0521adc92eaa14d",
       "mutant": "one selected assertion failure",
       "restored": "pass"
     }

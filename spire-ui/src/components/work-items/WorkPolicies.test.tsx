@@ -59,6 +59,7 @@ it('opens an existing version from its row and locks every control during save',
 it('marks required and optional profile fields and provides their help', async () => {
   render(<WorkPolicies />); await addProfile();
   const group = screen.getByRole('group', { name: 'Add profile' });
+  expect(group.closest('form')).toHaveClass('modal-body');
   for (const control of group.querySelectorAll('input,select,textarea')) {
     const field = control.closest('label')!;
     expect(field.querySelector('.field-hint')).not.toBeNull();

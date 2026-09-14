@@ -81,7 +81,7 @@ function ProfileEditor({ profiles, initial, saved, cancelled }: { profiles: api.
         modes, limits: { ...limits, protectedPaths: paths.split('\n').map(path => path.trim()).filter(Boolean) } }); saved(created);
     } catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
-  return <form className="work-policy-form" onSubmit={event => void submit(event)}><fieldset className="modal-body" style={{ border: 0, margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">{base ? 'New profile version' : 'Add profile'}</legend>
+  return <form className="work-policy-form modal-body" onSubmit={event => void submit(event)}><fieldset className="modal-body" style={{ border: 0, margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">{base ? 'New profile version' : 'Add profile'}</legend>
     <p className="prov-note">Fields marked required need a value. Off disables a phase, approve waits for an answer, and auto permits it within the limits below.</p>
     <label className="field">Base profile <span className="field-optional">optional</span><select aria-label="Base profile" value={selected} onChange={event => {
       const value = profiles.find(profile => key(profile) === event.target.value); setSelected(event.target.value);
