@@ -3,7 +3,7 @@ import WorkPolicies from './components/work-items/WorkPolicies';
 import WorkSources from './components/work-items/WorkSources';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -261,7 +261,8 @@ export default function App() {
             </svg>
             General
           </a>
-          <a className={location.pathname.startsWith('/settings/work-policy') ? 'active' : ''} href="#/settings/work-policy">Work policy</a>
+          <a className={location.pathname.startsWith('/settings/work-policy') ? 'active' : ''} href="#/settings/work-policy">
+            <SlidersHorizontal className="ic" size={16} aria-hidden="true" />Work policy</a>
           <a className={onWorkSources ? 'active' : ''} href="#/settings/work-sources">
             <svg className="ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <rect x="3" y="3" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4" />

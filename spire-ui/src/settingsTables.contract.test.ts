@@ -1,12 +1,13 @@
 import { expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
+import { withoutBlockComments } from './test/sourceText';
 
 const src = join(process.cwd(), 'src');
 function read(file: string) {
   const text = readFileSync(file, 'utf8');
   expect(text.length, `Source was read: ${file}`).toBeGreaterThan(0);
-  return text.replace(/\/\*[\s\S]*?\*\//g, '');
+  return withoutBlockComments(text);
 }
 function imports(text: string, file: string) {
   const paths = new Map<string, string>();
@@ -38,7 +39,7 @@ function tableSources(file: string, visited = new Set<string>()): Map<string, st
 it('uses the shared table vocabulary on every settings route and its rendered children', () => {
   const app = join(src, 'App.tsx');
   const text = read(app), dependencies = imports(text, app);
-  const routes = [...text.matchAll(/<Route\b[^>]*?path="(\/settings\/[^"\s]+)"\s+element=\{(?:configure\()?<([A-Z]\w*)\b/g)];
+  const routes = [...text.matchAll(/<Route\b[^>]*?path="(\/settings\/[^"\s]+)"\s+element=\{\s*(?:configure\(\s*)?<([A-Z]\w*)\b/g)];
   expect(routes.length, 'The guard must derive settings routes from App.tsx').toBeGreaterThan(0);
   const tables = new Map<string, string[]>();
   for (const [, route, component] of routes) {
@@ -52,5 +53,6 @@ it('uses the shared table vocabulary on every settings route and its rendered ch
     .filter(tag => !/className="[^"]*\bprov-table\b[^"]*"/.test(tag))
     .map(() => relative(src, file)));
   // Verified by mutation: remove prov-table from RepositoryRegistryPage, leaving its table intact.
+  // WorkPolicies is independently killed too: quoted /runs/* must not hide the following route.
   expect(unstyled, 'Every settings table must use prov-table, including extracted child components').toEqual([]);
 });

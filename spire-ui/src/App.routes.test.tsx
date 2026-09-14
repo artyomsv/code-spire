@@ -212,6 +212,14 @@ afterEach(() => {
 });
 
 describe('App — routing shell', () => {
+  it('gives each work navigation page an icon beside its name', async () => {
+    renderAtWithProbe('/settings/work-policy');
+    await screen.findByText('No profiles yet');
+    const rail = document.querySelector('nav.nav') as HTMLElement;
+    for (const name of ['Work policy', 'Work sources', 'Work items']) {
+      expect(within(rail).getByRole('link', { name }).querySelector('svg.ic')).not.toBeNull();
+    }
+  });
   it.each(ROUTES)('renders $title at $path', async ({ path, title, nav }) => {
     renderAt(path);
 

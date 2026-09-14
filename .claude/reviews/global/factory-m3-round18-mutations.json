@@ -1,0 +1,306 @@
+{
+  "summary": {
+    "checks": 27,
+    "distinctProductionMutations": 27
+  },
+  "method": "Mutate a production TSX line, isolate one selected assertion failure, restore exact scratch bytes and rerun green. No fixture mutation. Final source hashes verified. The initially surviving profile-table mutation exposed comment stripping of the quoted /runs/* route; both route guards now preserve strings, and all affected contract mutations were rerun.",
+  "checks": [
+    {
+      "id": "account-prerequisite",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "!account ? 'Choose a tracker account first'",
+      "to": "!account ? 'Select a repository'",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "explains the missing account before offering",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "origin-explanation",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "`No registered repository matches ${origin(account.baseUrl)}`",
+      "to": "'No repositories'",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "explains an origin mismatch after account selection",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "registration-link",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "href=\"#/settings/repositories\">Register a repository",
+      "to": "href=\"#/settings/accounts\">Register a repository",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "explains an origin mismatch after account selection",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-list-first",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "[adding, setAdding] = useState(false)",
+      "to": "[adding, setAdding] = useState(true)",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "opens on the source list",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-list-first",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "[editing, setEditing] = useState<string | null>(null)",
+      "to": "[editing, setEditing] = useState<string | null>('')",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens on visible profile versions",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-list-rows",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "data.profiles.map(profile => <tr",
+      "to": "data.profiles.slice(0, 0).map(profile => <tr",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens on visible profile versions",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-save-visible",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "profiles: [...current.profiles.filter(value => key(value) !== key(created)), created]",
+      "to": "profiles: current.profiles",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "shows a created profile immediately",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-save-confirmed",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "setNotice(`Profile ${created.name} v${created.version} created.`)",
+      "to": "setNotice('')",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "shows a created profile immediately",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-save-visible",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "sources: [...current.sources.filter(value => value.id !== created.id), created]",
+      "to": "sources: current.sources",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "shows the returned source in the list",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-save-confirmed",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "setNotice(`Work source ${created.name} registered.`)",
+      "to": "setNotice('')",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "shows the returned source in the list",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "scope-automatic",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "type === 'JIRA' ? 'required' : 'automatic'",
+      "to": "type === 'JIRA' ? 'required' : 'optional'",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "labels the automatic tracker scope",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "scope-explanation",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "Automatically filled from the target repository; choose a different repository above to change it.",
+      "to": "Tracker repository.",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "labels the automatic tracker scope",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "scope-readonly",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "readOnly={type !== 'JIRA'}",
+      "to": "readOnly={false}",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "labels the automatic tracker scope",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-required",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "aria-label=\"Source name\" required",
+      "to": "aria-label=\"Source name\"",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "labels the automatic tracker scope",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-help",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "<small className=\"field-hint\">A name you will recognise",
+      "to": "<small>A name you will recognise",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "labels the automatic tracker scope",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-required",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "aria-label=\"Profile name\" required",
+      "to": "aria-label=\"Profile name\"",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-optional",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "Base profile <span className=\"field-optional\">optional",
+      "to": "Base profile <span className=\"field-optional\">required",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-help",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "<small className=\"field-hint\">Start fresh",
+      "to": "<small>Start fresh",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "marks required and optional profile fields",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-busy",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">{base",
+      "to": "disabled={false}><legend className=\"field-sep\">{base",
+      "test": "spire-ui/src/components/work-items/WorkPolicies.test.tsx",
+      "selector": "opens an existing version from its row and locks",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-create-busy",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">Add a work source",
+      "to": "disabled={false}><legend className=\"field-sep\">Add a work source",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "styles both forms and keeps",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-edit-busy",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">{source.name}",
+      "to": "disabled={false}><legend className=\"field-sep\">{source.name}",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "selector": "styles both forms and keeps",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "policy-nav-icon",
+      "file": "spire-ui/src/App.tsx",
+      "from": "<SlidersHorizontal className=\"ic\" size={16} aria-hidden=\"true\" />",
+      "to": "",
+      "test": "spire-ui/src/App.routes.test.tsx",
+      "selector": "gives each work navigation page an icon",
+      "sourceSha256": "e00a3b075a44cfee1366e6e0ea894e34db157f8dec31074f3f8bca55a165035b",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "context-account-label",
+      "file": "spire-ui/src/components/SettingsContextProviders.tsx",
+      "from": "label: accountOptionLabel(a)",
+      "to": "label: a.name",
+      "test": "spire-ui/src/accountOptions.contract.test.ts",
+      "selector": "uses accountOptionLabel for account options",
+      "sourceSha256": "fa8a2d405b86a4873c5ea4bce0a2305714dff81f67c367751495da2633e1381b",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-create-account-label",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "{accountOptionLabel(value)}",
+      "to": "{value.name}",
+      "test": "spire-ui/src/accountOptions.contract.test.ts",
+      "selector": "uses accountOptionLabel for account options",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "source-edit-account-label",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "{accountOptionLabel(account)}",
+      "to": "{account.name}",
+      "test": "spire-ui/src/accountOptions.contract.test.ts",
+      "selector": "uses accountOptionLabel for account options",
+      "sourceSha256": "df8d2d455adc586dac743d12da61e670b6679ff70257f500ce0d70db588fd6e8",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "repository-account-label",
+      "file": "spire-ui/src/components/repositories/RepositoryForm.tsx",
+      "from": "{accountOptionLabel(p)}",
+      "to": "{p.name}",
+      "test": "spire-ui/src/accountOptions.contract.test.ts",
+      "selector": "uses accountOptionLabel for account options",
+      "sourceSha256": "798da58f0609d6fafde3561a8b70fb12c51c5171e86a9a216af36a0ff3eb0ff9",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    },
+    {
+      "id": "profile-table",
+      "file": "spire-ui/src/components/work-items/WorkPolicies.tsx",
+      "from": "<table className=\"prov-table\"",
+      "to": "<table className=\"\"",
+      "test": "spire-ui/src/settingsTables.contract.test.ts",
+      "selector": "uses the shared table vocabulary",
+      "sourceSha256": "7a795fabf40c49fd543b47021ac16bba16f178298fb9655548d28e54b3204080",
+      "mutant": "one selected assertion failure",
+      "restored": "pass"
+    }
+  ]
+}

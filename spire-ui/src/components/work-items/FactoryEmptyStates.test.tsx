@@ -27,7 +27,7 @@ it('welcomes the operator to an empty Work sources screen', async () => {
   render(<WorkSources />);
   await screen.findByText('No work sources registered.');
   empty('No work sources registered.');
-  expect(screen.getByText(/Add a tracker project below/)).toBeInTheDocument();
+  expect(screen.getByText(/Choose Add work source/)).toBeInTheDocument();
 });
 it('welcomes the operator to an empty Work items screen', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [], total: 0, offset: 0, limit: 50 });

@@ -24,13 +24,91 @@ beforeEach(() => {
   vi.spyOn(api, 'rescanWorkSource').mockResolvedValue();
   vi.spyOn(api, 'saveWorkActor').mockResolvedValue(source());
 });
+async function addSource() {
+  const button = await screen.findByRole('button', { name: 'Add work source' });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+}
 async function selectSource() { fireEvent.click(await screen.findByRole('link', { name: 'TEST-source name' })); }
+
+it('opens on the source list and reveals creation only through Add', async () => {
+  render(<WorkSources />);
+  await screen.findByRole('link', { name: 'TEST-source name' });
+  expect(screen.queryByLabelText('Source name')).toBeNull();
+  await addSource(); expect(screen.getByLabelText('Source name')).toBeRequired();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByLabelText('Source name')).toBeNull();
+});
+
+it('explains the missing account before offering otherwise compatible repositories', async () => {
+  render(<WorkSources />); await addSource();
+  const select = screen.getByLabelText('Target repository');
+  expect(select).toBeDisabled();
+  expect(within(select).getByRole('option')).toHaveTextContent('Choose a tracker account first');
+  expect(select).toHaveAccessibleDescription('Choose a tracker account first.');
+  fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  expect(select).toBeEnabled();
+  expect(within(select).getByRole('option', { name: 'TEST-owner/TEST-repo' })).toBeInTheDocument();
+});
+
+it('explains an origin mismatch after account selection and links repository registration', async () => {
+  // Enabled and the same SCM kind: only the origin excludes this repository.
+  vi.mocked(repositories.fetchRepositories).mockResolvedValue([{ ...repository, forgeOrigin: 'https://TEST-other.invalid' }]);
+  render(<WorkSources />); await addSource();
+  fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  const select = screen.getByLabelText('Target repository');
+  expect(select).toBeDisabled();
+  expect(within(select).getByRole('option')).toHaveTextContent('No registered repository matches https://github.example.test');
+  expect(select).toHaveAccessibleDescription('No registered repository matches https://github.example.test. Register a repository.');
+  expect(screen.getByRole('link', { name: 'Register a repository' })).toHaveAttribute('href', '#/settings/repositories');
+});
+
+it('distinguishes duplicate credential names in both source account pickers', async () => {
+  vi.mocked(accounts.fetchProviders).mockResolvedValue([
+    { ...account(), name: 'TEST-shared name' },
+    { ...account(), id: 'TEST-reviewer', name: 'TEST-shared name', role: 'REVIEWER' },
+  ]);
+  render(<WorkSources />); await addSource(); await selectSource();
+  for (const label of ['Tracker account', 'Source account']) {
+    const select = screen.getByLabelText(label);
+    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Factory' })).toHaveValue('TEST-github');
+    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Reviewer' })).toHaveValue('TEST-reviewer');
+  }
+});
+
+it('labels the automatic tracker scope and explains how to change it', async () => {
+  render(<WorkSources />); await addSource();
+  const scope = screen.getByLabelText('Tracker repository');
+  expect(scope).toHaveAttribute('readonly');
+  expect(scope.closest('label')).toHaveTextContent('automatic');
+  expect(scope).toHaveAccessibleDescription('Automatically filled from the target repository; choose a different repository above to change it.');
+  for (const label of ['Source name', 'Tracker', 'Tracker account', 'Target repository']) {
+    const control = screen.getByLabelText(label);
+    expect(control).toBeRequired();
+    expect(control.closest('label')?.querySelector('.field-hint')).not.toHaveTextContent(/^$/);
+  }
+  fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  fireEvent.change(screen.getByLabelText('Target repository'), { target: { value: repository.id } });
+  expect(scope).toHaveValue('TEST-owner/TEST-repo');
+});
+
+it('shows the returned source in the list and confirms registration', async () => {
+  vi.mocked(api.createWorkSource).mockResolvedValue({ ...source(), id: 'TEST-created', name: 'TEST-visible source' });
+  render(<WorkSources />); await addSource();
+  fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'TEST-visible source' } });
+  fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  fireEvent.change(screen.getByLabelText('Target repository'), { target: { value: repository.id } });
+  fireEvent.click(screen.getByRole('button', { name: 'Register work source' }));
+  expect(await screen.findByRole('link', { name: 'TEST-visible source' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Work source TEST-visible source registered.');
+  expect(screen.queryByLabelText('Source name')).toBeNull();
+});
 
 it('styles both forms and keeps all their controls locked during a save', async () => {
   let finishCreate!: (value: api.WorkSource) => void, finishEdit!: (value: api.WorkSource) => void;
   vi.mocked(api.createWorkSource).mockReturnValue(new Promise(done => { finishCreate = done; }));
   vi.mocked(api.editWorkSource).mockReturnValue(new Promise(done => { finishEdit = done; }));
-  render(<WorkSources />);
+  render(<WorkSources />);await addSource();
   const name = await screen.findByRole('link', { name: 'TEST-source name' });
   expect(name).toHaveClass('mono', 'nowrap');
   fireEvent.click(name);
@@ -47,14 +125,15 @@ it('styles both forms and keeps all their controls locked during a save', async 
   for (const element of create.querySelectorAll('input,select,button')) expect(element).toBeDisabled();
   expect(api.createWorkSource).toHaveBeenCalledTimes(1);
   await act(async () => finishCreate(source()));
+  const savedEdit = screen.getByRole('group', { name: 'TEST-source name' });
   fireEvent.click(screen.getByRole('button', { name: 'Save source' }));
-  for (const element of edit.querySelectorAll('input,select,button')) expect(element).toBeDisabled();
+  for (const element of savedEdit.querySelectorAll('input,select,button')) expect(element).toBeDisabled();
   expect(api.editWorkSource).toHaveBeenCalledTimes(1);
   await act(async () => finishEdit(source()));
 });
 
 it('registers a source with an explicit compatible account and repository', async () => {
-  render(<WorkSources />);
+  render(<WorkSources />);await addSource();
   fireEvent.change(await screen.findByLabelText('Source name'), { target: { value: 'TEST-new source' } });
   fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
   fireEvent.change(screen.getByLabelText('Target repository'), { target: { value: repository.id } });
@@ -62,7 +141,7 @@ it('registers a source with an explicit compatible account and repository', asyn
   await waitFor(() => expect(api.createWorkSource).toHaveBeenCalledWith({ name: 'TEST-new source', type: 'GITHUB', origin: 'https://github.example.test', scope: 'TEST-owner/TEST-repo', repositoryId: repository.id, accountId: 'TEST-github', enabled: true }));
 });
 it('maps a Jira project to a repository on a different forge', async () => {
-  render(<WorkSources />);
+  render(<WorkSources />);await addSource();
   fireEvent.change(await screen.findByLabelText('Tracker'), { target: { value: 'JIRA' } });
   fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'TEST-Jira source' } });
   fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-atlassian' } });
@@ -73,14 +152,14 @@ it('maps a Jira project to a repository on a different forge', async () => {
 });
 it('does not offer disabled or incompatible accounts', async () => {
   vi.mocked(accounts.fetchProviders).mockResolvedValue([account('github', false), account('gitlab'), account('atlassian')]);
-  render(<WorkSources />);const select = await screen.findByLabelText('Tracker account');
+  render(<WorkSources />);await addSource();const select = await screen.findByLabelText('Tracker account');
   expect(within(select).getAllByRole('option')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Register work source' })).toBeDisabled();
 });
 it('preserves the configured enabled flag when the account is disabled', async () => {
   vi.mocked(api.fetchWorkSources).mockResolvedValue([{ ...source(), enabled: false, configuredEnabled: true }]);
   vi.mocked(accounts.fetchProviders).mockResolvedValue([account('github', false)]);
-  render(<WorkSources />);await selectSource();
+  render(<WorkSources />);await addSource();await selectSource();
   expect(screen.getByLabelText('Source enabled')).toBeChecked();
   expect(screen.getByText(/This source is enabled, but its account or repository is unavailable/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Request rescan' })).toBeDisabled();
@@ -88,7 +167,7 @@ it('preserves the configured enabled flag when the account is disabled', async (
 it('requires explicit Jira account selection and saves the source revision', async () => {
   const initial = source('JIRA');vi.mocked(api.fetchWorkSources).mockResolvedValue([initial]);
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'SELECTION_REQUIRED', actors: [{ providerUserId: '900123', handle: '', displayName: 'TEST-person' }], detail: 'Select an account explicitly.' });
-  render(<WorkSources />);await selectSource();
+  render(<WorkSources />);await addSource();await selectSource();
   fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   const select = await screen.findByLabelText('Resolved source person');
@@ -99,7 +178,7 @@ it('requires explicit Jira account selection and saves the source revision', asy
 });
 it('discards a resolved selection when the typed person changes', async () => {
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null });
-  render(<WorkSources />);await selectSource();
+  render(<WorkSources />);await addSource();await selectSource();
   fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   await screen.findByLabelText('Resolved source person');
@@ -108,7 +187,7 @@ it('discards a resolved selection when the typed person changes', async () => {
 });
 it('requests a rescan and displays the reported capability limits', async () => {
   vi.spyOn(api, 'workCapabilities').mockResolvedValue({ operations: ['CANDIDATES', 'COMMENT'], detail: 'TEST-this deployment cannot attribute labels.' });
-  render(<WorkSources />);await selectSource();fireEvent.click(screen.getByRole('button', { name: 'Request rescan' }));
+  render(<WorkSources />);await addSource();await selectSource();fireEvent.click(screen.getByRole('button', { name: 'Request rescan' }));
   await waitFor(() => expect(api.rescanWorkSource).toHaveBeenCalledWith('TEST-source'));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Check supported operations' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Check supported operations' }));
@@ -127,7 +206,7 @@ it('cannot apply a pending actor resolution to another source', async () => {
   let resolve!: (value: Awaited<ReturnType<typeof api.resolveWorkActor>>) => void;
   vi.spyOn(api, 'resolveWorkActor').mockReturnValue(new Promise(yes => { resolve = yes; }));
   vi.mocked(api.fetchWorkSources).mockResolvedValue([source(), { ...source(), id: 'TEST-other-source', name: 'TEST-other source' }]);
-  render(<WorkSources />);await selectSource();fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
+  render(<WorkSources />);await addSource();await selectSource();fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   fireEvent.click(screen.getByRole('link', { name: 'TEST-other source' }));
   await act(async () => resolve({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null }));
@@ -136,21 +215,21 @@ it('cannot apply a pending actor resolution to another source', async () => {
 });
 it('does not offer unsupported account authentication', async () => {
   vi.mocked(accounts.fetchProviders).mockResolvedValue([{ ...account(), authKind: 'basic' }]);
-  render(<WorkSources />);expect(within(await screen.findByLabelText('Tracker account')).getAllByRole('option')).toHaveLength(1);
+  render(<WorkSources />);await addSource();expect(within(await screen.findByLabelText('Tracker account')).getAllByRole('option')).toHaveLength(1);
 });
 it('does not offer unavailable repositories', async () => {
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([{ ...repository, enabled: false }]);
-  render(<WorkSources />);fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  render(<WorkSources />);await addSource();fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
   expect(within(screen.getByLabelText('Target repository')).getAllByRole('option')).toHaveLength(1);
 });
 it('does not offer another forge origin for a forge source', async () => {
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([{ ...repository, forgeOrigin: 'https://TEST-other.invalid' }]);
-  render(<WorkSources />);fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  render(<WorkSources />);await addSource();fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
   expect(within(screen.getByLabelText('Target repository')).getAllByRole('option')).toHaveLength(1);
 });
 it('does not offer another platform on the same origin', async () => {
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([{ ...repository, scmType: 'gitlab' }]);
-  render(<WorkSources />);fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  render(<WorkSources />);await addSource();fireEvent.change(await screen.findByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
   expect(within(screen.getByLabelText('Target repository')).getAllByRole('option')).toHaveLength(1);
 });
 it('ignores a superseded list error', async () => {
@@ -164,7 +243,7 @@ it('does not infer a selection from multiple FOUND actors', async () => {
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [
     { providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' },
     { providerUserId: '900456', handle: 'TEST-other', displayName: 'TEST-other' }], detail: null });
-  render(<WorkSources />);await selectSource();fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
+  render(<WorkSources />);await addSource();await selectSource();fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));await screen.findByLabelText('Resolved source person');
   expect(screen.getByRole('button', { name: 'Save source person' })).toBeDisabled();
 });

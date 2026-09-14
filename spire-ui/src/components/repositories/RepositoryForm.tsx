@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ProviderView } from '../../api';
 import { saveRepository, type Repository, type RepositoryInput } from './repositoriesApi';
+import { accountOptionLabel } from '../accounts';
 
 interface Props {
   initial: Repository | null;
@@ -52,7 +53,7 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
           <select aria-label={`${role} account`} value={fields[key] ?? ''} onChange={e => patch({ [key]: e.target.value || null })}>
             <option value="">No account selected</option>
             {compatible.filter(p => p.role === role).map(p => <option key={p.id} value={p.id}>
-              {p.name}{p.enabled ? '' : ' (disabled)'}
+              {accountOptionLabel(p)}
             </option>)}
           </select>
         </label>;

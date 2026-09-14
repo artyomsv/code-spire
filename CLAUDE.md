@@ -19,6 +19,9 @@ services — see `LICENSING.md`. Never call the project "open source" in docs or
 
 ## Read first
 
+Before writing a new dashboard widget, check [spire-ui/docs/WIDGETS.md](spire-ui/docs/WIDGETS.md)
+for the existing components, vocabulary and account/person helpers.
+
 The design is fully specified in `docs/` — **treat those files as the source of truth**:
 
 | Doc | Contents |
@@ -86,7 +89,7 @@ PR #153 remains draft. No merge or promotion to ready is authorized by this hand
   expected revision, note and fresh evidence; retired items cannot resume.
 - **Measured final validation:** 4076 Java tests across 452 suites and 30 modules,
   zero failures/errors and 1 existing Windows symlink privilege skip. Forced testFast,
-  testServices and packaging passed sequentially. The full UI passed 730 tests across 92 files,
+  testServices and packaging passed sequentially. The full UI passed 742 tests across 93 files,
   TypeScript and production build. Slice 10 adds four verified production mutations (the real
   migration and separate read/INSERT/UPDATE guards); slice 9 has 78 distinct production mutations.
   Earlier per-slice counts and selectors remain in the acceptance record, without claiming a
