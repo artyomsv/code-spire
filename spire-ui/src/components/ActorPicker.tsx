@@ -57,29 +57,31 @@ export default function ActorPicker({ accountId, accountType, repositoryId }: Pr
       : 'Enter a person, resolve their identity, then save. Review commands and conversations compare the stored provider identity.'}</p>
     {accountType === 'bitbucket-cloud' && <p>Bitbucket nicknames are not unique. Select a workspace member explicitly. The selected credential needs workspace and user read access. Effective push-permission reads additionally require repository-admin access; this form does not increase it.</p>}
     {accountType === 'atlassian' && <p>Jira Cloud display names are not unique. Select a returned account explicitly. The credential needs Browse users and groups and user-read access. Jira Data Center person lookup is not supported here.</p>}
+    <div className="op-form">
     {!repositoryId && accountType === 'bitbucket-cloud' && <>
-      <button type="button" onClick={() => void chooseScope()}>Choose repository for member search</button>
-      <label>Member search repository<select value={scope} onChange={event => { setScope(event.target.value); setResolution({ choices: [], selected: '', detail: null }); }}>
+      <button className="btn-ghost" type="button" onClick={() => void chooseScope()}>Choose repository for member search</button>
+      <label className="field">Member search repository<select value={scope} onChange={event => { setScope(event.target.value); setResolution({ choices: [], selected: '', detail: null }); }}>
         <option value="">Select a bound repository</option>{repositories.map(repo => <option key={repo.id} value={repo.id}>{repo.workspace}/{repo.slug}</option>)}
       </select></label>
     </>}
-    <label>Person<input placeholder="@handle or display name" value={draft} onChange={event => { setDraft(event.target.value); setResolution({ choices: [], selected: '', detail: null }); }} /></label>
-    <button type="button" disabled={busy || !draft.trim()} onClick={() => void find()}>Resolve person</button>
+    <label className="field">Person<input placeholder="@handle or display name" value={draft} onChange={event => { setDraft(event.target.value); setResolution({ choices: [], selected: '', detail: null }); }} /></label>
+    <button className="btn-ghost" type="button" disabled={busy || !draft.trim()} onClick={() => void find()}>Resolve person</button>
     {detail && <p>{detail}</p>}
-    {choices.length > 0 && <label>Resolved person<select value={selected} onChange={event => setResolution(previous => ({ ...previous, selected: event.target.value }))}>
+    {choices.length > 0 && <label className="field">Resolved person<select value={selected} onChange={event => setResolution(previous => ({ ...previous, selected: event.target.value }))}>
       <option value="">Select a person</option>{choices.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.displayName} · {actor.providerUserId}</option>)}
     </select></label>}
-    {repositoryId && <label>Policy effect<select value={effect} onChange={event => setEffect(event.target.value as 'ALLOW' | 'DENY')}><option value="ALLOW">Allow</option><option value="DENY">Deny</option></select></label>}
-    <button type="button" disabled={busy || !selected || !policy} onClick={() => void save()}>Save person</button>
-    {error && <p role="alert">{error}</p>}
+    {repositoryId && <label className="field">Policy effect<select value={effect} onChange={event => setEffect(event.target.value as 'ALLOW' | 'DENY')}><option value="ALLOW">Allow</option><option value="DENY">Deny</option></select></label>}
+    <button className="btn-ghost" type="button" disabled={busy || !selected || !policy} onClick={() => void save()}>Save person</button>
+    </div>
+    {error && <p className="prov-error" role="alert">{error}</p>}
     {policy ? <ul>{policy.actors.map(actor => <li key={actor.providerUserId}>
       <span>{actorLabel(actor)}</span> — {actor.effect === 'DENY' ? 'Denied' : 'Allowed'}{actor.stale && <span> · stale display; refresh by ID</span>}
-      <button type="button" disabled={busy} onClick={async () => {
+      <button className="btn-ghost" type="button" disabled={busy} onClick={async () => {
         setBusy(true); setError(null);
         try { await deleteActor(path, actor, repositoryId ? actor.revision : policy.revision); await load(); }
         catch (failure) { setError(String(failure)); } finally { setBusy(false); }
       }}>Remove {actorLabel(actor)}</button>
     </li>)}</ul> : <p>People have not loaded.</p>}
-    <button type="button" disabled={busy} onClick={() => { setError(null); void load(true); }}>Reload people and refresh names</button>
+    <button className="btn-ghost" type="button" disabled={busy} onClick={() => { setError(null); void load(true); }}>Reload people and refresh names</button>
   </section>;
 }

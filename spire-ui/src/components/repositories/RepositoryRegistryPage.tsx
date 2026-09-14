@@ -4,12 +4,10 @@ import { fetchProviders, fetchWebhookRepos, type ProviderView, type WebhookRepoV
 import RepositoryDetail from './RepositoryDetail';
 import RepositoryForm from './RepositoryForm';
 import RepositoryPending from './RepositoryPending';
-import { fetchRepositories, fetchRepositoryKinds, type Repository, type RepositoryAccount } from './repositoriesApi';
-
-function accountLabel(account: RepositoryAccount | null): string {
-  if (!account) return 'No account selected';
-  return `${account.name}${account.handle ? ` (@${account.handle})` : ''} · ${account.state}`;
-}
+import RepositoryAccountsCell from './RepositoryAccountsCell';
+import { CopyableValue } from '../../render';
+import { GitBranch } from 'lucide-react';
+import { fetchRepositories, fetchRepositoryKinds, type Repository } from './repositoriesApi';
 
 /** Repository configuration remains usable when the separate webhook service is unavailable. */
 export default function RepositoryRegistryPage() {
@@ -55,24 +53,31 @@ export default function RepositoryRegistryPage() {
     try { setHooks(await fetchWebhookRepos()); }
     catch (failure) { setWebhooks(previous => ({ ...previous, error: String(failure) })); }
   }
-  return <section className="content"><div className="card" style={{ padding: 18 }}>
-    <h2>Registered repositories</h2>
-    <p>Repositories own their workspace and select the accounts used for reviews and runs.</p>
-    <p><a href="#/settings/webhooks">Manage legacy and organization webhooks</a></p>
-    {loading ? <p>Loading repositories…</p> : error ? <p role="alert">{error}</p> : <>
-      <button className="btn" onClick={() => setEditing('new')}>Register repository</button>
-      {hookError && <p role="alert">Webhooks could not be loaded: {hookError}. Repository settings remain available.
-        <button className="btn" onClick={() => void retryHooks()}>Retry loading webhooks</button></p>}
-      <RepositoryPending repositories={repositories} onHooksChanged={setHooks} />
-      {repositories.length === 0 ? <p>No registered repositories yet.</p> : <table>
-        <thead><tr><th>Repository</th><th>Forge origin</th><th>Workspace</th><th>Reviewer</th><th>Factory</th><th>State</th></tr></thead>
+  return <section className="content"><div className="card">
+    <div className="prov-head"><h2 className="prov-title">Registered repositories</h2>
+      {repositories.length > 0 && <button className="btn" onClick={() => setEditing('new')}>Register repository</button>}
+    </div>
+    <p className="prov-note">Repositories own their workspace and select the accounts used for reviews and runs.</p>
+    <p className="prov-note"><a className="btn-ghost" href="#/settings/webhooks">Manage legacy and organization webhooks</a></p>
+    {loading ? <p className="prov-note">Loading repositories…</p> : error ? <p className="prov-note prov-error" role="alert">{error}</p> : <>
+      {hookError && <div className="prov-note" role="alert"><p className="prov-error">Webhooks could not be loaded: {hookError}. Repository settings remain available.</p>
+        <button className="btn-ghost" onClick={() => void retryHooks()}>Retry loading webhooks</button></div>}
+      {repositories.length === 0 ? <div className="wh-empty">
+        <div className="wh-empty-icon"><GitBranch size={22} aria-hidden="true" /></div>
+        <div className="wh-empty-title">No registered repositories yet.</div>
+        <p className="wh-empty-text">Register a repository, then select its review and factory accounts and webhook kinds.</p>
+        <button className="btn" onClick={() => setEditing('new')}>Register repository</button>
+      </div> : <div className="prov-scroll"><table className="prov-table">
+        <thead><tr><th>Repository</th><th>Forge origin</th><th>Workspace</th><th>Accounts</th><th>State</th></tr></thead>
         <tbody>{repositories.map(repository => <tr key={repository.id}>
-          <td><button className="btn" onClick={() => setSelected(repository.id)}>{repository.slug}</button></td>
-          <td>{repository.forgeOrigin}</td><td>{repository.workspace}</td>
-          <td>{accountLabel(repository.reviewer)}</td><td>{accountLabel(repository.factory)}</td>
-          <td>{repository.enabled ? 'Enabled' : 'Disabled'}</td>
+          <td className="nowrap"><a className="prov-name mono nowrap" href="#/settings/repositories" onClick={event => { event.preventDefault(); setSelected(repository.id); }}>{repository.slug}</a>
+            <div className="prov-sub">{repository.scmType}</div></td>
+          <td className="mono nowrap"><div className="wh-url"><CopyableValue text={repository.forgeOrigin} mono /></div></td><td className="mono nowrap">{repository.workspace}</td>
+          <td><RepositoryAccountsCell repository={repository} /></td>
+          <td><div className="chips"><span className={`chip ${repository.enabled ? 'on' : ''}`}>{repository.enabled ? 'Enabled' : 'Disabled'}</span></div></td>
         </tr>)}</tbody>
-      </table>}
+      </table></div>}
+      <RepositoryPending repositories={repositories} onHooksChanged={setHooks} />
       {repositories.filter(repository => repository.id === selected).map(repository =>
         <RepositoryDetail key={repository.id} repository={repository} hooks={hooks} onHooksChanged={setHooks}
           onEdit={() => setEditing(repository)} />)}

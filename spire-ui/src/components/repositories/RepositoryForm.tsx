@@ -36,19 +36,19 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
     <form onSubmit={submit} style={{ padding: 18, display: 'grid', gap: 12 }}>
       <h3>{initial ? 'Repository details' : 'Register repository'}</h3>
       {!initial && prefill.get('registration') && <p>Incoming registration: {prefill.get('registration')}</p>}
-      <label>Forge kind <select aria-label="Forge kind" required disabled={!!initial} value={fields.scmType}
+      <label className="field">Forge kind <select aria-label="Forge kind" required disabled={!!initial} value={fields.scmType}
         onChange={e => patch({ scmType: e.target.value, reviewerAccountId: null, factoryAccountId: null })}>
         <option value="">Select forge</option>{kinds.map(kind => <option key={kind}>{kind}</option>)}
       </select></label>
-      <label>Forge origin <input aria-label="Forge origin" type="url" required readOnly={!!initial} value={fields.forgeOrigin}
+      <label className="field">Forge origin <input aria-label="Forge origin" type="url" required readOnly={!!initial} value={fields.forgeOrigin}
         onChange={e => patch({ forgeOrigin: e.target.value, reviewerAccountId: null, factoryAccountId: null })} /></label>
-      <label>Workspace <input aria-label="Workspace" required readOnly={!!initial} value={fields.workspace}
+      <label className="field">Workspace <input aria-label="Workspace" required readOnly={!!initial} value={fields.workspace}
         onChange={e => patch({ workspace: e.target.value })} /></label>
-      <label>Repository slug <input aria-label="Repository slug" required readOnly={!!initial} value={fields.slug}
+      <label className="field">Repository slug <input aria-label="Repository slug" required readOnly={!!initial} value={fields.slug}
         onChange={e => patch({ slug: e.target.value })} /></label>
       {(['REVIEWER', 'FACTORY'] as const).map(role => {
         const key = role === 'REVIEWER' ? 'reviewerAccountId' : 'factoryAccountId';
-        return <label key={role}>{role === 'REVIEWER' ? 'Reviewer account' : 'Factory account'}
+        return <label className="field" key={role}>{role === 'REVIEWER' ? 'Reviewer account' : 'Factory account'}
           <select aria-label={`${role} account`} value={fields[key] ?? ''} onChange={e => patch({ [key]: e.target.value || null })}>
             <option value="">No account selected</option>
             {compatible.filter(p => p.role === role).map(p => <option key={p.id} value={p.id}>
@@ -57,10 +57,10 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
           </select>
         </label>;
       })}
-      <label><input type="checkbox" checked={fields.enabled} onChange={e => patch({ enabled: e.target.checked })} /> Enabled</label>
-      {error && <p role="alert">{error}</p>}
-      <div><button className="btn" disabled={busy} type="submit">{busy ? 'Saving…' : 'Save repository'}</button>
-        <button className="btn" type="button" onClick={onCancel}>Cancel</button></div>
+      <label className="field-check"><input type="checkbox" checked={fields.enabled} onChange={e => patch({ enabled: e.target.checked })} /><span>Enabled</span></label>
+      {error && <p className="prov-error" role="alert">{error}</p>}
+      <div className="prov-actions"><button className="btn" disabled={busy} type="submit">{busy ? 'Saving…' : 'Save repository'}</button>
+        <button className="btn-ghost" type="button" onClick={onCancel}>Cancel</button></div>
     </form>
   );
 }

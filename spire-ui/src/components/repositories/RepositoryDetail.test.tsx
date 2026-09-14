@@ -19,6 +19,17 @@ const hooks: WebhookRepoView[] = (['REVIEWER', 'FACTORY', 'ISSUE'] as WebhookEve
 }));
 
 describe('RepositoryDetail', () => {
+  it('preserves the webhook path heading truncation and vertical account badges', () => {
+    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    expect(screen.getByRole('columnheader', { name: 'Webhook path' })).toBeInTheDocument();
+    const path = screen.getByText('/webhooks/gitlab/TEST-key-REVIEWER');
+    expect(path.closest('.wh-url')).not.toBeNull();
+    expect(path).toHaveAttribute('title', '/webhooks/gitlab/TEST-key-REVIEWER');
+    const accounts = screen.getByRole('region', { name: 'Selected accounts' });
+    expect(accounts.querySelector('.serving-pair')).toContainElement(within(accounts).getByText('Reviewer: Review account (@review-bot) · ok'));
+    expect(accounts.querySelector('.serving-pair')).toContainElement(within(accounts).getByText('Factory: Push account (@push-bot) · disabled'));
+  });
+
   it('links a known-origin legacy hook while preserving its key and secret', async () => {
     const legacy = { ...hooks[0], repositoryId: null };
     const update = vi.spyOn(api, 'updateWebhookRepo').mockResolvedValue(hooks[0]);

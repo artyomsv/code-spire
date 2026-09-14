@@ -24,7 +24,34 @@ beforeEach(() => {
   vi.spyOn(api, 'rescanWorkSource').mockResolvedValue();
   vi.spyOn(api, 'saveWorkActor').mockResolvedValue(source());
 });
-async function selectSource() { fireEvent.click(await screen.findByRole('button', { name: 'TEST-source name' })); }
+async function selectSource() { fireEvent.click(await screen.findByRole('link', { name: 'TEST-source name' })); }
+
+it('styles both forms and keeps all their controls locked during a save', async () => {
+  let finishCreate!: (value: api.WorkSource) => void, finishEdit!: (value: api.WorkSource) => void;
+  vi.mocked(api.createWorkSource).mockReturnValue(new Promise(done => { finishCreate = done; }));
+  vi.mocked(api.editWorkSource).mockReturnValue(new Promise(done => { finishEdit = done; }));
+  render(<WorkSources />);
+  const name = await screen.findByRole('link', { name: 'TEST-source name' });
+  expect(name).toHaveClass('mono', 'nowrap');
+  fireEvent.click(name);
+  for (const label of ['Source name', 'Tracker', 'Tracker account', 'Target repository', 'Tracker repository', 'Edit source name', 'Source account', 'Person']) {
+    expect(screen.getByLabelText(label).closest('label')).toHaveClass('field');
+  }
+  const create = screen.getByRole('group', { name: 'Add a work source' });
+  const edit = screen.getByRole('group', { name: 'TEST-source name' });
+  expect(create).toHaveStyle({ borderWidth: '0px', borderStyle: 'none' }); expect(edit).toHaveStyle({ borderWidth: '0px', borderStyle: 'none' });
+  fireEvent.change(screen.getByLabelText('Source name'), { target: { value: 'TEST-create' } });
+  fireEvent.change(screen.getByLabelText('Tracker account'), { target: { value: 'TEST-github' } });
+  fireEvent.change(screen.getByLabelText('Target repository'), { target: { value: repository.id } });
+  fireEvent.click(screen.getByRole('button', { name: 'Register work source' }));
+  for (const element of create.querySelectorAll('input,select,button')) expect(element).toBeDisabled();
+  expect(api.createWorkSource).toHaveBeenCalledTimes(1);
+  await act(async () => finishCreate(source()));
+  fireEvent.click(screen.getByRole('button', { name: 'Save source' }));
+  for (const element of edit.querySelectorAll('input,select,button')) expect(element).toBeDisabled();
+  expect(api.editWorkSource).toHaveBeenCalledTimes(1);
+  await act(async () => finishEdit(source()));
+});
 
 it('registers a source with an explicit compatible account and repository', async () => {
   render(<WorkSources />);
@@ -91,10 +118,10 @@ it('ignores a superseded list response', async () => {
   let resolve!: (value: api.WorkSource[]) => void;
   vi.mocked(api.fetchWorkSources).mockReturnValueOnce(new Promise(yes => { resolve = yes; })).mockResolvedValue([{ ...source(), name: 'TEST-current source' }]);
   render(<WorkSources />);fireEvent.click(screen.getByRole('button', { name: 'Refresh work sources' }));
-  await screen.findByRole('button', { name: 'TEST-current source' });
+  await screen.findByRole('link', { name: 'TEST-current source' });
   await act(async () => resolve([source()]));
-  expect(screen.queryByRole('button', { name: 'TEST-source name' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'TEST-current source' })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'TEST-source name' })).toBeNull();
+  expect(screen.getByRole('link', { name: 'TEST-current source' })).toBeInTheDocument();
 });
 it('cannot apply a pending actor resolution to another source', async () => {
   let resolve!: (value: Awaited<ReturnType<typeof api.resolveWorkActor>>) => void;
@@ -102,7 +129,7 @@ it('cannot apply a pending actor resolution to another source', async () => {
   vi.mocked(api.fetchWorkSources).mockResolvedValue([source(), { ...source(), id: 'TEST-other-source', name: 'TEST-other source' }]);
   render(<WorkSources />);await selectSource();fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
-  fireEvent.click(screen.getByRole('button', { name: 'TEST-other source' }));
+  fireEvent.click(screen.getByRole('link', { name: 'TEST-other source' }));
   await act(async () => resolve({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null }));
   expect(screen.getByRole('button', { name: 'Save source person' })).toBeDisabled();
   expect(screen.queryByLabelText('Resolved source person')).toBeNull();
@@ -130,7 +157,7 @@ it('ignores a superseded list error', async () => {
   let reject!: (error: Error) => void;
   vi.mocked(api.fetchWorkSources).mockReturnValueOnce(new Promise((_yes, no) => { reject = no; })).mockResolvedValue([source()]);
   render(<WorkSources />);fireEvent.click(screen.getByRole('button', { name: 'Refresh work sources' }));
-  await screen.findByRole('button', { name: 'TEST-source name' });await act(async () => reject(new Error('TEST-stale-error')));
+  await screen.findByRole('link', { name: 'TEST-source name' });await act(async () => reject(new Error('TEST-stale-error')));
   expect(screen.queryByRole('alert')).toBeNull();
 });
 it('does not infer a selection from multiple FOUND actors', async () => {

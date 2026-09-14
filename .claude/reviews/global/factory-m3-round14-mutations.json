@@ -1,0 +1,635 @@
+{
+  "date": "2026-09-14",
+  "checks": [
+    {
+      "name": "table-RepositoryRegistryPage",
+      "file": "spire-ui/src/components/repositories/RepositoryRegistryPage.tsx",
+      "from": "<table className=\"prov-table\">",
+      "to": "<table>",
+      "test": "spire-ui/src/settingsTables.contract.test.ts",
+      "title": "uses the shared table vocabulary",
+      "snapshot": ".handoff\\r14-mutations\\table-RepositoryRegistryPage.snapshot",
+      "sha256": "5fc10d62d08136ade1507b834adee5693464555d795be7f5ac06dbbc97261d42",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryRegistryPage-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryRegistryPage-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "5fc10d62d08136ade1507b834adee5693464555d795be7f5ac06dbbc97261d42"
+    },
+    {
+      "name": "table-RepositoryDetail",
+      "file": "spire-ui/src/components/repositories/RepositoryDetail.tsx",
+      "from": "<table className=\"prov-table\">",
+      "to": "<table>",
+      "test": "spire-ui/src/settingsTables.contract.test.ts",
+      "title": "uses the shared table vocabulary",
+      "snapshot": ".handoff\\r14-mutations\\table-RepositoryDetail.snapshot",
+      "sha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryDetail-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryDetail-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3"
+    },
+    {
+      "name": "table-RepositoryPending",
+      "file": "spire-ui/src/components/repositories/RepositoryPending.tsx",
+      "from": "<table className=\"prov-table\">",
+      "to": "<table>",
+      "test": "spire-ui/src/settingsTables.contract.test.ts",
+      "title": "uses the shared table vocabulary",
+      "snapshot": ".handoff\\r14-mutations\\table-RepositoryPending.snapshot",
+      "sha256": "40b0a2f9eb1b6a55c16d3b2cff303212f56cd6cd1f11e83aa76df77476bddc2e",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryPending-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\table-RepositoryPending-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "40b0a2f9eb1b6a55c16d3b2cff303212f56cd6cd1f11e83aa76df77476bddc2e"
+    },
+    {
+      "name": "table-WorkSources",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "<table className=\"prov-table\">",
+      "to": "<table>",
+      "test": "spire-ui/src/settingsTables.contract.test.ts",
+      "title": "uses the shared table vocabulary",
+      "snapshot": ".handoff\\r14-mutations\\table-WorkSources.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\table-WorkSources-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\table-WorkSources-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "path-heading",
+      "file": "spire-ui/src/components/repositories/RepositoryDetail.tsx",
+      "from": "<th>Webhook path</th>",
+      "to": "<th>Payload URL</th>",
+      "test": "spire-ui/src/components/repositories/RepositoryDetail.test.tsx",
+      "title": "preserves the webhook path heading",
+      "snapshot": ".handoff\\r14-mutations\\path-heading.snapshot",
+      "sha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\path-heading-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\path-heading-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3"
+    },
+    {
+      "name": "path-bound",
+      "file": "spire-ui/src/components/repositories/RepositoryDetail.tsx",
+      "from": "<div className=\"wh-url\">",
+      "to": "<div>",
+      "test": "spire-ui/src/components/repositories/RepositoryDetail.test.tsx",
+      "title": "preserves the webhook path heading",
+      "snapshot": ".handoff\\r14-mutations\\path-bound.snapshot",
+      "sha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\path-bound-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\path-bound-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "c10213b1063e55cb86b196d5032113336c01009b98bccd4f262a44874d1bbfb3"
+    },
+    {
+      "name": "account-stack",
+      "file": "spire-ui/src/components/repositories/RepositoryAccountsCell.tsx",
+      "from": "className=\"serving-pair\"",
+      "to": "className=\"serving-cell\"",
+      "test": "spire-ui/src/components/repositories/RepositoryDetail.test.tsx",
+      "title": "preserves the webhook path heading",
+      "snapshot": ".handoff\\r14-mutations\\account-stack.snapshot",
+      "sha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\account-stack-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\account-stack-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90"
+    },
+    {
+      "name": "path-width",
+      "file": "spire-ui/src/index.css",
+      "from": ".wh-url { max-width: 180px; }",
+      "to": ".wh-url { max-width: 360px; }",
+      "test": "spire-ui/src/repositoryLayout.contract.test.ts",
+      "title": "retains the operator requested",
+      "snapshot": ".handoff\\r14-mutations\\path-width.snapshot",
+      "sha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\path-width-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\path-width-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111"
+    },
+    {
+      "name": "pair-direction",
+      "file": "spire-ui/src/index.css",
+      "from": "flex-direction: column; align-items: flex-start; gap: 4px; white-space: nowrap;",
+      "to": "flex-direction: row; align-items: flex-start; gap: 4px; white-space: nowrap;",
+      "test": "spire-ui/src/repositoryLayout.contract.test.ts",
+      "title": "retains the operator requested",
+      "snapshot": ".handoff\\r14-mutations\\pair-direction.snapshot",
+      "sha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\pair-direction-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\pair-direction-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111"
+    },
+    {
+      "name": "pair-alignment",
+      "file": "spire-ui/src/index.css",
+      "from": "flex-direction: column; align-items: flex-start; gap: 4px; white-space: nowrap;",
+      "to": "flex-direction: column; align-items: center; gap: 4px; white-space: nowrap;",
+      "test": "spire-ui/src/repositoryLayout.contract.test.ts",
+      "title": "retains the operator requested",
+      "snapshot": ".handoff\\r14-mutations\\pair-alignment.snapshot",
+      "sha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\pair-alignment-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\pair-alignment-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "1dbdb3c935ecd5c93cd6b33679df13636acc9e56f07fb6981f1aefc4c7b34111"
+    },
+    {
+      "name": "WorkSources-wh-empty",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "className=\"wh-empty\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work sources screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkSources-wh-empty.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "WorkSources-wh-empty-icon",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "className=\"wh-empty-icon\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work sources screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkSources-wh-empty-icon.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-icon-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-icon-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "WorkSources-wh-empty-title",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "className=\"wh-empty-title\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work sources screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkSources-wh-empty-title.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-title-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-title-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "WorkSources-wh-empty-text",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "className=\"wh-empty-text\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work sources screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkSources-wh-empty-text.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-text-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkSources-wh-empty-text-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "WorkItems-wh-empty",
+      "file": "spire-ui/src/components/work-items/WorkItems.tsx",
+      "from": "className=\"wh-empty\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work items screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkItems-wh-empty.snapshot",
+      "sha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6"
+    },
+    {
+      "name": "WorkItems-wh-empty-icon",
+      "file": "spire-ui/src/components/work-items/WorkItems.tsx",
+      "from": "className=\"wh-empty-icon\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work items screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkItems-wh-empty-icon.snapshot",
+      "sha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-icon-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-icon-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6"
+    },
+    {
+      "name": "WorkItems-wh-empty-title",
+      "file": "spire-ui/src/components/work-items/WorkItems.tsx",
+      "from": "className=\"wh-empty-title\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work items screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkItems-wh-empty-title.snapshot",
+      "sha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-title-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-title-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6"
+    },
+    {
+      "name": "WorkItems-wh-empty-text",
+      "file": "spire-ui/src/components/work-items/WorkItems.tsx",
+      "from": "className=\"wh-empty-text\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Work items screen",
+      "snapshot": ".handoff\\r14-mutations\\WorkItems-wh-empty-text.snapshot",
+      "sha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-text-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\WorkItems-wh-empty-text-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "ec0147cbd718c77a0cde28dc226d32e480dd384dc677fabd038f8f52a5e0d4c6"
+    },
+    {
+      "name": "Approvals-wh-empty",
+      "file": "spire-ui/src/components/work-items/Approvals.tsx",
+      "from": "className=\"wh-empty\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Approvals screen",
+      "snapshot": ".handoff\\r14-mutations\\Approvals-wh-empty.snapshot",
+      "sha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190"
+    },
+    {
+      "name": "Approvals-wh-empty-icon",
+      "file": "spire-ui/src/components/work-items/Approvals.tsx",
+      "from": "className=\"wh-empty-icon\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Approvals screen",
+      "snapshot": ".handoff\\r14-mutations\\Approvals-wh-empty-icon.snapshot",
+      "sha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-icon-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-icon-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190"
+    },
+    {
+      "name": "Approvals-wh-empty-title",
+      "file": "spire-ui/src/components/work-items/Approvals.tsx",
+      "from": "className=\"wh-empty-title\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Approvals screen",
+      "snapshot": ".handoff\\r14-mutations\\Approvals-wh-empty-title.snapshot",
+      "sha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-title-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-title-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190"
+    },
+    {
+      "name": "Approvals-wh-empty-text",
+      "file": "spire-ui/src/components/work-items/Approvals.tsx",
+      "from": "className=\"wh-empty-text\"",
+      "to": "className=\"\"",
+      "test": "spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx",
+      "title": "welcomes the operator to an empty Approvals screen",
+      "snapshot": ".handoff\\r14-mutations\\Approvals-wh-empty-text.snapshot",
+      "sha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-text-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\Approvals-wh-empty-text-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "cc7425f1fe5035162075c02a87584168dc68f93e80513f395aca28bd12fa4190"
+    },
+    {
+      "name": "source-label",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "<label className=\"field\">Source name",
+      "to": "<label>Source name",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "title": "styles both forms and keeps all their controls",
+      "snapshot": ".handoff\\r14-mutations\\source-label.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\source-label-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\source-label-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "source-create-busy",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">Add a work source",
+      "to": "disabled={false}><legend className=\"field-sep\">Add a work source",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "title": "styles both forms and keeps all their controls",
+      "snapshot": ".handoff\\r14-mutations\\source-create-busy.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\source-create-busy-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\source-create-busy-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "source-edit-busy",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "disabled={busy}><legend className=\"field-sep\">{source.name}",
+      "to": "disabled={false}><legend className=\"field-sep\">{source.name}",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "title": "styles both forms and keeps all their controls",
+      "snapshot": ".handoff\\r14-mutations\\source-edit-busy.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\source-edit-busy-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\source-edit-busy-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "source-browser-border",
+      "file": "spire-ui/src/components/work-items/WorkSources.tsx",
+      "from": "borderWidth: 0, borderStyle: 'none',",
+      "to": "borderWidth: 2, borderStyle: 'groove',",
+      "test": "spire-ui/src/components/work-items/WorkSources.test.tsx",
+      "title": "styles both forms and keeps all their controls",
+      "snapshot": ".handoff\\r14-mutations\\source-browser-border.snapshot",
+      "sha256": "6e122ba5be356eedcdffb7c212aaef801ba2571b81272836f6cd9d510b32ec52",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\source-browser-border-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\source-browser-border-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "fb9b7ae18a611781bd6f847e7ce419e83422d54a244623ba0df4541cd34b7379"
+    },
+    {
+      "name": "configured-account",
+      "file": "spire-ui/src/components/repositories/RepositoryAccountsCell.tsx",
+      "from": "['configured', 'ok'].includes(account.state)",
+      "to": "['ok'].includes(account.state)",
+      "test": "spire-ui/src/components/repositories/RepositoryAccountsCell.test.tsx",
+      "title": "shows a configured account as usable",
+      "snapshot": ".handoff\\r14-mutations\\configured-account.snapshot",
+      "sha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\configured-account-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\configured-account-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90"
+    },
+    {
+      "name": "disabled-account",
+      "file": "spire-ui/src/components/repositories/RepositoryAccountsCell.tsx",
+      "from": "account.state === 'disabled'",
+      "to": "account.state === 'TEST-disabled'",
+      "test": "spire-ui/src/components/repositories/RepositoryAccountsCell.test.tsx",
+      "title": "shows a disabled account as disabled",
+      "snapshot": ".handoff\\r14-mutations\\disabled-account.snapshot",
+      "sha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\disabled-account-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\disabled-account-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90"
+    },
+    {
+      "name": "unknown-account",
+      "file": "spire-ui/src/components/repositories/RepositoryAccountsCell.tsx",
+      "from": "? 'completed' : 'refused'",
+      "to": "? 'completed' : 'completed'",
+      "test": "spire-ui/src/components/repositories/RepositoryAccountsCell.test.tsx",
+      "title": "never shows an unknown serving state as usable",
+      "snapshot": ".handoff\\r14-mutations\\unknown-account.snapshot",
+      "sha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\unknown-account-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\unknown-account-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90"
+    },
+    {
+      "name": "missing-account",
+      "file": "spire-ui/src/components/repositories/RepositoryAccountsCell.tsx",
+      "from": "? 'cancelled'",
+      "to": "? 'completed'",
+      "test": "spire-ui/src/components/repositories/RepositoryAccountsCell.test.tsx",
+      "title": "shows an absent account as missing",
+      "snapshot": ".handoff\\r14-mutations\\missing-account.snapshot",
+      "sha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90",
+      "mutant": {
+        "report": ".handoff\\r14-mutations\\missing-account-mutant.json",
+        "passed": 0,
+        "failed": 1
+      },
+      "restored": {
+        "report": ".handoff\\r14-mutations\\missing-account-restored.json",
+        "passed": 1,
+        "failed": 0
+      },
+      "finalSourceSha256": "b34c3be88949272e7cf20636f28d05d0dfb642bb16cb440c3a3d1ead5efeab90"
+    }
+  ]
+}

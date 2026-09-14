@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ClipboardCheck } from 'lucide-react';
 import { Link } from 'react-router';
 import { useMe } from '../../hooks/useMe';
 import { canAdminister } from '../../auth';
@@ -18,7 +19,11 @@ export default function Approvals() {
     <label><input type="checkbox" checked={history} onChange={event => setHistory(event.target.checked)} />Show decision history</label>
     <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh approvals</button>
     {error && <p role="alert">{error}</p>}
-    {!rows ? <p>Loading approvals…</p> : rows.length === 0 ? <p>{history ? 'No past decisions.' : 'No open approvals.'}</p> :
+    {!rows ? <p>Loading approvals…</p> : rows.length === 0 ? <div className="wh-empty">
+      <div className="wh-empty-icon"><ClipboardCheck size={22} aria-hidden="true" /></div>
+      <div className="wh-empty-title">{history ? 'No past decisions.' : 'No open approvals.'}</div>
+      <p className="wh-empty-text">{history ? 'Decisions will appear here after an approval is answered or expires.' : 'When a work item needs your approval, its phase and supporting evidence will appear here.'}</p>
+    </div> :
       <ul className="work-approvals">{rows.map(row => <li key={`${row.gate.id}:${row.gate.version}`}>
         <Decision row={row} admin={canAdminister(me)} resolved={() => setRefresh(value => value + 1)} />
       </li>)}</ul>}

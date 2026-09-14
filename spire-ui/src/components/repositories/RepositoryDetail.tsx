@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { createWebhookRepo, fetchWebhookRepos, updateWebhookRepo, rotateWebhookSecret, verifyRepo,
   type WebhookRepoView, type WebhookRepoSecret, type WebhookEventKind } from '../../api';
-import type { Repository, RepositoryAccount } from './repositoriesApi';
+import type { Repository } from './repositoriesApi';
 import ActorPicker from '../ActorPicker';
+import RepositoryAccountsCell from './RepositoryAccountsCell';
+import { CopyableValue } from '../../render';
+import CopyField from '../CopyField';
+import { webhookPath } from '../SettingsWebhookRepos';
 
 interface Props {
   repository: Repository;
@@ -11,10 +15,6 @@ interface Props {
   onEdit: () => void;
 }
 const kinds: WebhookEventKind[] = ['REVIEWER', 'FACTORY', 'ISSUE'];
-
-function account(account: RepositoryAccount | null): string {
-  return account ? `${account.name}${account.handle ? ` (@${account.handle})` : ''} · ${account.state}` : 'No account selected';
-}
 
 export default function RepositoryDetail({ repository, hooks, onHooksChanged, onEdit }: Props) {
   const [busy, setBusy] = useState(false);
@@ -87,39 +87,46 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged, on
     finally { setBusy(false); }
   }
 
-  return <article className="card" style={{ padding: 18, marginTop: 16 }}>
-    <h3>{repository.slug}</h3>
-    <section aria-label="Workspace"><h4>Workspace</h4><p>{repository.workspace}</p><p>{repository.scmType} · {repository.forgeOrigin}</p></section>
-    <section aria-label="Selected accounts"><h4>Selected accounts</h4>
-      <p>Reviewer: {account(repository.reviewer)}</p><p>Factory: {account(repository.factory)}</p>
-      <button className="btn" onClick={onEdit}>Edit repository and accounts</button>
-      {repository.reviewer && <button className="btn" disabled={busy} onClick={() => void verify()}>Verify reviewer access</button>}
+  return <article className="card" style={{ marginTop: 16 }}>
+    <div className="prov-head"><h3 className="prov-title">{repository.slug}</h3>
+      <button className="btn-ghost" onClick={onEdit}>Edit repository and accounts</button></div>
+    <section aria-label="Workspace" className="prov-note"><h4>Workspace</h4><p className="mono">{repository.workspace}</p><p className="prov-sub">{repository.scmType} · {repository.forgeOrigin}</p></section>
+    <section aria-label="Selected accounts" className="prov-note"><h4>Selected accounts</h4>
+      <RepositoryAccountsCell repository={repository} />
+      {repository.reviewer && <div className="prov-actions"><button className="btn-ghost" disabled={busy} onClick={() => void verify()}>Verify reviewer access</button></div>}
       {verification && <p role="status">{verification}</p>}
     </section>
-    <section aria-label="Webhooks"><h4>Webhooks</h4>
-      <p>Hooks are optional. A registered repository can be used for manual reviews and runs.</p>
+    <section aria-label="Webhooks"><div className="prov-head"><h4 className="prov-title">Webhooks</h4></div>
+      <p className="prov-note">Hooks are optional. A registered repository can be used for manual reviews and runs.</p>
+      <div className="prov-scroll"><table className="prov-table">
+      <thead><tr><th>Kind</th><th>Webhook path</th><th>State</th><th>Actions</th></tr></thead>
       {kinds.map(kind => {
         const hook = hooks.find(h => h.repositoryId === repository.id && h.eventKind === kind)
           ?? hooks.find(h => isLegacyCandidate(h, kind) && h.forgeOrigin === repository.forgeOrigin);
-        return <div key={kind} role="group" aria-label={`${kind} webhook`} style={{ marginBottom: 12 }}>
-          <strong>{kind}</strong>{hook ? <>
-            <span> · {hook.enabled ? 'Enabled' : 'Disabled'}</span>
-            <p><code>/webhooks/{hook.providerType}/{hook.webhookKey}</code></p>
-            {!hook.repositoryId && <button className="btn" disabled={busy} onClick={() => void link(hook)}>Link existing {kind} webhook</button>}
-            <button className="btn" disabled={busy} onClick={() => void toggle(hook)}>{hook.enabled ? 'Disable' : 'Enable'} {kind} webhook</button>
-            <button className="btn" disabled={busy} onClick={() => void rotate(hook)}>Rotate {kind} secret</button>
-          </> : kind === 'ISSUE' ? <p>Configure a work source to enable issue events.</p>
-            : <button className="btn" disabled={busy} onClick={() => void create(kind)}>Create {kind} webhook</button>}
-        </div>;
+        return <tbody key={kind} role="group" aria-label={`${kind} webhook`}><tr>
+          <td className="mono nowrap">{kind}</td>
+          <td>{hook ? <div className="wh-url"><CopyableValue text={webhookPath(hook)} mono copyTitle="Copy the webhook path" /></div>
+            : <span className="prov-sub">{kind === 'ISSUE' ? 'Configure a work source to enable issue events.' : 'Not configured'}</span>}</td>
+          <td>{hook && <div className="chips"><span className={`chip ${hook.enabled ? 'on' : ''}`}>{hook.enabled ? 'Enabled' : 'Disabled'}</span></div>}</td>
+          <td><div className="prov-actions">{hook ? <>
+            {!hook.repositoryId && <button className="btn-ghost" disabled={busy} onClick={() => void link(hook)} aria-label={`Link existing ${kind} webhook`}>Link existing</button>}
+            <button className="btn-ghost" disabled={busy} onClick={() => void toggle(hook)} aria-label={`${hook.enabled ? 'Disable' : 'Enable'} ${kind} webhook`}>{hook.enabled ? 'Disable' : 'Enable'}</button>
+            <button className="btn-ghost" disabled={busy} onClick={() => void rotate(hook)} aria-label={`Rotate ${kind} secret`}>Rotate secret</button>
+          </> : kind !== 'ISSUE' && <button className="btn-ghost" disabled={busy} onClick={() => void create(kind)} aria-label={`Create ${kind} webhook`}>Create webhook</button>}</div></td>
+        </tr></tbody>;
       })}
+      </table></div>
     </section>
-    {repository.reviewer ? <ActorPicker accountId={repository.reviewer.id} accountType={repository.scmType} repositoryId={repository.id} />
-      : <p>Select a reviewer account to edit fix overrides.</p>}
-    {error && <p role="alert">{error}</p>}
-    {revealed && <div role="dialog" aria-label="Webhook secret">
-      <p>Copy this secret now. It is shown once; store it in the forge webhook settings.</p>
-      <code>{revealed.secret}</code><p><code>/webhooks/{revealed.repo.providerType}/{revealed.repo.webhookKey}</code></p>
-      <button className="btn" onClick={() => setRevealed(null)}>Done</button>
-    </div>}
+    <div className="prov-note">{repository.reviewer ? <ActorPicker accountId={repository.reviewer.id} accountType={repository.scmType} repositoryId={repository.id} />
+      : <p>Select a reviewer account to edit fix overrides.</p>}</div>
+    {error && <p className="prov-note prov-error" role="alert">{error}</p>}
+    {revealed && <div className="modal-overlay"><div className="modal" role="dialog" aria-modal="true" aria-label="Webhook secret">
+      <div className="modal-head"><h3>Webhook secret</h3></div><div className="modal-body">
+        <p>Copy this secret now. It is shown once; store it in the forge webhook settings.</p>
+        <CopyField label="Secret" value={revealed.secret} />
+        <CopyField label="Webhook path" value={webhookPath(revealed.repo)} hint="Prefix with your public webhook base." />
+        <div className="modal-actions"><button className="btn" onClick={() => setRevealed(null)}>Done</button></div>
+      </div>
+    </div></div>}
   </article>;
 }

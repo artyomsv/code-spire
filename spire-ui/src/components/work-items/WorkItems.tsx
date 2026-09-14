@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
+import { ListTodo } from 'lucide-react';
 import { getWorkItems, type WorkItemPage, type WorkWorkflowStatus } from '../../api';
 
 const STATES = new Map(Object.entries({
@@ -110,13 +111,17 @@ export default function WorkItems() {
       <option value="">All states</option>{[...STATES].map(([value, state]) => <option key={value} value={value}>{state.label}</option>)}
     </select></label>
     {error ? <p role="alert">{error}</p> : !page ? <p>Loading work items…</p> : <>
-      {page.items.length === 0 ? <p>No work items yet. Registered sources admit tickets after a scan or label event.</p> :
+      {page.items.length === 0 ? <div className="wh-empty">
+        <div className="wh-empty-icon"><ListTodo size={22} aria-hidden="true" /></div>
+        <div className="wh-empty-title">{status ? 'No work items match this status.' : 'No work items yet.'}</div>
+        <p className="wh-empty-text">{status ? 'Choose another workflow status to see more items.' : 'Registered sources admit tickets after a scan or label event.'}</p>
+      </div> : <div className="prov-scroll">
         <table className="prov-table"><thead><tr><th>Ticket</th><th>Repository</th><th>Workflow</th><th>Phase</th><th>Profile</th></tr></thead>
           <tbody>{page.items.map(item => <tr key={item.id}>
             <td><Link to={`/work-items/${encodeURIComponent(item.id)}`}>{item.issueKey}</Link></td>
             <td>{item.repository}</td><td><WorkflowStatus status={item.workflowStatus} /></td><td>{item.phase}</td>
             <td>{item.profile ? `${item.profile.name} v${item.profile.version}` : 'No profile selected'}</td>
-          </tr>)}</tbody></table>}
+          </tr>)}</tbody></table></div>}
       <div className="prov-actions" style={{ marginTop: 16 }}>
         <button className="btn" disabled={page.offset === 0} onClick={() => setOffset(Math.max(0, page.offset - page.limit))}>Previous page</button>
         <span>{page.total === 0 ? '0 items' : `${page.offset + 1}–${page.offset + page.items.length} of ${page.total}`}</span>
