@@ -45,7 +45,9 @@ describe('Repository registry', () => {
     expect(await screen.findByRole('textbox', { name: 'Workspace' })).toHaveValue(repo.workspace);
     expect(screen.getByRole('textbox', { name: 'Forge origin' })).toHaveValue(repo.forgeOrigin);
     expect(screen.getByRole('textbox', { name: 'Repository slug' })).toHaveValue('TEST-new');
-    expect(screen.getByText('Incoming registration: TEST-registration')).toBeInTheDocument();
+    // The id is carried in its own `mono` element, so the sentence spans two nodes.
+    expect(screen.getByText('TEST-registration')).toHaveClass('mono');
+    expect(screen.getByText(/Incoming registration:/)).toHaveTextContent('Incoming registration: TEST-registration');
   });
   it('keeps repository registration available through a gateway outage and retries hooks', async () => {
     vi.mocked(accounts.fetchWebhookRepos).mockRejectedValueOnce(new Error('TEST-gateway down')).mockResolvedValue([]);
