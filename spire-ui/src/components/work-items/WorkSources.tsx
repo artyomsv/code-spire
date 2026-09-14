@@ -1,16 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { fetchProviders, type ProviderView } from '../../api';
 import { actorLabel, type ActorResult } from '../actorsApi';
 import { fetchRepositories, type Repository } from '../repositories/repositoriesApi';
 import * as api from './workSourcesApi';
 import { ListTodo } from 'lucide-react';
 import { accountOptionLabel } from '../accounts';
+import SettingField from '../SettingField';
 
 const kinds: Record<api.WorkSourceType, string> = { GITHUB: 'GitHub', GITLAB: 'GitLab', JIRA: 'Jira' };
 function origin(base: string) { try { return new URL(base).origin; } catch { return ''; } }
 function compatible(type: api.WorkSourceType, account: ProviderView) {
   return account.enabled && account.type === (type === 'JIRA' ? 'atlassian' : type.toLowerCase())
     && (account.authKind === 'bearer' || type === 'JIRA' && account.authKind === 'basic');
+}
+
+/**
+ * The app's dialog chrome, so a create or edit never renders inline beside the list it mutates.
+ * `fieldset disabled` is load-bearing: it locks every control while a save is in flight, so a
+ * second click cannot submit twice. `form-lock` only strips the fieldset's native border.
+ */
+function FormDialog({ title, busy, onClose, actions, children }:
+  { title: string; busy: boolean; onClose: () => void; actions: ReactNode; children: ReactNode }) {
+  return <div className="modal-overlay">
+    <div className="modal wide" onClick={event => event.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal-head"><h3>{title}</h3>
+        <button className="iconbtn" type="button" onClick={onClose} aria-label="Close">✕</button></div>
+      <fieldset className="modal-body scroll form-lock" aria-label={title} disabled={busy}>{children}</fieldset>
+      <div className="modal-actions">{actions}</div>
+    </div>
+  </div>;
 }
 
 export default function WorkSources() {
@@ -49,7 +67,8 @@ export default function WorkSources() {
           <td><div className="chips"><span className={`chip ${item.enabled ? 'on' : ''}`}>{item.enabled ? 'Available' : 'Unavailable'}</span></div>
             <div className="prov-sub">{item.health.split('_').join(' ')}</div></td>
         </tr>)}</tbody></table></div>}
-      {source && <SourceDetails key={`${source.id}:${source.version.source}`} source={source} accounts={data.accounts} changed={reload} />}
+      {source && <SourceDetails key={`${source.id}:${source.version.source}`} source={source} accounts={data.accounts}
+        closed={() => setSelected('')} changed={reload} />}
       {adding && <CreateSource accounts={data.accounts} repositories={data.repositories} cancelled={() => setAdding(false)} saved={created => {
         setData(current => current && ({ ...current, sources: [...current.sources.filter(value => value.id !== created.id), created] }));
         setAdding(false); setSelected(created.id); setNotice(`Work source ${created.name} registered.`);
@@ -73,34 +92,43 @@ function CreateSource({ accounts, repositories, saved, cancelled }: { accounts: 
     try { const created = await api.createWorkSource({ name: name.trim(), type, origin: origin(account.baseUrl), scope: scope.trim(), repositoryId, accountId, enabled: true }); saved(created); }
     catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
-  return <fieldset className="modal-body" style={{ borderWidth: 0, borderStyle: 'none', margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">Add a work source</legend>
-    <p className="prov-note">Fields marked required must be filled before registration.</p>
-    <label className="field">Source name <span className="field-optional">required</span><input aria-label="Source name" required value={name} onChange={event => setName(event.target.value)} /><small className="field-hint">A name you will recognise in the source list.</small></label>
-    <label className="field">Tracker <span className="field-optional">required</span><select aria-label="Tracker" required value={type} onChange={event => { setType(event.target.value as api.WorkSourceType); setAccount(''); setRepository(''); setScope(''); }}>
-      {Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-    </select><small className="field-hint">Where the tickets and their labels live.</small></label>
-    <label className="field">Tracker account <span className="field-optional">required</span><select aria-label="Tracker account" required value={accountId} onChange={event => { setAccount(event.target.value); setRepository(''); setScope(''); }}>
-      <option value="">Select an account</option>{accounts.filter(value => compatible(type, value)).map(value => <option key={value.id} value={value.id}>{accountOptionLabel(value)}</option>)}
-    </select><small className="field-hint">An enabled account with supported authentication for this tracker. Manage credentials in <a href="#/settings/accounts">Accounts</a>.</small></label>
+  const scopeLabel = type === 'JIRA' ? 'Jira project key' : 'Tracker repository';
+  return <FormDialog title="Add a work source" busy={busy} onClose={cancelled} actions={<>
+    <button className="btn" type="button" disabled={busy || !account || !repository || !name.trim() || !scope.trim()} onClick={() => void submit()}>Register work source</button>
+    <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></>}>
+    <SettingField label="Source name" scope="work source" hint="Required. A name you will recognise in the source list.">
+      <input aria-label="Source name" required value={name} onChange={event => setName(event.target.value)} /></SettingField>
+    <SettingField label="Tracker" scope="work source" hint="Required. Where the tickets and their labels live.">
+      <select aria-label="Tracker" required value={type} onChange={event => { setType(event.target.value as api.WorkSourceType); setAccount(''); setRepository(''); setScope(''); }}>
+        {Object.entries(kinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select></SettingField>
+    <SettingField label="Tracker account" scope="work source"
+      hint="Required. An enabled account with supported authentication for this tracker. Manage credentials on the Accounts screen.">
+      <select aria-label="Tracker account" required value={accountId} onChange={event => { setAccount(event.target.value); setRepository(''); setScope(''); }}>
+        <option value="">Select an account</option>{accounts.filter(value => compatible(type, value)).map(value => <option key={value.id} value={value.id}>{accountOptionLabel(value)}</option>)}
+      </select></SettingField>
     {!accounts.some(value => compatible(type, value)) && <p className="prov-note">No compatible {kinds[type]} accounts. <a href="#/settings/accounts">Add an account</a> first.</p>}
-    <label className="field">Target repository <span className="field-optional">required</span><select aria-label="Target repository" aria-describedby="source-repository-help" required disabled={!account || choices.length === 0} value={repositoryId} onChange={event => {
-      setRepository(event.target.value); const repo = choices.find(value => value.id === event.target.value);
-      if (type !== 'JIRA') setScope(repo ? `${repo.workspace}/${repo.slug}` : '');
-    }}><option value="">{repositoryPrompt}</option>{account && choices.map(repo => <option key={repo.id} value={repo.id}>{repo.workspace}/{repo.slug}</option>)}</select>
-      <small className="field-hint" id="source-repository-help">{!account ? 'Choose a tracker account first.' : choices.length === 0
-        ? <>{repositoryPrompt}. <a href="#/settings/repositories">Register a repository</a>.</>
-        : type === 'JIRA' ? 'The code repository for this project; it may be on another forge.' : `The code repository must be on ${origin(account.baseUrl)}.`}</small></label>
-    <label className="field">{type === 'JIRA' ? 'Jira project key' : 'Tracker repository'} <span className="field-optional">{type === 'JIRA' ? 'required' : 'automatic'}</span>
-      <input aria-label={type === 'JIRA' ? 'Jira project key' : 'Tracker repository'} aria-describedby="source-scope-help" required={type === 'JIRA'} value={scope} readOnly={type !== 'JIRA'} placeholder={type === 'JIRA' ? 'e.g. ENG' : 'Filled from the target repository'} onChange={event => setScope(event.target.value)} />
-      <small className="field-hint" id="source-scope-help">{type === 'JIRA' ? 'The Jira project key containing your tickets, for example ENG.' : 'Automatically filled from the target repository; choose a different repository above to change it.'}</small></label>
+    <SettingField label="Target repository" scope="work source"
+      hint={!account ? 'Required. Choose a tracker account first; the list is limited to repositories on that account’s forge.'
+        : choices.length === 0 ? `Required. ${repositoryPrompt}. Register one on the Repositories screen.`
+        : type === 'JIRA' ? 'Required. The code repository for this project; it may be on another forge.'
+        : `Required. The code repository must be on ${origin(account.baseUrl)}.`}>
+      <select aria-label="Target repository" required disabled={!account || choices.length === 0} value={repositoryId} onChange={event => {
+        setRepository(event.target.value); const repo = choices.find(value => value.id === event.target.value);
+        if (type !== 'JIRA') setScope(repo ? `${repo.workspace}/${repo.slug}` : '');
+      }}><option value="">{repositoryPrompt}</option>{account && choices.map(repo => <option key={repo.id} value={repo.id}>{repo.workspace}/{repo.slug}</option>)}</select></SettingField>
+    {account && choices.length === 0 && <p className="prov-note">{repositoryPrompt}. <a href="#/settings/repositories">Register a repository</a>.</p>}
+    <SettingField label={scopeLabel} scope="work source"
+      hint={type === 'JIRA' ? 'Required. The Jira project key containing your tickets, for example ENG.'
+        : 'Filled automatically from the target repository. Choose a different repository above to change it.'}>
+      <input aria-label={scopeLabel} required={type === 'JIRA'} value={scope} readOnly={type !== 'JIRA'}
+        placeholder={type === 'JIRA' ? 'e.g. ENG' : 'Filled from the target repository'} onChange={event => setScope(event.target.value)} /></SettingField>
     {type === 'JIRA' && <p className="prov-note">Jira is polled. Its project may target a repository on another forge; the Jira credential stays on the tracker. Unconfirmed label authors select no profile.</p>}
     {error && <p className="prov-error" role="alert">{error}</p>}
-    <div className="prov-actions"><button className="btn" type="button" disabled={busy || !account || !repository || !name.trim() || !scope.trim()} onClick={() => void submit()}>Register work source</button>
-      <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></div>
-  </fieldset>;
+  </FormDialog>;
 }
 
-function SourceDetails({ source, accounts, changed }: { source: api.WorkSource; accounts: ProviderView[]; changed: () => void }) {
+function SourceDetails({ source, accounts, changed, closed }: { source: api.WorkSource; accounts: ProviderView[]; changed: () => void; closed: () => void }) {
   const [name, setName] = useState(source.name), [accountId, setAccount] = useState(source.accountId);
   const [enabled, setEnabled] = useState(source.configuredEnabled);
   const [draft, setDraft] = useState(''), [selected, setSelected] = useState('');
@@ -111,34 +139,42 @@ function SourceDetails({ source, accounts, changed }: { source: api.WorkSource; 
     setBusy(true); setError(null);
     try { await run(); if (reload) changed(); } catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
-  return <fieldset className="modal-body" style={{ borderWidth: 0, borderStyle: 'none', margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">{source.name}</legend>
-    <p className="prov-note">{source.origin} · {source.scope}</p>
-    <label className="field">Edit source name <span className="field-optional">required</span><input aria-label="Edit source name" required value={name} onChange={event => setName(event.target.value)} /><small className="field-hint">The name shown in the source list.</small></label>
-    <label className="field">Source account <span className="field-optional">required</span><select aria-label="Source account" required value={accountId} onChange={event => setAccount(event.target.value)}>
-      {accounts.filter(account => compatible(source.type, account) && origin(account.baseUrl) === source.origin || account.id === source.accountId)
-        .map(account => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
-    </select><small className="field-hint">Choose a compatible account on this source's tracker origin. Disabled accounts cannot process tickets.</small></label>
-    <label className="field-check"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /><span>Source enabled</span></label>
-    {!source.enabled && source.configuredEnabled && <p>This source is enabled, but its account or repository is unavailable.</p>}
-    <div className="prov-actions" style={{ flexWrap: 'wrap' }}><button className="btn" type="button" disabled={busy || !name.trim()} onClick={() => void action(() => api.editWorkSource(source, { name, accountId, enabled }))}>Save source</button>
+  return <FormDialog title={source.name} busy={busy} onClose={closed} actions={<>
+    <button className="btn" type="button" disabled={busy || !name.trim()} onClick={() => void action(() => api.editWorkSource(source, { name, accountId, enabled }))}>Save source</button>
     <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(() => api.rescanWorkSource(source.id))}>Request rescan</button>
-    <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(async () => setCapabilities(await api.workCapabilities(source.id)), false)}>Check supported operations</button></div>
-    {capabilities && <p>{capabilities.operations.map(value => value.toLowerCase().split('_').join(' ')).join(', ')}. {capabilities.detail}</p>}
+    <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(async () => setCapabilities(await api.workCapabilities(source.id)), false)}>Check supported operations</button>
+    <button className="btn-ghost" type="button" onClick={closed}>Close</button></>}>
+    <p className="prov-note">{source.origin} · {source.scope}</p>
+    <SettingField label="Edit source name" scope="work source" hint="Required. The name shown in the source list.">
+      <input aria-label="Edit source name" required value={name} onChange={event => setName(event.target.value)} /></SettingField>
+    <SettingField label="Source account" scope="work source"
+      hint="Required. A compatible account on this source's tracker origin. Disabled accounts cannot process tickets.">
+      <select aria-label="Source account" required value={accountId} onChange={event => setAccount(event.target.value)}>
+        {accounts.filter(account => compatible(source.type, account) && origin(account.baseUrl) === source.origin || account.id === source.accountId)
+          .map(account => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
+      </select></SettingField>
+    <label className="field-check"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /><span>Source enabled</span></label>
+    {!source.enabled && source.configuredEnabled && <p className="prov-note">This source is enabled, but its account or repository is unavailable.</p>}
+    {capabilities && <p className="prov-note">{capabilities.operations.map(value => value.toLowerCase().split('_').join(' ')).join(', ')}. {capabilities.detail}</p>}
     <h4 className="prov-title">Allowed people</h4>
-    {source.type === 'JIRA' && <p>Jira Cloud display names are not unique. Resolve and select an account explicitly. Data Center person lookup is currently unavailable.</p>}
+    {source.type === 'JIRA' && <p className="prov-note">Jira Cloud display names are not unique. Resolve and select an account explicitly. Data Center person lookup is currently unavailable.</p>}
     <p className="prov-note">Only these people's attributed labels may choose a profile. An empty list grants no label authority.</p>
-    <label className="field">Person <span className="field-optional">optional; required to add a person</span><input aria-label="Person" value={draft} onChange={event => { setDraft(event.target.value); setResolution(null); setSelected(''); }} /><small className="field-hint">Enter a handle, then resolve and confirm the tracker identity before saving.</small></label>
+    <SettingField label="Person" scope="allowed people" hint="Optional, and required to add a person. Enter a handle, then resolve and confirm the tracker identity before saving.">
+      <input aria-label="Person" value={draft} onChange={event => { setDraft(event.target.value); setResolution(null); setSelected(''); }} /></SettingField>
     <div className="prov-actions"><button className="btn-ghost" type="button" disabled={busy || !draft.trim()} onClick={() => {
       setResolution(null); setSelected(''); void action(async () => {
         const result = await api.resolveWorkActor(source.id, draft); setResolution(result);
         setSelected(result.status === 'FOUND' && result.actors.length === 1 ? result.actors[0].providerUserId : '');
       }, false);
-    }}>Resolve source person</button></div>
-    {resolution && <><p>{resolution.detail}</p><label className="field">Resolved source person <span className="field-optional">required to add a person</span><select aria-label="Resolved source person" value={selected} onChange={event => setSelected(event.target.value)}>
-      <option value="">Select a person</option>{resolution.actors.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.providerUserId}</option>)}
-    </select><small className="field-hint">Confirm the person to grant label authority on this source.</small></label></>}
-    <div className="prov-actions"><button className="btn-ghost" type="button" disabled={busy || !selected} onClick={() => void action(() => api.saveWorkActor(source, draft, selected))}>Save source person</button></div>
-    <ul>{source.allowedActors.map(id => <li key={id}>{id} <button className="btn-ghost" type="button" onClick={() => void action(() => api.removeWorkActor(source, id))}>Remove {id}</button></li>)}</ul>
+    }}>Resolve source person</button>
+      <button className="btn-ghost" type="button" disabled={busy || !selected} onClick={() => void action(() => api.saveWorkActor(source, draft, selected))}>Save source person</button></div>
+    {resolution && <><p className="prov-note">{resolution.detail}</p>
+      <SettingField label="Resolved source person" scope="allowed people" hint="Required to add a person. Confirm the identity to grant label authority on this source.">
+        <select aria-label="Resolved source person" value={selected} onChange={event => setSelected(event.target.value)}>
+          <option value="">Select a person</option>{resolution.actors.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.providerUserId}</option>)}
+        </select></SettingField></>}
+    <ul className="prov-list">{source.allowedActors.map(id => <li key={id}><span className="mono nowrap">{id}</span>
+      <button className="btn-ghost" type="button" onClick={() => void action(() => api.removeWorkActor(source, id))}>Remove {id}</button></li>)}</ul>
     {error && <p className="prov-error" role="alert">{error}</p>}
-  </fieldset>;
+  </FormDialog>;
 }
