@@ -21,6 +21,9 @@ as well as its appearance: labels, empty states, pending-save lock-out and succe
 | Copyable values | `CopyField`, `CopyableValue`; avoid full URLs as button labels | [CopyField](../src/components/CopyField.tsx), [RepositoryDetail](../src/components/repositories/RepositoryDetail.tsx) |
 | Confirmation | `ConfirmDialog`; retain pending state and explicit action names | [ConfirmDialog](../src/components/ConfirmDialog.tsx) |
 | Navigation | A visible icon with `ic`, size 16, alongside the page name | [App](../src/App.tsx) |
+| **Create or edit anything** | `FormDialog`; a screen lists, a dialog changes. Its body is a `fieldset` so `disabled` locks every control during a save | [FormDialog](../src/components/FormDialog.tsx), [WorkSources](../src/components/work-items/WorkSources.tsx) |
+| **A control and its explanation** | `SettingField`; the hint sits on an info control, **never as prose under the input** — six controls must not become six paragraphs | [SettingField](../src/components/SettingField.tsx), [CapSettings](../src/components/CapSettings.tsx) |
+| Hover or focus explanation | `Tooltip`; portalled, so a card's `overflow: hidden` cannot clip it | [Tooltip](../src/components/Tooltip.tsx) |
 
 Styles live in [index.css](../src/index.css). A save must show the returned record in its list and
 confirm success; errors retain the entered values. A derived value says what fills it and how to
@@ -34,3 +37,14 @@ Observed-person identity pickers have a different data model and do not use cred
 Both guards assert that they discovered real controls before concluding. Preserve their production
 mutation proofs when changing the source traversal or extracting components. Comment removal must
 preserve quoted paths such as `/runs/*`, so a wildcard cannot hide later routes from either guard.
+
+`settingsTables.contract.test.ts` also holds two rules added on 2026-09-14: a settings screen with
+form controls must use `SettingField`, and a settings screen must not render its own `<form>`.
+Both are mutation-verified in place.
+
+## The legacy list
+
+`LEGACY_SCREENS` in that guard names screens written before these conventions. **It may shrink and
+must never grow.** A third test fails if an entry no longer owes anything, so a fixed screen cannot
+sit on the list — otherwise the list quietly becomes permission to stay broken. A new entry means a
+new screen repeated a mistake these rules exist to prevent; fix the screen instead.
