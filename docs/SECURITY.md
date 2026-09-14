@@ -3,6 +3,27 @@
 Decided model (ADR-009). Clean-room, OSS-standard, zero code copied from any private source.
 Trust boundaries, authn/authz, encryption, and secrets.
 
+## M3 workflow authority
+
+Repository role bindings select credentials; an account's former workspace is not authority and
+V72 removes that unused column. Source actor allowlists remain independent of reviewer lists.
+Unknown label attribution selects no profile even when an accompanying actor hint is allowed.
+Every eligible label, the pinned admission policy and the current ceiling restrict continuation.
+
+Dashboard gate answers use the verified operator subject. Tracker answers require authenticated
+delivery, this source's membership and an explicit command binding gate, generation and artifact.
+GitHub native PR approval additionally re-reads the named latest decisive review, linked current
+head, human identity and measured push permission without DENY. Unsupported native channels are
+visibly unavailable. These authorities converge on ResolveGate; they are not interchangeable IDs.
+
+Takeover compares stable machine identities recorded at admission/dispatch, independently of
+renames or later credential rotation. Its durable exact-binding publication revocation commits
+before compute is stopped and survives process death without relying on M1 cancellation. A
+publication already in progress cannot be recalled. Resume requires a verified operator, expected
+revision and note and re-observes current evidence. Retired items cannot resume. Production VERIFY
+and LAND remain unavailable. [M3 acceptance](factory/M3-ACCEPTANCE.md) and the separate per-forge
+[UNVERIFIED entries](UNVERIFIED.md) distinguish automated evidence from live deployment limits.
+
 ## Actors & trust boundaries
 
 | Actor | Boundary crossed | How it's trusted |

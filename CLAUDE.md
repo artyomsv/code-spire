@@ -37,94 +37,75 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0, M1 and M2 delivered (PRs #95/#96/#119, 2026-09-02/03/04), M3–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3 implemented (PRs #95/#96/#119/#153); M3 final review pending, M4–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-The per-milestone story — what shipped, what each review round found, the traps each one paid for —
-is in **`docs/HISTORY.md`**. A new milestone gets a new entry there; this section is rewritten to
-describe the new current state. Everything below is true as of **2026-09-14**.
+Measured on **2026-09-14**. Delivery history is in docs/HISTORY.md; the consolidated
+[M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps all seven verified criteria to their
+proving slices and reviews. **M3 implementation is complete; final operator review is pending.**
+PR #153 remains draft. No merge or promotion to ready is authorized by this handoff.
 
-- **The reviewer (P0–P4) is delivered.** Three deployables over Kafka — `spire-gateway` (:34081),
-  `spire-orchestrator` (:34080), `spire-review-worker` (:34082) — plus the `spire-ui` dashboard
-  (:34000). Three SCM adapters (Bitbucket Cloud, GitHub, GitLab) at full-flow parity — webhook →
-  review → conversation → ADR-019 reconciliation — verified live on all three (SMOKE-TEST Mode G).
-  Context: Jira, Confluence, GitHub Issues, GitLab Issues, `.codespire` repo rules, and the
-  repository knowledge base at rung 2 (`spire-context-code` + `worker.code_symbol`, ADR-026).
-  Per-repository prompts, `/finding`, learned memory + analytics (ADR-027), operator SCM sign-in
-  (ADR-028).
-- **Operations are delivered.** Hybrid OIDC operator auth with per-service URL prefixes (ADR-022);
-  Tink encryption at rest; the priced charge-line cost ledger (ADR-023), fleet spend caps and the
-  `refused` status (ADR-025), archive-not-delete (ADR-024); the operator attention panel; per-host
-  circuit breakers on SCM and LLM calls; provider-neutrality enforced by the `spire-arch` build check
-  (ADR-020); split licensing (ADR-021). CI/CD: nine GitHub Actions workflows, four production images
-  on GHCR, Compose + Helm + kustomize under `deploy/`, and the nightly `spire-e2e` tier against a
-  real containerised GitLab.
-- **Software factory M0–M2 are delivered (ADR-029..040; PRs #95, #96, #119 — 2026-09-02/03/04).**
-  `POST /api/runs` → `cs.run-commands` → `spire-run-worker` (:34083) → a three-container run unit on
-  Docker → push gate → a branch on the real remote. M1 added the run event stream, cancel over
-  `cs.run-control`, salvage-before-teardown, the orphan watchdog, idempotent dispatch that fails
-  closed, the harness credential pool, the corporate run-unit environment (FR-F14) and the checkable
-  agent image contract (`spire-agent-image verify`). **M2 made the reviewer close its own findings:**
-  `/fix` on a finding dispatches a run that pushes onto the pull request's own source branch
-  (ADR-040), bounded by two caps (per finding AND per review, FR-F32); a `PullRequestSink` port with
-  three adapters, so a run can end at a pull request rather than at a branch; `GET /api/runs`, the
-  run↔review join and the `/runs` screen; and `spire-run-worker` in **both packaged stacks behind
-  the `factory` compose profile** — opt-in because the Docker socket it mounts is root-equivalent
-  on the host. **M2 was measured end to end on 2026-09-12:** runs `3987682681:1` and
-  `3987682176:1` on `artyomsv/spire-test#31` completed the finding → fix → push → reconciliation
-  chain, with resolved threads and persisted verdicts. The separate automated GitLab gap remains:
-  `RunUnitSpec` has no network field, so run units cannot reach that test stack's GitLab
-  (`docs/UNVERIFIED.md`). **M3 slices 1–8b (PR #153) add repository ownership, explicit role bindings,
-  resolved person entry, effective /fix push authorization and durable GitHub/GitLab/Jira ticket intake.**
-  All seven acceptance criteria are independently verified through round 12, including the separate
-  membership and attribution proofs accepted in round 8. /fix permission reads hold no database transaction across
-  the network: short revision snapshots detect rotation and rebinding. Work sources own their
-  actor allowlists; incomplete attribution selects nothing. Workflow history and Work items
-  persist bookkeeping, with tracker content fetched separately. Source settings expose actor entry
-  and capabilities. Coordinate checkpoints survive actual process death between and within pages;
-  encrypted tracker effects commit uncertainty before HTTP and recover by reading evidence.
-  GitLab hooks and Jira polling have per-arm measured limits. Slice 7 adds current-policy phase
-  decisions, numeric caps, visible clamps and durable dashboard approvals. An actual child-JVM
-  kill/restart proves gate expiry and reservation release. Slice 8a registers fetched specification
-  and single-step plan versions, binds human decisions to them, and joins one M2 build to its phase
-  attempt through durable dispatch and result records. Suggest stops before build, assisted requires
-  plan approval, and autonomous admits a build. Slice 8b enables item execution with a distinct
-  held command: it checkpoints without pushing, stops active compute and retains its workspace.
-  Delivery permits resume only the publisher with fresh SCM credentials and the exact verified
-  head. Native draft state is requested and observed; REVIEW consumes actual reviewer evidence.
-  Real-container local-origin tests and killed worker JVMs prove execution, retained publication
-  recovery and one build charge. Production VERIFY and LAND remain unavailable. The separate
-  live standalone `/fix` re-proof passed on TEST PR #32 with run `4003204361:1`, an automatic push,
-  completed next review and resolved thread/verdict. No live item-build proof or M4 verifier is claimed.
-  The two factory images are still not on GHCR.
-- **Accounts normalization (#148, ADR-041).** Machine accounts now own forge and Atlassian
-  credentials in one registry. Context sources select a compatible account and retain their own
-  URL, project keys and path allowlists. V59 plus an idempotent startup reconciler moves legacy
-  credentials across Tink AADs atomically per source; failed rows remain recoverable. Account
-  rotation reaches every source, disabling an account stops its context resolution, and referenced
-  deletion returns the source names. Accounts show Used by and advisory scope reports. REVIEWER
-  and FACTORY remain separate scalar roles; CONTEXT has no workspace. Code credentials carry an
-  explicit platform through the worker contract. Repositories show the selected serving
-  identities through explicit role bindings. Live token-family and rollout gaps are recorded in
-  UNVERIFIED; scoped Atlassian gateway tokens are not claimed supported. M3 slice 2 removes account workspace from forms and runtime reads while retaining the populated
-  database column until slice 10. Person entry resolves stable provider IDs and displays observed handles. Per-repository push checks use only the selected reviewer credential.
-- **Known gaps** are in `docs/UNVERIFIED.md` (read before claiming something works) and `techdebt/`
-  (one entry per item, per module). Review dispositions per round are in `.claude/reviews/`.
-- **Measured, not estimated (2026-09-14):** 3970 Java tests across 444 suites and 30 modules,
-  zero failures and 1 existing Windows symlink privilege skip. Forced testFast, testServices and
-  packaging passed sequentially, including both actual worker process-death recovery cases and the
-  local-origin item journey. The full UI passed 714 tests across 88 files; all 40 route tests passed
-  in three shuffled orders, and the production build passed. Slice 8b has 248 checks covering 245
-  distinct production mutations, each with one isolated assertion failure, scratch-byte restoration
-  and a passing restored case. Pinned Semgrep reports zero findings across 98 changed source/test/
-  configuration/migration files; api.ts's four existing optional-field parser spans have identical
-  source on accepted d9861bc3. Evidence: .claude/reviews/global/factory-m3-slice8b.md. All seven criteria
-  are independently verified through round 12. Slice 8b's local execution/publication proofs pass;
-  its live standalone /fix proof passed on TEST PR #32. The TEST PR was closed and its branch
-  deleted; the user was notified to stop the live worker after the proof completed.
+- **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
+  Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
+  parity. Jira, Confluence, GitHub/GitLab Issues, repository rules and rung-2 code knowledge supply
+  context. Repository prompts, /finding, learned memory, analytics and operator SCM sign-in remain.
+- **Operations are delivered.** Hybrid OIDC uses separate service prefixes and session cookies;
+  stored sensitive content is encrypted with Tink. The charge ledger, fleet caps, refused status,
+  archive policy, attention, circuit breakers, provider-neutral boundaries and split licensing
+  remain. CI, Compose, Helm/kustomize and the separate GitLab e2e tier are present.
+- **M0–M2 execution and standalone /fix are delivered.** The Docker run unit, trusted publisher,
+  durable transcript/control, salvage and orphan watchdog, harness pool, corporate environment
+  and image contract remain. Per-finding and per-review fix caps still apply. The live chain was
+  proved on 2026-09-12 by runs 3987682681:1 and 3987682176:1, then re-proved on TEST PR #32 by
+  run 4003204361:1 on 2026-09-14: automatic push, next review, resolved thread and persisted
+  verdict, with the other six prior findings UNCHANGED. The TEST PR was closed and its exact
+  branch deleted; review/run history was retained. The development run worker remains stopped.
+- **M3 owns repositories, people and work-item policy.** Explicit repository-role bindings replace
+  account workspace lookup. People resolve to stable provider IDs and render observed handles;
+  source actor allowlists remain independent. /fix measures effective push access through the
+  selected reviewer, with explicit ALLOW/DENY overrides. V72 now drops only the unused account
+  workspace column after a fresh validated backup. IDs, ciphertext/AAD, context references,
+  bindings, immutable legacy mapping evidence and live history are preserved.
+- **M3 intake and approvals are durable.** GitHub/GitLab/Jira source parity is derived from adapters
+  and test sources. Unknown label attribution selects nothing. Current labels, pinned admission
+  bounds and the current ceiling restrict each next action. Scanner pages and uncertain tracker
+  writes survive real process death. Humans register actual specification and single-step plan
+  references; bodies stay transient. Suggest stops before BUILD, assisted requires PLAN approval,
+  and autonomous admits one prepared build. UI proofs compare phases, gates, decisions and runs.
+- **M3 item publication and takeover preserve authority through restart.** Item builds checkpoint
+  without pushing and retain their workspace. An exact current permit resumes only the publisher.
+  Dashboard answers, bound tracker commands and supported native PR reviews share ResolveGate.
+  Ordinary approving prose cannot approve; stale/dismissed reviews cannot resolve a gate.
+  Takeover uses recorded stable machine IDs across rename/rotation, supersedes gates, invalidates
+  pending effects and persists publication revocation before stopping compute. Actual JVM death
+  without an M1 cancel claim cannot restore publication authority. In-flight PR recovery records
+  the observed outcome once and keeps the item suspended. Resume requires a verified operator,
+  expected revision, note and fresh evidence; retired items cannot resume.
+- **Measured final validation:** 4076 Java tests across 452 suites and 30 modules,
+  zero failures/errors and 1 existing Windows symlink privilege skip. Forced testFast,
+  testServices and packaging passed sequentially. The full UI passed 730 tests across 92 files,
+  TypeScript and production build. Slice 10 adds four verified production mutations (the real
+  migration and separate read/INSERT/UPDATE guards); slice 9 has 78 distinct production mutations.
+  Earlier per-slice counts and selectors remain in the acceptance record, without claiming a
+  globally deduplicated total. Pinned Semgrep reports zero findings across 5 changed code files.
+  The final scan and rollout evidence are in
+  .claude/reviews/global/factory-m3-slice10.md.
+
+**Limits that remain:**
+
+- **Production VERIFY and LAND remain unavailable.** M4 owns the verifier; M3 does not ship one.
+- **No live item-build proof.** TEST PR #32 proves standalone /fix; real local-origin item tests
+  do not prove an item-linked build against a real forge.
+- **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
+  run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
+- **The two factory images are still not on GHCR.**
+- Per-forge identity and permission limits remain separate UNVERIFIED entries. Native external
+  gate answers and operator resume have no live proof. GitLab/Bitbucket native PR approvals and
+  Jira Data Center comment polling remain unavailable. Publication already in progress cannot
+  be recalled; no atomic ordering with a remote human push is claimed.
 
 ## Build & run
 

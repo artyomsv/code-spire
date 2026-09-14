@@ -40,7 +40,9 @@ abstract class RepositoryFixture {
     }
 
     void snapshotAccounts() throws Exception {
-        execute("INSERT INTO repository_legacy_account SELECT id,type,base_url,workspace,role FROM scm_provider WHERE workspace=? ON CONFLICT DO NOTHING", workspace);
+        for (UUID id : createdAccounts) {
+            execute("INSERT INTO repository_legacy_account SELECT id,type,base_url,?,role FROM scm_provider WHERE id=? ON CONFLICT DO NOTHING", workspace, id);
+        }
     }
 
     void execute(String sql, Object... parameters) throws Exception {
@@ -59,7 +61,6 @@ abstract class RepositoryFixture {
         execute("DELETE FROM repository_account WHERE repository_id IN (SELECT id FROM repository WHERE workspace=?)", workspace);
         execute("DELETE FROM repository WHERE workspace=?", workspace);
         execute("DELETE FROM repository_legacy_account WHERE workspace=?", workspace);
-        execute("DELETE FROM scm_provider WHERE workspace=?", workspace);
         for (UUID id : createdAccounts) execute("DELETE FROM scm_provider WHERE id=?", id);
     }
 }

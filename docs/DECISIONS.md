@@ -6,8 +6,9 @@ Architecture decision records for Code Spire. Newest first.
 
 ## ADR-045 — Declared profile precedence and bounded phase decisions
 
-**Status:** accepted M3 policy rule; implemented in slice 7. Artifact handoff and held publication
-remain slice 8 work; verify/review/land execution capabilities remain unavailable where no executor exists.
+**Status:** implemented through slices 7–9, including artifact handoff, held publication,
+external gate answers and takeover. All seven M3 criteria are independently verified.
+Production VERIFY and LAND remain unavailable; M4 owns the verifier.
 
 **Decision.** Operators assign distinct nonnegative precedence numbers to profile identities and
 create immutable profile versions. Names select no code path. The lowest-precedence eligible label
@@ -41,8 +42,8 @@ its implementation. Tests identify their execution capability explicitly; produc
 missing specification, verifier or publisher hold into a successful no-op.
 
 Dashboard gates are encrypted aggregate facts with synchronous query rows. Bind an answer to the
-item/generation, phase, policy, authority and item revision; artifact/head binding joins this contract
-in slice 8. One open gate holds a dispatch slot. At `now >= expiresAt`, expiry wins, persists refusal
+item/generation, phase, policy, authority, item revision and artifact/head. One open gate holds a
+dispatch slot. At `now >= expiresAt`, expiry wins, persists refusal
 and releases the slot. A stale answer requires a new decision. The winning answer key is idempotent;
 a conflicting answer is 409. Resolver identity comes from the verified operator session, never the
 request body. Restart sweeps persisted overdue gates; ordinary retries cannot reopen a refused gate.
@@ -125,9 +126,9 @@ in the person control, with separate per-forge evidence limits in UNVERIFIED.
 
 ## ADR-043 — Tracker authority and durable work-item bookkeeping
 
-**Status:** implemented for the first GitHub ticket in M3 slice 5; parity, tracker effect recovery,
-full policy gates and build handoff follow in slices 6–8. Local verification is recorded in
-`.claude/reviews/global/factory-m3-slice5.md`; live tracker behavior remains in UNVERIFIED.
+**Status:** implemented through slices 5–9: source parity, tracker effect recovery, policy gates,
+build handoff and external answers. [M3 acceptance](factory/M3-ACCEPTANCE.md) links the measured
+evidence; live tracker behavior remains in UNVERIFIED.
 
 **Decision.** A source names an explicit credential, tracker origin and stable project ID, and one
 target repository. Its stable actor allowlist belongs to that source; account authors and reviewer

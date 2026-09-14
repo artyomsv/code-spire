@@ -1,6 +1,6 @@
 # Data Model
 
-## Work-item bookkeeping (M3 slice 5)
+## Work-item bookkeeping (M3)
 
 V63 adds `scm_provider.revision` for credential-authority rechecks. V64 introduces `work_source`
 (explicit account/repository, immutable tracker scope, health and scan cursor), source-owned
@@ -19,6 +19,19 @@ and tracker identity components. Mutable issue keys, account credentials and dis
 not change identity. Redelivery records, event append, projection and outbox share one JTA
 transaction; a failed projection rolls all of them back. A scan page advances its cursor only
 with the reconciled page. Source failure records health and preserves existing workflow.
+
+V65–V71 add staged source pages and recoverable tracker effects, clamp and gate projections,
+phase attempts and reservations, prepared artifact references, run dispatch/result inboxes and
+delivery claims. Preparation records references, digests and base coordinates, never artifact
+bodies. WorkControl preserves recorded factory/reviewer/tracker IDs and takeover/resume facts
+inside encrypted workflow history. V71's work_activity_receipt deduplicates channel deliveries;
+work_run_hold_outbox durably repeats exact-binding revocations until the run ends.
+
+The runworker schema separately stores encrypted work execution, retained topology, readiness,
+publication permits and terminal acknowledgements. V4 adds work_publication_revocation keyed by
+run ID and binding digest. It deliberately has no execution-row FK: a hold may arrive before the
+execution command. Its durable refusal is independent of the M1 cancel claim. In-flight publication
+outcomes remain recorded without completing a suspended work-item phase.
 
 ## M3 repository ownership (ADR-042, slices 1–2)
 
@@ -47,9 +60,11 @@ triggers include these metadata fields. Existing webhook keys, encrypted secrets
 counters are unchanged. ISSUE is a reserved source-bound kind, not an SCM review route.
 
 Orchestrator V61 drops the former account (type,workspace,role) UNIQUE and workspace-by-role
-CHECK while retaining scalar role checks and the populated scm_provider.workspace column.
-Account DTOs and runtime SELECTs do not read that retained column. New account inserts leave it
-null. repository_unregistered_event records verified but unregistered deliveries without payload
+CHECK while retaining scalar role checks and, through slice 9, the populated scm_provider.workspace
+column. Account DTOs and runtime reads/writes stopped using it in the cutover. V72 explicitly drops
+only that column after the final pre-migration backup. Account IDs, ciphertext/AAD, bindings,
+context references and repository_legacy_account evidence remain. repository_unregistered_event
+records verified but unregistered deliveries without payload
 or secrets, coalesced by registration and full repository identity; its Attention action prefills
 registration. Review dispatch requires review_status.repository_id; factory_run.repository_id
 is written atomically with queueing. Unmapped legacy rows remain readable but cannot dispatch.

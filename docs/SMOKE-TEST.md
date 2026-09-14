@@ -1,11 +1,70 @@
 # Smoke Test Runbook
 
+## M3 final upgrade (slice 10)
+
+**Production VERIFY and LAND remain unavailable. No live item-build proof is claimed.** The
+standalone /fix proof on TEST PR #32 is separate from the real-container/local-origin item tests.
+The automated GitLab run-unit network gap remains open, both factory images remain absent from
+GHCR, and per-forge identity/permission limits remain in [UNVERIFIED](UNVERIFIED.md). The
+[acceptance record](factory/M3-ACCEPTANCE.md) names all seven independently verified criteria.
+
+V72 explicitly drops scm_provider.workspace, retained through slice 9 as rollback evidence.
+Before that migration reaches an existing database:
+
+1. Run `:spire-arch:test --tests dev.codespire.arch.AccountWorkspaceIsUnusedTest --rerun-tasks`
+   with Java 25. It checks production reads, INSERTs, UPDATEs, aliases and account models.
+2. Take a **fresh** custom-format backup to the worktree's git-ignored .handoff directory, validate
+   its archive listing and record its hash. Keep the matching encryption keysets outside git.
+   The old slice 1 backup does not satisfy this final-upgrade prerequisite. This PowerShell command
+   preserves binary bytes and refuses to overwrite an existing file:
+
+```powershell
+$m3Handoff = Join-Path (Get-Location).Path '.handoff'
+[void](New-Item -ItemType Directory -Force -Path $m3Handoff)
+$m3Dump = Join-Path $m3Handoff ('m3-before-slice10-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
+$m3Process = [Diagnostics.Process]::new()
+$m3Process.StartInfo = [Diagnostics.ProcessStartInfo]::new('docker')
+$m3Process.StartInfo.UseShellExecute = $false
+$m3Process.StartInfo.RedirectStandardOutput = $true
+@('exec','spire-postgres','sh','-c','exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc') | ForEach-Object { $m3Process.StartInfo.ArgumentList.Add($_) }
+$m3File = [IO.File]::Open($m3Dump, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+try { [void]$m3Process.Start(); $m3Process.StandardOutput.BaseStream.CopyTo($m3File); $m3Process.WaitForExit(); if ($m3Process.ExitCode -ne 0) { throw 'pg_dump failed' } } finally { $m3File.Dispose(); $m3Process.Dispose() }
+Get-FileHash -LiteralPath $m3Dump -Algorithm SHA256
+docker run --rm --mount "type=bind,source=$m3Handoff,target=/backup,readonly" postgres:18.4-alpine pg_restore --list "/backup/$([IO.Path]::GetFileName($m3Dump))"
+if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed' }
+```
+
+3. Record the actual counts of orchestrator.scm_provider, review_status, review_finding,
+   factory_run and gateway.webhook_repo before the upgrade. Compare the original encrypted
+   credential/reference and webhook baselines with scripts/verify-dev-credential-continuity.ps1
+   in Compare mode. Do not replace those baselines or delete accepted proof history to match
+   an older count. The accepted PR #32 proof accounts for +1 review, +8 findings and +1 run.
+4. Upgrade the gateway, orchestrator, review worker and UI using the tested source. External Kafka
+   deployments must provision the work/run topics and ACLs in [CONTRACT](CONTRACT.md). Keep the
+   development run worker stopped while Docker-driving test tiers run. No compose down is needed.
+5. Require V72 success in orchestrator.flyway_schema_history and zero information_schema.columns
+   rows for orchestrator.scm_provider.workspace. Re-run the five counts and both encrypted
+   continuity comparisons; inspect readiness and startup errors before declaring the upgrade done.
+
+AccountWorkspaceDropMigrationTest applies the real V71→V72 migration to a populated private schema.
+It checks every remaining account field, unchanged ciphertext/AAD, repository bindings, context
+references and legacy mapping evidence. Replacing the production DROP with SELECT 1 fails the
+column-absence assertion. The shared dev database is never a mutation target.
+
+For supported journey checks, use the existing repository/source/policy screens and inspect actual
+phase, gate, decision and run fields. Suggest stops before BUILD; assisted opens PLAN approval;
+autonomous admits a prepared build. Missing artifacts, unavailable capabilities and suspended
+items must remain visible. Tracker answers require `/approve <gate-id> <generation> <artifact>`
+or `/reject` with the same bindings; `-` explicitly binds no artifact. Ordinary comments do not
+approve. A suspended item's resume needs a note and fresh evidence; a retired item cannot resume.
+Any new live TEST canary requires its exact identity and cleanup to be recorded before insertion.
+
 ## M3 repository cutover upgrade (slices 1–2)
 
 Before rebuilding dev, follow slice 1 in
 [`2026-09-12-factory-m3-work-items.md`](superpowers/plans/2026-09-12-factory-m3-work-items.md).
-The verified `.handoff/spire-dev-pre-m3-2026-09-13.dump` already satisfies the backup prerequisite;
-do not take a second dump. `.handoff/m3-real-credentials.bin` holds encrypted baseline evidence
+The verified `.handoff/spire-dev-pre-m3-2026-09-13.dump` satisfied that historical cutover prerequisite;
+slice 10 requires the fresh backup above. `.handoff/m3-real-credentials.bin` holds encrypted baseline evidence
 for 9 real credential/reference entries. Keep the matching keysets outside git. Slice 2 must
 rerun the probe's Compare mode on the real upgraded rows.
 

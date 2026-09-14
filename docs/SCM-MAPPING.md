@@ -200,6 +200,23 @@ complete Bitbucket list without the actor is known no-write. The permission says
 write, not that a protected target branch will accept a push. Per-forge live limitations are in
 UNVERIFIED; fixture measurements do not establish live token capability.
 
+## External work answers and activity (M3 slice 9)
+
+| Channel | Implemented evidence | Limit |
+|---|---|---|
+| GitHub native PR review | Re-read named review, complete bounded chronological review history and current open PR/head; stable user ID, human type and measured push permission without DENY | Can answer an open linked LAND gate only; production LAND remains unavailable. Controlled-response tests, no live gate proof |
+| GitLab / Bitbucket native PR review | Capability unavailable in the current approval port composition | Visibly disabled; dashboard and tracker remain usable |
+| GitHub / GitLab tracker comment | Authenticated created-comment delivery with stable actor ID, source membership and explicit gate/generation/artifact command | Ordinary approving text is not an approval; system/edited GitLab notes are excluded |
+| Jira Cloud tracker comment | Authenticated REST v2 comment polling using accountId, timestamp and explicit command | Ignore undated/pre-admission comments; bounded pages report a polling failure when incomplete |
+| Jira Data Center tracker comment | Unavailable | Context-read support does not establish Cloud person identity |
+
+SCM takeover adapters use signed actor fields, not commit-author or display text. Repository and
+linked PR/branch coordinates must match. Recorded factory/reviewer identities remain authoritative
+after rename or rotation; tracker identity is a separate namespace. Unknown actors suspend
+conservatively. Gate answers and authorized /fix commands precede generic comment takeover.
+No native approval can resume a suspended item. These are automated provider-response proofs;
+the separate identity/permission and live activity limits remain in UNVERIFIED.
+
 ## Sources
 Bitbucket Cloud: developer.atlassian.com/cloud/bitbucket/rest + support.atlassian.com event-payloads ·
 GitHub: docs.github.com/rest/pulls · GitLab: docs.gitlab.com/api/merge_requests, /discussions ·

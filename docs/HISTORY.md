@@ -2041,3 +2041,41 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   The user started the worker after the service tier exited and was notified when the proof ended.
   Cleanup closed the TEST PR and deleted its exact source branch, retaining the review/run audit.
   Evidence: `.claude/reviews/global/factory-m3-slice8b.md`. No second backup was taken.
+
+- **Factory M3 final implementation and handoff (PR #153, 2026-09-14).**
+  All seven acceptance criteria were independently verified through round 12; round 16 accepted
+  slice 9 with no findings. The consolidated acceptance record maps each criterion to its slice,
+  exact witnesses and mutation ledger. Shared table/form/empty-state styling was accepted after
+  operator inspection, with route-derived guards and save lock-out preserved.
+  External gate answers share ResolveGate while retaining distinct channel authority. Ordinary
+  approving prose cannot approve. Current named native reviews bind the linked head, human ID and
+  measured push permission; dismissed/stale approvals refuse. Recorded bot IDs survive renames
+  and rotation, while a human wearing the bot's display name still takes over. Takeover supersedes
+  gates, invalidates unstarted effects and durably holds publication. A real worker JVM is killed
+  after revocation commits but before compute stops; a fresh permit and watchdog cannot publish
+  without an M1 cancel claim masking the proof. Concurrent in-flight PR recovery records one
+  observed outcome and keeps the item suspended. Operator resume requires current evidence and
+  an authenticated, versioned action with a note. Retired items cannot resume.
+  Slice 10 ran AccountWorkspaceIsUnusedTest before the drop and independently re-killed its read,
+  INSERT and UPDATE arms. V72 explicitly removes only scm_provider.workspace. A populated private
+  V71→V72 migration preserves every other account field, ciphertext/AAD, bindings, context
+  references and immutable legacy mapping rows; replacing DROP with SELECT 1 fails its assertion.
+  The fresh .handoff backup was verified at 2026-09-14T14:10:32.6500742+00:00 before dev migration.
+  Dev's full inventory remains 6 accounts / 38 reviews / 93 findings / 15 runs / 3 hooks.
+  The accepted PR #32 audit explains +1 review, findings 152–159 and run 4003204361:1; excluding
+  only those recorded proof rows, the original 6/37/85/14/3 baseline still matches. All 9 encrypted
+  credential/reference entries and 12 webhook entries remain identical after decryption.
+  Final forced fast/service tiers and packaging passed sequentially: 4076 Java tests in
+  452 suites and 30 modules, zero failures/errors and 1 existing Windows symlink skip.
+  The full UI passed 730 tests in 92 files, TypeScript and production build. Slice 9 records
+  78 distinct production mutations; slice 10 records four. Pinned Semgrep reports zero findings
+  across 5 changed code files. Earlier per-slice counts remain in
+  docs/factory/M3-ACCEPTANCE.md without an inflated cross-slice distinct total.
+  **Production VERIFY and LAND remain unavailable. M4 owns the verifier; M3 does not ship one.**
+  **No live item-build proof:** the accepted TEST PR #32 run proves standalone /fix only.
+  **The automated GitLab run-unit gap remains open:** RunUnitSpec has no network field and cannot
+  reach the e2e stack's GitLab; a live GitHub run does not close it. **Both factory images remain
+  absent from GHCR.** Separate per-forge identity/permission UNVERIFIED entries remain unchanged.
+  No warm GitLab e2e stack was available for this handoff. No new live canary or dev run worker
+  was started. PR #153 remains draft for final operator review; no merge is claimed.
+  Evidence: .claude/reviews/global/factory-m3-slice10.md.

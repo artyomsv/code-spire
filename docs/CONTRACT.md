@@ -1,6 +1,6 @@
 # Domain Contract (`spire-contract`)
 
-## Work-item channels and policy (M3 slice 5, ADR-043)
+## Work-item channels and policy (M3, ADR-043/045)
 
 Signed issue delivery produces `WorkSourceDelivery` on `cs.work-integration`, keyed by the
 stable `WorkItemIds` digest. Its coordinates bind the registration, repository, source, SCM
@@ -20,9 +20,25 @@ Profiles have immutable versions and an operator-defined unique precedence. Ever
 current label contributes a component-wise restriction; the repository ceiling and the full
 mode vector retained at admission also bound later decisions. The selected profile name is a
 display choice, not the whole effective policy. Events retain applied/ignored evidence and the
-source, account, repository and policy revisions. Approval and specification execution are
-unavailable until their later slices: intake records that limitation rather than producing a
-gate, run or completed phase. Tracker status never supplies workflow status.
+source, account, repository and policy revisions. Humans register fetched specification and plan
+references; their versions bind later decisions. Dashboard answers, explicit tracker commands
+and supported current native PR approvals enter `ResolveGate` and persist `GATE_RESOLVED`.
+Production VERIFY and LAND remain unavailable; manual artifact acceptance does not invent an
+executor completion. Tracker status never supplies workflow status.
+
+`ExecuteWorkRun` uses `cs.run-commands` and yields a durable `RunWorkReady` checkpoint without
+publishing. `PublishWorkRun` on `cs.run-control` carries the exact current delivery permit;
+only the trusted publisher resumes. `HoldWorkRun` uses that same control topic and durably revokes
+the exact run binding before stopping compute. The revocation survives restart and orphan salvage
+independently of M1 cancellation. Ordinary `ExecuteRun` and standalone /fix retain their automatic
+publication path. Readiness and terminal results use `cs.run-results`; transcript facts remain
+on `cs.run-events` and do not become work-item domain events.
+
+Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
+effects. Deliberate authorized commands are classified before generic comment takeover. Resume
+requires the server-derived operator subject, expected revision and note, fresh issue/repository/
+head/policy evidence, and a new generation. Retired items cannot resume. See the
+[acceptance record](factory/M3-ACCEPTANCE.md) for measured journeys and remaining live limits.
 
 ## Repository metadata and ingress channels (M3 slices 1–2, ADR-042)
 
@@ -47,8 +63,11 @@ registrationRevision, providerType, forgeOrigin, eventKind, deliveryId and the e
 IntegrationEvent. Gateway deliveryId is the SHA-256 of the signed request bytes. A manual review
 uses its explicit repository UUID. The consumer resolves full forge identity, verifies any
 explicit UUID and repository state, then applies REVIEWER lifecycle handling or forwards FACTORY
-activity to cs.repository-activity. The latter has no work-item consumer until the later factory
-slice. ISSUE has no SCM ingress acceptance; it is reserved for source registration.
+activity to cs.repository-activity for the existing activity publication. M3's `WorkActivityConsumer`
+independently consumes FACTORY `RepositoryActivity` envelopes directly from cs.repository-integration
+under the `spire-orchestrator-work-activity` group, rechecking registration and repository identity.
+It does not consume cs.repository-activity. ISSUE routes through the bound work-source ingress to
+cs.work-integration rather than the SCM review path.
 
 New deliveries for unknown repositories produce Attention with their incoming registration and
 prefilled coordinates. Unknown origins remain repairable, never inferred from namespace equality.
@@ -322,13 +341,20 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
    referenced by `contextRef` on `ContextAssembled`/`GenerateReview`. **Jira is the first live provider**
    (`spire-context-jira`).
 
-## 9. Kafka topics (keyed by `reviewId`)
+## 9. Kafka topics
 
 | Topic | Carries |
 |---|---|
 | `cs.registry-integration` | Revisioned registration metadata; keyed by registration UUID |
 | `cs.repository-integration` | Verified `RepositoryDelivery` envelopes around SCM ingress; keyed by the existing event key |
-| `cs.repository-activity` | FACTORY deliveries, keyed by repository UUID; reserved for later work-item consumers |
+| `cs.repository-activity` | Existing FACTORY activity publication, keyed by repository UUID; M3 takeover instead consumes the verified original envelope on cs.repository-integration |
+| `cs.work-integration` | Bound tracker deliveries, keyed by stable work-item identity |
+| `cs.work-events` | Durable work-item event notifications from the encrypted outbox |
+| `cs.work-dlq` | Failed tracker and factory-activity processing |
+| `cs.run-commands` | Standalone ExecuteRun and held ExecuteWorkRun, keyed by run ID |
+| `cs.run-control` | CancelRun, SteerRun, PublishWorkRun and HoldWorkRun; each worker consumes control independently |
+| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunFailed facts |
+| `cs.run-events` | Bounded run transcript facts, independent of workflow decisions |
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |

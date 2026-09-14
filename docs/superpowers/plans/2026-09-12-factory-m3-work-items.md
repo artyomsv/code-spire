@@ -2,24 +2,19 @@
 
 **Date:** 2026-09-12
 
-**Status:** Slice 1 is closed on fully green `363b13d`. Slice 2 implements the runtime cutover
-and proves criterion 7, with real-row post-cutover continuity. It was accepted and criterion 7 independently verified on 716dc75 in round 5.
-Slice 3 completes resolved person entry and editable repository overrides; criterion 6 was independently verified in round 6.
-Slice 4 implements effective push permission; criterion 5 was independently verified in round 7.
-Slice 5 is locally complete: signed ticket intake, durable bookkeeping, and distinct criterion 3
-membership/attribution mutations pass, with full Java/UI/build/scanner evidence.
-Round 8 independently verified criterion 3; round 9 accepted the route teardown correction.
-Slice 6 is pushed on 721f4084 with source parity, safe writes and actual JVM restart evidence.
-Round 10 accepted slice 6. Round 11 accepted slice 7 on fully green 2e42ffca with no findings;
-criteria 2 and 4 are independently verified. Criteria 2–7 are now verified. Slice 8a implements
-the remaining criterion's prepared-task handoff and plan/build journeys; it is pushed on fully
-green d9861bc3. Round 12 independently verified criterion 1; all seven criteria are proved.
-Slice 8b implements held execution,
-publisher-only permits, native draft delivery and observed review evidence. Real containers and
-separate JVMs prove item execution and recovery locally. Its final full Java/service checks and
-packaging pass. The live standalone `/fix` proof passed on TEST PR #32 with run `4003204361:1`,
-automatic source-branch push and resolved review verdict/thread. Slices 9 and 10 have not started.
-Evidence is in the corresponding slice review notes.
+**Status (2026-09-14):** Slices 1–9 are accepted, including the split 8a/8b and
+the operator-approved presentation correction. Round 12 independently verified the last of
+all seven acceptance criteria; round 16 accepted slice 9 with no findings. Slice 10 completes
+the explicit V72 drop, fresh pre-migration backup, dev continuity and final validation.
+[The acceptance record](../../factory/M3-ACCEPTANCE.md) maps each criterion to its proving
+slice and review. [Final evidence](../../../.claude/reviews/global/factory-m3-slice10.md)
+records measured counts, four additional production mutations and backup/migration chronology.
+PR #153 remains draft for final operator review; no merge is authorized.
+
+Production VERIFY and LAND remain unavailable. M4 owns the verifier. No live item-build
+proof exists; the accepted TEST PR #32 proof is standalone /fix. The automated GitLab
+run-unit network gap remains open, both factory images remain absent from GHCR, and
+separate per-forge identity/permission UNVERIFIED entries remain unchanged.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
 ownership, command authority and approval state visible and durable.
@@ -532,40 +527,23 @@ orphan salvage, item delivery orchestration, sink draft support and UI states.
 
 ## Slice 9 — answer outside the dashboard and take over safely
 
-**Files:** gate channel routing, normalized tracker/PR activity, takeover/resume, durable run control
-publication hold, publisher/runtime/orphan finalization, UI suspended state and attention.
+**Accepted without findings in round 16.**
+[Slice 9 evidence](../../../.claude/reviews/global/factory-m3-slice9.md) and its
+[78-mutation ledger](../../../.claude/reviews/global/factory-m3-slice9-mutations.json)
+record the actual test selectors, replacing the provisional names in this plan.
 
-**Produces:** one gate resolution path across three channels; takeover persists and suppresses new
-effects, including salvage publication after a restart.
-
-- [ ] Write `GateChannelsIT.dashboardTrackerAndPrReviewResolveTheSameGate`,
-  `GateChannelsIT.prReviewCannotApproveAPlanGate`,
-  `GateChannelsIT.staleHeadAndDismissedReviewCannotApprove`,
-  `HumanTakeoverIT.humanCommentSuspendsUntilOperatorResume`,
-  `HumanTakeoverIT.knownMachinePushDoesNotTakeOver`,
-  `HumanTakeoverIT.gateReplyIsNotReprocessedAsTakeover`.
-- [ ] Normalize source delivery identity/channel, actor and artifact/head. Re-read current
-  permission/review evidence before approval. Dashboard OIDC authority and tracker actor ids
-  must never be compared in the same namespace. Unknown approval capabilities are disabled.
-- [ ] Implement human activity classification from real linked branch/PR observations. Persist
-  takeover, supersede gates and stop unstarted effects transactionally. Record resume actor/note;
-  re-resolve policy and head before allowing a fresh action. Transfers retire rather than resume.
-- [ ] Design the publication hold through the existing `RunCommand` control vocabulary and worker
-  durable state; inspect actual runtime/finalization interfaces before editing. Hold must survive
-  queued delivery, restart and orphan recovery. Carry the hold to a trusted publisher control
-  channel rather than trusting a flag in a repository-writable file. Preserve local work and
-  standalone cancel semantics. Record the unavoidable already-in-progress push race honestly.
-- [ ] Add `PublicationHoldIT.takeoverPreservesWorkWithoutPushingOnCancel` and
-  `PublicationHoldIT.orphanRecoveryKeepsTheDurablePublicationHold` in `spire-run-worker`, using a
-  real remote whose head is measured before/after and a deterministic pause before publication.
-  These are not satisfied by asserting that `CancelRun` was emitted.
-- [ ] Add `WorkItemRetirementIT.transferRetiresOldIdentityAndInvalidatesOpenGate` and
-  `WorkItemRetirementIT.sourceOutageDoesNotPretendTheIssueWasDeleted`.
-- [ ] Kill gate scope/head, human-vs-machine identity, expiry-on-answer, retired-state and
-  publication-hold guards independently. A mutation killed by an earlier unrelated refusal is
-  invalid; prove the fixture reached its intended production line.
-- [ ] Run gateway, orchestrator and Docker worker suites one at a time, then UI tests. Document
-  native approval capabilities and takeover race limits. Commit the cross-channel slice.
+- [x] One ResolveGate boundary for dashboard, explicitly bound tracker commands and supported
+  native PR review answers. Ordinary approving prose cannot approve; a current approval on
+  an old head and a dismissed named review independently refuse.
+- [x] Stable recorded machine identities survive rename/rotation. A human wearing the bot's
+  display name still takes over. Unknown origin suspends; unrelated activity does not target an item.
+- [x] Takeover supersedes gates and invalidates unstarted effects transactionally. Authenticated
+  operator resume requires revision, note and fresh evidence; retired items cannot resume.
+- [x] Durable publication revocation survives real JVM death without an M1 cancellation claim.
+  A fresh permit and watchdog cannot publish. In-flight PR recovery records its observed outcome
+  once and keeps the item suspended; remote publication already in progress cannot be recalled.
+- [x] Independent production mutations, full sequential Java/service/package tiers, UI and
+  scanner evidence are recorded. Native provider capability and live-proof limits remain named.
 
 ## Acceptance proof matrix
 
@@ -645,36 +623,26 @@ this table with its discriminating witness before that slice is called complete.
 
 ## Slice 10 — integrated proof and handoff
 
-- [ ] Only now drop `scm_provider.workspace` in an explicit Flyway migration. Confirm its
-  populated evidence survived slices 2–9 and the no-production-read guard remained green.
-  Retain the validated pre-migration dump/credential proof as rollback evidence outside git.
-
-- [ ] Run `testFast --rerun-tasks` and, after it exits, `testServices --rerun-tasks`. Verify every new
-  module is included in its proper tier. No parallel second Gradle invocation.
-- [ ] From `spire-ui`, run `npm test` and `npx tsc --noEmit`. Check CSS contracts, routes/deep links,
-  keyboard form behavior and new unknown/refused/suspended status rendering.
-- [ ] Run the whole criterion test classes after targeted mutation baselines; inspect JUnit/vitest
-  counts. No compilation/setup failure, skipped suite or empty fixture is an acceptance pass.
-- [ ] Run the warm `spire-e2e` stack only if already available or separately provisioned without
-  touching `spire-dev`. Add `dev.codespire.e2e.WorkItemGateJourneyTest` for signed tracker event →
-  durable admission → gate → policy-controlled continuation against real GitLab. If the run unit
-  cannot reach its local GitLab, record the known network limitation; do not rebind it publicly
-  or claim this test proves run execution. Pair it with the real-container/local-origin worker
-  proof and an explicitly recorded live external-forge run when authorized and feasible.
-- [ ] Demonstrate all seven acceptance criteria through actual APIs/UI with supported provider
-  configuration. Any live canary uses announced ids and exact local cleanup before insertion,
-  with explicit remote cleanup. Store only observed ids, dates and results in the evidence notes.
-  A live credential/permission probe is evidence about that account/token family, not all tokens.
-- [ ] Record all mutation selectors and measured results, missing capabilities, unavailable live
-  credentials and exact remaining proof gaps. Do not mark acceptance complete if a required
-  criterion lacks evidence; bring that gap to the analyst.
-- [ ] Update `docs/DECISIONS.md` with accepted ADRs; reconcile factory architecture/topic/data
-  catalogues; M2 live-proof reconciliation already landed in slice 1; update smoke-test instructions, registry upgrade steps,
-  security/SCM mapping, factory roadmap and `docs/HISTORY.md`. Rewrite `CLAUDE.md` status/measured
-  counts from actual results, preserving unrelated UNVERIFIED entries.
-- [ ] Submit each slice for analyst review and resolve findings with their tests/docs. The PR
-  remains draft until the analyst's review process says to mark it ready; this plan authorizes
-  no merge, deployment or privilege changes.
+- [x] Run AccountWorkspaceIsUnusedTest before adding the explicit V72 migration; independently
+  kill its read, INSERT and UPDATE arms. Kill the real DROP in a populated private V71 schema.
+- [x] Take and validate a fresh .handoff pg_dump before migration reaches dev. Preserve the
+  original encrypted baselines. Apply V71/V72 and verify the column is absent, all five full row
+  counts unchanged and both credential/webhook comparisons passing. Reconcile the retained
+  PR #32 audit with the original baseline explicitly; delete no accepted proof history.
+- [x] Force testFast, then testServices, then packaging with no second Gradle test invocation.
+  Derive and inspect XML totals, including the whole criterion classes and actual JVM recovery.
+- [x] Run the full UI suite, TypeScript and production build, retaining route/style/interaction guards.
+- [x] Assess the optional warm GitLab e2e tier: no warm stack was available. No WorkItemGateJourneyTest
+  or new live item-build result is claimed. RunUnitSpec still lacks a network field, so automated
+  GitLab run-unit connectivity remains open. Accepted local-origin execution and the standalone
+  TEST PR #32 proof remain separate evidence; no new live canary was needed.
+- [x] Consolidate all seven independently accepted API/UI criteria in one acceptance record,
+  with proving slices, exact witnesses, mutation ledgers and unchanged proof boundaries.
+- [x] Reconcile accepted ADRs, architecture, topics, data, SCM/security and upgrade runbook.
+  Rewrite CLAUDE.md Status with actual measured results and append the M3 HISTORY entry.
+- [x] Record remaining capabilities and separate per-forge UNVERIFIED entries without softening them.
+- [ ] Final operator review of slice 10. PR remains draft until that review authorizes readiness;
+  merging remains the operator's decision. The slice 10 brief explicitly authorized this dev upgrade.
 
 ## Round 1 report content
 

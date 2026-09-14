@@ -365,6 +365,14 @@ is in the table above.
 
 **Goal:** work starts from a ticket, and autonomy is chosen per ticket.
 
+**Implementation complete; final review pending (2026-09-14, PR #153).** All seven criteria are
+independently verified; [M3-ACCEPTANCE](M3-ACCEPTANCE.md) maps each to its proving slice and evidence.
+Real local-origin tests prove item execution and held-publication recovery; TEST PR #32 separately
+proves live standalone /fix. **Production VERIFY and LAND remain unavailable; M4 owns the verifier.**
+**No live item-build proof is claimed.** The automated GitLab run-unit network gap remains open
+because RunUnitSpec has no network field, and **both factory images remain absent from GHCR**.
+Per-forge identity and permission limits remain separate [UNVERIFIED](../UNVERIFIED.md) entries.
+
 **Delivers.** `spire-worksource` plus GitHub Issues, GitLab Issues and Jira arms, reusing the
 existing context adapters' clients. Tracker webhooks on the gateway's keyed registry edge.
 `work_item` bookkeeping — **not** a mirror. Autonomy profiles, label mapping, the operator ceiling,

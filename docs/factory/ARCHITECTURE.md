@@ -115,28 +115,16 @@ failed runs was **dropped commit** — the agent did the work and the container 
 
 ### 3.3 `WorkSource` — where work comes from
 
-```java
-public interface WorkSource {
-    WorkSourceType type();
-    WorkSourceCapabilities capabilities();   // supportsTransitions, supportsPlans, supportsLabelAudit
-    List<WorkItemRef> candidates(WorkQuery q);
-    WorkItem fetch(WorkItemRef ref);
-    void comment(WorkItemRef ref, String body);
-    void transition(WorkItemRef ref, String state);
-
-    /** Labels WITH the actor who applied each one. A label whose applier is unknown carries
-     *  {@code Actor.UNKNOWN} and selects no autonomy profile — never a silent fallback. */
-    List<LabelEvent> labelEvents(WorkItemRef ref);
-}
-
-record LabelEvent(String label, Actor appliedBy, Instant at, Origin origin) {}
-enum Origin { WEBHOOK, AUDIT_TRAIL, UNATTRIBUTED }
-```
+The implemented [WorkSource port](../../spire-worksource/src/main/java/dev/codespire/worksource/WorkSource.java)
+binds one source scope and explicit account. Candidates and label events are paged. Fetch results
+distinguish found, unavailable, confirmed deletion and confirmed transfer. Comment/transition
+writes have durable effect identities and separate read-only recovery operations; uncertain absence
+does not authorize a repeat write. Jira Cloud also polls authenticated comment activities.
 
 `labelEvents` replaced a `Set<String> labels(ref)` after a review showed the safety rule built on it
 was unimplementable. A set of strings has no author, and FR-F24 must know who applied a label. Only a
 webhook names a sender; a label found by polling needs the tracker's own audit trail (GitHub's timeline
-API, Jira's changelog), which `supportsLabelAudit` declares. Where neither is available the label is
+API, Jira's changelog), which the `LABEL_AUDIT` capability declares. Where neither is available the label is
 `UNATTRIBUTED` and **selects nothing** — the honest degradation, rather than quietly enforcing the rule
 only for labels a webhook happened to witness.
 
@@ -144,29 +132,12 @@ Arms: GitHub Issues, GitLab Issues, Jira — reusing the HTTP clients the `spire
 already have. Same hosts, same registry, wider rights (see [PACKAGING.md](./PACKAGING.md) §Knowledge
 vs Build).
 
-### 3.4 `PullRequestSink` — the port that does not exist yet
+### 3.4 `PullRequestSink` — observed pull-request delivery
 
-**There is no `Forge` type in this codebase.** An earlier draft of these documents said M2 would open
-pull requests "via the existing `Forge` seam"; that name was imported from prior art and does not
-appear in a single Java file here. The real SCM ports are `ScmIngress`, `DiffSource`, `CommentSink`,
-`ThreadSource`, `IdentitySource` and `PrUrlParser`, and **none of them can create a pull request** —
-nothing in Code Spire ever has.
-
-So M2 owns real work, not wiring:
-
-```java
-public interface PullRequestSink {          // new port, three implementations
-    ScmType type();
-    PullRequestRef open(RepoRef repo, NewPullRequest request);
-    Optional<PullRequestRef> findByHead(RepoRef repo, String headBranch);   // idempotency
-
-    record NewPullRequest(String headBranch, String baseBranch, String title, String bodyMd) { }
-    class NothingToPropose extends RuntimeException { }   // the agent changed nothing
-}
-```
-
-Built in M2 and this is the shipped shape, not a sketch. Three differences from the draft above it
-are worth naming because each was forced by a forge rather than chosen:
+M2 introduced the [PullRequestSink port](../../spire-contract/src/main/java/dev/codespire/contract/port/PullRequestSink.java)
+with GitHub, GitLab and Bitbucket adapters. M3 adds explicit requested/observed draft state and
+recovers uncertain creation by matching both head and base branches. Unsupported draft capability
+blocks delivery. Three details matter to the caller:
 
 - **`type()`**, like every other port, so a composition root can assert it selected the adapter it
   meant to.
@@ -178,8 +149,7 @@ are worth naming because each was forced by a forge rather than chosen:
   and reads like a failure on all four. Naming it in the PORT is what lets a caller tell it apart
   from a permission fault without knowing which forge answered. See SCM-MAPPING.md §8.
 
-The **pull-request half above is still true**; the credential half is not, and was overtaken by M0.
-The FACTORY-role account's single token already clones AND pushes — `RunResource` packs it,
+The FACTORY-role account's single token clones and pushes — `RunResource` packs it,
 `Credentials` unpacks it into read and write slots, and `PublishRepo.push` uses it against a real
 remote. The per-forge question ("does one token serve both?") was answered before M0 and is recorded
 in `ROADMAP.md`'s pre-M0 table: **yes on all three**. So M2 does not decide a push credential; it
@@ -278,26 +248,29 @@ intent journalling matters more here than it does for a review: after early ack,
 response cannot be recovered by redelivery, so an ambiguous outcome must fail closed into
 `dispatch_uncertain`.
 
-## 6. Command and event vocabulary (sketch)
+## 6. Command and event vocabulary
 
-**The run half is DELIVERED and its names are not the ones sketched here.** The catalogue never
-landed in `../CONTRACT.md`, which still carries no factory entry — read the types, not this table.
-The work-item half is still a sketch for M3–M4.
+The implemented M3 catalogue is also recorded in [CONTRACT](../CONTRACT.md). M4 specification
+generation, planning and verification remain outside this implementation.
 
 | Kind | Names | State |
 |---|---|---|
-| Integration events (gateway) | `WorkItemLabelled`, `WorkItemCommented`, `WorkItemClosed` | sketch (M3) |
-| Commands (orchestrator → run worker) | `ExecuteRun`, `CancelRun`, `SteerRun` | **delivered** — `PrepareWorkspace` and `FinalizeRun` were never built: the unit clones itself and salvage is a runtime call, not a command (ADR-039) |
-| Results (run worker → orchestrator) | `RunStarted`, `RunFinished`, `RunFailed` | **delivered** — `RunProgressed` became the `cs.run-events` transcript (ADR-034) and `BranchPushed` became fields on `RunFinished` |
-| Domain events (aggregate) | `WorkItemAdmitted`, `SpecDrafted`, `PlanProposed`, `StepDispatched`, `StepVerified`, `GateOpened`, `GateResolved`, `PullRequestOpened`, `WorkItemCompleted`, `WorkItemRefused` | sketch (M3–M4). **`DomainEvent` carries no run member today**: `factory_run` is projected straight from `cs.run-results` and the durable record of a run is `factory_run` + `llm_charge`, not the event store. A run aggregate is M3's decision, not something M0/M1 skipped |
+| Integration events (gateway) | `WorkSourceDelivery`, `RepositoryDelivery` carrying typed `RepositoryActivity` | Implemented signed tracker/SCM ingress; rechecked against source and repository ownership |
+| Commands (orchestrator → run worker) | `ExecuteRun`, `CancelRun`, `SteerRun`, `ExecuteWorkRun`, `PublishWorkRun`, `HoldWorkRun` | Implemented standalone and held execution paths; salvage remains a runtime operation |
+| Results (run worker → orchestrator) | `RunStarted`, `RunWorkReady`, `RunFinished`, `RunFailed` | Implemented durable readiness and terminal publication; transcripts remain separate |
+| Work-item decisions | `WorkItemEvent` with milestone, policy, preparation, gate, progress and control facts; `ResolveGate` unifies answer channels | Implemented work-item aggregate. Review `DomainEvent` remains separate. `factory_run` and `llm_charge` retain run/execution truth; M3 deliberately adds no run aggregate |
 
-`WorkItemRefused` carries a discriminated reason, in the same vocabulary shape as ADR-025's
-`CapRefusal`: ceiling clamp, unlisted labeller, entitlement missing, credentials exhausted, budget
-exceeded, gate expired.
+Work-item state carries explicit refusal/wait reasons and never turns a missing executor into
+success. Production VERIFY and LAND remain unavailable. The [acceptance record](M3-ACCEPTANCE.md)
+separates supported local journeys from the standalone live /fix proof and remaining live gaps.
 
 ## 7. Data
 
-New tables, in the schema of the service that owns them (schema-per-service, ADR-011).
+Tables live in the schema of the service that owns them (schema-per-service, ADR-011).
+The current migration inventory is in [DATA-MODEL](../DATA-MODEL.md). Work-item persistence includes
+durable source pages/effects, gates and phase attempts, run dispatch/results, delivery claims and
+takeover receipts/revocation outboxes. V72 drops only the unused account workspace column;
+repository ownership and immutable legacy mapping evidence remain.
 
 **`orchestrator` schema**
 
