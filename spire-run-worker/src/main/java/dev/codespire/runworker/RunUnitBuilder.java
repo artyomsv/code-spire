@@ -112,6 +112,14 @@ public class RunUnitBuilder {
     EnterpriseEnvironmentConfig enterprise;
 
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
+        return build(command, adapter, "spire-publish");
+    }
+
+    public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
+        return build(command.execution(), adapter, "spire-publish-held");
+    }
+
+    private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, String publisherCommand) {
         if (command.maxWallClockSeconds() > maxWallClockSeconds) {
             throw new IllegalArgumentException("the command asks for a wall clock of " + command.maxWallClockSeconds()
                     + "s, over this worker's spire.run.max-wall-clock-seconds (" + maxWallClockSeconds
@@ -159,7 +167,7 @@ public class RunUnitBuilder {
 
         ContainerSpec publisher = new ContainerSpec(
                 publisherImage,
-                List.of("spire-publish"),
+                List.of(publisherCommand),
                 publisherEnvironment(command, scm),
                 // Read-only, and the ONLY volume it sees. Not the workspace.
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
@@ -167,6 +175,28 @@ public class RunUnitBuilder {
         return new RunUnitSpec(command.runId(), init, agent, publisher,
                 enterprise.environment(),
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
+    }
+
+    /** Reuse the retained unit's topology; decrypt only the current SCM credential, never a harness key. */
+    public RunUnitSpec publication(RunUnitSpec held, RunCommand.ExecuteWorkRun original,
+                                    RunCommand.PublishWorkRun request) {
+        if (!held.runId().equals(request.runId()) || !original.runId().equals(request.runId())
+                || !original.work().equals(request.permit().work())) {
+            throw new IllegalArgumentException("Publication does not match the retained build");
+        }
+        Credentials.Scm scm = credentials.scm(request.runId(), request.scmCredential());
+        Map<String, String> env = new HashMap<>(publisherEnvironment(original.execution(), scm));
+        // Preserve the original floor too: a policy edit cannot weaken a run's initial path bounds.
+        var paths = new java.util.LinkedHashSet<>(original.execution().protectedPaths());
+        paths.addAll(request.permit().protectedPaths());
+        env.put("SPIRE_PROTECTED_PATHS", String.join(",", paths));
+        env.put("SPIRE_PERMITTED_HEAD", request.permit().head());
+        env.put("SPIRE_PERMIT_ISSUED_AT", request.permit().issuedAt().toString());
+        env.put("SPIRE_PERMIT_EXPIRES_AT", request.permit().expiresAt().toString());
+        ContainerSpec publisher = new ContainerSpec(held.publisher().image(), List.of("spire-publish-permitted"),
+                env, held.publisher().mounts());
+        return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
+                held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
     }
 
     /**

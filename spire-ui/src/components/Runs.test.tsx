@@ -90,6 +90,16 @@ function show(rows: RunListEntry[]) {
 }
 
 describe('the runs screen', () => {
+  it('shows a built run with publication held without claiming active compute or a push', async () => {
+    const held = run({ runId: 'TEST-held-run', status: 'awaiting_delivery', pushedRef: null, endedAt: null });
+    show([held]);
+    const row = (await screen.findByTitle(held.runId)).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Built · publication held')).toHaveClass('refused');
+    expect(within(row).queryByText('Succeeded')).toBeNull();
+    expect(isRunUnfinished(held.status)).toBe(false);
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'awaiting_delivery' } });
+    expect(screen.getByTitle(held.runId)).toBeInTheDocument();
+  });
   it('discloses the filter window when the only matching run is older than the newest 200', async () => {
     const allRuns = Array.from({ length: 300 }, (_, index) => run({
       runId: `TEST-run-${index}`, status: index === 249 ? 'cancelled' : 'succeeded',
@@ -311,6 +321,7 @@ describe('the runs screen', () => {
     expect(options).toContain('push_gate_refused');
     expect(options).toContain('delivered_nothing');
     expect(options).toContain('dispatch_uncertain');
-    expect(options.filter((v) => v !== '')).toHaveLength(9);
+    expect(options).toContain('awaiting_delivery');
+    expect(options.filter((v) => v !== '')).toHaveLength(10);
   });
 });

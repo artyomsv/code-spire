@@ -1,5 +1,5 @@
 import { apiFetch } from './auth';
-import type { Preparation, WorkBuild } from './components/work-items/workPreparationApi';
+import type { Preparation, WorkBuild, WorkExecution } from './components/work-items/workPreparationApi';
 
 export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
 export interface WorkItemSummary {
@@ -28,6 +28,7 @@ export interface WorkItemPage {
 export interface WorkItemDetail extends WorkItemSummary {
   preparation?: Preparation | null;
   builds?: WorkBuild[];
+  progress?: { execution?: WorkExecution | null };
   effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
   admittedLimits?: import('./components/work-items/workPolicyApi').Limits;
   gate?: import('./components/work-items/approvalsApi').Gate | null;
@@ -1006,6 +1007,7 @@ export type RunStatus =
   | 'push_gate_refused'
   // Published and never acknowledged. Deliberately NOT retried: the record may be on the topic.
   | 'dispatch_uncertain'
+  | 'awaiting_delivery'
   // Finished, pushed nothing. An honest outcome, not an error.
   | 'delivered_nothing'
   | 'delivered_unfinished';
@@ -1049,6 +1051,8 @@ export interface RunListEntry {
   cost: RunCost;
   prUrl: string | null;
   prError: string | null;
+  /** Absent on standalone runs and older servers; these are observed held-build facts. */
+  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null } | null;
 }
 
 export interface RunFilter {

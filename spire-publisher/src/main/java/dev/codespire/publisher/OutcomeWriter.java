@@ -67,6 +67,11 @@ public final class OutcomeWriter {
         write(entry("event", "pushed", "ref", ref, "changed", describe(changed)));
     }
 
+    /** Trusted publisher observation; the checkpoint remains unpublished. */
+    public void checkpoint(String head, List<ChangedPath> changed) {
+        write(entry("event", "checkpoint", "head", head, "changed", describe(changed)));
+    }
+
     /**
      * @param blocked every refused path WITH what happened to it — "ci.yml was blocked" does not
      *                tell an operator whether the factory edited that workflow or deleted it

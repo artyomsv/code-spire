@@ -28,6 +28,8 @@ RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
 COPY build/install/spire-publisher/lib /opt/spire-publisher/lib
 COPY --chmod=755 docker/spire-clone.sh /usr/local/bin/spire-clone
 COPY --chmod=755 docker/spire-publish.sh /usr/local/bin/spire-publish
+COPY --chmod=755 docker/spire-publish-held.sh /usr/local/bin/spire-publish-held
+COPY --chmod=755 docker/spire-publish-permitted.sh /usr/local/bin/spire-publish-permitted
 
 USER 1001:1001
 ENV HOME=/home/spire

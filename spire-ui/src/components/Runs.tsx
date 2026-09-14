@@ -43,6 +43,7 @@ const STATUS: Record<RunStatus, { label: string; pill: string }> = {
   // Not a failure of the RUN: the agent finished and produced work the gate would not publish.
   push_gate_refused: { label: 'Push refused', pill: 'refused' },
   dispatch_uncertain: { label: 'Dispatch unknown', pill: 'refused' },
+  awaiting_delivery: { label: 'Built · publication held', pill: 'refused' },
   delivered_nothing: { label: 'Changed nothing', pill: 'refused' },
   delivered_unfinished: { label: 'Delivered unfinished', pill: 'refused' },
 };

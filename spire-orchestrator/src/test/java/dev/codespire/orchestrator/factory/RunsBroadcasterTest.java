@@ -127,7 +127,7 @@ class RunsBroadcasterTest {
             @Override
             public Optional<RunListEntry> listOne(String runId) {
                 return Optional.of(new RunListEntry(runId, "queued", "BUILD", "TEST-harness", "TEST-model",
-                        "spire/test", null, null, null, null, null, null, RunCost.unknown(), null, null, null));
+                        "spire/test", null, null, null, null, null, null, RunCost.unknown(), null, null, null, null));
             }
 
             @Override

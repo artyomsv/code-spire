@@ -43,7 +43,13 @@ class OrphanWatchdogTest {
     private static final String SIBLING = "another-replica";
 
     /** Lists what it is told to, and records what was salvaged and destroyed, in order. */
-    private static final class FakeRuntime implements RunRuntime {
+    private static final class FakeRuntime implements dev.codespire.runtime.PublicationRuntime {
+        boolean held;
+        public RunHandle createHeld(RunUnitSpec spec,dev.codespire.runtime.PublicationKey binding){throw new AssertionError("watchdog must not create");}
+        public boolean publicationHeld(RunHandle handle){return held;}
+        public Finalization publishHeld(RunHandle handle,dev.codespire.runtime.PublicationKey binding,java.util.UUID permit,
+                RunUnitSpec spec,Consumer<String> lines,java.util.function.BooleanSupplier mayStart){throw new AssertionError("watchdog must not publish");}
+        public void destroyHeld(RunHandle handle,dev.codespire.runtime.PublicationKey binding){throw new AssertionError("watchdog must not release a hold");}
         final List<RunHandle> units = new ArrayList<>();
         final List<String> lifecycle = new ArrayList<>();
         final List<RunHandle> destroyed = new ArrayList<>();
@@ -260,6 +266,27 @@ class OrphanWatchdogTest {
         assertEquals(List.of(), runtime.lifecycle,
                 "a fresh heartbeat means a live run, whoever owns it");
         assertEquals(List.of(), reported);
+    }
+
+    @Test void aHeldWorkspaceWithNoLeaseIsStoppedAndRetainedWithoutInventingATerminalResult() {
+        runtime.held=true;
+        runtime.units.add(new RunHandle("TEST-held-no-lease","TEST-unit"));
+        watchdog().sweep();
+        assertEquals(List.of("cancel:TEST-held-no-lease"),runtime.lifecycle);
+        assertTrue(runtime.destroyed.isEmpty());assertTrue(reported.isEmpty());assertTrue(leases.released.isEmpty());
+    }
+
+    @Test void aStaleHeldWorkspaceIsStoppedAndRetained() {
+        runtime.held=true;unitWithLease("TEST-held-stale",SIBLING,STALE_AFTER.plusMinutes(1));
+        watchdog().sweep();
+        assertEquals(List.of("cancel:TEST-held-stale"),runtime.lifecycle);
+        assertTrue(runtime.destroyed.isEmpty());assertTrue(reported.isEmpty());assertTrue(leases.released.isEmpty());
+    }
+
+    @Test void aSiblingsFreshHeldBuildIsStillExemptFromStopping() {
+        runtime.held=true;unitWithLease("TEST-held-live",SIBLING,Duration.ofSeconds(1));
+        watchdog().sweep();
+        assertTrue(runtime.lifecycle.isEmpty());assertTrue(reported.isEmpty());
     }
 
     @Test

@@ -133,23 +133,36 @@ prepared build. Local GitHub/GitLab/Jira fixtures establish reference resolution
 no live tracker-artifact journey. Generated specification, multi-step planning and verification
 executors remain M4.
 
-The three-profile slice 8a proof declares an explicit test publication capability and replaces the
-final broker emitter. It runs the real state machine, encrypted PostgreSQL history, M2 assembly,
-launcher and durable dispatch/result association. It does not execute an agent or push a branch.
-Production item execution stays capability-unavailable until slice 8b implements the publication
-hold. Missing verification remains visibly unavailable after the test-supplied build result.
-Separate delivery tests must identify their test-only prior-phase driver. No production verifier,
-native draft delivery or live-forge journey follows from the plan/build proof.
+The three-profile slice 8a proof replaces the final broker emitter. It runs the real state machine,
+encrypted PostgreSQL history, M2 assembly, launcher and durable dispatch/result association. That
+test does not execute an agent or push a branch. Slice 8b separately exercises actual held builds
+in `WorkItemRunJourneyIT` against real containers and a local smart-HTTP origin, with an isolated
+orchestrator JVM and provider fixture. It observes the checkpoint and one charge; the remote branch
+is absent and production VERIFY remains capability-unavailable. Draft/regular delivery tests use
+an explicitly TEST-only verification driver and real sink adapters against WireMock. They establish
+native request/response handling, not live draft support or a shipped verifier. No live tracker-artifact
+journey, live item publication, M4 verification or merge follows from these local proofs.
 
 Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
-PostgreSQL and recover without another completion or charge. They are staged durable-state tests;
-the actual JVM kills above concern scanners and gates. A claimed send with no known outcome stays
-uncertain until a result or explicit never-ran resolution arrives. Item/run worker restart and
-orphan publication safety remain slice 8b obligations. M2 reports one aggregate agent call per run;
+PostgreSQL and recover without another completion or charge. Those are staged durable-state tests.
+`WorkRunProcessRecoveryIT` separately kills real worker JVMs after readiness, after the publisher
+claim before IO, and after remote publication before terminal commit. New owners retain the hold,
+resume only the original publisher and observe one build on the actual local remote. Runtime tests
+also retain the hold after partial creation and after containers are lost while volumes survive.
+A claimed send with no known outcome stays uncertain until a result or explicit never-ran resolution
+arrives. The standalone `/fix` live regression passed on 2026-09-14: TEST PR #32, run
+`4003204361:1`, automatic source-branch push `264ff858b538a3c779cf94161d3bc601bcfcf69a`,
+then a completed review, persisted `RESOLVED` verdict and resolved GitHub thread. The TEST PR was
+closed and its branch deleted. This does not establish live item publication or draft behavior.
+M2 reports one aggregate agent call per run;
 it does not count internal model calls. Proven pre-agent failures reuse M2's existing zero-call
 classification and can be readmitted. Unmeasured potential spend blocks continuation, including
 after readmission, until accounting can be repaired; no automated usage-repair workflow is supplied.
-No live run worker was started.
+The user started the live worker after the Docker service tier finished and was notified when
+the proof completed. Legacy preflight limits remain: PR #26 has an old finding row without a
+thread reference, and PR #27 has unknown fork metadata. Both refused without a run; neither row
+was manually rewritten. The GitHub webhook's missing origin was repaired through its gateway API
+to the existing repository and origin; GitLab/Bitbucket's two origin repairs remain pending.
 
 ## Repository push permission — GitHub (2026-09-13)
 

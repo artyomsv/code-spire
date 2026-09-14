@@ -12,9 +12,13 @@ Round 8 independently verified criterion 3; round 9 accepted the route teardown 
 Slice 6 is pushed on 721f4084 with source parity, safe writes and actual JVM restart evidence.
 Round 10 accepted slice 6. Round 11 accepted slice 7 on fully green 2e42ffca with no findings;
 criteria 2 and 4 are independently verified. Criteria 2–7 are now verified. Slice 8a implements
-the remaining criterion's prepared-task handoff and plan/build journeys; its verification is
-complete locally and recorded in the slice evidence. Criterion 1 awaits independent review.
-Production publication remains held until slice 8b; slices 8b–10 remain pending.
+the remaining criterion's prepared-task handoff and plan/build journeys; it is pushed on fully
+green d9861bc3. Round 12 independently verified criterion 1; all seven criteria are proved.
+Slice 8b implements held execution,
+publisher-only permits, native draft delivery and observed review evidence. Real containers and
+separate JVMs prove item execution and recovery locally. Its final full Java/service checks and
+packaging pass. The live standalone `/fix` proof passed on TEST PR #32 with run `4003204361:1`,
+automatic source-branch push and resolved review verdict/thread. Slices 9 and 10 have not started.
 Evidence is in the corresponding slice review notes.
 
 **Goal:** Start factory work from a tracker ticket with explicit, bounded autonomy; make repository
@@ -494,7 +498,7 @@ restart and orphan recovery; **standalone `/fix` still pushes automatically**, r
 **Files:** work-ready/control/results, worker durable state, publisher/runtime finalization,
 orphan salvage, item delivery orchestration, sink draft support and UI states.
 
-- [ ] Implement the accepted work-ready/delivery-permit handshake from design §6.3. An item-linked
+- [x] Implement the accepted work-ready/delivery-permit handshake from design §6.3. An item-linked
   run starts with publication held, checkpoints without pushing, persists awaiting-delivery and
   releases active compute. Resume only the trusted publisher on a current delivery permit; keep
   workspace and hold through restart. Add contract/result/control fields, runtime lifecycle and
@@ -503,28 +507,28 @@ orphan salvage, item delivery orchestration, sink draft support and UI states.
   `WorkItemDeliveryIT.deliverOffNeverPushesTheBuiltBranch`,
   `WorkItemDeliveryIT.deliveryPermitPublishesWithoutRebuilding`, and
   `WorkItemDeliveryIT.workReadyAndFinishedDoNotDoubleCharge` in the worker service tier.
-- [ ] Prevent item-linked BUILD results from falling through `FactoryPullRequests.propose` before
+- [x] Prevent item-linked BUILD results from falling through `FactoryPullRequests.propose` before
   their deliver transition. Implement policy-controlled PR opening, observed reviewer result and
   land readiness according to the accepted order. Never mark missing review/verify as passing.
-- [ ] Extend the sink with explicit draft capability/request semantics and update constructors,
+- [x] Extend the sink with explicit draft capability/request semantics and update constructors,
   withers, snapshots and each adapter. Unsupported `draft_pr` visibly blocks delivery. Do not
   send a regular PR and label it a draft. Preserve find-by-head idempotency and existing FIX
   source-branch semantics.
-- [ ] Prove actual run execution separately in `WorkItemRunJourneyIT.preparedItemBuildsAndWaitsForVerification`
+- [x] Prove actual run execution separately in `WorkItemRunJourneyIT.preparedItemBuildsAndWaitsForVerification`
   (`spire-run-worker` service tier): real containers and local test origin plus provider fixture,
   distinct from a live-forge proof. This suite must share the existing Docker serialization lock.
   Delivery tests supply valid prior phase results through an explicitly test-only phase driver;
   the production handler for an unavailable verify capability continues to block honestly.
-- [ ] Kill criterion 1 mutations and the standalone-proposal bypass separately. Run relevant run,
+- [x] Kill criterion 1 mutations and the standalone-proposal bypass separately. Run relevant run,
   orchestrator, sink adapter and UI suites sequentially. Also remove the initial publication hold
   and isolate `WorkItemDeliveryIT.deliverOffNeverPushesTheBuiltBranch`: exactly one test must fail
   on the real remote's changed head. Restore and rerun green.
-- [ ] Re-prove a standalone `/fix` live on `artyomsv/spire-test`, using an actual open finding and
+- [x] Re-prove a standalone `/fix` live on `artyomsv/spire-test`, using an actual open finding and
   the same command → worker → publisher → next review → resolved thread/persisted verdict chain
   proved by runs `3987682681:1` and `3987682176:1`. Record actual new run/PR ids, source head before/
   after and verdict observations. A synthetic fixture or unit test is not this proof. Announce
   any TEST-/CANARY-prefixed setup and its exact cleanup first. Do not close 8b without this result.
-- [ ] Commit 8b independently after both exit obligations pass.
+- [x] Commit 8b independently after both exit obligations pass.
 
 ## Slice 9 — answer outside the dashboard and take over safely
 
@@ -565,7 +569,7 @@ effects, including salvage publication after a restart.
 
 ## Acceptance proof matrix
 
-Criteria 2–7 are independently verified, with the slice 2–7 mutation ledgers. Round 8 accepted the distinct membership and attribution proofs; round 11 verified both visible clamping and current-ceiling continuation. Criterion 1 remains for slice 8a review. `O-test`
+All seven criteria are independently verified, with the slice 2–8a mutation ledgers. Round 8 accepted the distinct membership and attribution proofs; round 11 verified both visible clamping and current-ceiling continuation. Round 12 verified criterion 1's five-axis journey proof and its artifact-reference/manual-acceptance honesty assertions. `O-test`
 means `spire-orchestrator/src/test/java/dev/codespire/orchestrator/`. Tests exercise the public
 resource/consumer path plus persisted outcomes; helpers may stub external HTTP at adapter edges.
 Every integration proof has a visible UI assertion or a matching component test where required.

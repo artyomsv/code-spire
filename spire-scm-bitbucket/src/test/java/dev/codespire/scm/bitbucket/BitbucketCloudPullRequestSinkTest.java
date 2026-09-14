@@ -95,7 +95,7 @@ class BitbucketCloudPullRequestSinkTest {
         assertEquals(42L, ref.number());
         assertEquals("https://bitbucket.org/acme/app/pull-requests/42", ref.url());
         wireMock.verify(postRequestedFor(urlEqualTo(PRS)).withRequestBody(equalToJson("""
-                {"title": "[factory] fix it", "description": "body",
+                {"draft": false, "title": "[factory] fix it", "description": "body",
                  "source": {"branch": {"name": "spire/run_1"}},
                  "destination": {"branch": {"name": "main"}}}
                 """)));
@@ -292,5 +292,56 @@ class BitbucketCloudPullRequestSinkTest {
             assertThrows(IllegalArgumentException.class, () -> sink.findByHead(REPO, nothing, "main"),
                     "head=" + nothing);
         }
+    }
+
+    private String draftResponse(Object state) {
+        var json=new ObjectMapper();var node=json.createObjectNode();node.put("id",901);node.putObject("links").putObject("html").put("href","https://forge.example.test/TEST-pull/901");
+        if(state!=null)node.set("draft",json.valueToTree(state));return node.toString();
+    }
+    private String draftList(Object state) { return "{\"values\":["+draftResponse(state)+"]}"; }
+    private PullRequestSink.NewPullRequest draftRequest() {
+        return new PullRequestSink.NewPullRequest("spire/TEST-prepared","main","TEST prepared work","TEST tracker references",true);
+    }
+    @Test void requestsTheNativeDraftState() throws Exception {
+        assertTrue(sink.supportsDrafts());noExistingPullRequest();
+        wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(json(draftResponse(true))));
+        assertEquals(Boolean.TRUE,sink.open(REPO,draftRequest()).draft());
+        var sent=new ObjectMapper().readTree(wireMock.findAll(postRequestedFor(urlEqualTo(PRS))).getFirst().getBodyAsString());
+        assertTrue(sent.path("draft").isBoolean());assertTrue(sent.path("draft").booleanValue());
+    }
+    @Test void regularDeliveryDoesNotAcquireDraftSemantics() throws Exception {
+        noExistingPullRequest();wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(json(draftResponse(false))));
+        assertEquals(Boolean.FALSE,sink.open(REPO,draftRequest().withDraft(false)).draft());
+        var sent=new ObjectMapper().readTree(wireMock.findAll(postRequestedFor(urlEqualTo(PRS))).getFirst().getBodyAsString());
+        assertTrue(sent.path("draft").isBoolean());org.junit.jupiter.api.Assertions.assertFalse(sent.path("draft").booleanValue());
+    }
+    @Test void anExistingDraftIsReusedWithoutAnotherPost() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(json(draftList(true))));
+        assertEquals(Boolean.TRUE,sink.open(REPO,draftRequest()).draft());wireMock.verify(0,postRequestedFor(urlEqualTo(PRS)));
+    }
+    @Test void anExistingRegularRequestCannotSatisfyDraftDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(json(draftList(false))));
+        assertEquals("draft_pr_not_observed",assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest())).getMessage());
+        wireMock.verify(0,postRequestedFor(urlEqualTo(PRS)));
+    }
+    @Test void unknownExistingDraftStateCannotAuthorizeDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(json(draftList(null))));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));wireMock.verify(0,postRequestedFor(urlEqualTo(PRS)));
+    }
+    @Test void aRegularCreateResponseCannotBeReportedAsDraft() {
+        noExistingPullRequest();wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(json(draftResponse(false))));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));wireMock.verify(1,postRequestedFor(urlEqualTo(PRS)));
+    }
+    @Test void malformedDraftStateStaysUnknown() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).willReturn(json(draftList("true"))));
+        org.junit.jupiter.api.Assertions.assertNull(sink.findByHead(REPO,"spire/TEST-prepared","main").orElseThrow().draft());
+    }
+    @Test void duplicateRecoveryCannotClaimARegularRequestAsDraft() {
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).inScenario("TEST-draft-race").whenScenarioStateIs("Started")
+                .willSetStateTo("TEST-existing").willReturn(json("{\"values\":[]}")));
+        wireMock.stubFor(get(urlPathEqualTo(PRS)).inScenario("TEST-draft-race").whenScenarioStateIs("TEST-existing").willReturn(json(draftList(false))));
+        wireMock.stubFor(post(urlEqualTo(PRS)).willReturn(aResponse().withStatus(409).withBody("TEST duplicate request")));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));
+        wireMock.verify(2,getRequestedFor(urlPathEqualTo(PRS)));wireMock.verify(1,postRequestedFor(urlEqualTo(PRS)));
     }
 }

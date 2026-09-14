@@ -20,6 +20,7 @@ final class WorkProcessHarness {
         properties.setProperty("spire.work-effects-interval","off");properties.setProperty("spire.work-outbox-interval","off");properties.setProperty("spire.repository-history-interval","off");
         properties.setProperty("spire.work-gate-expiry-interval","off");
         properties.setProperty("spire.work-run-interval","off");
+        properties.setProperty("spire.work-delivery-interval","off");
         // A killed recovery JVM must not retain partitions in the test parent's consumer groups.
         // These proofs drive the scanner/expiry scheduler, so give every incoming channel its own empty topic and group.
         String namespace="TEST-recovery-"+UUID.randomUUID();

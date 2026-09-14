@@ -29,7 +29,10 @@ public class WorkItemTransitions {
         }
     }
     public record Outcome(int status,String reason,WorkItemEvent item) {}
-    public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown) {
+    public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown,WorkExecution execution) {
+        public PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown) {
+            this(attemptId,successful,wallSeconds,costMillicents,calls,usageKnown,null);
+        }
         public PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls) {
             this(attemptId,successful,wallSeconds,costMillicents,calls,true);
         }
@@ -53,6 +56,31 @@ public class WorkItemTransitions {
         return advance(id,-1,observe(item),false,Objects.requireNonNull(result));
     }
 
+    /** A stopped or superseded build still bought usage. Account it once without authorizing a phase. */
+    Outcome recordLateBuild(String id,PhaseResult result) {
+        return QuarkusTransaction.requiringNew().call(()->{
+            try(Connection c=dataSource.getConnection()) {
+                lockItem(c,id);var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
+                String key="late-build-result:"+result.attemptId();
+                if(history.stream().anyMatch(event->key.equals(event.correlationId())))return new Outcome(200,"late_result_already_accounted",item);
+                try(PreparedStatement ps=c.prepareStatement("SELECT a.state FROM work_phase_attempt a JOIN work_run_effect b ON b.attempt_id=a.id WHERE a.id=? AND a.work_item_id=? AND a.phase='build'")) {
+                    ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
+                        if(!rs.next())return new Outcome(409,"build_attempt_missing",item);
+                        if("completed".equals(rs.getString(1)))return new Outcome(200,"result_already_applied",item);
+                    }
+                }
+                if("active".equals(item.workflowStatus()) && Objects.equals(result.attemptId(),item.progress().attemptId()))
+                    return new Outcome(409,"build_attempt_active",item);
+                WorkProgress progress=item.progress().account(result.wallSeconds(),result.costMillicents(),result.calls());
+                if(!result.usageKnown())progress=progress.unknownUsage();
+                var next=state(item,item.workflowStatus(),item.reason(),"LATE_BUILD_RESULT",item.gate(),progress);
+                store.appendDecision(c,history,next,key);
+                return new Outcome(200,"late_result_accounted",next);
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot account late build result",failure);}
+        });
+    }
+
     Outcome advance(String id,long expected,Observation observed,boolean readmit,PhaseResult result) {
         return QuarkusTransaction.requiringNew().call(()-> {
             try(Connection c=dataSource.getConnection()) {
@@ -70,6 +98,7 @@ public class WorkItemTransitions {
                     if(!Objects.equals(result.attemptId(),item.progress().attemptId()))return new Outcome(409,"attempt_changed",item);
                     if("completed".equals(item.progress().attemptState()))return new Outcome(200,"result_already_applied",item);
                     if(!"active".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
+                    if(!validExecution(item,result))return new Outcome(409,"phase_evidence_mismatch",item);
                 } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","completed").contains(item.workflowStatus()))
                     return new Outcome(409,"explicit_readmission_required",item);
                 if(readmit && Set.of("active","waiting_approval","retired").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
@@ -83,6 +112,7 @@ public class WorkItemTransitions {
                 }
                 if(result!=null) {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
+                    if(result.execution()!=null)progress=progress.withExecution(result.execution());
                     if(!result.usageKnown())progress=progress.unknownUsage();
                     next=state(next,result.successful()?"awaiting_input":"failed",result.successful()?"phase_completed":"phase_failed",
                             result.successful()?"PHASE_COMPLETED":"PHASE_FAILED",next.gate(),progress);
@@ -107,6 +137,25 @@ public class WorkItemTransitions {
     private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now) {
         return WorkItemLifecycle.enter(item,store.load(item.workItemId()),historySize,approved,now,
                 capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID());
+    }
+
+    private static boolean validExecution(WorkItemEvent item,PhaseResult result) {
+        WorkExecution proof=result.execution(),previous=item.progress().execution();
+        // Older policy-only histories carry no build execution. They cannot authorize a delivery;
+        // the capability/effect checks require its evidence independently.
+        if(proof==null)return !result.successful() || previous==null || !Set.of("verify","deliver","review").contains(item.phase());
+        return switch(item.phase()) {
+            case "build" -> proof.build().workItemId().equals(item.workItemId()) && proof.build().generation()==item.generation()
+                    && proof.build().buildAttemptId().equals(result.attemptId()) && item.preparation()!=null
+                    && proof.build().preparationBinding().equals(item.preparation().binding())
+                    && proof.verificationAttempt()==null && proof.pullRequest()==null && proof.reviewId()==null;
+            case "verify" -> previous!=null && proof.equals(previous.verified(result.attemptId()));
+            case "deliver" -> previous!=null && previous.verificationAttempt()!=null && proof.pullRequest()!=null
+                    && proof.equals(previous.delivered(proof.pullRequest()));
+            case "review" -> previous!=null && previous.pullRequest()!=null && proof.reviewId()!=null
+                    && proof.equals(previous.reviewed(proof.reviewId()));
+            default -> false;
+        };
     }
 
     /** Accept fetched manual evidence through each actual policy branch; never invent an executor result. */

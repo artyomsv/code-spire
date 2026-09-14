@@ -146,5 +146,9 @@ public class WorkItemStore {
             try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_run_effect(attempt_id,work_item_id,generation,state) VALUES (?,?,?,'pending') ON CONFLICT DO NOTHING")) {
                 ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());ps.executeUpdate();
             }
+        if("deliver".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()) && progress.execution()!=null)
+            try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_delivery_effect(attempt_id,work_item_id,generation,run_id,state) VALUES (?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {
+                ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());ps.setString(4,progress.execution().runId());ps.executeUpdate();
+            }
     }
 }

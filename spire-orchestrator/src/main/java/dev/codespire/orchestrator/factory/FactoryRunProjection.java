@@ -38,6 +38,8 @@ public class FactoryRunProjection {
 
     static final String RUNNING = "running";
 
+    static final String AWAITING_DELIVERY = "awaiting_delivery";
+
     static final String SUCCEEDED = "succeeded";
 
     static final String FAILED = "failed";
@@ -115,7 +117,7 @@ public class FactoryRunProjection {
      */
     public static final Set<String> STATUSES = Set.of(QUEUED, RUNNING, SUCCEEDED, FAILED,
             PUSH_GATE_REFUSED, DISPATCH_UNCERTAIN, CANCELLED, DELIVERED_NOTHING,
-            DELIVERED_UNFINISHED);
+            DELIVERED_UNFINISHED, AWAITING_DELIVERY);
 
     /**
      * The model this run was dispatched with, or empty when the row cannot be read.
@@ -176,8 +178,11 @@ public class FactoryRunProjection {
                           String workspace, String slug, String subject, int attempt,
                           String baseBranch, String baseCommit, String branch, String pushedAs,
                           String reviewId, String findingRef, String taskSummary,
-                          Instant startedAt, Instant endedAt, RunCost cost, RunSpend spend) {
+                          Instant startedAt, Instant endedAt, RunCost cost, RunSpend spend, RunPublication publication) {
     }
+
+    /** Held-build facts, distinct from a remote push and from a completed work item. */
+    public record RunPublication(String workItemId,String checkpointHead,Instant readyAt,Long activeWallSeconds) {}
 
     /**
      * One row of the runs list — a LIST shape, deliberately not {@link RunView}.
@@ -202,7 +207,7 @@ public class FactoryRunProjection {
                                String model, String branch, String pushedRef, String reviewId,
                                String findingRef, String failureCause, Instant startedAt,
                                Instant endedAt, RunCost cost, String prUrl, String prError,
-                               Instant agentStartedAt) {
+                               Instant agentStartedAt, RunPublication publication) {
     }
 
     /**
@@ -252,6 +257,7 @@ public class FactoryRunProjection {
                 SELECT r.run_id, r.status, r.kind, r.harness, r.model, r.branch,
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
                        r.started_at, r.ended_at, r.pr_url, r.pr_error, r.agent_started_at,
+                       r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
                        c.priced_millicents, c.unpriced_lines, c.line_count
                   FROM factory_run r
                   LEFT JOIN (
@@ -305,7 +311,7 @@ public class FactoryRunProjection {
                             rs.getString("review_id"), rs.getString("finding_ref"),
                             rs.getString("failure_cause"), instant(rs, "started_at"),
                             instant(rs, "ended_at"), costOf(rs), rs.getString("pr_url"),
-                            rs.getString("pr_error"), instant(rs, "agent_started_at")));
+                            rs.getString("pr_error"), instant(rs, "agent_started_at"), publicationOf(rs)));
                 }
                 return List.copyOf(rows);
             }
@@ -432,7 +438,7 @@ public class FactoryRunProjection {
      * {@code DISPATCH_FAILED} alone, so admitting the uncertain cause here publishes nothing.
      */
     private static final String LIVE = "(status IN ('" + QUEUED + "', '" + RUNNING + "', '"
-            + DISPATCH_UNCERTAIN + "') "
+            + DISPATCH_UNCERTAIN + "', '" + AWAITING_DELIVERY + "') "
             + "OR (status = '" + FAILED + "' AND failure_cause IN ('" + DISPATCH_FAILED + "', '"
             + RunFailureCause.DISPATCH_UNCERTAIN.name() + "')))";
 
@@ -730,10 +736,34 @@ public class FactoryRunProjection {
     public void apply(RunResult result) {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
+            case RunResult.RunWorkReady ready -> workReady(ready);
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
         push(result.runId());
+    }
+
+    private void workReady(RunResult.RunWorkReady ready) {
+        // A terminal publication may arrive first on redelivery. Preserve its status while
+        // recording the independent build evidence needed by delivery and the operator view.
+        update("""
+                UPDATE factory_run SET work_ready_at=COALESCE(work_ready_at,now()),
+                    checkpoint_head=COALESCE(checkpoint_head,?),active_wall_seconds=COALESCE(active_wall_seconds,?)
+                WHERE run_id=? AND (checkpoint_head IS NULL OR checkpoint_head=?)
+                  AND EXISTS (SELECT 1 FROM work_run_effect b WHERE b.run_id=factory_run.run_id
+                      AND b.work_item_id=? AND b.generation=? AND b.attempt_id=? AND b.preparation_binding=?)
+                """, ready.runId(), ready.head(), ready.activeWallSeconds(), ready.runId(), ready.head(),
+                ready.work().workItemId(), ready.work().generation(), ready.work().buildAttemptId(),ready.work().preparationBinding());
+        update("""
+                UPDATE factory_run SET status='awaiting_delivery',work_ready_at=COALESCE(work_ready_at,now()),
+                    checkpoint_head=COALESCE(checkpoint_head,?),active_wall_seconds=COALESCE(active_wall_seconds,?),
+                    failure_cause=NULL,failure_detail=NULL,ended_at=NULL
+                WHERE run_id=? AND (checkpoint_head IS NULL OR checkpoint_head=?)
+                  AND EXISTS (SELECT 1 FROM work_run_effect e WHERE e.run_id=factory_run.run_id
+                      AND e.work_item_id=? AND e.generation=? AND e.attempt_id=? AND e.preparation_binding=?)
+                  AND
+                """ + LIVE, ready.runId(), ready.head(), ready.activeWallSeconds(), ready.runId(), ready.head(),
+                ready.work().workItemId(), ready.work().generation(), ready.work().buildAttemptId(),ready.work().preparationBinding());
     }
 
     private void started(String runId, String unitId) {
@@ -988,7 +1018,8 @@ public class FactoryRunProjection {
                 SELECT status, pushed_ref, blocked_changes, failure_cause, failure_detail, unit_id,
                        pr_url, pr_error, agent_started_at, kind, harness, model, provider_type,
                        workspace, slug, subject, attempt, base_branch, base_commit, branch, pushed_as,
-                       review_id, finding_ref, task_summary, started_at, ended_at
+                       review_id, finding_ref, task_summary, started_at, ended_at,
+                       work_item_id, checkpoint_head, work_ready_at, active_wall_seconds
                   FROM factory_run WHERE run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -1019,6 +1050,11 @@ public class FactoryRunProjection {
                 rs.getString("base_branch"), rs.getString("base_commit"), rs.getString("branch"),
                 rs.getString("pushed_as"), rs.getString("review_id"), rs.getString("finding_ref"),
                 rs.getString("task_summary"), instant(rs, "started_at"), instant(rs, "ended_at"),
-                spend.cost(), spend);
+                spend.cost(), spend, publicationOf(rs));
+    }
+
+    private static RunPublication publicationOf(ResultSet rs) throws SQLException {
+        String item=rs.getString("work_item_id");
+        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class));
     }
 }

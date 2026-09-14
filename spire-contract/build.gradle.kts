@@ -22,6 +22,7 @@ dependencies {
     api("com.fasterxml.jackson.core:jackson-annotations:2.22")
 
     testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.1")
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

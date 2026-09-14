@@ -112,6 +112,15 @@ class RunFailureCauseTest {
         }
     }
 
+    @Test
+    void heldPublicationRefusalsKeepThePaidBuildAndDoNotRetryTheSamePermit() {
+        for (String cause : List.of("PUBLICATION_PERMIT_EXPIRED", "PERMITTED_HEAD_UNAVAILABLE")) {
+            assertEquals(RunFailureCause.GATE_REFUSED, RunFailureCause.of(cause), cause);
+            assertFalse(RunFailureCause.of(cause).isRetryable(), cause);
+            assertTrue(RunFailureCause.of(cause).agentMayHaveSpent(), cause);
+        }
+    }
+
     /**
      * The union of every vocabulary that can reach the wire must be representable.
      *

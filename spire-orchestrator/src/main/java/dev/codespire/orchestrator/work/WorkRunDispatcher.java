@@ -84,8 +84,8 @@ public class WorkRunDispatcher {
                 ps.setString(4,id);ps.setObject(5,attempt);
                 if(ps.executeUpdate()!=1)throw new IllegalStateException("Run association already exists");
             }
-            try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='uncertain',reason='dispatch_claimed',run_id=? WHERE attempt_id=?")) {
-                ps.setString(1,prepared.command().runId());ps.setObject(2,attempt);ps.executeUpdate();
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='uncertain',reason='dispatch_claimed',run_id=?,preparation_binding=? WHERE attempt_id=?")) {
+                ps.setString(1,prepared.command().runId());ps.setString(2,prepared.command().work().preparationBinding());ps.setObject(3,attempt);ps.executeUpdate();
             }
             store.appendDecision(c,history,item.withMilestone("BUILD_DISPATCH_CLAIMED"),"build-claim:"+attempt);
             return prepared;

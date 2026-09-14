@@ -60,6 +60,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Run only inside the worker's real-container journey proof, under its Docker task lock.
+    exclude("**/WorkItemRunJourneyDriver.class")
     val pathVariable = System.getenv().keys.firstOrNull { it.equals("PATH", ignoreCase = true) } ?: "PATH"
     environment(pathVariable, javaLauncher.get().executablePath.asFile.parent + System.getProperty("path.separator") + System.getenv(pathVariable))
     // Recovery tests kill and restart the actual packaged scanner on isolated Dev Services.

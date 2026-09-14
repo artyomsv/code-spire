@@ -7,7 +7,12 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class WorkPhaseCapability {
     @jakarta.inject.Inject WorkRunTransport runs;
+    @jakarta.inject.Inject WorkDelivery delivery;
     public boolean available(WorkItemEvent item,String phase) {
-        return "build".equals(phase) && item.preparation()!=null && runs.available();
+        return switch(phase) {
+            case "build" -> item.preparation()!=null && runs.available();
+            case "deliver","review" -> delivery.available(item,phase);
+            default -> false;
+        };
     }
 }

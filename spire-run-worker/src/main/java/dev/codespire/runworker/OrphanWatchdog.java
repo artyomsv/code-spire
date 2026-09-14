@@ -206,6 +206,13 @@ public class OrphanWatchdog {
         if (lease.isPresent() && !isOrphaned(lease.orElseThrow(), staleBefore)) {
             return;
         }
+        if (runtime instanceof dev.codespire.runtime.PublicationRuntime publication && publication.publicationHeld(unit)) {
+            // An abandoned build may still be running, but its checkpoint remains held. No
+            // ordinary salvage, terminal failure or deletion can stand in for a delivery decision.
+            stop(unit);
+            LOG.warn("publication is held; stopped the abandoned processes and retained their workspace");
+            return;
+        }
         boolean preserved = lease.map(WorkspaceLeases.Lease::preserved).orElse(false);
         LOG.warnf("reclaiming a sandbox with %s", preserved
                 ? "a lease marked preserved" : lease.isPresent()

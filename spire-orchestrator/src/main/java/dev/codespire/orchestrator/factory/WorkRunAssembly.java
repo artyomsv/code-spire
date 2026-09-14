@@ -21,7 +21,7 @@ public class WorkRunAssembly {
     @Inject SpendGate spend;
     @Inject LlmModelPricer pricer;
     @Inject RunCredentials credentials;
-    public record Prepared(RunCommand.ExecuteRun command,FactoryRunProjection.QueuedRun row) {}
+    public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
     public void validate(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,WorkArtifacts.Evidence evidence) {
         parse(source,preparation,evidence,"work-validation");
@@ -52,6 +52,8 @@ public class WorkRunAssembly {
                 in.baseBranch(),in.baseCommit(),branch,in.prompt(),in.harness(),in.model(),in.agentImage(),
                 item.policy().limits().protectedPaths().stream().sorted().toList(),wall,
                 credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,chosen.member().apiKey()));
-        return new Prepared(command,new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),chosen.member().id()));
+        var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
+                item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
+        return new Prepared(held,new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),chosen.member().id()));
     }
 }

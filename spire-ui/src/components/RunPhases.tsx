@@ -3,7 +3,8 @@ import type { RunView } from '../api';
 import { formatEventTime } from '../format';
 
 export default function RunPhases({ run }: { run: RunView }) {
-  const phases = [['Queued', run.startedAt], ['Agent running', run.agentStartedAt], ['Ended', run.endedAt]];
+  const phases = [['Queued', run.startedAt], ['Agent running', run.agentStartedAt],
+    ...(run.publication?.readyAt ? [['Build ready', run.publication.readyAt]] : []), ['Ended', run.endedAt]];
   return <ol className="run-phases" aria-label="Run phases">{phases.map(([label, at]) => (
     <li key={label}>
       <span className="run-phase-label"><Clock3 size={15} aria-hidden="true" />{label}</span>

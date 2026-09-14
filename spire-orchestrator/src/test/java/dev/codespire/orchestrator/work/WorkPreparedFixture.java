@@ -23,6 +23,7 @@ abstract class WorkPreparedFixture extends WorkFixture {
     @Inject FactoryConfig factoryConfig;
     @Inject RunLaunch actualLaunch;
     final List<RunCommand.ExecuteRun> dispatched=new ArrayList<>();
+    final List<RunCommand.ExecuteWorkRun> heldCommands=new ArrayList<>();
     final Map<String,WorkPolicy.Profile> profiles=new LinkedHashMap<>();
     final String model="TEST-prepared-"+UUID.randomUUID();
     final UUID modelId=UUID.randomUUID();
@@ -38,14 +39,15 @@ abstract class WorkPreparedFixture extends WorkFixture {
             @Override public void dispatch(RunCommand command) {
                 try { assertEquals(1,count("SELECT count(*) FROM work_run_effect e JOIN factory_run r ON r.run_id=e.run_id WHERE e.run_id=? AND e.state='uncertain' AND r.work_item_id=e.work_item_id",command.runId()),"The associated claim must be committed before dispatch"); }
                 catch(SQLException failure){throw new AssertionError(failure);}
-                dispatched.add((RunCommand.ExecuteRun)command);
+                var held=assertInstanceOf(RunCommand.ExecuteWorkRun.class,command);
+                heldCommands.add(held);dispatched.add(held.execution());
                 if(brokerFailure!=null)throw brokerFailure;
             }
         },RunCommandEmitter.class);
         QuarkusMock.installMockForType(new WorkRunTransport() {
-            @Override public boolean available(){return publicationSupported;}
-            @Override public RunLaunch.Outcome dispatch(RunCommand.ExecuteRun command) {
-                // Explicit 8a test capability. The real M2 launcher runs; the emitter above never reaches a worker.
+            @Override public boolean available(){return publicationSupported && super.available();}
+            @Override public RunLaunch.Outcome dispatch(RunCommand.ExecuteWorkRun command) {
+                // The real held-command launcher runs; only the final broker emitter is a TEST boundary.
                 assertTrue(publicationSupported);return actualLaunch.launch(command);
             }
         },WorkRunTransport.class);

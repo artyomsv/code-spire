@@ -18,7 +18,10 @@ import java.util.Objects;
  * per-repository number, and each of them ALSO has a global id that is not it. Naming it {@code id}
  * is how the two get confused, and {@code RepoRef}'s own history shows what that costs.
  */
-public record PullRequestRef(long number, String url) {
+public record PullRequestRef(long number, String url,Boolean draft) {
+
+    /** Legacy observations did not carry draft state. Null means unknown, never regular. */
+    public PullRequestRef(long number,String url) { this(number,url,null); }
 
     public PullRequestRef {
         if (number <= 0) {

@@ -34,6 +34,23 @@ public interface PullRequestSink {
 
     ScmType type();
 
+    /** An unknown adapter must never turn a requested draft into a regular pull request. */
+    default boolean supportsDrafts() { return false; }
+
+    default void requireSupported(NewPullRequest request) {
+        if(request.draft() && !supportsDrafts())throw new DeliveryUnavailable("draft_pr_unsupported");
+    }
+
+    /** Applies to both create responses and find-by-head recovery; a title is not proof of state. */
+    static PullRequestRef requireObservedDraft(NewPullRequest request,PullRequestRef observed) {
+        if(request.draft() && !Boolean.TRUE.equals(observed.draft()))throw new DeliveryUnavailable("draft_pr_not_observed");
+        return observed;
+    }
+
+    class DeliveryUnavailable extends RuntimeException {
+        public DeliveryUnavailable(String reason) { super(reason); }
+    }
+
     /**
      * Open a pull request, or answer the one that is already open from this head onto this base.
      *
@@ -109,7 +126,12 @@ public interface PullRequestSink {
      *     reviewer's own model on the next round, so it is untrusted output as much as untrusted
      *     input
      */
-    record NewPullRequest(String headBranch, String baseBranch, String title, String bodyMd) {
+    record NewPullRequest(String headBranch, String baseBranch, String title, String bodyMd,boolean draft) {
+
+        public NewPullRequest(String headBranch,String baseBranch,String title,String bodyMd) {
+            this(headBranch,baseBranch,title,bodyMd,false);
+        }
+        public NewPullRequest withDraft(boolean value) { return new NewPullRequest(headBranch,baseBranch,title,bodyMd,value); }
 
         public NewPullRequest {
             Objects.requireNonNull(headBranch, "headBranch");

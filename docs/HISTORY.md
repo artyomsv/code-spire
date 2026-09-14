@@ -2009,3 +2009,35 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   pinned Semgrep passed. 92 checks cover 92 distinct production mutations. Criterion 1 is ready
   for independent review. Evidence is in `.claude/reviews/global/factory-m3-slice8a.md`. No dev data,
   second backup or live worker was used.
+
+- **Factory M3 slice 8b — held publication and observed delivery (PR #153, 2026-09-14).**
+  Round 12 independently verified criterion 1 on d9861bc3; all seven acceptance criteria are
+  proved. The review accepted five independent journey axes and the assertions that history
+  persists artifact references while manual acceptance cannot invent executor completion.
+  Item execution now uses a distinct held command and publisher entry point. The worker persists
+  encrypted execution, topology and independent readiness/terminal acknowledgements. It checkpoints
+  the real head without pushing, stops active compute and retains its workspace through restart and
+  orphan recovery. A current short-lived delivery permit resumes only the trusted publisher with
+  fresh SCM credentials, exact head and both original/current protected-path floors. Production
+  VERIFY and LAND remain unavailable. Native draft delivery is requested and observed across all
+  three adapters; REVIEW consumes the existing review at the exact reviewed and posted head.
+  An ambiguous PR creation recovers only by reading; a stale publisher reader cannot rewind its
+  durable proposal claim. Late paid usage survives stop/readmission without completing a newer
+  attempt. Separate worker results share the existing M2 charge identity.
+  Real local-origin execution and three worker JVMs prove recovery after readiness, after a
+  durable publication claim before IO, and after a real push before terminal commit, with one
+  build. Verification exposed missing late accounting, checkpoint loss after an early terminal
+  result, a stale proposal race, rotated-credential failure redaction and two unmapped publisher
+  causes. The producer-derived cause inventory caught the last pair during the full fast suite;
+  both now retain paid-build accounting and refuse retry of the same publication permit.
+  Forced fast/service suites and packaging passed sequentially: 3970 Java tests, 714 UI tests,
+  248 checks covering 245 distinct production mutations, and zero pinned Semgrep findings across
+  98 files. The live orchestrator was refreshed from the tested source after Docker tests exited;
+  its repository/account inventory is unchanged. Live ingress required an explicit repair of the
+  GitHub webhook's missing origin. Two older PRs refused missing historical finding/fork metadata
+  without dispatch or cap changes. Fresh TEST PR #32 then completed the standalone `/fix` chain:
+  run `4003204361:1` automatically pushed `264ff858b538a3c779cf94161d3bc601bcfcf69a`, the next
+  review completed on that head, and both GitHub and the persisted finding recorded resolution.
+  The user started the worker after the service tier exited and was notified when the proof ended.
+  Cleanup closed the TEST PR and deleted its exact source branch, retaining the review/run audit.
+  Evidence: `.claude/reviews/global/factory-m3-slice8b.md`. No second backup was taken.

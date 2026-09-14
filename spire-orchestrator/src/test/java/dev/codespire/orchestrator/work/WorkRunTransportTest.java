@@ -10,10 +10,10 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WorkRunTransportTest {
-    @Test void productionDeclaresNoPublicationCapabilityBeforeTheHoldExists(){assertFalse(new WorkRunTransport().available());}
+    @Test void productionSupportsTheDistinctHeldBuildCommand(){assertTrue(new WorkRunTransport().available());}
     @Test void anUnavailableTransportCannotReachTheLauncher(){
-        List<RunCommand.ExecuteRun> sent=new ArrayList<>();var transport=new WorkRunTransport();
-        transport.launch=new RunLaunch(){@Override public Outcome launch(RunCommand.ExecuteRun command){sent.add(command);return new Dispatched();}};
+        List<RunCommand.ExecuteWorkRun> sent=new ArrayList<>();var transport=new WorkRunTransport(){@Override public boolean available(){return false;}};
+        transport.launch=new RunLaunch(){@Override public Outcome launch(RunCommand.ExecuteWorkRun command){sent.add(command);return new Dispatched();}};
         assertThrows(IllegalStateException.class,()->transport.dispatch(null));assertTrue(sent.isEmpty());
     }
     WorkPhaseCapability capability(){var value=new WorkPhaseCapability();value.runs=new WorkRunTransport(){@Override public boolean available(){return true;}};return value;}

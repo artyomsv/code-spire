@@ -48,6 +48,7 @@ public class RunResultSaga {
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
+            if(!workItems.acceptsBinding(result))return;
             projection.apply(result);
             // AFTER the projection, deliberately. The run's outcome is the fact an operator is
             // waiting on; the ledger write is best-effort and says so if it fails, so ordering it

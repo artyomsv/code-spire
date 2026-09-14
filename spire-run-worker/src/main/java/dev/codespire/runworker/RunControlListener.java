@@ -60,6 +60,8 @@ public class RunControlListener {
     @Inject
     HarnessRegistry harnesses;
 
+    @Inject WorkRunWorker workRuns;
+
     @Incoming("run-control-in")
     @Blocking(ordered = false)
     public void onControl(RunCommand command) {
@@ -83,6 +85,10 @@ public class RunControlListener {
     }
 
     private void dispatch(RunCommand command) {
+        if (command instanceof RunCommand.PublishWorkRun publication) {
+            workRuns.publish(publication);
+            return;
+        }
         if (command instanceof RunCommand.CancelRun cancel) {
             cancel(cancel);
             return;
@@ -159,6 +165,9 @@ public class RunControlListener {
     }
 
     private void cancel(RunCommand.CancelRun request) {
+        // A live held build becomes an idle retained workspace. The cancellation must still bind
+        // its later publication after this process forgets the live registry entry or restarts.
+        recordForARunNotYetStarted(request);
         Optional<RunRegistry.LiveRun> live = registry.cancel(request.runId());
         if (live.isEmpty()) {
             // Late, duplicate, another replica's — or NOT STARTED YET, which is the one this
@@ -171,7 +180,11 @@ public class RunControlListener {
             //
             // Every replica reads every control record, so several will race to write this. The
             // claim is ON CONFLICT DO NOTHING, so one wins and the rest are no-ops.
-            recordForARunNotYetStarted(request);
+            if (runtime instanceof dev.codespire.runtime.PublicationRuntime publication) {
+                for (var unit : runtime.discoverUnits()) {
+                    if (unit.runId().equals(request.runId()) && publication.publicationHeld(unit)) runtime.cancel(unit);
+                }
+            }
             LOG.debugf("cancel for %s: not executing here (%s)", request.runId(), request.reason());
             return;
         }

@@ -296,4 +296,55 @@ class GitLabPullRequestSinkTest {
         assertTrue(sink.findByHead(nested, "spire/run_1", "main").isEmpty());
         wireMock.verify(getRequestedFor(urlPathEqualTo(path)));
     }
+
+    private String draftResponse(Object state) {
+        var json=new ObjectMapper();var node=json.createObjectNode();node.put("iid",901).put("web_url","https://forge.example.test/TEST-merge/901");
+        if(state!=null)node.set("draft",json.valueToTree(state));return node.toString();
+    }
+    private String draftList(Object state) { return "["+draftResponse(state)+"]"; }
+    private PullRequestSink.NewPullRequest draftRequest() {
+        return new PullRequestSink.NewPullRequest("spire/TEST-prepared","main","TEST prepared work","TEST tracker references",true);
+    }
+    @Test void requestsTheNativeDraftState() throws Exception {
+        assertTrue(sink.supportsDrafts());noExistingMergeRequest();
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(json(draftResponse(true))));
+        assertEquals(Boolean.TRUE,sink.open(REPO,draftRequest()).draft());
+        var sent=new ObjectMapper().readTree(wireMock.findAll(postRequestedFor(urlEqualTo(MRS))).getFirst().getBodyAsString());
+        assertEquals("Draft: TEST prepared work",sent.path("title").asText());
+    }
+    @Test void regularDeliveryDoesNotAcquireDraftSemantics() throws Exception {
+        noExistingMergeRequest();wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(json(draftResponse(false))));
+        assertEquals(Boolean.FALSE,sink.open(REPO,draftRequest().withDraft(false)).draft());
+        var sent=new ObjectMapper().readTree(wireMock.findAll(postRequestedFor(urlEqualTo(MRS))).getFirst().getBodyAsString());
+        assertEquals("TEST prepared work",sent.path("title").asText());
+    }
+    @Test void anExistingDraftIsReusedWithoutAnotherPost() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(json(draftList(true))));
+        assertEquals(Boolean.TRUE,sink.open(REPO,draftRequest()).draft());wireMock.verify(0,postRequestedFor(urlEqualTo(MRS)));
+    }
+    @Test void anExistingRegularRequestCannotSatisfyDraftDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(json(draftList(false))));
+        assertEquals("draft_pr_not_observed",assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest())).getMessage());
+        wireMock.verify(0,postRequestedFor(urlEqualTo(MRS)));
+    }
+    @Test void unknownExistingDraftStateCannotAuthorizeDelivery() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(json(draftList(null))));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));wireMock.verify(0,postRequestedFor(urlEqualTo(MRS)));
+    }
+    @Test void aRegularCreateResponseCannotBeReportedAsDraft() {
+        noExistingMergeRequest();wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(json(draftResponse(false))));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));wireMock.verify(1,postRequestedFor(urlEqualTo(MRS)));
+    }
+    @Test void malformedDraftStateStaysUnknown() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).willReturn(json(draftList("true"))));
+        org.junit.jupiter.api.Assertions.assertNull(sink.findByHead(REPO,"spire/TEST-prepared","main").orElseThrow().draft());
+    }
+    @Test void duplicateRecoveryCannotClaimARegularRequestAsDraft() {
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).inScenario("TEST-draft-race").whenScenarioStateIs("Started")
+                .willSetStateTo("TEST-existing").willReturn(json("[]")));
+        wireMock.stubFor(get(urlPathEqualTo(MRS)).inScenario("TEST-draft-race").whenScenarioStateIs("TEST-existing").willReturn(json(draftList(false))));
+        wireMock.stubFor(post(urlEqualTo(MRS)).willReturn(aResponse().withStatus(409).withBody("TEST duplicate request")));
+        assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));
+        wireMock.verify(2,getRequestedFor(urlPathEqualTo(MRS)));wireMock.verify(1,postRequestedFor(urlEqualTo(MRS)));
+    }
 }
