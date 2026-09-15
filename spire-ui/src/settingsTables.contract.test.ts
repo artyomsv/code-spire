@@ -79,29 +79,50 @@ const LEGACY_SCREENS = [
 ];
 const legacy = (file: string) => LEGACY_SCREENS.some(name => file.endsWith(name));
 
+/** Each convention a settings screen must meet, as one verdict per rule. */
+function owed(body: string) {
+  // A checkbox states its own text beside it; everything else needs the label and its explanation.
+  const controls = [...body.matchAll(/<(input|select|textarea)\b[^>]*>/g)]
+    .filter(match => !/type="checkbox"/.test(match[0]));
+  return {
+    field: isScreen(body) && controls.length > 0 && !/\bSettingField\b/.test(body),
+    form: /<form\b/.test(body),
+    centred: isScreen(body) && /className="modal-overlay"/.test(body),
+  };
+}
+const offenders = (rule: keyof ReturnType<typeof owed>) => [...screenFiles()]
+  .filter(([file, body]) => !legacy(file) && owed(body)[rule])
+  .map(([file]) => relative(src, file));
+
 it('carries every settings control on a SettingField, not a hand-rolled label', () => {
-  const offenders: string[] = [];
-  for (const [file, body] of screenFiles()) {
-    if (!isScreen(body) || legacy(file)) continue;
-    // A checkbox states its own text beside it; everything else needs the label and its explanation.
-    const controls = [...body.matchAll(/<(input|select|textarea)\b[^>]*>/g)]
-      .filter(match => !/type="checkbox"/.test(match[0]));
-    if (controls.length && !/\bSettingField\b/.test(body)) offenders.push(relative(src, file));
-  }
   // Verified by mutation: drop the SettingField import and its uses from WorkSources, leaving the
   // controls intact — this fails. A screen that renders only checkboxes is not required to import it.
-  expect(offenders, 'A settings screen with form controls must use SettingField').toEqual([]);
+  expect(offenders('field'), 'A settings screen with form controls must use SettingField').toEqual([]);
 });
 
-it('changes things in a dialog rather than a form inline on the screen', () => {
-  const offenders: string[] = [];
-  for (const [file, body] of screenFiles()) {
-    if (legacy(file)) continue;
-    if (/<form\b/.test(body)) offenders.push(relative(src, file));
-  }
-  // FormDialog owns create and edit, so a settings screen renders no <form> of its own. Verified by
+it('changes things in a side panel rather than a form inline on the screen', () => {
+  // SidePanel owns create and edit, so a settings screen renders no <form> of its own. Verified by
   // mutation: wrap RepositoryForm's fields back in a bare <form> — this fails.
-  expect(offenders, 'A settings screen must not render its own <form>; use FormDialog').toEqual([]);
+  expect(offenders('form'), 'A settings screen must not render its own <form>; use SidePanel').toEqual([]);
+});
+
+it('opens create and edit beside the list, not in a centred dialog over it', () => {
+  // A screen must not roll its own overlay. Verified by mutation: replace SidePanel in WorkSources
+  // with an inline modal-overlay div — this fails.
+  expect(offenders('centred'), 'A settings screen must use SidePanel, not an overlay of its own').toEqual([]);
+
+  // ...and the shared panel must actually be anchored to an edge. The class alone proves nothing:
+  // the earlier version of this rule read only the screens, and swapping SidePanel's own overlay
+  // class for the centred one passed every test. Both halves are needed, so both are asserted.
+  const panel = read(join(src, 'components', 'SidePanel.tsx'));
+  expect(panel, 'SidePanel anchors to the side').toContain('className="panel-overlay"');
+  expect(panel, 'SidePanel is not a centred dialog').not.toContain('modal-overlay');
+  const styles = readFileSync(join(src, 'index.css'), 'utf8');
+  expect(styles.length, 'The stylesheet was read').toBeGreaterThan(0);
+  const overlay = /\.panel-overlay \{([^}]*)\}/.exec(styles);
+  expect(overlay?.[1], 'index.css defines .panel-overlay').toBeDefined();
+  // Verified by mutation: change this to `place-items: center` — this fails.
+  expect(overlay![1], '.panel-overlay pins the panel to an edge, it does not centre it').toContain('justify-content: flex-end');
 });
 
 it('keeps the legacy list honest: every entry is still reachable and still in debt', () => {
@@ -109,10 +130,9 @@ it('keeps the legacy list honest: every entry is still reachable and still in de
   for (const name of LEGACY_SCREENS) {
     const entry = [...files].find(([file]) => file.endsWith(name));
     expect(entry, `${name} is still a reachable settings screen; drop it from the list if it is gone`).toBeDefined();
-    const body = entry![1];
-    const owes = (isScreen(body) && !/\bSettingField\b/.test(body)) || /<form\b/.test(body);
     // A fixed screen must leave the list, or the list quietly becomes permission to stay broken.
-    expect(owes, `${name} now meets the conventions; remove it from LEGACY_SCREENS`).toBe(true);
+    expect(Object.values(owed(entry![1])).some(Boolean),
+      `${name} now meets the conventions; remove it from LEGACY_SCREENS`).toBe(true);
   }
 });
 

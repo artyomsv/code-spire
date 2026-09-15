@@ -20,7 +20,7 @@ const hooks: WebhookRepoView[] = (['REVIEWER', 'FACTORY', 'ISSUE'] as WebhookEve
 
 describe('RepositoryDetail', () => {
   it('preserves the webhook path heading truncation and vertical account badges', () => {
-    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} />);
     expect(screen.getByRole('columnheader', { name: 'Webhook path' })).toBeInTheDocument();
     const path = screen.getByText('/webhooks/gitlab/TEST-key-REVIEWER');
     expect(path.closest('.wh-url')).not.toBeNull();
@@ -34,7 +34,7 @@ describe('RepositoryDetail', () => {
     const legacy = { ...hooks[0], repositoryId: null };
     const update = vi.spyOn(api, 'updateWebhookRepo').mockResolvedValue(hooks[0]);
     const changed = vi.fn();
-    render(<RepositoryDetail repository={repository} hooks={[legacy]} onHooksChanged={changed} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={[legacy]} onHooksChanged={changed} />);
     expect(screen.queryByRole('button', { name: 'Create REVIEWER webhook' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Link existing REVIEWER webhook' }));
     await waitFor(() => expect(changed).toHaveBeenCalledWith([hooks[0]]));
@@ -45,7 +45,7 @@ describe('RepositoryDetail', () => {
   it('requires explicit origin repair before creating beside an unresolved legacy hook', async () => {
     vi.spyOn(api, 'fetchWebhookRepos').mockResolvedValue([{ ...hooks[0], repositoryId: null, forgeOrigin: null }]);
     const create = vi.spyOn(api, 'createWebhookRepo');
-    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Create REVIEWER webhook' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('forge origin confirmed');
     expect(create).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe('RepositoryDetail', () => {
     const create = vi.spyOn(api, 'createWebhookRepo').mockRejectedValue(new Error('TEST-response lost'));
     const rotate = vi.spyOn(api, 'rotateWebhookSecret');
     const changed = vi.fn();
-    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={changed} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={changed} />);
     fireEvent.click(screen.getByRole('button', { name: 'Create REVIEWER webhook' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Repository remains saved');
     fireEvent.click(screen.getByRole('button', { name: 'Create REVIEWER webhook' }));
@@ -68,14 +68,14 @@ describe('RepositoryDetail', () => {
 
   it('verifies the full namespace with the selected reviewer and names a failure', async () => {
     const verify = vi.spyOn(api, 'verifyRepo').mockResolvedValue({ ok: false, detail: 'TEST-token cannot see repository' });
-    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={[]} onHooksChanged={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Verify reviewer access' }));
     expect(await screen.findByRole('status')).toHaveTextContent('TEST-token cannot see repository');
     expect(verify).toHaveBeenCalledWith('TEST-reviewer', 'TEST-group/nested/service');
   });
 
   it('shows workspace selected accounts and one webhook per event kind', () => {
-    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} />);
     expect(within(screen.getByRole('region', { name: 'Workspace' })).getByText('TEST-group/nested')).toBeInTheDocument();
     const accounts = within(screen.getByRole('region', { name: 'Selected accounts' }));
     expect(accounts.getByText('Reviewer: Review account (@review-bot) · ok')).toBeInTheDocument();
@@ -89,7 +89,7 @@ describe('RepositoryDetail', () => {
   });
 
   it('shows missing role bindings and permits a repository with no hooks', () => {
-    render(<RepositoryDetail repository={{ ...repository, reviewer: null, factory: null }} hooks={[]} onHooksChanged={vi.fn()} onEdit={vi.fn()} />);
+    render(<RepositoryDetail repository={{ ...repository, reviewer: null, factory: null }} hooks={[]} onHooksChanged={vi.fn()} />);
     expect(screen.getByText('Reviewer: No account selected')).toBeInTheDocument();
     expect(screen.getByText('Factory: No account selected')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create REVIEWER webhook' })).toBeEnabled();

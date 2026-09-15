@@ -8,7 +8,7 @@ as well as its appearance: labels, empty states, pending-save lock-out and succe
 |---|---|---|
 | Screen and list | `content`, `card`, `prov-head`, `prov-title`, `prov-note`, `prov-actions`; list first, Add opens the form | [WorkSources](../src/components/work-items/WorkSources.tsx), [SettingsWebhookRepos](../src/components/SettingsWebhookRepos.tsx) |
 | Tables | `prov-scroll` wraps `prov-table`; `prov-name`, `prov-sub`, `nowrap` keep cells readable | [RepositoryRegistryPage](../src/components/repositories/RepositoryRegistryPage.tsx) |
-| Forms | `field`, `field-hint`, `field-optional`, `field-check`, `field-row-2`, `field-sep`, `modal-body`; mark required/optional/automatic, retain native `required`, connect explanations with `aria-describedby` | [SettingsContextProviders](../src/components/SettingsContextProviders.tsx), [WorkSources](../src/components/work-items/WorkSources.tsx) |
+| Forms | `field`, `field-hint`, `field-optional`, `field-check`, `field-row-2`, `field-sep`, `panel-body`; mark required/optional/automatic, retain native `required`, connect explanations with `aria-describedby` | [SettingsContextProviders](../src/components/SettingsContextProviders.tsx), [WorkSources](../src/components/work-items/WorkSources.tsx) |
 | Buttons | `btn` for the main action, `btn-ghost` for secondary actions, `prov-actions` for spacing; keep every control disabled during save, including Cancel | [WorkSources](../src/components/work-items/WorkSources.tsx) |
 | Empty lists | `wh-empty`, `wh-empty-icon`, `wh-empty-title`, `wh-empty-text`; explain the next action | [SettingsWebhookRepos](../src/components/SettingsWebhookRepos.tsx), [WorkPolicies](../src/components/work-items/WorkPolicies.tsx) |
 | Badges | `chips` groups `chip` states; names remain text or links, never badge-shaped buttons | [AccountsCells](../src/components/AccountsCells.tsx) |
@@ -21,7 +21,9 @@ as well as its appearance: labels, empty states, pending-save lock-out and succe
 | Copyable values | `CopyField`, `CopyableValue`; avoid full URLs as button labels | [CopyField](../src/components/CopyField.tsx), [RepositoryDetail](../src/components/repositories/RepositoryDetail.tsx) |
 | Confirmation | `ConfirmDialog`; retain pending state and explicit action names | [ConfirmDialog](../src/components/ConfirmDialog.tsx) |
 | Navigation | A visible icon with `ic`, size 16, alongside the page name | [App](../src/App.tsx) |
-| **Create or edit anything** | `FormDialog`; a screen lists, a dialog changes. Its body is a `fieldset` so `disabled` locks every control during a save | [FormDialog](../src/components/FormDialog.tsx), [WorkSources](../src/components/work-items/WorkSources.tsx) |
+| **Create, edit or inspect one row** | `SidePanel`; a screen lists at full width, a panel beside it changes. Its form is a `fieldset` so `disabled` locks every control during a save. `tabs` splits a panel that does more than one job; `wide` suits a panel that carries a table | [SidePanel](../src/components/SidePanel.tsx), [WorkSources](../src/components/work-items/WorkSources.tsx) |
+| A profile’s eight phase modes | `PhaseStrip` and `PhaseLegend`; colour says who decides — grey nobody, amber a person, green the machine. Eight chips in one cell could not be compared between rows | [PhaseStrip](../src/components/work-items/PhaseStrip.tsx), [WorkPolicies](../src/components/work-items/WorkPolicies.tsx) |
+| Something waiting for the operator | `attn`; a banner above the list. Below it, an operator reported not finding it at all | [RepositoryRegistryPage](../src/components/repositories/RepositoryRegistryPage.tsx) |
 | **A control and its explanation** | `SettingField`; the hint sits on an info control, **never as prose under the input** — six controls must not become six paragraphs | [SettingField](../src/components/SettingField.tsx), [CapSettings](../src/components/CapSettings.tsx) |
 | Hover or focus explanation | `Tooltip`; portalled, so a card's `overflow: hidden` cannot clip it | [Tooltip](../src/components/Tooltip.tsx) |
 
@@ -38,9 +40,12 @@ Both guards assert that they discovered real controls before concluding. Preserv
 mutation proofs when changing the source traversal or extracting components. Comment removal must
 preserve quoted paths such as `/runs/*`, so a wildcard cannot hide later routes from either guard.
 
-`settingsTables.contract.test.ts` also holds two rules added on 2026-09-14: a settings screen with
-form controls must use `SettingField`, and a settings screen must not render its own `<form>`.
-Both are mutation-verified in place.
+`settingsTables.contract.test.ts` also holds three conventions: a settings screen with form controls
+must use `SettingField`; a settings screen must not render its own `<form>`; and create and edit
+open in `SidePanel`, anchored to an edge, never a centred `modal-overlay`. That last rule asserts
+the panel component and its stylesheet as well as the screens — reading the screens alone let a
+mutation that gave `SidePanel` the centred overlay class pass every test, because the class lives
+in the shared component and not in the screen. All are mutation-verified in place.
 
 ## The legacy list
 

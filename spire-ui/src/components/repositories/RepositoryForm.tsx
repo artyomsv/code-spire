@@ -3,7 +3,7 @@ import type { ProviderView } from '../../api';
 import { saveRepository, type Repository, type RepositoryInput } from './repositoriesApi';
 import { accountOptionLabel } from '../accounts';
 import SettingField from '../SettingField';
-import FormDialog from '../FormDialog';
+import SidePanel from '../SidePanel';
 
 interface Props {
   initial: Repository | null;
@@ -40,7 +40,7 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
   // to change them — a different origin or slug is a different repository.
   const settled = !!initial;
   return (
-    <FormDialog title={title} busy={busy} onClose={onCancel} actions={<>
+    <SidePanel title={title} busy={busy} onClose={onCancel} actions={<>
       <button className="btn" disabled={busy} type="button" onClick={() => void submit()}>{busy ? 'Saving…' : 'Save repository'}</button>
       <button className="btn-ghost" type="button" onClick={onCancel}>Cancel</button></>}>
       {!initial && prefill.get('registration') && <p className="prov-note">Incoming registration: <span className="mono">{prefill.get('registration')}</span></p>}
@@ -79,6 +79,6 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
         && <p className="prov-note">No accounts on {origin(fields.forgeOrigin) || 'this origin'}. <a href="#/settings/accounts">Add an account</a> to select one.</p>}
       <label className="field-check"><input type="checkbox" checked={fields.enabled} onChange={e => patch({ enabled: e.target.checked })} /><span>Enabled</span></label>
       {error && <p className="prov-error" role="alert">{error}</p>}
-    </FormDialog>
+    </SidePanel>
   );
 }

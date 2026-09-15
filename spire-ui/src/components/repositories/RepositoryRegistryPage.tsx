@@ -5,6 +5,7 @@ import RepositoryDetail from './RepositoryDetail';
 import RepositoryForm from './RepositoryForm';
 import RepositoryPending from './RepositoryPending';
 import RepositoryAccountsCell from './RepositoryAccountsCell';
+import SidePanel from '../SidePanel';
 import { CopyableValue } from '../../render';
 import { GitBranch } from 'lucide-react';
 import { fetchRepositories, fetchRepositoryKinds, type Repository } from './repositoriesApi';
@@ -53,6 +54,7 @@ export default function RepositoryRegistryPage() {
     try { setHooks(await fetchWebhookRepos()); }
     catch (failure) { setWebhooks(previous => ({ ...previous, error: String(failure) })); }
   }
+  const chosen = repositories.find(repository => repository.id === selected);
   return <section className="content"><div className="card">
     <div className="prov-head"><h2 className="prov-title">Registered repositories</h2>
       {repositories.length > 0 && <button className="btn" onClick={() => setEditing('new')}>Register repository</button>}
@@ -62,6 +64,8 @@ export default function RepositoryRegistryPage() {
     {loading ? <p className="prov-note">Loading repositories…</p> : error ? <p className="prov-note prov-error" role="alert">{error}</p> : <>
       {hookError && <div className="prov-note" role="alert"><p className="prov-error">Webhooks could not be loaded: {hookError}. Repository settings remain available.</p>
         <button className="btn-ghost" onClick={() => void retryHooks()}>Retry loading webhooks</button></div>}
+      {/* What is waiting for the operator goes above the list. Below it, it was not found. */}
+      <RepositoryPending repositories={repositories} onHooksChanged={setHooks} />
       {repositories.length === 0 ? <div className="wh-empty">
         <div className="wh-empty-icon"><GitBranch size={22} aria-hidden="true" /></div>
         <div className="wh-empty-title">No registered repositories yet.</div>
@@ -77,10 +81,12 @@ export default function RepositoryRegistryPage() {
           <td><div className="chips"><span className={`chip ${repository.enabled ? 'on' : ''}`}>{repository.enabled ? 'Enabled' : 'Disabled'}</span></div></td>
         </tr>)}</tbody>
       </table></div>}
-      <RepositoryPending repositories={repositories} onHooksChanged={setHooks} />
-      {repositories.filter(repository => repository.id === selected).map(repository =>
-        <RepositoryDetail key={repository.id} repository={repository} hooks={hooks} onHooksChanged={setHooks}
-          onEdit={() => setEditing(repository)} />)}
+      {chosen && <SidePanel wide title={chosen.slug} subtitle={`${chosen.workspace} · ${chosen.forgeOrigin}`}
+        busy={false} onClose={() => setSelected(null)} actions={<>
+          <button className="btn" type="button" onClick={() => setEditing(chosen)}>Edit repository and accounts</button>
+          <button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button></>}>
+        <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />
+      </SidePanel>}
       {editing && <RepositoryForm key={editing === 'new' ? `new:${location.search}` : editing.id} initial={editing === 'new' ? null : editing}
         prefill={new URLSearchParams(location.search)}
         providers={providers} kinds={kinds} onSaved={saved} onCancel={() => setEditing(null)} />}

@@ -30,10 +30,11 @@ function hintOf(label: string, scope: string) {
   openInfo = info;
   return screen.getByRole('tooltip');
 }
-/** Pick the repository, then open its policy dialog — the page itself only reads. */
+/** Every repository has its own row; Edit opens that row's policy panel. The page itself only reads. */
 async function editPolicy() {
-  fireEvent.change(await screen.findByLabelText('Repository policy', { selector: 'input,select,textarea' }), { target: { value: repository.id } });
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit repository policy' }));
+  const button = await screen.findByRole('button', { name: 'Edit policy for TEST-owner/TEST-repo' });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
 }
 
 it('opens on visible profile versions with an Add action and no creation form', async () => {
@@ -74,8 +75,8 @@ it('opens an existing version from its row and locks every control during save',
 });
 it('marks required and optional profile fields and provides their help', async () => {
   render(<WorkPolicies />); await addProfile();
-  // The editor renders in the shared dialog, not inline beside the list it changes.
-  expect(screen.getByRole('group', { name: 'Add profile' })).toHaveClass('modal-body');
+  // The editor renders in the shared side panel, not inline beside the list it changes.
+  expect(screen.getByRole('group', { name: 'Add profile' })).toHaveClass('panel-form');
   expect(hintOf('Profile name', 'profile')).toHaveTextContent('Required.');
   expect(hintOf('Base profile', 'profile')).toHaveTextContent('Optional.');
   expect(hintOf('verify mode', 'phase modes')).toHaveTextContent('Production verification is unavailable until M4.');
@@ -108,14 +109,20 @@ it('keeps a failed policy save visible', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-policy changed; reload');expect(screen.getByLabelText('Label 1', { selector: 'input,select,textarea' })).toHaveValue('TEST-work');
 });
-it('ignores an earlier repository policy after selecting another repository', async () => {
+it('files a slow repository policy under the repository it was asked about', async () => {
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([repository, { ...repository, id: 'TEST-other', slug: 'TEST-other' }]);
   let resolve!: (policy: api.Policy) => void;
   vi.mocked(api.policy).mockReturnValueOnce(new Promise(done => { resolve = done; })).mockResolvedValue({ revision: 4, ceiling: profile, mappings: {} });
-  render(<WorkPolicies />);fireEvent.change(await screen.findByLabelText('Repository policy', { selector: 'input,select,textarea' }), { target: { value: repository.id } });
-  fireEvent.change(screen.getByLabelText('Repository policy', { selector: 'input,select,textarea' }), { target: { value: 'TEST-other' } });
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit repository policy' }));
-  await waitFor(() => expect(screen.getByLabelText('Repository ceiling', { selector: 'input,select,textarea' })).toHaveValue('TEST-profile:3'));
-  await act(async () => { resolve({ revision: 9, ceiling: profile, mappings: { 'TEST-old': profile } }); });
-  expect(screen.queryByLabelText('Label 1', { selector: 'input,select,textarea' })).not.toBeInTheDocument();
+  render(<WorkPolicies />);
+  const table = await screen.findByRole('table', { name: 'Repository assignments' });
+  // The second repository has answered; the first is still outstanding.
+  await waitFor(() => expect(within(table).getByText('TEST-assisted v3')).toBeInTheDocument());
+  expect(within(table).getByText('Loading…')).toBeInTheDocument();
+  await act(async () => { resolve({ revision: 9, ceiling: null, mappings: { 'TEST-late': profile } }); });
+  const rows = within(table).getAllByRole('row');
+  expect(within(rows[1]).getByText('No ceiling — nothing runs')).toBeInTheDocument();
+  expect(within(rows[1]).getByText(/TEST-late/)).toBeInTheDocument();
+  // The late answer must not have reached the row that never asked for it.
+  expect(within(rows[2]).getByText('TEST-assisted v3')).toBeInTheDocument();
+  expect(within(rows[2]).queryByText(/TEST-late/)).toBeNull();
 });

@@ -31,6 +31,11 @@ async function addSource() {
   fireEvent.click(button);
 }
 async function selectSource() { fireEvent.click(await screen.findByRole('link', { name: 'TEST-source name' })); }
+/**
+ * Connection and allowed people are separate tabs of the source panel. The inactive one is
+ * `hidden`, so its controls are out of the accessibility tree until its tab is opened.
+ */
+async function openPeople() { fireEvent.click(await screen.findByRole('tab', { name: /Allowed people/ })); }
 
 /**
  * A SettingField carries its explanation on an info control; focusing it reveals the tooltip.
@@ -183,7 +188,7 @@ it('preserves the configured enabled flag when the account is disabled', async (
 it('requires explicit Jira account selection and saves the source revision', async () => {
   const initial = source('JIRA');vi.mocked(api.fetchWorkSources).mockResolvedValue([initial]);
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'SELECTION_REQUIRED', actors: [{ providerUserId: '900123', handle: '', displayName: 'TEST-person' }], detail: 'Select an account explicitly.' });
-  render(<WorkSources />);await addSource();await selectSource();
+  render(<WorkSources />);await addSource();await selectSource();await openPeople();
   fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   const select = await screen.findByLabelText('Resolved source person', { selector: 'input,select,textarea' });
@@ -194,7 +199,7 @@ it('requires explicit Jira account selection and saves the source revision', asy
 });
 it('discards a resolved selection when the typed person changes', async () => {
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null });
-  render(<WorkSources />);await addSource();await selectSource();
+  render(<WorkSources />);await addSource();await selectSource();await openPeople();
   fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   await screen.findByLabelText('Resolved source person', { selector: 'input,select,textarea' });
@@ -222,9 +227,10 @@ it('cannot apply a pending actor resolution to another source', async () => {
   let resolve!: (value: Awaited<ReturnType<typeof api.resolveWorkActor>>) => void;
   vi.spyOn(api, 'resolveWorkActor').mockReturnValue(new Promise(yes => { resolve = yes; }));
   vi.mocked(api.fetchWorkSources).mockResolvedValue([source(), { ...source(), id: 'TEST-other-source', name: 'TEST-other source' }]);
-  render(<WorkSources />);await addSource();await selectSource();fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
+  render(<WorkSources />);await addSource();await selectSource();await openPeople();fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));
   fireEvent.click(screen.getByRole('link', { name: 'TEST-other source' }));
+  await openPeople();
   await act(async () => resolve({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null }));
   expect(screen.getByRole('button', { name: 'Save source person' })).toBeDisabled();
   expect(screen.queryByLabelText('Resolved source person', { selector: 'input,select,textarea' })).toBeNull();
@@ -259,7 +265,7 @@ it('does not infer a selection from multiple FOUND actors', async () => {
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [
     { providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' },
     { providerUserId: '900456', handle: 'TEST-other', displayName: 'TEST-other' }], detail: null });
-  render(<WorkSources />);await addSource();await selectSource();fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
+  render(<WorkSources />);await addSource();await selectSource();await openPeople();fireEvent.change(screen.getByLabelText('Person', { selector: 'input,select,textarea' }), { target: { value: 'TEST-person' } });
   fireEvent.click(screen.getByRole('button', { name: 'Resolve source person' }));await screen.findByLabelText('Resolved source person', { selector: 'input,select,textarea' });
   expect(screen.getByRole('button', { name: 'Save source person' })).toBeDisabled();
 });

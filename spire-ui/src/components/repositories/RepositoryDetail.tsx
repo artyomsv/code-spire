@@ -12,11 +12,11 @@ interface Props {
   repository: Repository;
   hooks: WebhookRepoView[];
   onHooksChanged: (hooks: WebhookRepoView[]) => void;
-  onEdit: () => void;
 }
 const kinds: WebhookEventKind[] = ['REVIEWER', 'FACTORY', 'ISSUE'];
 
-export default function RepositoryDetail({ repository, hooks, onHooksChanged, onEdit }: Props) {
+/** The body of the repository side panel. The panel supplies the name, coordinates and actions. */
+export default function RepositoryDetail({ repository, hooks, onHooksChanged }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
@@ -87,9 +87,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged, on
     finally { setBusy(false); }
   }
 
-  return <article className="card" style={{ marginTop: 16 }}>
-    <div className="prov-head"><h3 className="prov-title">{repository.slug}</h3>
-      <button className="btn-ghost" onClick={onEdit}>Edit repository and accounts</button></div>
+  return <div className="panel-detail">
     <section aria-label="Workspace" className="prov-note"><h4>Workspace</h4><p className="mono">{repository.workspace}</p><p className="prov-sub">{repository.scmType} · {repository.forgeOrigin}</p></section>
     <section aria-label="Selected accounts" className="prov-note"><h4>Selected accounts</h4>
       <RepositoryAccountsCell repository={repository} />
@@ -128,5 +126,5 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged, on
         <div className="modal-actions"><button className="btn" onClick={() => setRevealed(null)}>Done</button></div>
       </div>
     </div></div>}
-  </article>;
+  </div>;
 }

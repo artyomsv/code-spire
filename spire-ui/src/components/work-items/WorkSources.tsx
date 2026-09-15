@@ -6,7 +6,7 @@ import * as api from './workSourcesApi';
 import { ListTodo } from 'lucide-react';
 import { accountOptionLabel } from '../accounts';
 import SettingField from '../SettingField';
-import FormDialog from '../FormDialog';
+import SidePanel from '../SidePanel';
 
 const kinds: Record<api.WorkSourceType, string> = { GITHUB: 'GitHub', GITLAB: 'GitLab', JIRA: 'Jira' };
 function origin(base: string) { try { return new URL(base).origin; } catch { return ''; } }
@@ -43,11 +43,15 @@ export default function WorkSources() {
         <div className="wh-empty-title">No work sources registered.</div>
         <p className="wh-empty-text">Choose Add work source to bring tracker tickets into Work items. You will need a registered repository and a compatible account.</p>
       </div> : <div className="prov-scroll"><table className="prov-table">
-        <thead><tr><th>Source</th><th>Tracker</th><th>Project</th><th>Repository</th><th>State</th></tr></thead>
+        <thead><tr><th>Source</th><th>Tracker</th><th>Project</th><th>Repository</th><th>Allowed people</th><th>State</th></tr></thead>
         <tbody>{data.sources.map(item => <tr key={item.id}>
           <td className="nowrap"><a className="prov-name mono nowrap" href="#/settings/work-sources" onClick={event => { event.preventDefault(); setSelected(item.id); }}>{item.name}</a></td>
           <td className="nowrap">{kinds[item.type] ?? 'Unknown tracker'}</td><td className="mono nowrap">{item.scope}</td>
           <td className="mono nowrap">{item.repository.workspace}/{item.repository.slug}</td>
+          {/* An empty allowlist grants no label authority, so the count is the difference between a
+              source that works and one that silently selects nothing. It belongs in the list. */}
+          <td className="nowrap">{item.allowedActors.length}
+            {item.allowedActors.length === 0 && <div className="prov-sub">no ticket starts work</div>}</td>
           <td><div className="chips"><span className={`chip ${item.enabled ? 'on' : ''}`}>{item.enabled ? 'Available' : 'Unavailable'}</span></div>
             <div className="prov-sub">{item.health.split('_').join(' ')}</div></td>
         </tr>)}</tbody></table></div>}
@@ -77,7 +81,7 @@ function CreateSource({ accounts, repositories, saved, cancelled }: { accounts: 
     catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
   const scopeLabel = type === 'JIRA' ? 'Jira project key' : 'Tracker repository';
-  return <FormDialog title="Add a work source" busy={busy} onClose={cancelled} actions={<>
+  return <SidePanel title="Add a work source" busy={busy} onClose={cancelled} actions={<>
     <button className="btn" type="button" disabled={busy || !account || !repository || !name.trim() || !scope.trim()} onClick={() => void submit()}>Register work source</button>
     <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></>}>
     <SettingField label="Source name" scope="work source" hint="Required. A name you will recognise in the source list.">
@@ -109,7 +113,7 @@ function CreateSource({ accounts, repositories, saved, cancelled }: { accounts: 
         placeholder={type === 'JIRA' ? 'e.g. ENG' : 'Filled from the target repository'} onChange={event => setScope(event.target.value)} /></SettingField>
     {type === 'JIRA' && <p className="prov-note">Jira is polled. Its project may target a repository on another forge; the Jira credential stays on the tracker. Unconfirmed label authors select no profile.</p>}
     {error && <p className="prov-error" role="alert">{error}</p>}
-  </FormDialog>;
+  </SidePanel>;
 }
 
 function SourceDetails({ source, accounts, changed, closed }: { source: api.WorkSource; accounts: ProviderView[]; changed: () => void; closed: () => void }) {
@@ -119,46 +123,55 @@ function SourceDetails({ source, accounts, changed, closed }: { source: api.Work
   const [resolution, setResolution] = useState<ActorResult | null>(null);
   const [capabilities, setCapabilities] = useState<api.WorkCapabilities | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  // Connection and people are separate jobs on the same source. Both stay mounted so a half-typed
+  // handle survives a tab switch; `hidden` keeps the inactive one out of the accessibility tree.
+  const [tab, setTab] = useState('connection');
   async function action(run: () => Promise<unknown>, reload = true) {
     setBusy(true); setError(null);
     try { await run(); if (reload) changed(); } catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
-  return <FormDialog title={source.name} busy={busy} onClose={closed} actions={<>
-    <button className="btn" type="button" disabled={busy || !name.trim()} onClick={() => void action(() => api.editWorkSource(source, { name, accountId, enabled }))}>Save source</button>
-    <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(() => api.rescanWorkSource(source.id))}>Request rescan</button>
-    <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(async () => setCapabilities(await api.workCapabilities(source.id)), false)}>Check supported operations</button>
-    <button className="btn-ghost" type="button" onClick={closed}>Close</button></>}>
-    <p className="prov-note">{source.origin} · {source.scope}</p>
-    <SettingField label="Edit source name" scope="work source" hint="Required. The name shown in the source list.">
-      <input aria-label="Edit source name" required value={name} onChange={event => setName(event.target.value)} /></SettingField>
-    <SettingField label="Source account" scope="work source"
-      hint="Required. A compatible account on this source's tracker origin. Disabled accounts cannot process tickets.">
-      <select aria-label="Source account" required value={accountId} onChange={event => setAccount(event.target.value)}>
-        {accounts.filter(account => compatible(source.type, account) && origin(account.baseUrl) === source.origin || account.id === source.accountId)
-          .map(account => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
-      </select></SettingField>
-    <label className="field-check"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /><span>Source enabled</span></label>
-    {!source.enabled && source.configuredEnabled && <p className="prov-note">This source is enabled, but its account or repository is unavailable.</p>}
-    {capabilities && <p className="prov-note">{capabilities.operations.map(value => value.toLowerCase().split('_').join(' ')).join(', ')}. {capabilities.detail}</p>}
-    <h4 className="prov-title">Allowed people</h4>
-    {source.type === 'JIRA' && <p className="prov-note">Jira Cloud display names are not unique. Resolve and select an account explicitly. Data Center person lookup is currently unavailable.</p>}
-    <p className="prov-note">Only these people's attributed labels may choose a profile. An empty list grants no label authority.</p>
-    <SettingField label="Person" scope="allowed people" hint="Optional, and required to add a person. Enter a handle, then resolve and confirm the tracker identity before saving.">
-      <input aria-label="Person" value={draft} onChange={event => { setDraft(event.target.value); setResolution(null); setSelected(''); }} /></SettingField>
-    <div className="prov-actions"><button className="btn-ghost" type="button" disabled={busy || !draft.trim()} onClick={() => {
-      setResolution(null); setSelected(''); void action(async () => {
-        const result = await api.resolveWorkActor(source.id, draft); setResolution(result);
-        setSelected(result.status === 'FOUND' && result.actors.length === 1 ? result.actors[0].providerUserId : '');
-      }, false);
-    }}>Resolve source person</button>
-      <button className="btn-ghost" type="button" disabled={busy || !selected} onClick={() => void action(() => api.saveWorkActor(source, draft, selected))}>Save source person</button></div>
-    {resolution && <><p className="prov-note">{resolution.detail}</p>
-      <SettingField label="Resolved source person" scope="allowed people" hint="Required to add a person. Confirm the identity to grant label authority on this source.">
-        <select aria-label="Resolved source person" value={selected} onChange={event => setSelected(event.target.value)}>
-          <option value="">Select a person</option>{resolution.actors.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.providerUserId}</option>)}
-        </select></SettingField></>}
-    <ul className="prov-list">{source.allowedActors.map(id => <li key={id}><span className="mono nowrap">{id}</span>
-      <button className="btn-ghost" type="button" onClick={() => void action(() => api.removeWorkActor(source, id))}>Remove {id}</button></li>)}</ul>
+  return <SidePanel title={source.name} subtitle={`${source.origin} · ${source.scope}`} busy={busy} onClose={closed}
+    tabs={[{ id: 'connection', label: 'Connection' }, { id: 'people', label: 'Allowed people', count: source.allowedActors.length }]}
+    tab={tab} onTab={setTab}
+    actions={<>
+      <button className="btn" type="button" disabled={busy || !name.trim()} onClick={() => void action(() => api.editWorkSource(source, { name, accountId, enabled }))}>Save source</button>
+      <button className="btn-ghost" type="button" onClick={closed}>Close</button></>}>
+    <div role="tabpanel" aria-label="Connection" hidden={tab !== 'connection'} className="panel-section">
+      <SettingField label="Edit source name" scope="work source" hint="Required. The name shown in the source list.">
+        <input aria-label="Edit source name" required value={name} onChange={event => setName(event.target.value)} /></SettingField>
+      <SettingField label="Source account" scope="work source"
+        hint="Required. A compatible account on this source's tracker origin. Disabled accounts cannot process tickets.">
+        <select aria-label="Source account" required value={accountId} onChange={event => setAccount(event.target.value)}>
+          {accounts.filter(account => compatible(source.type, account) && origin(account.baseUrl) === source.origin || account.id === source.accountId)
+            .map(account => <option key={account.id} value={account.id}>{accountOptionLabel(account)}</option>)}
+        </select></SettingField>
+      <label className="field-check"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /><span>Source enabled</span></label>
+      {!source.enabled && source.configuredEnabled && <p className="prov-note">This source is enabled, but its account or repository is unavailable.</p>}
+      <div className="prov-actions">
+        <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(() => api.rescanWorkSource(source.id))}>Request rescan</button>
+        <button className="btn-ghost" type="button" disabled={busy || !source.enabled} onClick={() => void action(async () => setCapabilities(await api.workCapabilities(source.id)), false)}>Check supported operations</button></div>
+      {capabilities && <p className="prov-note">{capabilities.operations.map(value => value.toLowerCase().split('_').join(' ')).join(', ')}. {capabilities.detail}</p>}
+    </div>
+    <div role="tabpanel" aria-label="Allowed people" hidden={tab !== 'people'} className="panel-section">
+      {source.type === 'JIRA' && <p className="prov-note">Jira Cloud display names are not unique. Resolve and select an account explicitly. Data Center person lookup is currently unavailable.</p>}
+      <p className="prov-note">Only these people's attributed labels may choose a profile. An empty list grants no label authority.</p>
+      <SettingField label="Person" scope="allowed people" hint="Optional, and required to add a person. Enter a handle, then resolve and confirm the tracker identity before saving.">
+        <input aria-label="Person" value={draft} onChange={event => { setDraft(event.target.value); setResolution(null); setSelected(''); }} /></SettingField>
+      <div className="prov-actions"><button className="btn-ghost" type="button" disabled={busy || !draft.trim()} onClick={() => {
+        setResolution(null); setSelected(''); void action(async () => {
+          const result = await api.resolveWorkActor(source.id, draft); setResolution(result);
+          setSelected(result.status === 'FOUND' && result.actors.length === 1 ? result.actors[0].providerUserId : '');
+        }, false);
+      }}>Resolve source person</button>
+        <button className="btn-ghost" type="button" disabled={busy || !selected} onClick={() => void action(() => api.saveWorkActor(source, draft, selected))}>Save source person</button></div>
+      {resolution && <><p className="prov-note">{resolution.detail}</p>
+        <SettingField label="Resolved source person" scope="allowed people" hint="Required to add a person. Confirm the identity to grant label authority on this source.">
+          <select aria-label="Resolved source person" value={selected} onChange={event => setSelected(event.target.value)}>
+            <option value="">Select a person</option>{resolution.actors.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.providerUserId}</option>)}
+          </select></SettingField></>}
+      <ul className="prov-list">{source.allowedActors.map(id => <li key={id}><span className="mono nowrap">{id}</span>
+        <button className="btn-ghost" type="button" onClick={() => void action(() => api.removeWorkActor(source, id))}>Remove {id}</button></li>)}</ul>
+    </div>
     {error && <p className="prov-error" role="alert">{error}</p>}
-  </FormDialog>;
+  </SidePanel>;
 }

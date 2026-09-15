@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchPendingMappings, linkMapping, type PendingMapping, type Repository } from './repositoriesApi';
 import { fetchWebhookRepos, updateWebhookRepo, type WebhookRepoView } from '../../api';
+import { AlertTriangle } from 'lucide-react';
 
 export default function RepositoryPending({ repositories, onHooksChanged }: {
   repositories: Repository[]; onHooksChanged: (hooks: WebhookRepoView[]) => void;
@@ -39,7 +40,9 @@ export default function RepositoryPending({ repositories, onHooksChanged }: {
   return <section aria-label="Mappings needing attention">
     {error && <p className="prov-note prov-error" role="alert">{error}</p>}
     {pending.length > 0 && <><div className="prov-head"><h3 className="prov-title">Mappings needing attention</h3></div>
-      <p className="prov-note">Register the named repository at its verified forge origin, then link it here.</p>
+      <div className="attn"><AlertTriangle size={17} aria-hidden="true" />
+        <span className="grow"><b>{pending.length} {pending.length === 1 ? 'registration is' : 'registrations are'} waiting to be linked.</b>{' '}
+          Register the named repository at its verified forge origin, then link it here.</span></div>
       <div className="prov-scroll"><table className="prov-table"><thead><tr><th>Repository</th><th>Needs attention</th><th>Link repository</th></tr></thead>
         <tbody>{pending.map(row => <tr key={row.registrationId} id={`registration-${row.registrationId}`}>
           <td className="mono nowrap">{row.target}<div className="prov-sub">{row.scmType}</div></td>
