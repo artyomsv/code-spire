@@ -98,6 +98,18 @@ describe('people', () => {
     fireEvent.change(within(form).getByLabelText('Person', field), { target: { value: 'TEST-someone-else' } });
     expect(within(form).getByRole('button', { name: 'Allow person' })).toBeDisabled();
   });
+  it('ignores a lookup that answers after the handle was edited', async () => {
+    // The form's fieldset stops typing mid-lookup in a browser; this holds if that lock is ever loosened.
+    let answer!: (value: Awaited<ReturnType<typeof sources.resolveWorkActor>>) => void;
+    vi.spyOn(sources, 'resolveWorkActor').mockReturnValue(new Promise(done => { answer = done; }));
+    const form = await openPeople();
+    fireEvent.change(within(form).getByLabelText('Person', field), { target: { value: 'TEST-new' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Find person' }));
+    fireEvent.change(within(form).getByLabelText('Person', field), { target: { value: 'TEST-someone-else' } });
+    await act(async () => answer({ status: 'FOUND', actors: [{ providerUserId: '900456', handle: 'TEST-new', displayName: 'TEST-new' }], detail: null }));
+    expect(within(form).queryByText('@TEST-new')).toBeNull();
+    expect(within(form).getByRole('button', { name: 'Allow person' })).toBeDisabled();
+  });
   it('does not turn a lookup that answers after Cancel into a selection', async () => {
     let answer!: (value: Awaited<ReturnType<typeof sources.resolveWorkActor>>) => void;
     vi.spyOn(sources, 'resolveWorkActor').mockReturnValue(new Promise(done => { answer = done; }));
