@@ -14,7 +14,7 @@ class WorkArtifactsTest {
     int reads;
     final WorkSourceRegistry.Source source=new WorkSourceRegistry.Source(UUID.randomUUID(),"TEST-source",WorkSourceType.GITHUB,
             "https://tracker.example.test","TEST-project","TEST-scope",UUID.randomUUID(),UUID.randomUUID(),true,true,
-            new WorkSourceRegistry.Version(1,1,1),null,null,null,null,null,Set.of("TEST-actor"));
+            new WorkSourceRegistry.Version(1,1,1),null,null,null,null,null,List.of(new WorkSourceRegistry.Person("TEST-actor","TEST-actor-handle","TEST-actor name")));
     final WorkArtifacts artifacts=new WorkArtifacts();
     WorkArtifactsTest() {
         artifacts.mapper=new ObjectMapper();

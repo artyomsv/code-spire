@@ -18,6 +18,13 @@ class WorkSourceResourceTest extends WorkFixture {
         assertEquals(2,sources.get(source).orElseThrow().version().source());
     }
     @Test @TestSecurity(user="TEST-admin",roles="spire-admin")
+    void listedSourceNamesItsAllowedPeopleByHandleAsWellAsId() {
+        // An id alone is unrecognisable in the allowlist panel; the handle confirmed at save time is what an operator reads.
+        given().get("/api/work-sources").then().statusCode(200)
+                .body("find { it.id == '"+source+"' }.allowedPeople.providerUserId",contains("900123"))
+                .body("find { it.id == '"+source+"' }.allowedPeople.handle",contains("TEST-person"));
+    }
+    @Test @TestSecurity(user="TEST-admin",roles="spire-admin")
     void blankPersonQueryIsRejectedBeforeTheTracker() {
         forge.resetRequests();given().contentType("application/json").body("{\"handle\":\"  \"}")
                 .post(endpoint()+"/actors/resolve").then().statusCode(400);

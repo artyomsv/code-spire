@@ -13,7 +13,7 @@ function account(type = 'github', enabled = true): accounts.ProviderView {
 const repository: repositories.Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.test', workspace: 'TEST-owner', slug: 'TEST-repo', enabled: true, revision: 1, reviewer: null, factory: null };
 function source(type: api.WorkSourceType = 'GITHUB'): api.WorkSource {
   return { id: 'TEST-source', name: 'TEST-source name', type, origin: type === 'JIRA' ? 'https://atlassian.example.test' : 'https://github.example.test', projectId: '10001', scope: 'TEST-owner/TEST-repo',
-    repositoryId: repository.id, accountId: type === 'JIRA' ? 'TEST-atlassian' : 'TEST-github', enabled: true, configuredEnabled: true, version: { source: 4, repository: 1, account: 1 }, cursor: null, health: 'healthy', allowedActors: ['900123'], repository: { workspace: 'TEST-owner', slug: 'TEST-repo' } };
+    repositoryId: repository.id, accountId: type === 'JIRA' ? 'TEST-atlassian' : 'TEST-github', enabled: true, configuredEnabled: true, version: { source: 4, repository: 1, account: 1 }, cursor: null, health: 'healthy', allowedPeople: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person name' }], repository: { workspace: 'TEST-owner', slug: 'TEST-repo' } };
 }
 beforeEach(() => {
   openInfo = null;
@@ -196,6 +196,14 @@ it('requires explicit Jira account selection and saves the source revision', asy
   fireEvent.change(select, { target: { value: '900123' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save source person' }));
   await waitFor(() => expect(api.saveWorkActor).toHaveBeenCalledWith(initial, 'TEST-person', '900123'));
+});
+it('names allowed people by handle and keeps the id that authorises them', async () => {
+  // The reported failure: the allowlist showed only 3218389, which nobody recognises.
+  render(<WorkSources />);await selectSource();await openPeople();
+  const list = screen.getByRole('list');
+  expect(within(list).getByText('@TEST-person')).toBeInTheDocument();
+  expect(within(list).getByText('900123')).toHaveClass('prov-sub');
+  expect(within(list).getByRole('button', { name: 'Remove @TEST-person' })).toBeInTheDocument();
 });
 it('discards a resolved selection when the typed person changes', async () => {
   vi.spyOn(api, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST-person' }], detail: null });

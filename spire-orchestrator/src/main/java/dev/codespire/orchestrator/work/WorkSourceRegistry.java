@@ -18,10 +18,25 @@ public class WorkSourceRegistry {
     @Inject ProviderClients clients;
 
     public record Version(long source, long repository, long account) {}
+    /**
+     * One allowlisted person as the tracker showed them when they were confirmed. The id is the
+     * authority; the handle and display name exist so an operator recognises who they allowed.
+     */
+    public record Person(String providerUserId, String handle, String displayName) {}
     public record Source(UUID id, String name, WorkSourceType type, String origin, String projectId, String scope,
                          UUID repositoryId, UUID accountId, boolean enabled, boolean configuredEnabled, Version version, String cursor,
-                         String health, ScmType scm, String forgeOrigin, RepoRef repository, Set<String> allowedActors) {
-        public Source { allowedActors = Set.copyOf(allowedActors); }
+                         String health, ScmType scm, String forgeOrigin, RepoRef repository, List<Person> allowedPeople) {
+        public Source { allowedPeople = List.copyOf(allowedPeople); }
+
+        /**
+         * The ids that authorise labels and tracker answers. Derived from the people rather than stored
+         * beside them, so the list an operator reads and the set that decides cannot drift apart.
+         */
+        public Set<String> allowedActors() {
+            Set<String> ids = new HashSet<>();
+            for (Person person : allowedPeople) ids.add(person.providerUserId());
+            return Set.copyOf(ids);
+        }
     }
     private static final String SELECT = """
             SELECT s.*,r.scm_type,r.forge_origin,r.workspace,r.slug,r.revision repository_revision,
@@ -76,12 +91,14 @@ public class WorkSourceRegistry {
         return clients.workSource(source.type(), account, source.projectId(), source.scope());
     }
 
-    private Set<String> actors(Connection c, UUID source) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT actor_id FROM work_source_actor WHERE source_id=?")) {
+    private List<Person> actors(Connection c, UUID source) throws SQLException {
+        // Ordered: a list is compared by position, so two reads of an unchanged allowlist must agree.
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT actor_id,observed_handle,display_name FROM work_source_actor WHERE source_id=? ORDER BY observed_handle,actor_id")) {
             ps.setObject(1, source);
             try (ResultSet rs = ps.executeQuery()) {
-                Set<String> result = new HashSet<>();
-                while (rs.next()) result.add(rs.getString(1));
+                List<Person> result = new ArrayList<>();
+                while (rs.next()) result.add(new Person(rs.getString(1), rs.getString(2), rs.getString(3)));
                 return result;
             }
         }

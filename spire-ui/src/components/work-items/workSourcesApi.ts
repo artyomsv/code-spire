@@ -1,12 +1,13 @@
 import { apiFetch } from '../../auth';
-import type { ActorResult } from '../actorsApi';
+import type { Actor, ActorResult } from '../actorsApi';
 
 export type WorkSourceType = 'GITHUB' | 'GITLAB' | 'JIRA';
 export interface WorkSource {
   id: string; name: string; type: WorkSourceType; origin: string; projectId: string; scope: string;
   repositoryId: string; accountId: string; enabled: boolean; configuredEnabled: boolean;
   version: { source: number; account: number; repository: number };
-  cursor: string | null; health: string; allowedActors: string[];
+  /** Confirmed people, with the handle the tracker showed when each was saved. The id decides. */
+  cursor: string | null; health: string; allowedPeople: Actor[];
   repository: { workspace: string; slug: string };
 }
 export interface WorkSourceInput {

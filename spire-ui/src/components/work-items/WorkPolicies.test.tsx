@@ -103,6 +103,22 @@ it('refuses duplicate labels instead of silently dropping one mapping', async ()
   fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Each label needs one mapping.');expect(api.savePolicy).not.toHaveBeenCalled();
 });
+it('saves when an added mapping row is left blank', async () => {
+  // The reported failure: an untouched "Add label mapping" row reached pin() and threw a TypeError.
+  render(<WorkPolicies />);await editPolicy();
+  fireEvent.click(screen.getByRole('button', { name: 'Add label mapping' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
+  await waitFor(() => expect(api.savePolicy).toHaveBeenCalledWith(repository.id, { revision: 7, ceiling: { id: profile.id, version: 3 }, mappings: { 'TEST-work': { id: profile.id, version: 3 } } }));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+it('names a half-filled mapping row instead of guessing its profile', async () => {
+  render(<WorkPolicies />);await editPolicy();
+  fireEvent.click(screen.getByRole('button', { name: 'Add label mapping' }));
+  fireEvent.change(screen.getByLabelText('Label 2', { selector: 'input,select,textarea' }), { target: { value: 'TEST-half' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Label 2 needs both a ticket label and a profile version.');
+  expect(api.savePolicy).not.toHaveBeenCalled();
+});
 it('keeps a failed policy save visible', async () => {
   vi.mocked(api.savePolicy).mockRejectedValue(new Error('TEST-policy changed; reload'));
   render(<WorkPolicies />);await editPolicy();

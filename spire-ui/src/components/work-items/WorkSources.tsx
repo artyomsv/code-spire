@@ -50,8 +50,8 @@ export default function WorkSources() {
           <td className="mono nowrap">{item.repository.workspace}/{item.repository.slug}</td>
           {/* An empty allowlist grants no label authority, so the count is the difference between a
               source that works and one that silently selects nothing. It belongs in the list. */}
-          <td className="nowrap">{item.allowedActors.length}
-            {item.allowedActors.length === 0 && <div className="prov-sub">no ticket starts work</div>}</td>
+          <td className="nowrap">{item.allowedPeople.length}
+            {item.allowedPeople.length === 0 && <div className="prov-sub">no ticket starts work</div>}</td>
           <td><div className="chips"><span className={`chip ${item.enabled ? 'on' : ''}`}>{item.enabled ? 'Available' : 'Unavailable'}</span></div>
             <div className="prov-sub">{item.health.split('_').join(' ')}</div></td>
         </tr>)}</tbody></table></div>}
@@ -131,7 +131,7 @@ function SourceDetails({ source, accounts, changed, closed }: { source: api.Work
     try { await run(); if (reload) changed(); } catch (failure) { setError(String(failure)); } finally { setBusy(false); }
   }
   return <SidePanel title={source.name} subtitle={`${source.origin} · ${source.scope}`} busy={busy} onClose={closed}
-    tabs={[{ id: 'connection', label: 'Connection' }, { id: 'people', label: 'Allowed people', count: source.allowedActors.length }]}
+    tabs={[{ id: 'connection', label: 'Connection' }, { id: 'people', label: 'Allowed people', count: source.allowedPeople.length }]}
     tab={tab} onTab={setTab}
     actions={<>
       <button className="btn" type="button" disabled={busy || !name.trim()} onClick={() => void action(() => api.editWorkSource(source, { name, accountId, enabled }))}>Save source</button>
@@ -169,8 +169,11 @@ function SourceDetails({ source, accounts, changed, closed }: { source: api.Work
           <select aria-label="Resolved source person" value={selected} onChange={event => setSelected(event.target.value)}>
             <option value="">Select a person</option>{resolution.actors.map(actor => <option key={actor.providerUserId} value={actor.providerUserId}>{actorLabel(actor)} · {actor.providerUserId}</option>)}
           </select></SettingField></>}
-      <ul className="prov-list">{source.allowedActors.map(id => <li key={id}><span className="mono nowrap">{id}</span>
-        <button className="btn-ghost" type="button" onClick={() => void action(() => api.removeWorkActor(source, id))}>Remove {id}</button></li>)}</ul>
+      {/* People are shown as the tracker named them; the id stays visible because it is what authorises. */}
+      <ul className="prov-list">{source.allowedPeople.map(person => <li key={person.providerUserId}>
+        <span><span className="prov-name">{actorLabel(person)}</span><span className="prov-sub">{person.providerUserId}</span></span>
+        <button className="btn-ghost" type="button" aria-label={`Remove ${actorLabel(person)}`}
+          onClick={() => void action(() => api.removeWorkActor(source, person.providerUserId))}>Remove</button></li>)}</ul>
     </div>
     {error && <p className="prov-error" role="alert">{error}</p>}
   </SidePanel>;

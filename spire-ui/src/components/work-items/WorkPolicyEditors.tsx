@@ -71,6 +71,28 @@ export function ProfileEditor({ profiles, initial, saved, cancelled }: { profile
   </SidePanel>;
 }
 
+/**
+ * The save request, or the reason it cannot be made. A mapping row left completely blank carries no
+ * intent — it is what "Add label mapping" leaves behind — so it is dropped. A row with only one half
+ * filled is refused by its number, because guessing the other half would grant authority nobody chose.
+ */
+function policyInput(revision: number, ceiling: string, rows: { label: string; profile: string }[], profiles: api.Profile[]) {
+  const chosen = profiles.find(value => key(value) === ceiling);
+  if (!chosen) throw new Error('Choose a repository ceiling.');
+  const filled = rows.map((row, index) => ({ label: row.label.trim(), profile: row.profile, number: index + 1 }))
+    .filter(row => row.label || row.profile);
+  const incomplete = filled.find(row => !row.label || !row.profile);
+  if (incomplete) throw new Error(`Label ${incomplete.number} needs both a ticket label and a profile version.`);
+  if (new Set(filled.map(row => row.label)).size !== filled.length) throw new Error('Each label needs one mapping.');
+  const mappings: Record<string, api.Pin> = {};
+  for (const row of filled) {
+    const profile = profiles.find(value => key(value) === row.profile);
+    if (!profile) throw new Error(`Label ${row.number} names a profile version that no longer exists. Choose another.`);
+    mappings[row.label] = pin(profile);
+  }
+  return { revision, ceiling: pin(chosen), mappings };
+}
+
 export function PolicyEditor({ id, label, policy, profiles, saved, cancelled }:
   { id: string; label: string; policy: api.Policy; profiles: api.Profile[]; saved: (policy: api.Policy) => void; cancelled: () => void }) {
   const [ceiling, setCeiling] = useState(policy.ceiling ? key(policy.ceiling) : '');
@@ -79,12 +101,8 @@ export function PolicyEditor({ id, label, policy, profiles, saved, cancelled }:
   const options = <><option value="">Select a version</option>{profiles.map(profile => <option key={key(profile)} value={key(profile)}>{profile.name} v{profile.version}</option>)}</>;
   async function submit() {
     setBusy(true); setError('');
-    try {
-      if (new Set(labels.map(value => value.label.trim())).size !== labels.length) throw new Error('Each label needs one mapping.');
-      const selected = profiles.find(value => key(value) === ceiling)!;
-      saved(await api.savePolicy(id, { revision: policy.revision, ceiling: pin(selected),
-        mappings: Object.fromEntries(labels.map(value => [value.label.trim(), pin(profiles.find(profile => key(profile) === value.profile)!)])) }));
-    } catch (failure) { setError(String(failure)); } finally { setBusy(false); }
+    try { saved(await api.savePolicy(id, policyInput(policy.revision, ceiling, labels, profiles))); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); } finally { setBusy(false); }
   }
   return <SidePanel title="Repository policy" subtitle={label} busy={busy} onClose={cancelled} actions={<>
     <button className="btn" type="button" disabled={busy || !ceiling} onClick={() => void submit()}>Save repository policy</button>
