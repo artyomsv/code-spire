@@ -5,7 +5,7 @@ import type { Repository } from './repositoriesApi';
 import ActorPicker from '../ActorPicker';
 import RepositoryAccountsCell from './RepositoryAccountsCell';
 import { CopyableValue } from '../../render';
-import CopyField from '../CopyField';
+import WebhookSecretReveal from './WebhookSecretReveal';
 import { webhookPath } from '../SettingsWebhookRepos';
 
 interface Props {
@@ -104,7 +104,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
         return <tbody key={kind} role="group" aria-label={`${kind} webhook`}><tr>
           <td className="mono nowrap">{kind}</td>
           <td>{hook ? <div className="wh-url"><CopyableValue text={webhookPath(hook)} mono copyTitle="Copy the webhook path" /></div>
-            : <span className="prov-sub">{kind === 'ISSUE' ? 'Configure a work source to enable issue events.' : 'Not configured'}</span>}</td>
+            : <span className="prov-sub">{kind === 'ISSUE' ? 'Turn on instant updates in the Factory tab.' : 'Not configured'}</span>}</td>
           <td>{hook && <div className="chips"><span className={`chip ${hook.enabled ? 'on' : ''}`}>{hook.enabled ? 'Enabled' : 'Disabled'}</span></div>}</td>
           <td><div className="prov-actions">{hook ? <>
             {!hook.repositoryId && <button className="btn-ghost" disabled={busy} onClick={() => void link(hook)} aria-label={`Link existing ${kind} webhook`}>Link existing</button>}
@@ -118,13 +118,6 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
     <div className="prov-note">{repository.reviewer ? <ActorPicker accountId={repository.reviewer.id} accountType={repository.scmType} repositoryId={repository.id} />
       : <p>Select a reviewer account to edit fix overrides.</p>}</div>
     {error && <p className="prov-note prov-error" role="alert">{error}</p>}
-    {revealed && <div className="modal-overlay"><div className="modal" role="dialog" aria-modal="true" aria-label="Webhook secret">
-      <div className="modal-head"><h3>Webhook secret</h3></div><div className="modal-body">
-        <p>Copy this secret now. It is shown once; store it in the forge webhook settings.</p>
-        <CopyField label="Secret" value={revealed.secret} />
-        <CopyField label="Webhook path" value={webhookPath(revealed.repo)} hint="Prefix with your public webhook base." />
-        <div className="modal-actions"><button className="btn" onClick={() => setRevealed(null)}>Done</button></div>
-      </div>
-    </div></div>}
+    {revealed && <WebhookSecretReveal revealed={revealed} onDone={() => setRevealed(null)} />}
   </div>;
 }

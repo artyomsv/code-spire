@@ -9,6 +9,11 @@ import SidePanel from '../SidePanel';
 import { CopyableValue } from '../../render';
 import { GitBranch } from 'lucide-react';
 import { fetchRepositories, fetchRepositoryKinds, type Repository } from './repositoriesApi';
+import { fetchWorkSources, type WorkSource } from '../work-items/workSourcesApi';
+import { policy as fetchPolicy, type Policy } from '../work-items/workPolicyApi';
+import RepositoryFactory from './factory/RepositoryFactory';
+import FactoryProgress from './factory/FactoryProgress';
+import { readiness } from './factory/factoryModel';
 
 /** Repository configuration remains usable when the separate webhook service is unavailable. */
 export default function RepositoryRegistryPage() {
@@ -24,6 +29,10 @@ export default function RepositoryRegistryPage() {
   const { rows: hooks, error: hookError } = webhooks;
   const setHooks = (rows: WebhookRepoView[]) => setWebhooks({ rows, error: null });
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState('details');
+  // The setup column is a summary; when it cannot load, the repositories and their panels still work.
+  const [setup, setSetup] = useState<{ sources: WorkSource[]; policies: Record<string, Policy> } | null>(null);
+  const [setupRefresh, setSetupRefresh] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -37,6 +46,14 @@ export default function RepositoryRegistryPage() {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([fetchWorkSources(), Promise.all(repositories.map(async repo => [repo.id, await fetchPolicy(repo.id)] as const))])
+      .then(([sources, policies]) => { if (active) setSetup({ sources, policies: Object.fromEntries(policies) }); })
+      .catch(() => { if (active) setSetup(null); });
+    return () => { active = false; };
+  }, [repositories, setupRefresh]);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -72,20 +89,25 @@ export default function RepositoryRegistryPage() {
         <p className="wh-empty-text">Register a repository, then select its review and factory accounts and webhook kinds.</p>
         <button className="btn" onClick={() => setEditing('new')}>Register repository</button>
       </div> : <div className="prov-scroll"><table className="prov-table">
-        <thead><tr><th>Repository</th><th>Forge origin</th><th>Workspace</th><th>Accounts</th><th>State</th></tr></thead>
+        <thead><tr><th>Repository</th><th>Forge origin</th><th>Workspace</th><th>Accounts</th><th>Factory setup</th><th>State</th></tr></thead>
         <tbody>{repositories.map(repository => <tr key={repository.id}>
-          <td className="nowrap"><a className="prov-name mono nowrap" href="#/settings/repositories" onClick={event => { event.preventDefault(); setSelected(repository.id); }}>{repository.slug}</a>
+          <td className="nowrap"><a className="prov-name mono nowrap" href="#/settings/repositories" onClick={event => { event.preventDefault(); setTab('details'); setSelected(repository.id); }}>{repository.slug}</a>
             <div className="prov-sub">{repository.scmType}</div></td>
           <td className="mono nowrap"><div className="wh-url"><CopyableValue text={repository.forgeOrigin} mono /></div></td><td className="mono nowrap">{repository.workspace}</td>
           <td><RepositoryAccountsCell repository={repository} /></td>
+          <td><FactoryProgress ready={setup ? readiness(setup.sources.filter(source => source.repositoryId === repository.id), setup.policies[repository.id] ?? null) : null} /></td>
           <td><div className="chips"><span className={`chip ${repository.enabled ? 'on' : ''}`}>{repository.enabled ? 'Enabled' : 'Disabled'}</span></div></td>
         </tr>)}</tbody>
       </table></div>}
       {chosen && <SidePanel wide title={chosen.slug} subtitle={`${chosen.workspace} · ${chosen.forgeOrigin}`}
-        busy={false} onClose={() => setSelected(null)} actions={<>
-          <button className="btn" type="button" onClick={() => setEditing(chosen)}>Edit repository and accounts</button>
+        busy={false} onClose={() => setSelected(null)} tabs={[{ id: 'details', label: 'Details' }, { id: 'factory', label: 'Factory' }]}
+        tab={tab} onTab={setTab} actions={<>
+          {tab === 'details' && <button className="btn" type="button" onClick={() => setEditing(chosen)}>Edit repository and accounts</button>}
           <button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button></>}>
-        <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />
+        {tab === 'details'
+          ? <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />
+          : <RepositoryFactory key={chosen.id} repository={chosen} accounts={providers}
+            webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
       </SidePanel>}
       {editing && <RepositoryForm key={editing === 'new' ? `new:${location.search}` : editing.id} initial={editing === 'new' ? null : editing}
         prefill={new URLSearchParams(location.search)}
