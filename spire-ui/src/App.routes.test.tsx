@@ -184,8 +184,7 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/settings/memory', title: 'Memory', nav: 'Memory' },
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
-  { path: '/settings/work-sources', title: 'Work sources', nav: 'Work sources' },
-  { path: '/settings/work-policy', title: 'Work policy', nav: 'Work policy' },
+  { path: '/settings/profiles', title: 'Profiles', nav: 'Profiles' },
   { path: '/approvals', title: 'Approvals', nav: 'Approvals' },
   { path: '/settings/repositories', title: 'Repositories', nav: 'Repositories' },
   { path: '/settings/llm', title: 'LLM', nav: 'LLM' },
@@ -213,10 +212,10 @@ afterEach(() => {
 
 describe('App — routing shell', () => {
   it('gives each work navigation page an icon beside its name', async () => {
-    renderAtWithProbe('/settings/work-policy');
+    renderAtWithProbe('/settings/profiles');
     await screen.findByText('No profiles yet');
     const rail = document.querySelector('nav.nav') as HTMLElement;
-    for (const name of ['Work policy', 'Work sources', 'Work items']) {
+    for (const name of ['Profiles', 'Work items']) {
       expect(within(rail).getByRole('link', { name }).querySelector('svg.ic')).not.toBeNull();
     }
   });
@@ -298,6 +297,9 @@ describe('App — old settings routes redirect', () => {
     ['/settings/providers?edit=TEST-id-1', '/settings/accounts?edit=TEST-id-1', 'Accounts'],
     ['/settings/operators', '/settings/accounts/people', 'Accounts'],
     ['/settings/webhooks?edit=TEST-id-2', '/settings/webhooks?edit=TEST-id-2', 'Webhooks'],
+    // Work policy became Profiles; Work sources moved into each repository's Factory tab.
+    ['/settings/work-policy', '/settings/profiles', 'Profiles'],
+    ['/settings/work-sources', '/settings/repositories', 'Repositories'],
   ])('sends %s to %s', async (from, to, title) => {
     renderAtWithProbe(from);
 
@@ -353,7 +355,7 @@ describe('App — what a viewer may see', () => {
     // exercise the gate at all.
     await waitFor(() => expect(within(rail()).queryByText('Configure')).not.toBeInTheDocument());
     expect(within(rail()).getByText('Reviews')).toBeInTheDocument();
-    for (const label of ['General', 'Context', 'Work sources', 'Accounts', 'Repositories', 'LLM', 'Prompts', 'Dead-letter']) {
+    for (const label of ['General', 'Context', 'Profiles', 'Accounts', 'Repositories', 'LLM', 'Prompts', 'Dead-letter']) {
       expect(within(rail()).queryByText(label)).not.toBeInTheDocument();
     }
   });
@@ -374,7 +376,7 @@ describe('App — what a viewer may see', () => {
    * back button arrives at a settings path without ever passing the rail. Said plainly rather than
    * redirected: a silent bounce to another screen is indistinguishable from a broken link.
    */
-  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq', '/settings/work-sources', '/settings/work-policy'])(
+  it.each(['/settings/general', '/settings/accounts', '/settings/llm', '/settings/dlq', '/settings/profiles'])(
     'tells a viewer at %s that the page is not theirs',
     async (path) => {
       renderAt(path);

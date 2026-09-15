@@ -30,13 +30,6 @@ function hintOf(label: string, scope: string) {
   openInfo = info;
   return screen.getByRole('tooltip');
 }
-/** Every repository has its own row; Edit opens that row's policy panel. The page itself only reads. */
-async function editPolicy() {
-  const button = await screen.findByRole('button', { name: 'Edit policy for TEST-owner/TEST-repo' });
-  await waitFor(() => expect(button).toBeEnabled());
-  fireEvent.click(button);
-}
-
 it('opens on visible profile versions with an Add action and no creation form', async () => {
   render(<WorkPolicies />);
   const table = await screen.findByRole('table', { name: 'Profile versions' });
@@ -90,55 +83,39 @@ it('creates a new immutable version with the full vector and limits', async () =
   fireEvent.click(screen.getByRole('button', { name: 'Save as new version' }));
   await waitFor(() => expect(api.saveProfile).toHaveBeenCalledWith({ ...profile, version: 4, modes: { ...profile.modes, PLAN: 'off' }, limits: { ...profile.limits, maxCallsPerItem: 21 } }));
 });
-it('pins the selected ceiling and label versions with the displayed revision', async () => {
-  render(<WorkPolicies />);await editPolicy();
-  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
-  await waitFor(() => expect(api.savePolicy).toHaveBeenCalledWith(repository.id, { revision: 7, ceiling: { id: profile.id, version: 3 }, mappings: { 'TEST-work': { id: profile.id, version: 3 } } }));
+it('names the repositories that pin each version, as ceiling and by label', async () => {
+  vi.mocked(repositories.fetchRepositories).mockResolvedValue([repository, { ...repository, id: 'TEST-other', slug: 'TEST-other' }]);
+  vi.mocked(api.policy).mockImplementation(async (id): Promise<api.Policy> => id === repository.id
+    ? { revision: 7, ceiling: profile, mappings: { 'TEST-work': profile } }
+    : { revision: 2, ceiling: null, mappings: {} });
+  render(<WorkPolicies />);
+  const row = within(await screen.findByRole('table', { name: 'Profile versions' })).getAllByRole('row')[1];
+  expect(await within(row).findByText('TEST-owner/TEST-repo')).toBeInTheDocument();
+  expect(within(row).getByText('ceiling · label TEST-work')).toBeInTheDocument();
+  // A repository that pins nothing is not listed as a user.
+  expect(within(row).queryByText('TEST-owner/TEST-other')).toBeNull();
 });
-it('refuses duplicate labels instead of silently dropping one mapping', async () => {
-  render(<WorkPolicies />);await editPolicy();
-  fireEvent.click(screen.getByRole('button', { name: 'Add label mapping' }));
-  fireEvent.change(screen.getByLabelText('Label 2', { selector: 'input,select,textarea' }), { target: { value: ' TEST-work ' } });
-  fireEvent.change(screen.getByLabelText('Label profile 2', { selector: 'input,select,textarea' }), { target: { value: 'TEST-profile:3' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Each label needs one mapping.');expect(api.savePolicy).not.toHaveBeenCalled();
-});
-it('saves when an added mapping row is left blank', async () => {
-  // The reported failure: an untouched "Add label mapping" row reached pin() and threw a TypeError.
-  render(<WorkPolicies />);await editPolicy();
-  fireEvent.click(screen.getByRole('button', { name: 'Add label mapping' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
-  await waitFor(() => expect(api.savePolicy).toHaveBeenCalledWith(repository.id, { revision: 7, ceiling: { id: profile.id, version: 3 }, mappings: { 'TEST-work': { id: profile.id, version: 3 } } }));
-  expect(screen.queryByRole('alert')).toBeNull();
-});
-it('names a half-filled mapping row instead of guessing its profile', async () => {
-  render(<WorkPolicies />);await editPolicy();
-  fireEvent.click(screen.getByRole('button', { name: 'Add label mapping' }));
-  fireEvent.change(screen.getByLabelText('Label 2', { selector: 'input,select,textarea' }), { target: { value: 'TEST-half' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Label 2 needs both a ticket label and a profile version.');
-  expect(api.savePolicy).not.toHaveBeenCalled();
-});
-it('keeps a failed policy save visible', async () => {
-  vi.mocked(api.savePolicy).mockRejectedValue(new Error('TEST-policy changed; reload'));
-  render(<WorkPolicies />);await editPolicy();
-  fireEvent.click(screen.getByRole('button', { name: 'Save repository policy' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-policy changed; reload');expect(screen.getByLabelText('Label 1', { selector: 'input,select,textarea' })).toHaveValue('TEST-work');
+it('does not count a version the repository does not pin', async () => {
+  vi.mocked(api.profiles).mockResolvedValue([profile, { ...profile, version: 4 }]);
+  render(<WorkPolicies />);
+  const table = await screen.findByRole('table', { name: 'Profile versions' });
+  const current = within(table).getAllByRole('row')[1];
+  await waitFor(() => expect(api.policy).toHaveBeenCalled());
+  expect(within(current).getByText('v4')).toBeInTheDocument();
+  expect(within(current).getByText('—')).toBeInTheDocument();
 });
 it('files a slow repository policy under the repository it was asked about', async () => {
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([repository, { ...repository, id: 'TEST-other', slug: 'TEST-other' }]);
   let resolve!: (policy: api.Policy) => void;
   vi.mocked(api.policy).mockReturnValueOnce(new Promise(done => { resolve = done; })).mockResolvedValue({ revision: 4, ceiling: profile, mappings: {} });
   render(<WorkPolicies />);
-  const table = await screen.findByRole('table', { name: 'Repository assignments' });
-  // The second repository has answered; the first is still outstanding.
-  await waitFor(() => expect(within(table).getByText('TEST-assisted v3')).toBeInTheDocument());
-  expect(within(table).getByText('Loading…')).toBeInTheDocument();
+  const row = within(await screen.findByRole('table', { name: 'Profile versions' })).getAllByRole('row')[1];
+  // The second repository answered first; the first is still outstanding.
+  expect(await within(row).findByText('TEST-owner/TEST-other')).toBeInTheDocument();
+  expect(within(row).queryByText('TEST-owner/TEST-repo')).toBeNull();
   await act(async () => { resolve({ revision: 9, ceiling: null, mappings: { 'TEST-late': profile } }); });
-  const rows = within(table).getAllByRole('row');
-  expect(within(rows[1]).getByText('No ceiling — nothing runs')).toBeInTheDocument();
-  expect(within(rows[1]).getByText(/TEST-late/)).toBeInTheDocument();
-  // The late answer must not have reached the row that never asked for it.
-  expect(within(rows[2]).getByText('TEST-assisted v3')).toBeInTheDocument();
-  expect(within(rows[2]).queryByText(/TEST-late/)).toBeNull();
+  const uses = (repo: string) => within(row).getByText(repo).parentElement!.querySelector('.prov-sub');
+  expect(uses('TEST-owner/TEST-repo')).toHaveTextContent('label TEST-late');
+  // The late answer must not have reached the repository that never asked for it.
+  expect(uses('TEST-owner/TEST-other')).toHaveTextContent(/^ceiling$/);
 });

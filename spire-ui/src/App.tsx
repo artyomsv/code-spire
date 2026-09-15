@@ -1,6 +1,5 @@
 import Approvals from './components/work-items/Approvals';
 import WorkPolicies from './components/work-items/WorkPolicies';
-import WorkSources from './components/work-items/WorkSources';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
@@ -55,7 +54,7 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/work-items/', 'Work item detail'],
   ['/work-items', 'Work items'],
   ['/approvals', 'Approvals'],
-  ['/settings/work-policy', 'Work policy'],
+  ['/settings/profiles', 'Profiles'],
   ['/runs/', 'Run detail'],
   ['/runs', 'Runs'],
   ['/r/', 'Review detail'],
@@ -66,7 +65,6 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/settings/general', 'General'],
   ['/settings/llm', 'LLM'],
   ['/settings/context', 'Context'],
-  ['/settings/work-sources', 'Work sources'],
   ['/settings/repositories', 'Repositories'],
   ['/settings/webhooks', 'Webhooks'],
   ['/settings/prompts', 'Prompts'],
@@ -87,7 +85,6 @@ export default function App() {
   const onAccounts = location.pathname.startsWith('/settings/accounts');
   const onLlm = location.pathname.startsWith('/settings/llm');
   const onContext = location.pathname.startsWith('/settings/context');
-  const onWorkSources = location.pathname.startsWith('/settings/work-sources');
   const onRepositories = location.pathname.startsWith('/settings/repositories');
   const onDlq = location.pathname.startsWith('/settings/dlq');
   const onPrompts = location.pathname.startsWith('/settings/prompts');
@@ -261,15 +258,10 @@ export default function App() {
             </svg>
             General
           </a>
-          <a className={location.pathname.startsWith('/settings/work-policy') ? 'active' : ''} href="#/settings/work-policy">
-            <SlidersHorizontal className="ic" size={16} aria-hidden="true" />Work policy</a>
-          <a className={onWorkSources ? 'active' : ''} href="#/settings/work-sources">
-            <svg className="ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <rect x="3" y="3" width="10" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-              <path d="M6 2h4v3H6zM6 8h4M6 11h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
-            Work sources
-          </a>
+          {/* Work sources left the rail: where tickets come from, and who may start work, are part of a
+              repository's Factory tab now. Profiles stay here because every repository shares them. */}
+          <a className={location.pathname.startsWith('/settings/profiles') ? 'active' : ''} href="#/settings/profiles">
+            <SlidersHorizontal className="ic" size={16} aria-hidden="true" />Profiles</a>
           <a className={onContext ? 'active' : ''} href="#/settings/context">
             <svg className="ic" viewBox="0 0 16 16" fill="none">
               <ellipse cx="8" cy="3.6" rx="5" ry="2.1" stroke="currentColor" strokeWidth="1.4" />
@@ -398,7 +390,8 @@ export default function App() {
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/*" element={<RunDetail />} />
           <Route path="/approvals" element={<Approvals />} />
-          <Route path="/settings/work-policy" element={configure(<WorkPolicies />)} />
+          <Route path="/settings/profiles" element={configure(<WorkPolicies />)} />
+          <Route path="/settings/work-policy" element={<RedirectKeepingQuery to="/settings/profiles" />} />
           <Route path="/work-items" element={<WorkItems />} />
           <Route path="/work-items/:id" element={<WorkItemDetail />} />
           <Route path="/analytics" element={<AnalyticsOverview />} />
@@ -418,7 +411,7 @@ export default function App() {
           <Route path="/settings/operators" element={<RedirectKeepingQuery to="/settings/accounts/people" />} />
           <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
           <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
-          <Route path="/settings/work-sources" element={configure(<WorkSources />)} />
+          <Route path="/settings/work-sources" element={<RedirectKeepingQuery to="/settings/repositories" />} />
           <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
           <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />
           <Route path="/settings/prompts/:kind" element={configure(<PromptDetail />)} />

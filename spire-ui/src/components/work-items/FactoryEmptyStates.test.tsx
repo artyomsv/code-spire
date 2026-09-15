@@ -3,10 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import * as api from '../../api';
 import * as auth from '../../auth';
-import * as sources from './workSourcesApi';
-import * as repositories from '../repositories/repositoriesApi';
 import * as approvals from './approvalsApi';
-import WorkSources from './WorkSources';
 import WorkItems from './WorkItems';
 import Approvals from './Approvals';
 
@@ -20,15 +17,6 @@ function empty(title: string) {
   expect(guidance).toBeInTheDocument();
   expect(guidance?.textContent ?? '').toMatch(/.{21}/);
 }
-it('welcomes the operator to an empty Work sources screen', async () => {
-  vi.spyOn(api, 'fetchProviders').mockResolvedValue([]);
-  vi.spyOn(repositories, 'fetchRepositories').mockResolvedValue([]);
-  vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([]);
-  render(<WorkSources />);
-  await screen.findByText('No work sources registered.');
-  empty('No work sources registered.');
-  expect(screen.getByText(/Choose Add work source/)).toBeInTheDocument();
-});
 it('welcomes the operator to an empty Work items screen', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [], total: 0, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);

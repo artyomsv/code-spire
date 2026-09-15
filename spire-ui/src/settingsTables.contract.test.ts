@@ -62,12 +62,16 @@ function screenFiles(): Map<string, string> {
   return files;
 }
 
-/**
- * A screen owns a panel; a field component is the thing you put inside one. `AutoTextarea` and
- * `ActorPicker` render a control on purpose and belong within a `SettingField`, so the rule that
- * screens must use one does not apply to them.
- */
+/** A screen owns a page-level panel. Only screens can host an overlay of their own. */
 const isScreen = (body: string) => /className="(card|content)\b/.test(body);
+
+/**
+ * Components that ARE one control, and belong inside a SettingField rather than containing one.
+ * The field rule used to apply to screens only; once create and edit moved into side panels and
+ * step forms, no non-legacy screen held a control and the rule checked nothing while passing.
+ */
+const FIELD_COMPONENTS = ['AutoTextarea.tsx', 'ActorPicker.tsx', 'PromptScopePicker.tsx'];
+const fieldComponent = (file: string) => FIELD_COMPONENTS.some(name => file.endsWith(name));
 
 /**
  * Screens written before these conventions. The list may shrink and must never grow — a new entry
@@ -76,28 +80,35 @@ const isScreen = (body: string) => /className="(card|content)\b/.test(body);
 const LEGACY_SCREENS = [
   'ProviderFormModal.tsx', 'SettingsOperators.tsx', 'ScmConnections.tsx', 'SettingsWebhookRepos.tsx',
   'SettingsLlmProviders.tsx', 'SettingsLlmModelForm.tsx', 'SettingsContextProviders.tsx',
+  // Field groups of the legacy forms above. They were always in the same debt; the field rule only
+  // saw them once it stopped being limited to screens (2026-09-15). They leave with their forms.
+  'AccountCredentialFields.tsx', 'SettingsLlmModelRateFields.tsx', 'SettingsLlmModelDialectFields.tsx',
 ];
 const legacy = (file: string) => LEGACY_SCREENS.some(name => file.endsWith(name));
 
-/** Each convention a settings screen must meet, as one verdict per rule. */
-function owed(body: string) {
-  // A checkbox states its own text beside it; everything else needs the label and its explanation.
-  const controls = [...body.matchAll(/<(input|select|textarea)\b[^>]*>/g)]
-    .filter(match => !/type="checkbox"/.test(match[0]));
+/** Controls that need a label and an explanation. A checkbox states its own text beside it. */
+const controlsIn = (body: string) => [...body.matchAll(/<(input|select|textarea)\b[^>]*>/g)]
+  .filter(match => !/type="checkbox"/.test(match[0]));
+
+/** Each convention a settings file must meet, as one verdict per rule. */
+function owed(body: string, file = '') {
   return {
-    field: isScreen(body) && controls.length > 0 && !/\bSettingField\b/.test(body),
+    field: !fieldComponent(file) && controlsIn(body).length > 0 && !/\bSettingField\b/.test(body),
     form: /<form\b/.test(body),
     centred: isScreen(body) && /className="modal-overlay"/.test(body),
   };
 }
 const offenders = (rule: keyof ReturnType<typeof owed>) => [...screenFiles()]
-  .filter(([file, body]) => !legacy(file) && owed(body)[rule])
+  .filter(([file, body]) => !legacy(file) && owed(body, file)[rule])
   .map(([file]) => relative(src, file));
 
 it('carries every settings control on a SettingField, not a hand-rolled label', () => {
-  // Verified by mutation: drop the SettingField import and its uses from WorkSources, leaving the
-  // controls intact — this fails. A screen that renders only checkboxes is not required to import it.
-  expect(offenders('field'), 'A settings screen with form controls must use SettingField').toEqual([]);
+  const inspected = [...screenFiles()].filter(([file, body]) => !legacy(file) && !fieldComponent(file) && controlsIn(body).length > 0);
+  // Not vacuous: this rule once passed while inspecting nothing at all.
+  expect(inspected.length, 'The field rule must find current settings forms to inspect').toBeGreaterThan(3);
+  // Verified by mutation: replace PresetForm's SettingField with a bare label, leaving its select
+  // intact — this fails. A file that renders only checkboxes is not required to import it.
+  expect(offenders('field'), 'A settings form with controls must use SettingField').toEqual([]);
 });
 
 it('changes things in a side panel rather than a form inline on the screen', () => {
@@ -107,8 +118,8 @@ it('changes things in a side panel rather than a form inline on the screen', () 
 });
 
 it('opens create and edit beside the list, not in a centred dialog over it', () => {
-  // A screen must not roll its own overlay. Verified by mutation: replace SidePanel in WorkSources
-  // with an inline modal-overlay div — this fails.
+  // A screen must not roll its own overlay. Verified by mutation: give the Profiles screen an inline
+  // modal-overlay div — this fails.
   expect(offenders('centred'), 'A settings screen must use SidePanel, not an overlay of its own').toEqual([]);
 
   // ...and the shared panel must actually be anchored to an edge. The class alone proves nothing:
@@ -131,7 +142,7 @@ it('keeps the legacy list honest: every entry is still reachable and still in de
     const entry = [...files].find(([file]) => file.endsWith(name));
     expect(entry, `${name} is still a reachable settings screen; drop it from the list if it is gone`).toBeDefined();
     // A fixed screen must leave the list, or the list quietly becomes permission to stay broken.
-    expect(Object.values(owed(entry![1])).some(Boolean),
+    expect(Object.values(owed(entry![1], entry![0])).some(Boolean),
       `${name} now meets the conventions; remove it from LEGACY_SCREENS`).toBe(true);
   }
 });

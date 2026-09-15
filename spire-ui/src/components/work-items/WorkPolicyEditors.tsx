@@ -2,11 +2,10 @@ import { useState } from 'react';
 import * as api from './workPolicyApi';
 import SettingField from '../SettingField';
 import SidePanel from '../SidePanel';
+import { key } from './policyInput';
 
 const bounds = { gateTtlSeconds: 'Approval lifetime (seconds)', maxRunsPerItem: 'Maximum runs per item', maxStepsPerPlan: 'Maximum steps per plan',
   maxWallClockSeconds: 'Maximum wall time (seconds)', maxCostMillicents: 'Maximum cost (millicents)', maxCallsPerItem: 'Maximum calls per item' };
-export const pin = (profile: api.Profile) => ({ id: profile.id, version: profile.version });
-export const key = (profile: api.Pin) => `${profile.id}:${profile.version}`;
 const phaseHelp: Record<api.Phase, string> = {
   INTAKE: 'Accept a ticket into the workflow.', SPEC: 'Accept an existing specification reference.', PLAN: 'Accept an existing plan reference.',
   BUILD: 'Run the prepared plan in a sandbox.', VERIFY: 'Production verification is unavailable until M4.',
@@ -67,59 +66,6 @@ export function ProfileEditor({ profiles, initial, saved, cancelled }: { profile
     <SettingField label="Additional protected paths, one per line" scope="limits"
       hint="Optional. Repository-relative path patterns to protect in addition to the built-in CI paths. Leave blank for no additions.">
       <textarea aria-label="Additional protected paths, one per line" value={paths} onChange={event => setPaths(event.target.value)} /></SettingField>
-    {error && <p className="prov-error" role="alert">{error}</p>}
-  </SidePanel>;
-}
-
-/**
- * The save request, or the reason it cannot be made. A mapping row left completely blank carries no
- * intent — it is what "Add label mapping" leaves behind — so it is dropped. A row with only one half
- * filled is refused by its number, because guessing the other half would grant authority nobody chose.
- */
-function policyInput(revision: number, ceiling: string, rows: { label: string; profile: string }[], profiles: api.Profile[]) {
-  const chosen = profiles.find(value => key(value) === ceiling);
-  if (!chosen) throw new Error('Choose a repository ceiling.');
-  const filled = rows.map((row, index) => ({ label: row.label.trim(), profile: row.profile, number: index + 1 }))
-    .filter(row => row.label || row.profile);
-  const incomplete = filled.find(row => !row.label || !row.profile);
-  if (incomplete) throw new Error(`Label ${incomplete.number} needs both a ticket label and a profile version.`);
-  if (new Set(filled.map(row => row.label)).size !== filled.length) throw new Error('Each label needs one mapping.');
-  const mappings: Record<string, api.Pin> = {};
-  for (const row of filled) {
-    const profile = profiles.find(value => key(value) === row.profile);
-    if (!profile) throw new Error(`Label ${row.number} names a profile version that no longer exists. Choose another.`);
-    mappings[row.label] = pin(profile);
-  }
-  return { revision, ceiling: pin(chosen), mappings };
-}
-
-export function PolicyEditor({ id, label, policy, profiles, saved, cancelled }:
-  { id: string; label: string; policy: api.Policy; profiles: api.Profile[]; saved: (policy: api.Policy) => void; cancelled: () => void }) {
-  const [ceiling, setCeiling] = useState(policy.ceiling ? key(policy.ceiling) : '');
-  const [labels, setLabels] = useState(Object.entries(policy.mappings).map(([text, profile]) => ({ label: text, profile: key(profile) })));
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const options = <><option value="">Select a version</option>{profiles.map(profile => <option key={key(profile)} value={key(profile)}>{profile.name} v{profile.version}</option>)}</>;
-  async function submit() {
-    setBusy(true); setError('');
-    try { saved(await api.savePolicy(id, policyInput(policy.revision, ceiling, labels, profiles))); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); } finally { setBusy(false); }
-  }
-  return <SidePanel title="Repository policy" subtitle={label} busy={busy} onClose={cancelled} actions={<>
-    <button className="btn" type="button" disabled={busy || !ceiling} onClick={() => void submit()}>Save repository policy</button>
-    <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></>}>
-    <SettingField label="Repository ceiling" scope="repository policy"
-      hint="Required. The maximum authority for this repository. Ticket labels can restrict it, never exceed it.">
-      <select aria-label="Repository ceiling" required value={ceiling} onChange={event => setCeiling(event.target.value)}>{options}</select></SettingField>
-    <h4 className="field-sep">Label mappings</h4>
-    <p className="prov-note">Optional. Each mapping needs a ticket label and the profile version that label requests.</p>
-    {labels.map((value, index) => <div className="op-form" key={index}>
-      <SettingField label={`Label ${index + 1}`} scope="label mappings" hint="Required. The exact ticket label, for example work:assisted.">
-        <input aria-label={`Label ${index + 1}`} required value={value.label} onChange={event => setLabels(rows => rows.map((row, i) => i === index ? { ...row, label: event.target.value } : row))} /></SettingField>
-      <SettingField label={`Label profile ${index + 1}`} scope="label mappings" hint="Required. The saved profile version this label requests.">
-        <select aria-label={`Label profile ${index + 1}`} required value={value.profile} onChange={event => setLabels(rows => rows.map((row, i) => i === index ? { ...row, profile: event.target.value } : row))}>{options}</select></SettingField>
-      <button className="btn-ghost" type="button" onClick={() => setLabels(rows => rows.filter((_, i) => i !== index))}>Remove label {index + 1}</button>
-    </div>)}
-    <div className="prov-actions"><button className="btn-ghost" type="button" onClick={() => setLabels(rows => [...rows, { label: '', profile: '' }])}>Add label mapping</button></div>
     {error && <p className="prov-error" role="alert">{error}</p>}
   </SidePanel>;
 }
