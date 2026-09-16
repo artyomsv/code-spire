@@ -18,8 +18,7 @@ const item = { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-rep
   effectiveLimits: { gateTtlSeconds: 86400, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] },
   preparation: { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'a0f8a41'.padEnd(40, '0'), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' },
 } satisfies gateway.WorkItemDetail;
-const evidence: preparation.PreparationEvidence = { reason: null, detail: null, specification: 'TEST-specification text', instruction: 'TEST-the one step',
-  specificationSha256: item.preparation.specification.sha256, planSha256: item.preparation.plan.sha256 };
+const evidence: preparation.PreparationEvidence = { reason: null, detail: null, specification: 'TEST-specification text', instruction: 'TEST-the one step', binding: row.gate.artifact! };
 const decided = vi.fn();
 
 afterEach(cleanup);
@@ -177,9 +176,25 @@ it('keeps Approve unavailable when the tickets cannot be read or have moved', as
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 });
 it('refuses to show texts read for another preparation than the decision binds', async () => {
-  vi.mocked(preparation.preparationEvidence).mockResolvedValue({ ...evidence, planSha256: 'f'.repeat(64), instruction: 'TEST-a newer step' });
+  vi.mocked(preparation.preparationEvidence).mockResolvedValue({ ...evidence, binding: 'TEST-a newer binding', instruction: 'TEST-a newer step' });
   show();
-  expect(await screen.findByRole('alert')).toHaveTextContent('The prepared task changed while this panel was open.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('The prepared task changed after this decision was opened');
   expect(screen.queryByText('TEST-a newer step')).toBeNull();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+});
+
+// Review finding: a server that does not report the binding left Approve off with a message that did not say why.
+it('says the server must report the binding when it does not', async () => {
+  vi.mocked(preparation.preparationEvidence).mockResolvedValue({ ...evidence, binding: undefined });
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('The server does not say which prepared version');
+  expect(screen.queryByText('TEST-the one step')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+});
+// A land decision binds a built commit, not the task texts, so it must not wait for them.
+it('does not hold a land decision back on the task texts', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'land', artifact: 'b'.repeat(40) } }]);
+  vi.mocked(preparation.preparationEvidence).mockReturnValue(new Promise(() => {}));
+  show();
+  await approvable();
 });

@@ -73,11 +73,15 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
 
   const gate = loaded?.approval?.gate;
   const answeringNow = answering !== null;
-  // Approval is a promise to build what the panel shows. Until the texts for this very preparation
-  // are on screen it is not offered; rejecting needs no evidence and stays available.
-  const bound = !preparation || !!evidence.value && !evidence.value.reason
-    && evidence.value.specificationSha256 === preparation.specification.sha256 && evidence.value.planSha256 === preparation.plan.sha256;
-  const mismatched = !!preparation && !!evidence.value && !evidence.value.reason && !bound;
+  // Approving a plan is a promise to build what the panel shows, so Approve waits until the texts on
+  // screen were read against the very binding the decision stores. A land decision binds a commit,
+  // not these texts, so it does not wait for them. Rejecting needs no evidence and stays available.
+  const needsTexts = !!preparation && !!gate && gate.phase !== 'land';
+  const readable = !!evidence.value && !evidence.value.reason;
+  const reported = evidence.value?.binding;
+  const unreported = needsTexts && readable && reported === undefined;
+  const mismatched = needsTexts && readable && reported !== undefined && reported !== gate?.artifact;
+  const bound = !needsTexts || readable && reported !== undefined && reported === gate?.artifact;
   const heading = gate ? `Approve the ${gate.phase}` : 'Decision';
   const subtitle = !loaded ? undefined : title ? `${title} · ${loaded.item.issueKey} · ${loaded.item.repository}` : `${loaded.item.issueKey} · ${loaded.item.repository}`;
   return <SidePanel title={heading} subtitle={subtitle} busy={answering !== null} onClose={onClose} wide
@@ -90,8 +94,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     {!loaded && !error && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
-      <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched ? null : evidence.value} evidenceError={evidence.error} />
-      {mismatched && <p className="prov-error" role="alert">The prepared task changed while this panel was open. Close it and open the decision again.</p>}
+      <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
+      {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering replaces it with a new decision.</p>}
+      {unreported && <p className="prov-error" role="alert">The server does not say which prepared version these tickets belong to, so Approve is not offered. Update the orchestrator to the version this dashboard expects.</p>}
       {admin && preparation && !evidence.value && !evidence.error && <p className="prov-note" role="status">Reading the tickets. Approve is offered once they are on screen.</p>}
       {admin ? <SettingField label="Decision note" scope="approval" hint="Optional. Recorded with the decision and shown in the item's history.">
         <textarea aria-label="Decision note" value={note} onChange={event => setNote(event.target.value)} placeholder="Why you approve or reject" /></SettingField>

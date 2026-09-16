@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes, useParams } from 'react-router';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../../api';
 import * as auth from '../../auth';
@@ -535,4 +536,22 @@ it('keeps a recheck that answers after a manual refresh from restoring its notic
   await act(async () => answer({ reason: 'artifacts_changed', detail: 'plan_changed' }));
   await act(async () => {});
   expect(screen.queryByText(/The plan ticket changed/)).toBeNull();
+});
+
+// The one render between an address change and the effect that clears the old item: a layout effect
+// records the committed page before passive effects run, which a plain assertion after act() cannot see.
+it('never commits one item under another item address', async () => {
+  const committed: { id: string; subtitle: string | null }[] = [];
+  function Probe() {
+    const { id = '' } = useParams();
+    useLayoutEffect(() => { committed.push({ id, subtitle: document.querySelector('.work-head .prov-sub')?.textContent ?? null }); }, [id]);
+    return null;
+  }
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
+    <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>);
+  expect(await screen.findByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
+  expect(committed.find(entry => entry.id === 'TEST-item-1')).toEqual({ id: 'TEST-item-1', subtitle: null });
 });

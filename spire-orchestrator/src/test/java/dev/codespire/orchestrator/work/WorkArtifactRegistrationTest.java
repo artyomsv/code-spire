@@ -133,9 +133,9 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
         assertNull(evidence.reason());
         assertEquals(specification,evidence.specification());
         assertEquals("TEST-implement this one existing task",evidence.instruction());
-        // The texts name the prepared versions they were read against, so a screen can match them to its decision.
-        assertEquals(store.load(id).preparation().specification().sha256(),evidence.specificationSha256());
-        assertEquals(store.load(id).preparation().plan().sha256(),evidence.planSha256());
+        // The texts name the binding they were read against, which is exactly what the open plan decision stores.
+        assertEquals(store.load(id).preparation().binding(),evidence.binding());
+        assertEquals(store.load(id).gate().artifact(),evidence.binding());
     }
     /** A ticket that moved after registration is named, and its unapproved text is not shown as the evidence. */
     @Test void evidenceForAMovedTicketNamesItInsteadOfShowingIt() throws Exception {
