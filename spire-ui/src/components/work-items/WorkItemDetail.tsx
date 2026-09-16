@@ -74,6 +74,16 @@ export default function WorkItemDetail() {
           <button className="btn-ghost sm" type="button" onClick={() => { start(); reread(); }}>Refresh workflow</button>
         </div>
       </div>
+      {item.preparationHealth && <p className="prov-error" role="status">
+        The factory could not prepare this task: {workReason(item.preparationHealth.reason)}
+        {item.preparationHealth.attempts > 1 ? ` (tried ${item.preparationHealth.attempts} times)` : ''}
+      </p>}
+      {/* The prepared specification is a snapshot. Saying when the ticket has moved on is the whole
+          reason an operator would press "Prepare again" — and never changes the approved bytes. */}
+      {item.preparation?.specification.origin === 'STORED' && tracker.value?.composedSha256
+        && tracker.value.composedSha256 !== item.preparation.specification.sha256
+        && <p className="factory-note" role="status">The ticket changed after it was prepared. What is approved and built is still the
+          text that was prepared; prepare it again to use the edit.</p>}
       <div className="work-status">
         <WorkflowStatus status={item.workflowStatus} /><JourneyStrip item={item} />
         <span className="prov-sub">{item.profile ? `${item.profile.name} v${item.profile.version}` : 'No profile'} · updated {formatEventTime(item.updatedAt)}</span>

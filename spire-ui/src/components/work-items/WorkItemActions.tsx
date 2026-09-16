@@ -40,7 +40,7 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   async function compose() {
     const number = started(); setBusy('compose'); setError('');
     try {
-      const outcome = await composePreparation(item.id);
+      const outcome = await composePreparation(item.id, item.revision);
       if (active.current) changed(workReason(outcome.reason), number);
     }
     catch (failure) { if (active.current) setError(String(failure instanceof Error ? failure.message : failure)); }
@@ -56,7 +56,9 @@ export default function WorkItemActions({ item, started, changed }: Props) {
     return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;
   // Composing is offered wherever a person could want the ticket read again: before anything is
   // prepared, and after an edit they made on purpose.
-  const canCompose = ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped'].includes(item.workflowStatus);
+  // waiting_approval included on purpose: an assisted item sits at its plan gate, which is exactly when
+  // an operator reads the ticket again and edits it. The server refuses anything a build has started.
+  const canCompose = ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
   if (!canResume && !canReadmit && !canCompose) return null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">
@@ -69,10 +71,6 @@ export default function WorkItemActions({ item, started, changed }: Props) {
       {canCompose && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void compose()}>
         {busy === 'compose' ? 'Preparing…' : 'Prepare again from the ticket'}</button>}
     </div>
-    {item.preparationHealth && <p className="factory-note" role="status">
-      The factory could not prepare this task: {workReason(item.preparationHealth.reason)}
-      {item.preparationHealth.attempts > 1 ? ` (tried ${item.preparationHealth.attempts} times)` : ''}
-    </p>}
     {busy && <p className="factory-note" role="status">Working. The buttons unlock when the server answers.</p>}
     {error && <p className="prov-error" role="alert">{error}</p>}
   </div>;

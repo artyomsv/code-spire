@@ -53,7 +53,7 @@ export const preparationOptions = (id: string) => read<PreparationOptions>(`/api
 export const branchHead = (id: string, branch: string) =>
   read<BranchHead>(`/api/work-items/${encodeURIComponent(id)}/preparation/head?branch=${encodeURIComponent(branch)}`);
 /** Composes this item's task again from its ticket, superseding an open decision. */
-export const composePreparation = (id: string) =>
-  read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation/compose`, { method: 'POST' });
+export const composePreparation = (id: string, expectedRevision: number) =>
+  read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation/compose?expectedRevision=${expectedRevision}`, { method: 'POST' });
 export const registerPreparation = (id: string, input: Omit<Preparation, 'registeredBy'> & { expectedRevision: number }) =>
   read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });

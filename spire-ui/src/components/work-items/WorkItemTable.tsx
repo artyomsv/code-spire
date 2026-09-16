@@ -39,7 +39,10 @@ export default function WorkItemTable({ rows, titles, busy }: Props) {
             </td>
             <td><div className="work-where"><JourneyStrip item={row} /><span><WorkflowStatus status={row.workflowStatus} /> <span className="prov-sub">{row.phase}</span></span></div></td>
             <td>
-              <div className="work-why">{workReason(row.reason)}</div>
+              {/* The health of the automatic preparation is more specific than the workflow reason it
+                  sits under: "a specification is required" is true of an empty ticket and of a
+                  repository with no build setup alike. */}
+              <div className="work-why">{row.preparationHealth ? workReason(row.preparationHealth.reason) : workReason(row.reason)}</div>
               {action && <Link className="btn sm work-next" to={action.to}>{action.label}</Link>}
             </td>
             <td className="mono">{row.profile ? `${row.profile.name} v${row.profile.version}` : '—'}</td>

@@ -143,6 +143,16 @@ class CoreIsProviderNeutralTest {
                 "Composition root: maps a provider's API base URL to its clone host. GitHub's cloud API "
                         + "answers on api.github.com while clones go to github.com; a GHE server keeps "
                         + "both on one host. That mapping is provider knowledge and this is its one home.");
+        allowed.put("spire-contract/src/main/java/dev/codespire/contract/llm/HarnessTokenReport.java",
+                "Declares which token types each harness CAN report, so a run is refused before it spends "
+                        + "on a model whose rates are incomplete. Neither preferred resolution is available: "
+                        + "the orchestrator decides whether a run may start and has no dependency on the "
+                        + "harness tier, so this cannot be a method on an adapter, and there is no "
+                        + "composition root between them. It is a lookup keyed by harness name whose default "
+                        + "for an UNKNOWN name is every priceable type, so a harness this build has never "
+                        + "heard of is refused rather than silently under-priced — the failure mode the "
+                        + "neutrality rule exists to prevent cannot occur here. Drift is caught in the "
+                        + "adapter's own module by CodexReportsWhatTheContractDeclaresTest.");
         return Collections.unmodifiableMap(allowed);
     }
 

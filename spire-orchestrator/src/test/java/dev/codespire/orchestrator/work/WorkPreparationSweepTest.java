@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -54,6 +56,20 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         }
     }
 
+    /** Holds the branch-head answer open, so a test can act while the sweep is waiting on the forge. */
+    private void slowHead(int millis) {
+        forge.stubFor(get(urlEqualTo("/repos/" + scope + "/branches/main")).willReturn(okJson(
+                "{\"name\":\"main\",\"commit\":{\"sha\":\"" + "d".repeat(40) + "\"}}").withFixedDelay(millis)));
+    }
+
+    private void awaitHeadRequest() throws Exception {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            if (!forge.findAll(getRequestedFor(urlEqualTo("/repos/" + scope + "/branches/main"))).isEmpty()) return;
+            Thread.sleep(20);
+        }
+        throw new AssertionError("the sweep never asked the forge for the branch head");
+    }
+
     @Test
     void oneTicketBecomesAPreparedTaskWithNoTypingAtAll() throws Exception {
         String id = admit("assisted", 80);
@@ -93,7 +109,11 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         assertTrue(observed.artifacts().specification().contains("TEST-identical task"));
         assertEquals("Implement the specification in full, and change nothing it does not ask for.",
                 observed.artifacts().instruction());
-        assertEquals(item.preparation().binding(), dev.codespire.contract.work.WorkGate.artifactOf(item));
+        // The gate's OWN stored artifact, not a value recomputed from the same preparation: the
+        // comparison that answers a decision reads what was persisted when the gate opened.
+        assertNotNull(item.gate(), "an assisted item opens its plan decision as part of being prepared");
+        assertEquals("OPEN", item.gate().state());
+        assertEquals(item.preparation().binding(), item.gate().artifact());
     }
 
     /**
@@ -197,13 +217,142 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         edited.putArray("labels").add("TEST-assisted");
         forge.stubFor(get(urlEqualTo("/repos/" + scope + "/issues/88")).willReturn(okJson(edited.toString())));
 
-        assertTrue(sweep.prepareAgain(id).prepared());
+        assertTrue(sweep.prepareAgain(id, "TEST-prepared-admin").prepared());
         var second = store.load(id).preparation();
         assertNotEquals(first.specification().storedId(), second.specification().storedId());
         assertNotEquals(first.binding(), second.binding());
         assertTrue(stored.read(id, second.specification().storedId()).orElseThrow().contains("rewrote this on purpose"));
         // The bytes the first preparation bound are still there: a gate or a held run may still name them.
         assertTrue(stored.read(id, first.specification().storedId()).orElseThrow().contains("TEST-identical task"));
+    }
+
+    /**
+     * A person registers a preparation while the sweep is waiting on the forge.
+     *
+     * <p>The sweep must lose. It captured its revision before that registration; adopting a fresh one
+     * would supersede the operator's open decision and install an older automatic composition in its
+     * place — silently, because both look like ordinary preparations afterwards.
+     */
+    @Test
+    void aManualRegistrationDuringTheForgeCallBeatsTheSweep() throws Exception {
+        String id = admit("assisted", 90);
+        slowHead(800);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var running = pool.submit(() -> sweep.prepare(id));
+            awaitHeadRequest();
+            register(id);
+            var result = running.get(30, TimeUnit.SECONDS);
+            assertFalse(result.prepared(), "the sweep must not overwrite a registration it did not see");
+            assertEquals("work_item_changed", result.reason());
+        }
+        assertEquals(WorkPreparation.Origin.TRACKER, store.load(id).preparation().specification().origin(),
+                "the operator's own preparation stands");
+    }
+
+    /**
+     * The build setup changes while the sweep waits on the forge. Its coordinates were read before that
+     * change, so registering them would bind a repository to a setup nobody saved.
+     */
+    @Test
+    void aBuildSetupChangedDuringTheForgeCallRefusesTheComposition() throws Exception {
+        String id = admit("assisted", 91);
+        slowHead(800);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var running = pool.submit(() -> sweep.prepare(id));
+            awaitHeadRequest();
+            defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model),
+                    "TEST-other-admin");
+            var result = running.get(30, TimeUnit.SECONDS);
+            assertFalse(result.prepared());
+            assertEquals("build_defaults_changed", result.reason());
+        }
+        assertNull(store.load(id).preparation());
+        assertEquals("build_defaults_changed", reason(id));
+    }
+
+    /** What the dispatch would refuse must not become an approval. */
+    @Test
+    void aModelSwitchedOffAfterTheSetupWasSavedStopsThePreparation() throws Exception {
+        String id = admit("assisted", 92);
+        execute("UPDATE llm_model SET enabled=FALSE WHERE id=?", modelId);
+        try {
+            sweep.sweep();
+            assertNull(store.load(id).preparation(), "no decision may open on a build that is already refused");
+            assertEquals("model_disabled", reason(id));
+        } finally { execute("UPDATE llm_model SET enabled=TRUE WHERE id=?", modelId); }
+    }
+
+    /**
+     * A refusal belongs to the generation that was ATTEMPTED, not to one that started later.
+     *
+     * <p>The item is re-admitted while the sweep waits on the forge, so the two differ. Recording
+     * against the new generation would hold back the attempt that has not run yet, with a backoff and a
+     * reason earned by work nobody asked for any more.
+     */
+    @Test
+    void healthIsRecordedAgainstTheGenerationThatWasAttempted() throws Exception {
+        String id = admit("assisted", 93);
+        slowHead(800);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var running = pool.submit(() -> sweep.prepare(id));
+            awaitHeadRequest();
+            assertEquals(200, transitions.resume(id, store.history(id).size(), true).status());
+            assertFalse(running.get(30, TimeUnit.SECONDS).prepared());
+        }
+        assertEquals(2, store.load(id).generation(), "the re-admission is what makes the two generations differ");
+        assertEquals(1, count("SELECT count(*) FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=1", id));
+        assertEquals(0, count("SELECT count(*) FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=2", id),
+                "the generation that has not been attempted must start clean");
+    }
+
+    /**
+     * A refusal a local check settled is retried on a flat, short wait.
+     *
+     * <p>Saving the build setup wakes these items at once. Switching a model back on, or entering the
+     * rate the screen asked for, does not — so the wait after such a repair must stay a minute rather
+     * than growing to half an hour, which it would after five attempts under the exponential rule.
+     */
+    @Test
+    void aRefusalASingleDatabaseReadCanSettleDoesNotBackOffForHalfAnHour() throws Exception {
+        String id = admit("assisted", 94);
+        execute("UPDATE llm_model SET enabled=FALSE WHERE id=?", modelId);
+        try {
+            for (int attempt = 0; attempt < 6; attempt++) {
+                execute("UPDATE work_item_preparation_attempt SET retry_after=now()-interval '1 second' WHERE work_item_id=?", id);
+                sweep.sweep();
+            }
+            assertEquals("model_disabled", reason(id));
+            assertEquals(6, count("SELECT attempts FROM work_item_preparation_attempt WHERE work_item_id=?", id),
+                    "every one of those sweeps must have tried again");
+            assertTrue(retryWithin(id, LOCAL_RETRY_BOUND),
+                    "a refusal that costs no remote call must not push the operator's repair half an hour away");
+        } finally { execute("UPDATE llm_model SET enabled=TRUE WHERE id=?", modelId); }
+    }
+
+    /** And the other side of the same rule, or "everything is local" would pass the test above. */
+    @Test
+    void aRefusalThatCostsARemoteCallStillBacksOff() throws Exception {
+        forge.stubFor(get(urlEqualTo("/repos/" + scope + "/branches/main")).willReturn(WireMock.aResponse().withStatus(500)));
+        String id = admit("assisted", 95);
+        for (int attempt = 0; attempt < 6; attempt++) {
+            execute("UPDATE work_item_preparation_attempt SET retry_after=now()-interval '1 second' WHERE work_item_id=?", id);
+            sweep.sweep();
+        }
+        assertEquals("branch_head_unconfirmed", reason(id));
+        assertFalse(retryWithin(id, LOCAL_RETRY_BOUND),
+                "asking a forge that is failing must not be repeated on the flat local wait");
+    }
+
+    /** Generous enough not to measure the clock, far below the exponential rule's 30 minutes. */
+    private static final int LOCAL_RETRY_BOUND = 120;
+
+    private boolean retryWithin(String id, int seconds) throws Exception {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT retry_after <= now()+(?::bigint*interval '1 second') FROM work_item_preparation_attempt WHERE work_item_id=?")) {
+            ps.setLong(1, seconds); ps.setString(2, id);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next() && rs.getBoolean(1); }
+        }
     }
 
     /**

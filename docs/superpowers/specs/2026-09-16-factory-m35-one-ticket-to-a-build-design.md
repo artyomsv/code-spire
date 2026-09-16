@@ -343,11 +343,32 @@ and compares the source version and policy revision (`WorkItemTransitions.java:3
 item and checks revision, status, attempts and gate (`WorkItemTransitions.java:343-352`).
 
 The sweep uses that same protocol, in that same lock order, plus the build-defaults revision, and it
-re-checks its own trigger predicate under the item lock. The stored artifact rows, the preparation
-decision, the gate change and the comment intent commit in one transaction, so a lost race cannot leave a
-winning event pointing at losing bytes. Separate tests cover a racing manual registration, a policy or
-defaults change, takeover, suspension and re-admission — each one alone, so no second refusal masks the
-one under test.
+re-checks its own trigger predicate under the item lock.
+
+Two values are read BEFORE the forge call the attempt then waits on, and both are carried into the
+registration rather than read again: the item revision, and the build setup's revision. Re-reading either
+afterwards compares two things that were never true at the same moment — a manual preparation that landed
+in the window would be superseded by this older composition, and a repository whose branch, harness or
+model changed would have a composition registered against a setup nobody saved. The item revision is
+compared by the existing protocol; the setup revision is compared by a `Precondition` evaluated
+inside that same lock.
+
+The preparation decision and the gate change commit in one transaction. The stored artifact rows are
+written BEFORE it, on purpose: encryption and two inserts have no business inside the lock that guards
+the item's history, the rows are insert-only, and nothing reads them without a preparation event that
+names them — so a refused registration leaves unreferenced bytes, never a winning event pointing at
+losing bytes.
+
+**The tracker comment is not in that transaction, and is not durable.** It is posted after the commit,
+best-effort, and every value in it comes from the preparation that actually won rather than from what
+this attempt composed. A process death between the two leaves the item prepared with no comment on the
+ticket. That is a known gap, recorded in `docs/UNVERIFIED.md`: the factory's own screens are the
+authority, and the comment is a courtesy. Making it durable means the transactional-outbox treatment the
+tracker writes already have elsewhere, and it is not in M3.5's scope.
+
+Separate tests cover a racing manual registration, a defaults change during the forge call, a model
+switched off after the setup was saved, a re-admission during the forge call, takeover and suspension —
+each one alone, so no second refusal masks the one under test.
 
 ### 6.5 Preparation health is separate from the workflow reason, and retries are bounded
 
@@ -363,8 +384,23 @@ bounded backoff, and it retries immediately after the operator repairs defaults,
 never revisits an item that is manually prepared, active, suspended, retired, or in a newer generation.
 
 Refusal reasons, each with its sentence on screen: `ticket_body_empty`, `ticket_body_too_large` (today's
-bound, 48×1024 characters), `build_defaults_missing`, `branch_head_unconfirmed`,
-`model_pricing_incomplete`, `subscription_unavailable`, `artifacts_unavailable`.
+bound, 48×1024 characters), `build_defaults_missing`, `build_defaults_changed`,
+`branch_head_unconfirmed`, `model_disabled`, `model_pricing_incomplete`,
+`catalogue_unavailable`, `subscription_unavailable`, `artifacts_unavailable`.
+
+Health is recorded against the generation the attempt BEGAN in. Reading it again at the end would let a
+slow attempt impose its obsolete reason and backoff on a generation that was re-admitted while it ran.
+Every viewer sees the health sentence, on the list and on the detail page: only an administrator can
+prepare anything, but "why has nothing been prepared" is the first question everyone asks.
+
+**The backoff has two shapes, because the refusals do.** A refusal a LOCAL check settled — no build
+setup, a switched-off model, an unpriced token type, a catalogue that would not answer — stops before
+any remote call, so trying again costs one database read. Those wait a flat minute. A refusal that cost
+a forge or tracker call keeps the exponential wait, 30 seconds doubling to a bound of 30 minutes. The
+difference matters to a person, not to a machine: the operator repairs exactly what the screen told them
+to repair, and an exponential wait would then leave the item idle for up to half an hour. Saving a
+repository's build setup goes further and makes its items due at once, in the same transaction as the
+save, because that is the commonest repair of all.
 
 ### 6.6 A refusal at dispatch must still say what it is
 
@@ -428,3 +464,25 @@ findings, six of them high. Every claim quoted below was re-checked in the code 
 | The sweep's trigger could never retry its own refusals | 6.5: preparation health kept separately, bounded backoff |
 | Dispatch collapses every refusal into one reason | 6.6: a shared preflight and a structured refusal |
 | The head read needs an item and falls back to REVIEWER | 3: a repository-scoped read, with the fallback stated |
+
+## 11. What the part C review changed
+
+Part C's shipped commits were reviewed against the code on 2026-09-16
+(`build/codex-review-153ca2d7.md`). Thirteen findings, two of them high. Every claim was re-checked in
+the code before anything changed, and every guard below is mutation-verified.
+
+| Finding | Change |
+|---|---|
+| The sweep read its expected revision AFTER the forge call, so a manual preparation made meanwhile was superseded | 6.4: the revision is captured with the item and carried into the registration |
+| The saved build setup was never compared at registration, so a changed branch, harness or model could be registered | 6.4: a `Precondition` compares the setup revision inside the registration lock |
+| Preparation succeeded on a model the dispatch would refuse, opening a decision on a build already known to be unrunnable | 6.6: the dispatch's own checks run before the decision opens, as `model_disabled` and `model_pricing_incomplete` |
+| A slow attempt wrote its obsolete reason and backoff onto a generation re-admitted while it ran | 6.5: health is recorded against the generation the attempt began in |
+| The tracker comment mixed the winning preparation with this attempt's own values | 6.4: every value is read back from the preparation that won |
+| The comment intent was described as transactional; it is not | 6.4 and `docs/UNVERIFIED.md` A4: stated plainly as a courtesy that can be lost |
+| Repairing configuration did not trigger the promised retry | 6.5: a flat one-minute wait for locally settled refusals, and saving a build setup wakes its items at once |
+| Deliberate composition carried no caller revision and lost the operator's identity | 6.7: the endpoint takes the revision the screen showed, and records the operator |
+| "Prepare again" was hidden at `waiting_approval` — exactly where an operator edits the ticket | 6.7: the button is offered at an open plan gate |
+| Nothing said the ticket had changed since it was prepared | 6.7: the detail page compares the composed digest and says so, for every viewer |
+| Preparation health never reached the triage list or a viewer's detail page | 6.5: rendered independently of who may act on it |
+| The gate test compared a recomputed binding with itself, so a corrupted stored gate would survive | the test reads `item.gate().artifact()` |
+| The version test never decoded old JSON through the production codec | a wire test decodes the exact M3 shape and asserts the hash is unchanged |

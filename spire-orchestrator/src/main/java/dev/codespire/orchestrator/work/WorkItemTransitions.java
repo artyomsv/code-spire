@@ -331,7 +331,22 @@ public class WorkItemTransitions {
                 observed.evidence().failure()==null?artifacts.observe(observed.source(),item.workItemId(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
     }
 
+    /**
+     * One more condition to test under the item lock, beside revision, status, attempts and gate.
+     *
+     * <p>The automatic path needs it: its coordinates come from a repository's saved build setup, read
+     * before a forge call it then waits on. Comparing that setup's revision anywhere but inside this
+     * lock is a comparison of two things that were never true at the same moment.
+     *
+     * @return the refusal reason, or null to continue
+     */
+    public interface Precondition { String refuse(Connection c) throws SQLException; }
+
     public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation) {
+        return prepare(id,expectedRevision,preparation,c->null);
+    }
+
+    public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation,Precondition precondition) {
         WorkItemEvent item=require(id);
         Observation observed=observe(item.sourceId(),item.issue());
         WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),id,preparation);
@@ -349,6 +364,8 @@ public class WorkItemTransitions {
                         rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);
                     }
                 }
+                String refused=precondition.refuse(c);
+                if(refused!=null)return new Outcome(409,refused,current);
                 if(current.gate()!=null && "OPEN".equals(current.gate().state())) {
                     current=state(current,"awaiting_input","artifacts_replaced","GATE_SUPERSEDED",current.gate().resolve("SUPERSEDED",preparation.registeredBy(),null,null),current.progress().reserve(false));
                     store.appendDecision(c,history,current,"preparation-replaced:"+UUID.randomUUID());history=store.history(id);

@@ -20,7 +20,7 @@ export interface WorkItemSummary {
 
 export interface WorkItemPage {
   /** The list endpoint returns each row's detail view, so a row can draw its journey and next action. */
-  items: (WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate'>>)[];
+  items: (WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate' | 'preparationHealth'>>)[];
   total: number;
   offset: number;
   limit: number;
@@ -65,6 +65,11 @@ export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, no
 
 /** Fetched for the current detail request; these fields are never workflow projection columns. */
 export interface WorkItemTracker {
+  /**
+   * The digest a specification composed from THIS ticket text would carry, so a screen can say the
+   * ticket changed after it was prepared. Null when the ticket could not be a specification at all.
+   */
+  composedSha256?: string | null;
   title: string;
   body: string;
   trackerStatus: string;

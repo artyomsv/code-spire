@@ -399,6 +399,26 @@ like a repository with nothing to retrieve.
 
 **Tracked in** `techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md`.
 
+### A4. The comment the factory writes on a prepared ticket can be lost (M3.5 part C, 2026-09-16)
+
+**The claim.** When the factory prepares a task from a ticket, it comments on that ticket saying what
+it prepared, so a person reading the ticket alone learns the task exists.
+
+**Why nothing catches it.** The comment is posted AFTER the transaction that registers the
+preparation, and is best-effort by construction. A process death, a tracker outage or a source without
+the COMMENT capability leaves the item correctly prepared with no comment on the ticket. Nothing
+retries it, and nothing records that it was skipped — a ticket with no comment and a ticket the
+factory never reached read the same on the tracker.
+
+Two things bound the damage. The comment is a courtesy: the factory's own screens hold the authority,
+and the preparation, the gate and the stored texts are all durable. And every value in the comment is
+read back from the preparation that actually won the registration, so a comment that IS posted never
+describes a composition nobody holds.
+
+**Evidence needed.** None — this is a deliberate omission, not a suspicion. Closing it means giving
+the tracker write the transactional-outbox treatment the other uncertain tracker writes already have
+(§"Work-source GitHub label audit and tracker writes"), which M3.5 does not do.
+
 ---
 
 ## B. Works in tests, never proven on a live deployment

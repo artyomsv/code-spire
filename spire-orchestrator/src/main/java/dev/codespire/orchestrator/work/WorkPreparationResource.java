@@ -110,10 +110,15 @@ public class WorkPreparationResource {
      * It supersedes an open decision, because the texts a new decision binds are new.
      */
     @POST @Path("/compose")
-    public Response compose(@PathParam("id") String id) {
+    public Response compose(@PathParam("id") String id,@QueryParam("expectedRevision") long expectedRevision) {
         var item=store.load(id);if(item==null)throw new NotFoundException();
-        if(OidcSubjects.of(identity).isBlank())throw new ForbiddenException("A verified operator identity is required");
-        var result=sweep.prepareAgain(id);
+        String actor=OidcSubjects.of(identity);
+        if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        // The revision the operator was LOOKING at. Without it a stale tab could replace a decision that
+        // opened after the page was rendered, and the history would attribute it to the system.
+        if(expectedRevision>0 && store.history(id).size()!=expectedRevision)
+            return Response.status(409).entity(Map.of("reason","work_item_changed")).build();
+        var result=sweep.prepareAgain(id,actor);
         return Response.status(result.prepared()?200:409).entity(Map.of("reason",result.reason())).build();
     }
 

@@ -47,8 +47,11 @@ public class BuildDefaults {
         catch (SQLException failure) { throw database(failure); }
     }
 
-    /** Package-private with an explicit lock flag: part C reads these under the item's own lock. */
-    Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
+    /**
+     * On the caller's connection, so the automatic preparation can compare the setup it composed from
+     * against the saved one INSIDE the transaction that registers the result (M3.5 part C).
+     */
+    public Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
         String sql = "SELECT revision,base_branch,harness,model,updated_by,updated_at"
                 + " FROM repository_build_defaults WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement ps = c.prepareStatement(sql)) {
@@ -108,6 +111,15 @@ public class BuildDefaults {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
                 ps.setString(4, model); ps.setString(5, actor);
                 ps.executeUpdate();
+            }
+            // Saving a setup is the repair for "this repository has no build setup", so the items that
+            // were refused for it are made due again rather than waiting out a backoff they have
+            // outlived. Same transaction: a save that rolls back must not leave items woken for nothing.
+            try (PreparedStatement ps = c.prepareStatement("""
+                    UPDATE work_item_preparation_attempt SET retry_after=now()
+                     WHERE work_item_id IN (SELECT id FROM work_item WHERE repository_id=?)
+                    """)) {
+                ps.setObject(1, repository); ps.executeUpdate();
             }
             return get(c, repository, false);
         } catch (SQLException failure) { throw database(failure); }

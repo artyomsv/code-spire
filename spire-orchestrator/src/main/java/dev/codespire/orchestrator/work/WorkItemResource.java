@@ -82,7 +82,12 @@ public class WorkItemResource {
         Set<String> referenced=applied.stream().map(WorkPolicy.AppliedLabel::actorId).collect(java.util.stream.Collectors.toSet());
         return allowed.stream().filter(person->referenced.contains(person.providerUserId())).toList();
     }
-    public record Tracker(String title, String body, String trackerStatus) {}
+    /**
+     * @param composedSha256 the digest a specification composed from THIS ticket text would carry. The
+     *     screen compares it with the pinned one to say "the ticket changed after it was prepared"
+     *     without re-hashing anything in a browser, and without changing the bytes that were approved.
+     */
+    public record Tracker(String title, String body, String trackerStatus, String composedSha256) {}
 
     @GET
     public Page list(@QueryParam("offset") @DefaultValue("0") int offset, @QueryParam("limit") @DefaultValue("50") int limit,
@@ -148,6 +153,14 @@ public class WorkItemResource {
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
 
+    @Inject WorkPreparationComposer composer;
+
+    /** Null when this ticket could not be a specification at all; the item page says why separately. */
+    private String composedDigest(dev.codespire.worksource.WorkTicket ticket) {
+        try { return dev.codespire.contract.work.WorkPreparation.digest(composer.specification(ticket)); }
+        catch (WorkPreparationComposer.NotComposable notComposable) { return null; }
+    }
+
     @GET @Path("/{id}/tracker")
     public Tracker tracker(@PathParam("id") String id) {
         get(id);
@@ -158,7 +171,8 @@ public class WorkItemResource {
         try {
             WorkSource.Fetch result = task.get(20, TimeUnit.SECONDS);
             if (result instanceof WorkSource.Fetch.Found found)
-                return new Tracker(found.ticket().title(), found.ticket().body(), found.ticket().trackerStatus());
+                return new Tracker(found.ticket().title(), found.ticket().body(), found.ticket().trackerStatus(),
+                        composedDigest(found.ticket()));
         } catch (Exception failure) {
             task.cancel(true);
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
