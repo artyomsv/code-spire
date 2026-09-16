@@ -374,6 +374,13 @@ public class WorkItemTransitions {
                 store.appendDecision(c,history,next,"preparation:"+UUID.randomUUID());history=store.history(id);
                 next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
                 store.appendDecision(c,history,next,"prepared-transition:"+UUID.randomUUID());
+                // In THIS transaction, so a registration that rolls back does not leave the screen
+                // claiming the item is healthy. Every registration clears it, not only the sweep's:
+                // preparation health answers "why has nothing been prepared", and something now is.
+                try(PreparedStatement ps=c.prepareStatement(
+                        "DELETE FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=?")) {
+                    ps.setString(1,id);ps.setLong(2,next.generation());ps.executeUpdate();
+                }
                 return new Outcome(200,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode preparation",failure);}

@@ -79,12 +79,13 @@ public class WorkPreparationSweep {
     @Scheduled(every = "${spire.work-preparation-interval:20s}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void sweep() {
         for (String id : candidates()) {
+            // prepare() records its own health against the generation it captured, faults included.
+            // An outer handler that reloaded the item to learn the generation would write the failed
+            // attempt's reason onto whatever generation exists NOW — the contamination this whole round
+            // set out to remove, reintroduced one level up.
             try { prepare(id); }
             catch (RuntimeException failure) {
-                // One item's forge, tracker or catalogue fault must not stop the others.
                 LOG.warnf(failure, "work item %s could not be prepared automatically", id);
-                WorkItemEvent item = store.load(id);
-                if (item != null) record(id, item.generation(), "preparation_failed");
             }
         }
     }
@@ -108,7 +109,11 @@ public class WorkPreparationSweep {
                  WHERE i.phase = 'spec' AND i.workflow_status = 'awaiting_input'
                    AND i.reason = 'specification_required'
                    AND (a.retry_after IS NULL OR a.retry_after <= now())
-                 ORDER BY i.updated_at
+                 -- Never-attempted items first, then whichever has been due longest. Ordering by the
+                 -- item's own age instead let a cohort of old, permanently failing rows come due again
+                 -- before selection ever reached a ticket somebody wrote this morning, and with a
+                 -- five-item batch that cohort could hold every slot indefinitely.
+                 ORDER BY (a.work_item_id IS NOT NULL), COALESCE(a.retry_after, i.updated_at), i.updated_at
                  LIMIT ?
                 """)) {
             ps.setInt(1, MAX_ITEMS_PER_SWEEP);
@@ -128,22 +133,44 @@ public class WorkPreparationSweep {
     /** Whether the item is now prepared, and the reason to show either way. */
     public record Result(boolean prepared, String reason) {}
 
-    public Result prepareAgain(String id, String actor) {
+    /**
+     * @param expectedRevision the revision the operator's screen was showing. Required, positive, and
+     *     carried unchanged to the locked comparison.
+     */
+    public Result prepareAgain(String id, long expectedRevision, String actor) {
         WorkItemEvent item = store.load(id);
         if (item == null) return new Result(false, "work_item_unknown");
-        clear(id, item.generation());
-        return prepare(id, true, actor);
+        // Health is cleared only by a registration that actually happens; clearing it here made a
+        // refused compose look like an item with nothing wrong.
+        return prepare(id, true, actor, expectedRevision);
     }
 
     /** Compose, store and register one item. Every refusal is recorded as this item's health. */
-    Result prepare(String id) { return prepare(id, false, null); }
+    Result prepare(String id) { return prepare(id, false, null, 0); }
+
+    /**
+     * The sweep's own trigger, as a predicate on an item rather than only as SQL.
+     *
+     * <p>{@code candidates()} asks the same question of the projection; this asks it of the snapshot the
+     * attempt actually captured, so the two cannot disagree across the gap between them.
+     */
+    private static boolean automatic(WorkItemEvent item) {
+        return item.preparation() == null && "spec".equals(item.phase())
+                && "awaiting_input".equals(item.workflowStatus())
+                && "specification_required".equals(item.reason());
+    }
 
     /**
      * @param again compose even though something is prepared already — a person asking for it after an
      *     edit, never the sweep
      * @param actor the operator who asked, recorded as the registrant; null for the sweep's own work
+     * @param callerRevision the revision the OPERATOR was looking at, or 0 for the sweep, which reads
+     *     its own. A caller that supplies one gets it carried all the way to the locked comparison: an
+     *     earlier version checked it in the resource and then read a fresh revision here, which is the
+     *     very race the parameter exists to close — between those two reads a competing registration
+     *     could open a newer gate that this stale call then superseded.
      */
-    Result prepare(String id, boolean again, String actor) {
+    Result prepare(String id, boolean again, String actor, long callerRevision) {
         // The revision is captured HERE, with the item, and carried to the registration below. Reading
         // it again after the forge call would adopt whatever happened meanwhile: a manual preparation
         // that landed in between would be superseded by this older composition, and work begun for one
@@ -151,18 +178,38 @@ public class WorkPreparationSweep {
         List<dev.codespire.contract.event.EventEnvelope> history = store.history(id);
         if (history.isEmpty()) return new Result(false, "work_item_unknown");
         long expectedRevision = history.size();
+        if (callerRevision > 0 && callerRevision != expectedRevision) return new Result(false, "work_item_changed");
         WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
         long generation = item.generation();
         if (item.preparation() != null && !again) return new Result(false, "already_prepared");
+        // The sweep's OWN trigger, re-read from the item it captured. candidates() selected this id
+        // earlier; a re-admission or a policy change between that query and this capture would
+        // otherwise let the automatic path prepare a state it was never triggered for. The deliberate
+        // path is exempt on purpose — a person composing again is not this trigger.
+        if (actor == null && !automatic(item)) return new Result(false, "work_item_changed");
 
+        try { return attempt(id, again, actor, history, expectedRevision, item, generation); }
+        catch (RuntimeException failure) {
+            LOG.warnf(failure, "work item %s could not be prepared automatically", id);
+            return refuse(id, generation, "preparation_failed");
+        }
+    }
+
+    private Result attempt(String id, boolean again, String actor,
+                           List<dev.codespire.contract.event.EventEnvelope> history, long expectedRevision,
+                           WorkItemEvent item, long generation) {
         BuildDefaults.Defaults setup = defaults.get(item.repositoryId());
         if (!setup.set()) return refuse(id, generation, "build_defaults_missing");
         // What the dispatch will ask, asked before an approval is opened on it. Without this, disabling
         // a model after the setup was saved still produced a decision whose build was already refused.
-        if (models.isDisabled(setup.model())) return refuse(id, generation, "model_disabled");
-        var unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
-        if (!unpriced.isEmpty()) return refuse(id, generation, "model_pricing_incomplete:"
-                + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
+        try {
+            if (models.isDisabled(setup.model())) return refuse(id, generation, "model_disabled");
+            var unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
+            if (!unpriced.isEmpty()) return refuse(id, generation, "model_pricing_incomplete:"
+                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unavailable) {
+            return refuse(id, generation, "catalogue_unavailable");
+        }
 
         var observed = transitions.observe(item.sourceId(), item.issue());
         if (observed.evidence().failure() != null) return refuse(id, generation, observed.evidence().failure());
@@ -232,17 +279,21 @@ public class WorkPreparationSweep {
     private void comment(String id, WorkItemEvent item) {
         if (!sources.get(item.sourceId()).map(source -> sources.client(source).capabilities()
                 .contains(WorkSource.Capability.COMMENT)).orElse(false)) return;
-        WorkItemEvent prepared = store.load(id);
-        if (prepared == null || prepared.preparation() == null) return;
-        // Every value comes from the preparation that is actually registered. Mixing them with what this
-        // attempt composed would describe a preparation nobody holds if another one won the race.
+        // ONE snapshot: the text and the revision it is enqueued against come from the same read, so
+        // they cannot describe different preparations. Taking them from two reads let a replacement
+        // between the two put the earlier preparation's words under the later one's authority.
+        var history = store.history(id);
+        if (history.isEmpty()) return;
+        long revision = history.size();
+        WorkItemEvent prepared = (WorkItemEvent) history.getLast().payload();
+        if (prepared.preparation() == null) return;
         var winner = prepared.preparation();
         String text = "Prepared by the factory from this ticket.\n\n"
                 + "- Specification digest: `" + winner.specification().sha256() + "`\n"
                 + "- Plan: one step, built from " + winner.harness() + " on " + winner.model() + "\n"
                 + "- Starts from `" + winner.baseBranch() + "` at `" + winner.baseCommit() + "`\n\n"
                 + "Editing this ticket does not change what was prepared; prepare it again to pick up an edit.";
-        try { effects.enqueue(UUID.randomUUID(), id, store.history(id).size(), WorkSourceEffects.Kind.COMMENT, text); }
+        try { effects.enqueue(UUID.randomUUID(), id, revision, WorkSourceEffects.Kind.COMMENT, text); }
         catch (RuntimeException failure) {
             // The preparation stands. A missing comment is worth a log line, not an undone registration.
             LOG.warnf("work item %s was prepared but its tracker comment could not be queued (%s)",
@@ -250,9 +301,17 @@ public class WorkPreparationSweep {
         }
     }
 
-    /** Records the refusal against the generation this attempt began in, and answers it to the caller. */
+    /**
+     * Records the refusal against the generation this attempt began in, and answers it to the caller.
+     *
+     * <p>One reason is deliberately NOT recorded. {@code work_item_changed} says somebody else acted —
+     * a person registered a preparation, or a newer generation began. It is a fact about the item, not
+     * about the factory's ability to prepare it, and writing it as health made the list tell an operator
+     * "the factory could not prepare this task" beside the open plan gate that had just been created
+     * for it.
+     */
     private Result refuse(String id, long generation, String reason) {
-        record(id, generation, reason);
+        if (!"work_item_changed".equals(reason)) record(id, generation, reason);
         return new Result(false, reason);
     }
 

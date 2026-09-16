@@ -62,6 +62,12 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
                 "{\"name\":\"main\",\"commit\":{\"sha\":\"" + "d".repeat(40) + "\"}}").withFixedDelay(millis)));
     }
 
+    /** A branch-head read that is both slow and doomed, so a refusal WORTH recording lands late. */
+    private void slowFailingHead(int millis) {
+        forge.stubFor(get(urlEqualTo("/repos/" + scope + "/branches/main"))
+                .willReturn(WireMock.aResponse().withStatus(500).withFixedDelay(millis)));
+    }
+
     private void awaitHeadRequest() throws Exception {
         for (int attempt = 0; attempt < 100; attempt++) {
             if (!forge.findAll(getRequestedFor(urlEqualTo("/repos/" + scope + "/branches/main"))).isEmpty()) return;
@@ -217,7 +223,7 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         edited.putArray("labels").add("TEST-assisted");
         forge.stubFor(get(urlEqualTo("/repos/" + scope + "/issues/88")).willReturn(okJson(edited.toString())));
 
-        assertTrue(sweep.prepareAgain(id, "TEST-prepared-admin").prepared());
+        assertTrue(sweep.prepareAgain(id, store.history(id).size(), "TEST-prepared-admin").prepared());
         var second = store.load(id).preparation();
         assertNotEquals(first.specification().storedId(), second.specification().storedId());
         assertNotEquals(first.binding(), second.binding());
@@ -292,12 +298,12 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
     @Test
     void healthIsRecordedAgainstTheGenerationThatWasAttempted() throws Exception {
         String id = admit("assisted", 93);
-        slowHead(800);
+        slowFailingHead(800);
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             var running = pool.submit(() -> sweep.prepare(id));
             awaitHeadRequest();
             assertEquals(200, transitions.resume(id, store.history(id).size(), true).status());
-            assertFalse(running.get(30, TimeUnit.SECONDS).prepared());
+            assertEquals("branch_head_unconfirmed", running.get(30, TimeUnit.SECONDS).reason());
         }
         assertEquals(2, store.load(id).generation(), "the re-admission is what makes the two generations differ");
         assertEquals(1, count("SELECT count(*) FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=1", id));
@@ -353,6 +359,146 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
             ps.setLong(1, seconds); ps.setString(2, id);
             try (ResultSet rs = ps.executeQuery()) { return rs.next() && rs.getBoolean(1); }
         }
+    }
+
+    /**
+     * The revision a person was looking at reaches the LOCKED comparison, not a fresh read.
+     *
+     * <p>The first version of this checked the revision in the resource and then let the composition
+     * read its own. Between those two reads a competing registration could open a newer gate, which the
+     * stale call then superseded — the precise race the parameter exists to close.
+     */
+    @Test
+    void composingAgainWithTheRevisionTheScreenShowedRefusesOnceSomebodyElseHasActed() throws Exception {
+        String id = admit("assisted", 96);
+        long shown = store.history(id).size();
+        register(id);
+        assertTrue(store.history(id).size() > shown, "the other person's registration is what moves it on");
+
+        var result = sweep.prepareAgain(id, shown, "TEST-stale-tab");
+
+        assertFalse(result.prepared());
+        assertEquals("work_item_changed", result.reason());
+        assertEquals(WorkPreparation.Origin.TRACKER, store.load(id).preparation().specification().origin(),
+                "the registration that was there first still stands");
+    }
+
+    /** And the same call with the current revision goes through, or the test above proves only refusal. */
+    @Test
+    void composingAgainWithTheCurrentRevisionIsAllowed() throws Exception {
+        String id = admit("assisted", 97);
+        register(id);
+
+        var result = sweep.prepareAgain(id, store.history(id).size(), "TEST-operator");
+
+        assertTrue(result.prepared(), result.reason());
+        assertEquals("TEST-operator", store.load(id).preparation().registeredBy());
+    }
+
+    /**
+     * A catalogue that will not answer is a refusal with a name, not an escaped exception.
+     *
+     * <p>It reaches no forge, so it belongs on the flat wait; letting it escape turned it into
+     * {@code preparation_failed} on the exponential one, and the reason the design lists was
+     * unreachable on this path.
+     */
+    @Test
+    void aCatalogueThatWillNotAnswerRefusesByNameRatherThanFailing() throws Exception {
+        String id = admit("assisted", 98);
+        executeWith("UPDATE llm_model SET name=? WHERE id=?", "TEST-renamed-away", modelId);
+        try {
+            sweep.sweep();
+            assertNull(store.load(id).preparation());
+            // The saved setup names a model the catalogue no longer has; the read cannot say whether it
+            // is offered, and a preparation must not be built on an unanswered question.
+            assertNotNull(reason(id));
+            assertNotEquals("preparation_failed", reason(id), "an unanswered catalogue has its own name");
+        } finally { executeWith("UPDATE llm_model SET name=? WHERE id=?", model, modelId); }
+    }
+
+    /**
+     * A registration a PERSON made clears the health the sweep left behind.
+     *
+     * <p>Health answers "why has nothing been prepared". Something now is, and leaving the old sentence
+     * made the list say the factory could not prepare a task whose plan gate was open in front of them.
+     */
+    @Test
+    void aPersonRegisteringByHandClearsWhateverTheSweepCouldNotDo() throws Exception {
+        execute("DELETE FROM repository_build_defaults WHERE repository_id=?", repository);
+        String id = admit("assisted", 99);
+        sweep.sweep();
+        assertEquals("build_defaults_missing", reason(id));
+
+        register(id);
+
+        assertEquals(0, attempts(id), "a prepared generation has nothing left to report");
+    }
+
+    /** The loser of a race records nothing: the item changing is not the factory failing. */
+    @Test
+    void theSweepLosingARaceLeavesNoFailureOnAnItemThatIsPrepared() throws Exception {
+        String id = admit("assisted", 100);
+        slowHead(800);
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            var running = pool.submit(() -> sweep.prepare(id));
+            awaitHeadRequest();
+            register(id);
+            assertFalse(running.get(30, TimeUnit.SECONDS).prepared());
+        }
+        assertNotNull(store.load(id).preparation(), "the person's registration won");
+        assertEquals(0, attempts(id), "and the loser must not report a failure against it");
+    }
+
+    /**
+     * An item nobody has tried yet is picked before a cohort of old failing ones.
+     *
+     * <p>An attempt never touches the item, so ordering the queue by the item's own age let old,
+     * permanently failing rows come due again before selection ever reached a ticket written today —
+     * and with a bounded batch they could hold every slot for ever.
+     */
+    @Test
+    void aTicketNobodyHasTriedYetIsNotStuckBehindOlderFailingOnes() throws Exception {
+        execute("DELETE FROM repository_build_defaults WHERE repository_id=?", repository);
+        for (int number = 101; number <= 105; number++) { admit("assisted", number); }
+        sweep.sweep();
+        String fresh = admit("assisted", 106);
+        // Every older item is due again, so an age-ordered queue would fill its whole batch with them.
+        executeWith("""
+                UPDATE work_item_preparation_attempt SET retry_after=now()-interval '1 minute'
+                 WHERE work_item_id IN (SELECT id FROM work_item WHERE repository_id=?)
+                """, repository);
+
+        sweep.sweep();
+
+        assertEquals("build_defaults_missing", reason(fresh), "the newest ticket must still be reached");
+    }
+
+    /**
+     * The automatic path prepares only what its own trigger selected.
+     *
+     * <p>{@code candidates()} asks the projection; the attempt then captures the item a moment later. A
+     * re-admission or a policy change in that gap used to be adopted silently, because the capture was
+     * believed and only "is something already prepared" was re-asked. This drives the gap directly: an
+     * item that does not match the trigger is handed to the automatic path, which must decline it
+     * WITHOUT doing any remote work — the refusal is the point, and so is the forge never being asked.
+     */
+    @Test
+    void theAutomaticPathDeclinesAnItemItsOwnTriggerWouldNotHaveSelected() throws Exception {
+        String id = admit("assisted", 107);
+        // A person takes the item over. It keeps no preparation, and it stops matching the trigger.
+        assertEquals(200, transitions.resume(id, store.history(id).size(), true).status());
+        var readmitted = store.load(id);
+        assertNull(readmitted.preparation(), "the case is an item with nothing prepared");
+        assertNotEquals("specification_required", readmitted.reason(),
+                "a state the trigger would never have selected is the whole point of this case");
+
+        forge.resetRequests();
+        var result = sweep.prepare(id);
+
+        assertFalse(result.prepared());
+        assertNull(store.load(id).preparation());
+        assertTrue(forge.findAll(getRequestedFor(urlEqualTo("/repos/" + scope + "/branches/main"))).isEmpty(),
+                "declining must cost no remote call; asking first is the whole defect");
     }
 
     /**

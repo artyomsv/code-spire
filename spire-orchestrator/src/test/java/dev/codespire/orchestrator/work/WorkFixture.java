@@ -102,6 +102,14 @@ abstract class WorkFixture {
             try(ResultSet rs=ps.executeQuery()){rs.next();return rs.getLong(1);}
         }
     }
+    /** Any number of bound values, including none. The single-value form below predates it. */
+    void executeWith(String sql,Object... values) throws SQLException {
+        try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(sql)) {
+            for(int index=0;index<values.length;index++)ps.setObject(index+1,values[index]);
+            ps.executeUpdate();
+        }
+    }
+
     void execute(String sql,Object value) throws SQLException {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(sql)){ps.setObject(1,value);ps.executeUpdate();}
     }

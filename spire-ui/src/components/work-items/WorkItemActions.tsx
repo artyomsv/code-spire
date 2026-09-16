@@ -58,7 +58,14 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // prepared, and after an edit they made on purpose.
   // waiting_approval included on purpose: an assisted item sits at its plan gate, which is exactly when
   // an operator reads the ticket again and edits it. The server refuses anything a build has started.
-  const canCompose = ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
+  // The server refuses a composition once this generation has attempted a phase, because replacing the
+  // task under a build that already ran needs an explicit re-admission. Offering the button there means
+  // offering one that can only fail. The builds this generation already has are the visible half of that
+  // rule — an approximation of work_phase_attempt, and deliberately the conservative one: it hides a
+  // button the server might have allowed rather than offering one it must refuse.
+  const attempted = (item.builds ?? []).some(build => build.generation === item.generation);
+  const canCompose = !attempted
+    && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
   if (!canResume && !canReadmit && !canCompose) return null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">

@@ -70,6 +70,11 @@ export interface WorkItemTracker {
    * ticket changed after it was prepared. Null when the ticket could not be a specification at all.
    */
   composedSha256?: string | null;
+  /**
+   * Why it could not, when there is no digest. An emptied or oversized ticket has drifted further from
+   * what was prepared than an edited one, and without this it read as no drift at all.
+   */
+  composedRefusal?: string | null;
   title: string;
   body: string;
   trackerStatus: string;

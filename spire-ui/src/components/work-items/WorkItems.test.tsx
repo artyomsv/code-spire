@@ -572,7 +572,7 @@ it('composes the task again from the ticket, and says why the factory could not'
 
   expect(await screen.findByText(/This ticket has no description/)).toBeInTheDocument();
   expect(screen.getByText(/tried 3 times/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Prepare again from the ticket' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Prepare again from the ticket' }));
   await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
 });
 
@@ -630,6 +630,44 @@ it('adds no drift notice while the ticket still composes to what was prepared', 
 
 // An assisted item sits at its plan decision. That is exactly when an operator reads the ticket again
 // and edits it, so the button has to be reachable there rather than only before anything is prepared.
+// A ticket somebody emptied has drifted further from what was prepared than an edited one. It used to
+// arrive as an absent digest, which read exactly like "no drift", so the notice vanished when it mattered.
+it('says the ticket changed when it can no longer be prepared at all', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: '', trackerStatus: 'open',
+    composedSha256: null, composedRefusal: 'ticket_body_empty' });
+  showDetail();
+
+  expect(await screen.findByText(/The ticket changed after it was prepared/)).toBeInTheDocument();
+  expect(screen.getByText(/This ticket has no description/)).toBeInTheDocument();
+});
+
+// The server refuses a composition once this generation has attempted a phase. A button that can only
+// fail is worse than no button: it reads as "the system is broken" rather than "that is not allowed".
+it('stops offering to compose again once this generation has built something', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', preparation: prepared(),
+    builds: [{ attemptId: 'TEST-attempt', state: 'held', runId: 'TEST-run', reason: null, generation: detail().generation }] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Prepare again from the ticket' })).not.toBeInTheDocument();
+});
+
+// A build belonging to an OLDER generation must not hide it: that item was re-admitted and is starting over.
+it('still offers to compose again when the build belonged to an earlier generation', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', preparation: prepared(),
+    builds: [{ attemptId: 'TEST-attempt', state: 'held', runId: 'TEST-run', reason: null, generation: detail().generation - 1 }] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  expect(await screen.findByRole('button', { name: 'Prepare again from the ticket' })).toBeInTheDocument();
+});
+
 it('offers composing again while a plan decision is open', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: prepared() });

@@ -407,13 +407,21 @@ it prepared, so a person reading the ticket alone learns the task exists.
 **Why nothing catches it.** The comment is posted AFTER the transaction that registers the
 preparation, and is best-effort by construction. A process death, a tracker outage or a source without
 the COMMENT capability leaves the item correctly prepared with no comment on the ticket. Nothing
-retries it, and nothing records that it was skipped — a ticket with no comment and a ticket the
-factory never reached read the same on the tracker.
+retries the CREATION of that intent, and nothing records that it was skipped — a ticket with no comment
+and a ticket the factory never reached read the same on the tracker. Once an intent does exist it is
+handled durably: the outbox records refused and uncertain states and recovers uncertain writes. The
+missing durability is the creation, not the delivery.
 
 Two things bound the damage. The comment is a courtesy: the factory's own screens hold the authority,
-and the preparation, the gate and the stored texts are all durable. And every value in the comment is
-read back from the preparation that actually won the registration, so a comment that IS posted never
-describes a composition nobody holds.
+and the preparation, the gate and the stored texts are all durable. And the comment's text and the
+revision it is enqueued against come from ONE history read, so a replacement landing between them cannot
+put one preparation's words under another's authority.
+
+**A posted comment can still describe a composition that is no longer current**, and an earlier version
+of this entry said otherwise. The outbox permanently refuses an enqueued comment after any item-revision
+or phase change, so a quick approval suppresses a valid notice; and a preparation replaced after the
+comment was written leaves the older text already posted. The screens are the authority; the ticket
+comment is a note about a moment.
 
 **Evidence needed.** None — this is a deliberate omission, not a suspicion. Closing it means giving
 the tracker write the transactional-outbox treatment the other uncertain tracker writes already have

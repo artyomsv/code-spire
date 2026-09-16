@@ -111,14 +111,16 @@ public class WorkPreparationResource {
      */
     @POST @Path("/compose")
     public Response compose(@PathParam("id") String id,@QueryParam("expectedRevision") long expectedRevision) {
+        // The revision the operator was LOOKING at, and it is REQUIRED. An earlier version accepted its
+        // absence and checked it here, outside the transaction, which left the exact race the parameter
+        // exists to close: between this read and the registration's own, a competing preparation could
+        // open a newer gate that this stale call then superseded. It is now carried to the locked
+        // comparison, and a caller that omits it is refused rather than exempted.
+        if(expectedRevision<1)throw new BadRequestException("The current item revision is required");
         var item=store.load(id);if(item==null)throw new NotFoundException();
         String actor=OidcSubjects.of(identity);
         if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
-        // The revision the operator was LOOKING at. Without it a stale tab could replace a decision that
-        // opened after the page was rendered, and the history would attribute it to the system.
-        if(expectedRevision>0 && store.history(id).size()!=expectedRevision)
-            return Response.status(409).entity(Map.of("reason","work_item_changed")).build();
-        var result=sweep.prepareAgain(id,actor);
+        var result=sweep.prepareAgain(id,expectedRevision,actor);
         return Response.status(result.prepared()?200:409).entity(Map.of("reason",result.reason())).build();
     }
 

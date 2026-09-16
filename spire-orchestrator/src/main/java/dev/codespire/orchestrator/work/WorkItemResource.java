@@ -87,7 +87,19 @@ public class WorkItemResource {
      *     screen compares it with the pinned one to say "the ticket changed after it was prepared"
      *     without re-hashing anything in a browser, and without changing the bytes that were approved.
      */
-    public record Tracker(String title, String body, String trackerStatus, String composedSha256) {}
+    /**
+     * @param composedSha256 what a specification composed from THIS ticket text would hash to, or null
+     *     when the ticket could not be one at all
+     * @param composedRefusal why it could not, when {@code composedSha256} is null. Without this an
+     *     emptied or oversized ticket looked exactly like a ticket that still matches what was
+     *     prepared, and the drift notice quietly disappeared at the moment it was most needed.
+     */
+    public record Tracker(String title, String body, String trackerStatus, String composedSha256,
+                          String composedRefusal) {
+        public Tracker(String title, String body, String trackerStatus, String composedSha256) {
+            this(title, body, trackerStatus, composedSha256, null);
+        }
+    }
 
     @GET
     public Page list(@QueryParam("offset") @DefaultValue("0") int offset, @QueryParam("limit") @DefaultValue("50") int limit,
@@ -155,10 +167,12 @@ public class WorkItemResource {
 
     @Inject WorkPreparationComposer composer;
 
-    /** Null when this ticket could not be a specification at all; the item page says why separately. */
-    private String composedDigest(dev.codespire.worksource.WorkTicket ticket) {
-        try { return dev.codespire.contract.work.WorkPreparation.digest(composer.specification(ticket)); }
-        catch (WorkPreparationComposer.NotComposable notComposable) { return null; }
+    /** The digest, or the rule that stops this ticket being a specification — never neither. */
+    private record Composed(String sha256, String refusal) {}
+
+    private Composed composedDigest(dev.codespire.worksource.WorkTicket ticket) {
+        try { return new Composed(dev.codespire.contract.work.WorkPreparation.digest(composer.specification(ticket)), null); }
+        catch (WorkPreparationComposer.NotComposable notComposable) { return new Composed(null, notComposable.reason()); }
     }
 
     @GET @Path("/{id}/tracker")
@@ -170,9 +184,11 @@ public class WorkItemResource {
         Thread.ofVirtual().start(task);
         try {
             WorkSource.Fetch result = task.get(20, TimeUnit.SECONDS);
-            if (result instanceof WorkSource.Fetch.Found found)
+            if (result instanceof WorkSource.Fetch.Found found) {
+                Composed composed = composedDigest(found.ticket());
                 return new Tracker(found.ticket().title(), found.ticket().body(), found.ticket().trackerStatus(),
-                        composedDigest(found.ticket()));
+                        composed.sha256(), composed.refusal());
+            }
         } catch (Exception failure) {
             task.cancel(true);
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();

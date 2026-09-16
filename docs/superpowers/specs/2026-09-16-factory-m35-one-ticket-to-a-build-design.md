@@ -152,32 +152,73 @@ No storage kind, injection, charging rule or screen exists for a sign-in file.
 
 ### 5.2 What the operator does
 
-1. **Once, on their own machine:** sign in to Codex into a folder used only by the factory, for example
-   `CODEX_HOME=<folder> codex login`. Do not use the everyday `~/.codex` folder. Two programs that share
-   one sign-in may lock each other out when one of them refreshes the token (**not verified**; F0
-   measures it).
-2. **Settings → Harness credentials → Add Codex subscription:** a label and the contents of `auth.json`.
-   The screen never shows the contents again. The same screen lists and manages API keys, which today
-   have no screen (`techdebt/spire-ui/4-3-three-factory-surfaces-still-have-no-screen.md`).
-3. **Factory tab step 5:** Pay with → Codex subscription.
+**No terminal, on any machine.** An earlier draft of this section asked the operator to run
+`CODEX_HOME=<folder> codex login` on the host and then paste the resulting `auth.json` into a form. That
+cannot ship. In a real deployment the services run in containers on a machine the operator may never log
+in to, and a product that requires a shell on the server is not a product. The operator has a browser;
+that is all this may assume.
 
-The screen recommends a ChatGPT seat used only by the factory (see 5.9).
+What they actually do:
+
+1. **Settings → Harness credentials → Add a Codex subscription.** Type a label. Press *Start sign-in*.
+2. The screen shows a link and a one-time code, with the time left. The operator opens the link **on any
+   device** — phone, laptop, anything — signs in to ChatGPT and types the code.
+3. The screen turns into the signed-in identity as the vendor reports it, masked. It never shows a token.
+4. **Factory tab step 5:** Pay with → Codex subscription.
+
+The screen recommends a ChatGPT seat used only by the factory (see 5.9). It also warns that signing the
+same seat in twice can lock the factory out, because two holders of one sign-in can each invalidate the
+other's refresh token — **not verified**, and 5.3 says how the first real sign-in measures it.
+
+**How that works, and why it is built this way.** Something has to speak the device-authorization
+protocol. Two ways were considered:
+
+- Speak OAuth directly from the orchestrator. Rejected: it needs the vendor's client id and endpoints,
+  which are internal to a compiled CLI and are not published. A vendor change would break sign-in with no
+  warning and nothing to read.
+- **Run the vendor's own CLI, in a short-lived trusted unit.** Chosen. The run worker already drives a
+  container runtime for every agent run, in development and in Kubernetes alike, so no new capability is
+  introduced and the orchestrator still starts nothing itself.
+
+The unit is **trusted** in the one sense that matters: no repository, no workspace mount, no prompt, no
+ticket text. Nothing attacker-controlled enters it, which is what separates it from an agent container
+and what makes reading its output safe. It runs `codex login --device-auth` with a private
+`CODEX_HOME` on a scratch volume, the worker reads the link and code from its output and returns them
+over the existing command channel, and the operator's approval is what ends it. The worker then returns
+what the CLI wrote, the orchestrator encrypts it into the credential pool, and the scratch volume is
+destroyed. A unit nobody approves exits when the code expires, and leaves nothing.
 
 ### 5.3 F0 — measure before building
 
-Use the pinned `spire-agent-codex` image (`@openai/codex@0.146.0`), the operator's dedicated sign-in and
-one TEST prompt. Measure:
+**Measured on 2026-09-16**, in the pinned `spire-agent-codex` image (`@openai/codex@0.146.0`), with no
+account and no spend. These are what the CLI offers, and they are why 5.2 and 5.6 read as they do:
 
-1. A container with only a copied `auth.json`, and no login step, runs `codex exec --json` to completion.
-2. Whether a run rewrites `auth.json`, and when (`last_refresh`).
-3. After a refresh, whether the previous refresh token still works.
-4. Whether any cheap CLI command renews the sign-in **without** spending model quota.
-5. What a usage-limit refusal looks like on the NDJSON stream and in the exit code, so that the pool can
-   tell `rate_limited` from `rejected`.
-6. Which usage buckets a subscription run reports.
+| Asked | Answer |
+|---|---|
+| Is there a sign-in that needs no terminal and no local port? | Yes. `codex login --device-auth` prints the fixed link `https://auth.openai.com/codex/device` and a one-time code of the form `XXXX-XXXXX`, stated to expire in 15 minutes. It binds no port and opens no browser. |
+| What does it write, and when? | Nothing until the code is approved. Before that only `log/` and `tmp/` exist under `CODEX_HOME`. |
+| Can a token be handed in without a file? | Yes, twice over: `codex login --with-api-key` and `codex login --with-access-token` both read from **stdin**. |
+| What does an API-key sign-in look like on disk? | `auth.json`, mode `0600`, `{"auth_mode":"apikey","OPENAI_API_KEY":"…"}`. |
+| Does the CLI check a key when it stores one? | **No.** A junk string is accepted and reported as logged in. A stored credential is therefore not evidence that it works. |
+| Is there something safe to show on a screen? | Yes. `codex login status` prints a masked identity (`sk-TEST-***l-key` for the junk key above), never the secret. |
+| Can a sign-in be removed? | Yes. `codex logout`. |
 
-Answers 2, 3 and 4 choose the refresh path in 5.6. The measurements go into EXECUTION-LAYER §3.3 with
-their date and the CLI version.
+Five questions remain, and each one needs a real sign-in. They are answered from the **first sign-in the
+operator makes through 5.2's own screen** — not from a shell — and the answers are written into
+EXECUTION-LAYER §3.3 with their date and the CLI version:
+
+1. What a ChatGPT-mode `auth.json` holds: the field names only, never a value.
+2. Whether a run rewrites it, and how often.
+3. After a refresh, whether the previous refresh token still works — which also answers whether two
+   holders of one seat lock each other out (5.2).
+4. Whether any cheap CLI command renews the sign-in **without** spending model quota. This chooses the
+   refresh path in 5.6, so until it is answered path (b) is what ships.
+5. What a usage-limit refusal looks like on the NDJSON stream and in the exit code, so the pool can tell
+   `rate_limited` from `rejected`, and which usage buckets a subscription run reports.
+
+**Nothing is built on an unmeasured answer.** Where one is missing, the design takes the option that is
+safe when the guess is wrong: no automatic refresh, and a sign-in that is used until the vendor refuses
+it.
 
 ### 5.4 Storage, identity and selection
 
@@ -185,9 +226,12 @@ their date and the CLI version.
   `API_KEY`). `api_key` is renamed `secret`. `base_url` may be empty for a subscription. `account_ref`
   holds the ChatGPT account id claim, never an e-mail address, and is **unique among subscription
   members**, so the same sign-in cannot be uploaded twice under two labels and then leased twice.
-- **Upload check.** The file must be a JSON object with its tokens present and a readable account id. It
-  is stored Tink-encrypted with the row id as AAD, as keys are today. A file that carries an API key
-  shape is refused rather than stored as a sign-in.
+- **What is stored.** Not an upload: the bytes the trusted sign-in unit's CLI wrote (5.2). The
+  orchestrator checks that they are a JSON object, that `auth_mode` is the ChatGPT one rather than
+  `apikey`, and that an account id can be read; then stores them Tink-encrypted with the row id as AAD,
+  as keys are today. A sign-in that came back in API-key mode is refused with "that signed in as an API
+  key, not a subscription" rather than stored under the wrong kind. The bytes are opaque to everything
+  above storage — the fields inside them are the vendor's, and 5.3 says they are measured, not assumed.
 - **Selection.** `select(harness, billing)` picks only members of the requested mode, and a `SUBSCRIPTION`
   member serves only a harness that declares subscription support. Least-recently-exhausted order does
   not change. **Every existing caller keeps API-key selection** — `FixRunDispatcher.java:174`,
@@ -216,9 +260,14 @@ lease, dispatch failure before the container exists, and two uploads of the same
 
 ### 5.6 Injection and refresh — the agent never hands a credential back
 
-- The worker passes the credential kind beside `HarnessInvocation.CREDENTIAL`. `CodexAdapter` writes the
-  file to `$HOME/.codex/auth.json` with mode 0600 through a pipe, never through argv. Then it starts
-  `codex exec` without a login step.
+- The worker passes the credential kind beside `HarnessInvocation.CREDENTIAL`. `CodexAdapter` pipes an
+  **access token** into `codex login --with-access-token` on stdin, exactly as it pipes an API key into
+  `--with-api-key` today (F0 measured both). Then it starts `codex exec`. No credential file is written
+  into the agent container, and nothing reaches argv or the environment.
+- **The refresh token never leaves the orchestrator.** An access token expires on its own; a refresh
+  token does not, and an agent that reads one holds the sign-in until a person revokes it. Handing the
+  agent the short-lived half is therefore not a detail of the plumbing — it is the whole difference
+  between a leak that ages out and a leak that does not.
 - **The container's copy is one-way.** The agent has a full shell (`CodexAdapter.java:105,127`) and runs
   ticket text, so anything it writes is attacker-controlled. Accepting a rewritten `auth.json` back — even
   with a matching account claim and a newer timestamp — lets a prompt-injected agent store a broken
@@ -393,6 +442,12 @@ slow attempt impose its obsolete reason and backoff on a generation that was re-
 Every viewer sees the health sentence, on the list and on the detail page: only an administrator can
 prepare anything, but "why has nothing been prepared" is the first question everyone asks.
 
+**Only a saved build setup wakes an item immediately.** Entering a missing rate, or switching a model
+back on, wakes nothing — those items wait out the flat minute below plus the sweep's own interval. That
+is a bounded delay and it is stated here rather than promised away, because an earlier draft of this
+section said "retries immediately after the operator repairs defaults, pricing or a sign-in" and only
+the first third of that was ever built.
+
 **The backoff has two shapes, because the refusals do.** A refusal a LOCAL check settled — no build
 setup, a switched-off model, an unpriced token type, a catalogue that would not answer — stops before
 any remote call, so trying again costs one database read. Those wait a flat minute. A refusal that cost
@@ -403,6 +458,16 @@ repository's build setup goes further and makes its items due at once, in the sa
 save, because that is the commonest repair of all.
 
 ### 6.6 A refusal at dispatch must still say what it is
+
+**What is built is the MODEL half, not a shared preflight.** The sweep asks the two questions that were
+actually causing approved plans to die — is this model switched off, and are all its reported token types
+priced — using the same calls dispatch uses. It does **not** yet ask the other three: whether the
+repository has a FACTORY binding rather than only a REVIEWER one, whether the credential pool has a
+member, or whether the deployment spend gate is already refusing. Those are still discovered at dispatch,
+and an approval can still open on a build that fails for one of them. Manual registration reaches only
+the parse-only validation it always did. Closing that means one non-consuming prerequisite check shared
+by registration, sweep and dispatch; this slice did not build it, and dispatch keeps its authoritative
+rechecks either way, because credentials, prices and caps all change after an approval.
 
 An approved plan that stops at dispatch with no explanation breaks the one-ticket promise.
 `WorkRunDispatcher` catches an assembly refusal and persists `build_configuration_unavailable`
@@ -465,7 +530,7 @@ findings, six of them high. Every claim quoted below was re-checked in the code 
 | Dispatch collapses every refusal into one reason | 6.6: a shared preflight and a structured refusal |
 | The head read needs an item and falls back to REVIEWER | 3: a repository-scoped read, with the fallback stated |
 
-## 11. What the part C review changed
+## 11. What the two part C reviews changed
 
 Part C's shipped commits were reviewed against the code on 2026-09-16
 (`build/codex-review-153ca2d7.md`). Thirteen findings, two of them high. Every claim was re-checked in
@@ -486,3 +551,19 @@ the code before anything changed, and every guard below is mutation-verified.
 | Preparation health never reached the triage list or a viewer's detail page | 6.5: rendered independently of who may act on it |
 | The gate test compared a recomputed binding with itself, so a corrupted stored gate would survive | the test reads `item.gate().artifact()` |
 | The version test never decoded old JSON through the production codec | a wire test decodes the exact M3 shape and asserts the hash is unchanged |
+
+The answers were reviewed again on 2026-09-16 (`build/codex-review-5d579af3.md`). One HIGH and nine
+MEDIUMs — including one defect introduced by the previous round's own fix:
+
+| Finding | Change |
+|---|---|
+| **HIGH.** Composing again checked the caller's revision in the resource and then read a fresh one, so the parameter closed nothing; omitting it skipped even that check | the revision is required, positive, and carried unchanged to the locked comparison |
+| The scheduled handler reloaded the item to learn which generation had failed | every attempt records inside itself, against the generation it captured; the outer handler only logs |
+| `catalogue_unavailable` was unreachable — the exception escaped as `preparation_failed` on the exponential wait | caught where it is raised and refused by name |
+| A losing attempt wrote health onto a generation the winner had just prepared, so the list said the factory had failed beside an open plan gate | `work_item_changed` is never health, and every registration clears health in its own transaction — a person's as well as the sweep's |
+| The sweep's trigger was re-checked in SQL but not against the item it captured | the same predicate, applied to the captured snapshot, for the automatic path only |
+| A permanently failing old cohort could hold every batch and starve new tickets | never-attempted items first, then whichever has been due longest |
+| The comment took its text from one history read and its revision from another | one snapshot for both |
+| An emptied or oversized ticket removed the drift notice instead of raising it | the tracker read returns the refusal beside the digest, and the notice says which |
+| "Prepare again" was offered where the server must refuse it | hidden once this generation has built something |
+| §6.5 and §6.6 claimed more than the code did | both corrected above, with what is missing named |
