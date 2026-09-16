@@ -28,7 +28,13 @@ public class WorkItemTransitions {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
         }
     }
-    public record Outcome(int status,String reason,WorkItemEvent item) {}
+    /**
+     * {@code detail} names which rule refused a registration, for the one caller that must tell an
+     * operator what to change. Transitions that have no rule to name keep the two-argument form.
+     */
+    public record Outcome(int status,String reason,String detail,WorkItemEvent item) {
+        public Outcome(int status,String reason,WorkItemEvent item) { this(status,reason,null,item); }
+    }
     public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown,WorkExecution execution) {
         public PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown) {
             this(attemptId,successful,wallSeconds,costMillicents,calls,usageKnown,null);
@@ -320,7 +326,7 @@ public class WorkItemTransitions {
         Observation observed=observe(item.sourceId(),item.issue());
         WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),preparation);
         if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),item);
-        if(prepared.failure()!=null)return new Outcome("artifacts_unavailable".equals(prepared.failure())?503:409,prepared.failure(),item);
+        if(prepared.failure()!=null)return new Outcome("artifacts_unavailable".equals(prepared.failure())?503:409,prepared.failure(),prepared.detail(),item);
         runAssembly.validate(observed.source(),preparation,prepared);
         return QuarkusTransaction.requiringNew().call(()-> {
             try(Connection c=dataSource.getConnection()) {

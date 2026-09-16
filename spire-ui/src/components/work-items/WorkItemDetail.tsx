@@ -7,6 +7,7 @@ import { getWorkItem, getWorkItemTracker, resumeWorkItem, type WorkItemDetail as
 import { useMe } from '../../hooks/useMe';
 import { canAdminister } from '../../auth';
 import { WorkflowStatus, workReason } from './WorkItems';
+import { actorLabel } from '../actorsApi';
 
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
@@ -42,7 +43,13 @@ export default function WorkItemDetail() {
       <WorkItemPreparation key={`preparation:${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
       <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh workflow</button>
       <h3>Applied labels</h3>
-      <ul>{item.appliedLabels.map(label => <li key={label.label}><strong>{label.label}</strong>: actor {label.actorId}, {label.origin.toLowerCase().split('_').join(' ')}; profile version {label.profileVersion}</li>)}</ul>
+      {/* The label stores a stable provider id; the handle is looked up for reading and never stored
+          here, so a rename shows the current handle on the next read. */}
+      <ul>{item.appliedLabels.map(label => {
+        const person = item.people?.find(candidate => candidate.providerUserId === label.actorId);
+        return <li key={label.label}><strong>{label.label}</strong>: added by {person ? actorLabel(person) : 'an unknown person'}
+          {' '}<span className="prov-sub">{label.actorId}</span>, {label.origin.toLowerCase().split('_').join(' ')}; profile version {label.profileVersion}</li>;
+      })}</ul>
       <h3>Ignored labels</h3>
       {item.ignoredLabels.length === 0 ? <p>No labels were ignored.</p> : <ul>{item.ignoredLabels.map(label =>
         <li key={label.label}><strong>{label.label}</strong>: {workReason(label.reason)}</li>)}</ul>}

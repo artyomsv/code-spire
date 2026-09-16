@@ -94,6 +94,7 @@ let session: unknown = ADMIN_SESSION;
 function payloadFor(url: string): unknown {
   if (url.startsWith('/api/work-items?')) return { items: [], total: 0, offset: 0, limit: 50 };
   if (url === '/api/work-items/TEST-item/tracker') return { title: 'TEST-ticket', body: 'TEST-body', trackerStatus: 'open' };
+  if (url === '/api/work-items/TEST-item/preparation/options') return { harnesses: ['TEST-harness'] };
   if (url === '/api/work-items/TEST-item') return { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-repository',
     issueKey: 'TEST-1', repository: 'TEST-WS/TEST-REPO', revision: 1, updatedAt: '2026-09-13T12:00:00Z',
     trackerUrl: 'https://example.invalid/TEST/1', generation: 1, phase: 'spec', workflowStatus: 'awaiting_input',

@@ -42,7 +42,8 @@ export function runRow(overrides: Partial<RunListEntry> = {}): RunListEntry {
 
 export function runView(overrides: Partial<RunView> = {}): RunView {
   return {
-    ...runRow(), providerType: 'github', workspace: 'TEST-WS', slug: 'app', subject: 'task', attempt: 1,
+    ...runRow(), credentialLabel: 'TEST-pool-key', credentialType: 'openai',
+    providerType: 'github', workspace: 'TEST-WS', slug: 'app', subject: 'task', attempt: 1,
     baseBranch: 'main', baseCommit: 'TEST-base-sha', pushedAs: 'TEST-bot', unitId: null,
     taskSummary: 'TEST-task summary', blocked: [], failureDetail: null,
     spend: { priced: 0, unpricedLines: 0, tokensByType: {} }, ...overrides,

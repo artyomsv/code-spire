@@ -198,7 +198,7 @@ it('keeps the workflow visible when the tracker cannot be fetched', async () => 
   expect(screen.getByText('Admitted: Allowed current label.')).toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'Open ticket in tracker' })).toHaveAttribute('href', item().trackerUrl);
   expect(screen.getByRole('table')).toHaveTextContent('planapproveapprove');
-  expect(screen.getByText(/actor 900123, audit trail/)).toBeInTheDocument();
+  expect(screen.getByText(/added by an unknown person/)).toHaveTextContent(/900123, audit trail/);
 });
 
 it('shows the ignored reason and no selected profile', async () => {
@@ -261,4 +261,20 @@ it('heads the detail with the key while the tracker read is unavailable', async 
   vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-forge read failed'));
   showDetail();
   expect(await screen.findByRole('heading', { level: 2, name: 'TEST-0' })).toBeInTheDocument();
+});
+
+// A label carries a stable provider id. Shown alone it reads as "actor 900123", which names nobody.
+it('shows who applied a label by the handle the tracker knows', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(),
+    people: [{ providerUserId: '900123', handle: 'TEST-person', displayName: 'TEST Person' }] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  expect(await screen.findByText(/added by @TEST-person/)).toHaveTextContent('900123');
+});
+
+it('says the applier is unknown rather than showing a bare id as a name', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), people: [] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  expect(await screen.findByText(/added by an unknown person/)).toBeInTheDocument();
 });

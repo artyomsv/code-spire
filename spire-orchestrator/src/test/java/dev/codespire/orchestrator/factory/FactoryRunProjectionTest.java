@@ -360,6 +360,29 @@ class FactoryRunProjectionTest {
                 "the producer's own detail must not be discarded by the prefix");
     }
 
+    /**
+     * Which key paid for a run is operator metadata, and it was readable only in SQL. An operator
+     * asking "was this my API key or a subscription?" had no answer on the screen that spent it.
+     */
+    @Test
+    void aRunNamesTheCredentialThatPaidForIt() {
+        var member = pool.add("TEST-pool-frp-named-" + UUID.randomUUID(), "openai", "https://api.openai.com", "TEST-agent-key");
+        String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+        assertTrue(queueWith(runId, member.id()));
+
+        FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+        assertEquals(member.label(), view.credentialLabel());
+        assertEquals("openai", view.credentialType());
+    }
+
+    /** A run dispatched with no pool member names none, rather than inventing one. */
+    @Test
+    void aRunWithNoCredentialNamesNone() {
+        FactoryRunProjection.RunView view = projection.find(queuedRun()).orElseThrow();
+        assertNull(view.credentialLabel());
+        assertNull(view.credentialType());
+    }
+
     private String queuedRun() {
         String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
         assertTrue(reQueue(runId));

@@ -38,6 +38,8 @@ export interface WorkItemDetail extends WorkItemSummary {
   policyReason: string;
   ceiling: WorkItemSummary['profile'];
   appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
+  /** The source's allowed people, so a label's stored id can be shown as the handle the tracker knows. */
+  people?: { providerUserId: string; handle: string | null; displayName: string | null }[];
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
   events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
@@ -1071,6 +1073,9 @@ export interface RunSpend {
 
 /** Rich detail read model; the list's common fields retain the same names and meaning. */
 export interface RunView extends RunListEntry {
+  // Which pool member paid for this run. Null on a run dispatched before a credential was recorded.
+  credentialLabel: string | null;
+  credentialType: string | null;
   providerType: string;
   workspace: string;
   slug: string;

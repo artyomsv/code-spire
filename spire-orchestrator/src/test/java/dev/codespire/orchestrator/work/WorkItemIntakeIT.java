@@ -28,6 +28,18 @@ class WorkItemIntakeIT extends WorkSourceParityCases {
         assertEquals(1,count("SELECT count(*) FROM work_item WHERE id=?",itemId));
         assertNull(sources.get(source).orElseThrow().cursor());
     }
+    /**
+     * A label stores the stable provider id, which is the only identity safe to keep. The screen has
+     * to name a person, so the read carries the handles the tracker observed for this source's
+     * allowed people — resolved per read, never written onto the label.
+     */
+    @Test void theItemCarriesTheObservedHandlesForTheIdsOnItsLabels() throws Exception {
+        intake.accept(signed("900123"));
+        var view=resource.get(itemId);
+        assertTrue(view.appliedLabels().stream().anyMatch(label->"900123".equals(label.actorId())),"the label keeps the id");
+        var person=view.people().stream().filter(row->"900123".equals(row.providerUserId())).findFirst().orElseThrow();
+        assertEquals("TEST-person",person.handle());
+    }
     @Test void anAccountOutageCannotRetireOrDeleteTheWorkflow() throws Exception {
         intake.accept(signed("900123"));
         forge.stubFor(get(urlEqualTo(path)).willReturn(aResponse().withStatus(403)));

@@ -188,3 +188,18 @@ it('ignores an older detail response arriving after a newer push response', asyn
   expect(screen.getByText('Succeeded')).toBeInTheDocument();
   expect(screen.queryByText('Running')).toBeNull();
 });
+
+// "Was this my API key or a subscription?" had no answer on the screen that spent the money.
+it('names the key a run was billed to', async () => {
+  show(runView({ credentialLabel: 'TEST-factory-key', credentialType: 'openai' }));
+  expect(await screen.findByText('Billed to')).toBeInTheDocument();
+  expect(screen.getByText('API key TEST-factory-key · openai, billed per token')).toBeInTheDocument();
+});
+
+// An unrecorded key reads as unknown, never as a run nobody paid for.
+it('shows no key rather than inventing one when a run recorded none', async () => {
+  show(runView({ credentialLabel: null, credentialType: null }));
+  const card = await screen.findByRole('region', { name: 'Run definition' });
+  expect(within(card).getByText('Billed to').parentElement).toHaveTextContent('—');
+  expect(within(card).queryByText(/API key/)).toBeNull();
+});

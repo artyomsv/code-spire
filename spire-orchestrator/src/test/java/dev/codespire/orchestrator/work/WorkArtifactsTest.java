@@ -38,22 +38,22 @@ class WorkArtifactsTest {
         return new WorkPreparation(new WorkPreparation.Artifact(spec,WorkPreparation.digest(body)),new WorkPreparation.Artifact(plan,WorkPreparation.digest(planBody)),"main","a".repeat(40),"TEST-harness","TEST-model","TEST-operator");
     }
     WorkPreparation valid(){return prepare("TEST-specification",planBody("1",WorkPreparation.digest("TEST-specification"),step()));}
-    void invalidPlan(String version,String steps){var value=prepare("TEST-specification",planBody(version,WorkPreparation.digest("TEST-specification"),steps));assertEquals("single_step_plan_required",artifacts.observe(source,value).failure());}
+    void invalidPlan(String version,String steps,String detail){var value=prepare("TEST-specification",planBody(version,WorkPreparation.digest("TEST-specification"),steps));var evidence=artifacts.observe(source,value);assertEquals("single_step_plan_required",evidence.failure());assertEquals(detail,evidence.detail(),"The refusal must name the rule the operator has to fix");}
     @Test void readsTheBoundBodiesWithoutPersistingOrChangingThem(){var value=valid();var evidence=artifacts.observe(source,value);assertNull(evidence.failure());assertEquals("TEST-specification",evidence.specification());assertEquals("TEST-instruction",evidence.instruction());assertEquals(2,reads);}
-    @Test void anOverflowingSchemaVersionIsNotVersionOne(){invalidPlan("4294967297",step());}
-    @Test void unsupportedSchemaVersionIsRejected(){invalidPlan("2",step());}
-    @Test void fractionalSchemaVersionIsRejected(){invalidPlan("1.5",step());}
-    @Test void malformedPlanIsInvalidRatherThanAnOutage(){assertEquals("single_step_plan_required",artifacts.observe(source,prepare("TEST-specification","TEST-not-json")).failure());}
-    @Test void planMustBeAnObject(){assertEquals("single_step_plan_required",artifacts.observe(source,prepare("TEST-specification","[]")).failure());}
-    @Test void stepsMustBeAnArray(){invalidPlan("1","{\"id\":\"TEST-step\"}");}
-    @Test void exactlyOneStepIsRequired(){String one=step().substring(1,step().length()-1);invalidPlan("1","["+one+","+one+"]");}
-    @Test void stepIdentityMustBeText(){invalidPlan("1","[{\"id\":7,\"instruction\":\"TEST-instruction\"}]");}
-    @Test void stepIdentityCannotBeBlank(){invalidPlan("1","[{\"id\":\"  \",\"instruction\":\"TEST-instruction\"}]");}
-    @Test void instructionMustBeText(){invalidPlan("1","[{\"id\":\"TEST-step\",\"instruction\":7}]");}
-    @Test void instructionCannotBeBlank(){invalidPlan("1","[{\"id\":\"TEST-step\",\"instruction\":\"  \"}]");}
-    @Test void planMustBindTheSpecificationDigest(){var value=prepare("TEST-specification",planBody("1","b".repeat(64),step()));assertEquals("single_step_plan_required",artifacts.observe(source,value).failure());}
-    @Test void changingSpecificationInvalidatesEvidence(){var value=valid();ticket(spec,spec,"TEST-changed");assertEquals("artifacts_changed",artifacts.observe(source,value).failure());}
-    @Test void changingPlanInvalidatesEvidence(){var value=valid();ticket(plan,plan,planBody("1",value.specification().sha256(),step())+" ");assertEquals("artifacts_changed",artifacts.observe(source,value).failure());}
+    @Test void anOverflowingSchemaVersionIsNotVersionOne(){invalidPlan("4294967297",step(),"plan_schema_version");}
+    @Test void unsupportedSchemaVersionIsRejected(){invalidPlan("2",step(),"plan_schema_version");}
+    @Test void fractionalSchemaVersionIsRejected(){invalidPlan("1.5",step(),"plan_schema_version");}
+    @Test void malformedPlanIsInvalidRatherThanAnOutage(){var evidence=artifacts.observe(source,prepare("TEST-specification","TEST-not-json"));assertEquals("single_step_plan_required",evidence.failure());assertEquals("plan_not_json",evidence.detail());}
+    @Test void planMustBeAnObject(){var evidence=artifacts.observe(source,prepare("TEST-specification","[]"));assertEquals("single_step_plan_required",evidence.failure());assertEquals("plan_schema_version",evidence.detail());}
+    @Test void stepsMustBeAnArray(){invalidPlan("1","{\"id\":\"TEST-step\"}","plan_step_count");}
+    @Test void exactlyOneStepIsRequired(){String one=step().substring(1,step().length()-1);invalidPlan("1","["+one+","+one+"]","plan_step_count");}
+    @Test void stepIdentityMustBeText(){invalidPlan("1","[{\"id\":7,\"instruction\":\"TEST-instruction\"}]","plan_step_fields");}
+    @Test void stepIdentityCannotBeBlank(){invalidPlan("1","[{\"id\":\"  \",\"instruction\":\"TEST-instruction\"}]","plan_step_fields");}
+    @Test void instructionMustBeText(){invalidPlan("1","[{\"id\":\"TEST-step\",\"instruction\":7}]","plan_step_fields");}
+    @Test void instructionCannotBeBlank(){invalidPlan("1","[{\"id\":\"TEST-step\",\"instruction\":\"  \"}]","plan_step_fields");}
+    @Test void planMustBindTheSpecificationDigest(){var value=prepare("TEST-specification",planBody("1","b".repeat(64),step()));var evidence=artifacts.observe(source,value);assertEquals("single_step_plan_required",evidence.failure());assertEquals("plan_specification_mismatch",evidence.detail());}
+    @Test void changingSpecificationInvalidatesEvidence(){var value=valid();ticket(spec,spec,"TEST-changed");var evidence=artifacts.observe(source,value);assertEquals("artifacts_changed",evidence.failure());assertEquals("specification_changed",evidence.detail(),"Which ticket moved is what the operator has to re-read");}
+    @Test void changingPlanInvalidatesEvidence(){var value=valid();ticket(plan,plan,planBody("1",value.specification().sha256(),step())+" ");var evidence=artifacts.observe(source,value);assertEquals("artifacts_changed",evidence.failure());assertEquals("plan_changed",evidence.detail());}
     @Test void aDifferentReturnedIdentityCannotSupplyEvidence(){valid();ticket(spec,location("TEST-other"),"TEST-specification");assertThrows(WorkArtifacts.ArtifactUnavailable.class,()->artifacts.resolve(source,"TEST-spec"));}
     @Test void aBlankBodyCannotSupplyEvidence(){valid();ticket(spec,spec,"  ");assertThrows(WorkArtifacts.ArtifactUnavailable.class,()->artifacts.resolve(source,"TEST-spec"));}
     @Test void anOversizedBodyCannotSupplyEvidence(){valid();ticket(spec,spec,"x".repeat(48*1024+1));assertThrows(WorkArtifacts.ArtifactUnavailable.class,()->artifacts.resolve(source,"TEST-spec"));}

@@ -1,6 +1,7 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { WorkItemDetail } from '../../api';
+import type { LlmModelView, WorkItemDetail } from '../../api';
+import * as gateway from '../../api';
 import * as auth from '../../auth';
 import * as api from './workPreparationApi';
 import WorkItemPreparation from './WorkItemPreparation';
@@ -9,12 +10,19 @@ afterEach(cleanup);
 const item = { id: 'TEST-prepared-item', revision: 7, workflowStatus: 'awaiting_input' } as WorkItemDetail;
 const reference = (key: string): api.ArtifactReference => ({ title: `TEST-artifact-${key}`, artifact: { sha256: key.repeat(64).slice(0, 64),
   location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: `TEST-${key}` }, issueKey: key, link: `https://TEST.example/issues/${key}` } } });
+const model = (name: string, rates: LlmModelView['rates'] = { INPUT: 100, OUTPUT: 200 }): LlmModelView => ({ id: `TEST-model-${name}`, type: 'openai', name, label: name,
+  pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z' });
 function show(changed = vi.fn(), roles = ['spire-admin'], value = item) {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-operator', roles });
+  // A test that cares about the offered choices mocks them first; this is only the default pair.
+  if (!vi.isMockFunction(api.preparationOptions)) vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'] });
+  if (!vi.isMockFunction(gateway.fetchLlmModels)) vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
   return { changed, ...render(<WorkItemPreparation item={value} changed={changed} />) };
 }
 async function fill() {
   await screen.findByLabelText('Specification ticket');
+  // The selects only hold what the deployment offers, so wait for those answers before choosing.
+  await screen.findByRole('option', { name: 'TEST-harness' });
   for (const [label, value] of [['Specification ticket', '71'], ['Plan ticket', '72'], ['Base branch', 'main'], ['Base commit', 'a'.repeat(40)], ['Harness', 'TEST-harness'], ['Model', 'TEST-model']])
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
@@ -100,4 +108,34 @@ it('says which answer is in flight while the registration is recorded', async ()
   expect(await screen.findByRole('button', { name: 'Registering…' })).toBeDisabled();
   expect(screen.getByRole('status')).toHaveTextContent('Registering the checked versions.');
   await act(async () => pending.resolve({ reason: 'TEST-registered' }));
+});
+
+// A harness with no agent image and a model with no price are both refused at dispatch, after the
+// operator has typed them and waited. The form offers only what this deployment can run.
+it('offers the configured harnesses and the priced models instead of free text', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-other-harness'] });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model'), model('TEST-unpriced', { INPUT: 100 }), { ...model('TEST-disabled'), enabled: false }]);
+  show();
+  const harness = await screen.findByLabelText('Harness');
+  expect(within(harness).getAllByRole('option').map(option => option.textContent)).toEqual(['Select a harness', 'TEST-harness', 'TEST-other-harness']);
+  const models = within(await screen.findByLabelText('Model')).getAllByRole('option');
+  expect(models.map(option => option.textContent)).toEqual(['Select a model', 'TEST-model', 'TEST-unpriced — no price for input or output tokens']);
+  expect(models[2]).toBeDisabled();
+});
+
+it('reads the base commit from the forge for the named branch', async () => {
+  vi.spyOn(api, 'branchHead').mockResolvedValue({ branch: 'main', commit: 'c'.repeat(40) });
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));show();await fill();
+  fireEvent.change(screen.getByLabelText('Base commit'), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use current head' }));
+  await waitFor(() => expect(screen.getByLabelText('Base commit')).toHaveValue('c'.repeat(40)));
+  expect(api.branchHead).toHaveBeenCalledWith(item.id, 'main');
+});
+
+it('keeps the typed commit when the forge cannot answer', async () => {
+  vi.spyOn(api, 'branchHead').mockRejectedValue(new Error('TEST-branch head unavailable'));
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));show();await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Use current head' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-branch head unavailable');
+  expect(screen.getByLabelText('Base commit')).toHaveValue('a'.repeat(40));
 });

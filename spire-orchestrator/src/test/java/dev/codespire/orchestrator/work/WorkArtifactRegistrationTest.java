@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest @TestSecurity(user="TEST-prepared-admin",roles="spire-admin")
 class WorkArtifactRegistrationTest extends WorkPreparedFixture {
+    @jakarta.inject.Inject WorkPreparationResource resource;
     String waiting() throws Exception {String id=admit("assisted",57);register(id);assertEquals("OPEN",store.load(id).gate().state());return id;}
     @Test void changedSpecificationRequiresANewPlanDecision() throws Exception {
         String id=waiting();var gate=store.load(id).gate();stubArtifact(71,57001,"TEST-revised specification");
@@ -34,18 +35,67 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
     @Test void aPlanWithTwoStepsCannotBecomeAPreparedTask() throws Exception {
         String id=admit("autonomous",57);var root=mapper.readTree(plan);((com.fasterxml.jackson.databind.node.ArrayNode)root.path("steps")).add(root.path("steps").get(0).deepCopy());
         stubArtifact(72,57002,root.toString());var prepared=preparation("TEST-human");long revision=store.history(id).size();
-        var result=transitions.prepare(id,revision,prepared);assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());
+        var result=transitions.prepare(id,revision,prepared);assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());assertEquals("plan_step_count",result.detail());
         assertEquals(revision,store.history(id).size());assertNull(store.load(id).preparation());assertEquals(0,runCount(id));
     }
     @Test void thePlanMustNameTheRegisteredSpecificationVersion() throws Exception {
         String id=admit("autonomous",57);var root=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(plan);root.put("specificationSha256","b".repeat(64));
         stubArtifact(72,57002,root.toString());var result=transitions.prepare(id,store.history(id).size(),preparation("TEST-human"));
-        assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());assertNull(store.load(id).preparation());
+        assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());assertEquals("plan_specification_mismatch",result.detail());assertNull(store.load(id).preparation());
     }
     @Test void anEmptyPlanInstructionCannotStartABuild() throws Exception {
         String id=admit("autonomous",57);var root=mapper.readTree(plan);((com.fasterxml.jackson.databind.node.ObjectNode)root.path("steps").get(0)).put("instruction","");
         stubArtifact(72,57002,root.toString());var result=transitions.prepare(id,store.history(id).size(),preparation("TEST-human"));
-        assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());assertNull(store.load(id).preparation());
+        assertEquals(409,result.status());assertEquals("single_step_plan_required",result.reason());assertEquals("plan_step_fields",result.detail());assertNull(store.load(id).preparation());
+    }
+
+    /**
+     * The operator sees the response body, not the Outcome. One reason covers five plan rules, so the
+     * body has to carry the rule as well, or the screen can only repeat "single_step_plan_required".
+     */
+    @Test void theRefusedRegistrationResponseCarriesTheRuleThatRefusedIt() throws Exception {
+        String id=admit("autonomous",57);var root=mapper.readTree(plan);((com.fasterxml.jackson.databind.node.ArrayNode)root.path("steps")).add(root.path("steps").get(0).deepCopy());
+        stubArtifact(72,57002,root.toString());var prepared=preparation("TEST-prepared-admin");
+        var input=new WorkPreparationResource.Input(store.history(id).size(),prepared.specification(),prepared.plan(),
+                prepared.baseBranch(),prepared.baseCommit(),prepared.harness(),prepared.model());
+        var response=resource.register(id,input);
+        assertEquals(409,response.getStatus());
+        assertEquals(java.util.Map.of("reason","single_step_plan_required","detail","plan_step_count"),response.getEntity());
+    }
+
+    @Test void anAcceptedRegistrationNamesNoRule() throws Exception {
+        String id=admit("autonomous",57);var prepared=preparation("TEST-prepared-admin");
+        var input=new WorkPreparationResource.Input(store.history(id).size(),prepared.specification(),prepared.plan(),
+                prepared.baseBranch(),prepared.baseCommit(),prepared.harness(),prepared.model());
+        var response=resource.register(id,input);
+        assertEquals(200,response.getStatus());
+        // An accepted registration continues the workflow, so its reason is whatever the item reached.
+        var body=assertInstanceOf(java.util.Map.class,response.getEntity());
+        assertNotNull(body.get("reason"));assertFalse(body.containsKey("detail"),"An accepted registration has no rule to name");
+    }
+    /**
+     * The harness and the base commit were free text, so an operator typed a harness this deployment
+     * cannot run and pasted 40 hex characters from a terminal. Both answers exist on this side.
+     */
+    @Test void onlyTheHarnessesThisDeploymentCanRunAreOffered() {
+        var harnesses=resource.options().harnesses();
+        assertEquals(factoryConfig.agentImage().keySet().stream().sorted().toList(),harnesses);
+        assertFalse(harnesses.isEmpty(),"A deployment with no agent image can run no build at all");
+    }
+    @Test void theBaseHeadIsReadFromTheForgeRatherThanTyped() throws Exception {
+        String id=admit("autonomous",57);
+        forge.stubFor(get(urlEqualTo("/repos/"+scope+"/branches/main")).willReturn(okJson("{\"name\":\"main\",\"commit\":{\"sha\":\""+BASE+"\"}}")));
+        assertEquals(new WorkPreparationResource.Head("main",BASE),resource.head(id,"main"));
+    }
+    @Test void aHeadTheForgeWillNotConfirmIsNotOfferedAsACommit() throws Exception {
+        String id=admit("autonomous",57);
+        forge.stubFor(get(urlEqualTo("/repos/"+scope+"/branches/main")).willReturn(aResponse().withStatus(404)));
+        assertThrows(jakarta.ws.rs.ServiceUnavailableException.class,()->resource.head(id,"main"));
+    }
+    @Test void aBlankBranchHasNoHeadToRead() throws Exception {
+        String id=admit("autonomous",57);
+        assertThrows(jakarta.ws.rs.BadRequestException.class,()->resource.head(id," "));
+        forge.verify(0,getRequestedFor(urlPathMatching("/repos/.*/branches/.*")));
     }
     @Test void registrationRequiresTheCurrentItemRevision() throws Exception {
         String id=admit("autonomous",57);long revision=store.history(id).size();

@@ -48,7 +48,15 @@ public class WorkItemResource {
                        Map<WorkPolicy.Phase,String> effectiveModes, Map<WorkPolicy.Phase,String> admittedModes,
                        String policyReason, Profile ceiling, List<WorkPolicy.AppliedLabel> appliedLabels,
                        WorkPolicyLimits effectiveLimits,WorkPolicyLimits admittedLimits,WorkGate gate,WorkProgress progress,
-                       WorkPreparation preparation,List<Build> builds,WorkControl control) {}
+                       WorkPreparation preparation,List<Build> builds,WorkControl control,
+                       /**
+                        * Who the ids on this item's labels are, as the tracker last observed them.
+                        * The label carries the stable provider id, which is the only thing safe to
+                        * store; a screen that shows it alone tells the operator "actor 900123".
+                        * Resolved at read time from the source's allowed people, so a renamed handle
+                        * is right on the next read and no observed name is ever persisted here.
+                        */
+                       List<WorkSourceRegistry.Person> people) {}
     public record Page(List<View> items, long total, int offset, int limit) {}
     public record Tracker(String title, String body, String trackerStatus) {}
 
@@ -91,7 +99,7 @@ public class WorkItemResource {
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control());
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),source.allowedPeople());
     }
 
     private List<Build> builds(String id) {
