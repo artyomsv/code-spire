@@ -288,15 +288,20 @@ preparation.
   an override.
 - **Specification.** The ticket's title and body at that moment, stored encrypted as an immutable row.
 - **Plan.** `{"schemaVersion":1,"specificationSha256":…,"steps":[{"id":"step-1","instruction":"Implement
-  the specification."}]}` — the schema the manual path already validates, so `WorkArtifacts.observe`
-  keeps one rule set.
+  the specification in full, and change nothing it does not ask for."}]}` — the schema the manual path
+  already validates, so `WorkArtifacts.observe` keeps one rule set. The instruction does not repeat the
+  specification: the dispatch prompt already carries both texts, so repeating it would pay twice.
 - **Base.** The head of the default base branch, read through the FACTORY account
   (`DiffSource.fetchBranchHead`). Pinning the observed head is the decision; nothing claims to hold a
   lock on the remote branch.
-- **Registered by** `system`, with the build-defaults revision recorded.
+- **Registered by** `system:build-defaults@<revision>`, so the item's history says which saved setup the
+  coordinates came from.
 - **A readable copy on the ticket.** One tracker `COMMENT` effect through `WorkSourceEffects`, when the
   source has that capability, naming the specification digest, the one step, the base, the harness, the
-  model, how the run is paid, and a link to the item. Without `COMMENT`, the dashboard only.
+  model, and that editing the ticket does not change what was prepared. Without `COMMENT`, the dashboard
+  only. It is queued as an effect: a comment that fails must never undo a registration that succeeded.
+- **The sweep registers through {@code WorkItemTransitions.prepare}**, the manual form's own entry
+  point, so it inherits that path's authority protocol whole rather than restating it (§6.4).
 
 ### 6.2 A stored artifact has its own immutable identity
 
@@ -307,8 +312,10 @@ destroy the bytes an earlier gate or a held run still binds.
 
 So: `work_item_artifact(id UUID primary key, work_item_id, kind, ciphertext, sha256, created_at)` —
 **insert only**. A new preparation writes new rows; old rows stay for the gates and proofs that bind them.
-`WorkPreparation.Artifact` gains `origin` (`TRACKER` when absent, `STORED`) and a stored id; `location` is
-present for `TRACKER` and absent for `STORED`. Reads are authorised against the owning item.
+`WorkPreparation.Artifact` gains `origin` (`TRACKER` when absent, `STORED`) and a stored id. **Built:**
+`location` stays present for BOTH origins — a composed artifact keeps the ticket it was composed from,
+so a decision can still be traced to the ticket a person wrote, and no screen has to handle a null
+location. Reads are authorised against the owning item.
 `WorkArtifacts.observe` reads a `STORED` artifact from that table and checks its digest exactly as it
 checks a ticket body today. The UI dereferences `artifact.location.link` unconditionally today
 (`DecisionEvidence.tsx:47`, `WorkItemSteps.tsx:57`) and must render a stored artifact as text with its
