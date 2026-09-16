@@ -62,16 +62,19 @@ FACTORY account and falls back to REVIEWER for this read only, exactly as the it
 fallback is stated on screen.
 
 **Storage.** A new table `repository_build_defaults` (repository id as key, base branch, harness, model,
-billing, revision, updated by, updated at). It is configuration, not history. A preparation pins copies of
-these values, and the gate binds the copies (ADR-045), so a later change never alters an open gate. The
-revision takes part in the authority check of part C (§6).
+revision, updated by, updated at). It is configuration, not history. A preparation pins copies of these
+values, and the gate binds the copies (ADR-045), so a later change never alters an open gate. The
+revision takes part in the authority check of part C (§6). The billing column arrives with part F: a
+column whose only accepted value is `API_KEY` would offer a choice the deployment cannot honour.
 
 **API.** `GET` and `PUT /api/repositories/{id}/factory/build`, `spire-admin`, with an expected revision.
 Refusals name the rule: `base_branch_blank`, `harness_unconfigured`, `model_unknown`,
 `billing_unsupported`.
 
-**Readiness.** `readiness()` in `factoryModel.ts` gains `build`. A repository is ready at five of five, and
-the outcome line names the missing part.
+**Readiness.** Admission does not need these coordinates, so part B does not make a repository "not ready"
+without them: the outcome line adds one sentence saying each ticket still has its build coordinates typed
+by hand. Part C promotes them to a requirement, because that is when their absence stops the automatic
+path.
 
 **Manual form.** The prepared-task form fills its fields from the defaults.
 

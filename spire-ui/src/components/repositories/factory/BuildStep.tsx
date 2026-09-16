@@ -1,0 +1,104 @@
+import { useEffect, useRef, useState } from 'react';
+import { fetchLlmModels, type LlmModelView } from '../../../api';
+import SettingField from '../../SettingField';
+import FactoryStep from './FactoryStep';
+import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults } from './buildDefaultsApi';
+
+interface Props {
+  repositoryId: string;
+  defaults: BuildDefaults;
+  open: string | null;
+  setOpen: (open: string | null) => void;
+  changed: (notice?: string) => void;
+}
+
+/** A model a build can be priced with: an unpriced call stops the item after it has already spent. */
+function priced(model: LlmModelView) {
+  return model.pricingMode !== 'METERED' || (!!model.rates.INPUT && !!model.rates.OUTPUT);
+}
+
+/**
+ * How this repository builds: the coordinates every prepared task copies (M3.5 part B).
+ *
+ * <p>They were typed per work item until now — a branch, forty hex characters of commit, a harness name
+ * and a model name, four free-text fields per ticket, each refused at dispatch if it was wrong. Saved
+ * here once, they are offered as what this deployment can actually run, and the same refusals arrive
+ * where they can be fixed.
+ */
+export default function BuildStep({ repositoryId, defaults, open, setOpen, changed }: Props) {
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const [form, setForm] = useState({
+    baseBranch: defaults.baseBranch ?? '', harness: defaults.harness ?? '', model: defaults.model ?? '',
+  });
+  const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[] }>({ harnesses: [], models: [] });
+  const [busy, setBusy] = useState<'saving' | 'head' | null>(null);
+  const [error, setError] = useState(''), [head, setHead] = useState<{ commit: string; account: string } | null>(null);
+  const editing = open === 'build';
+
+  useEffect(() => {
+    if (!editing) return;
+    let active = true;
+    Promise.all([buildOptions(repositoryId), fetchLlmModels()])
+      // A wire answer of the wrong shape offers nothing rather than blanking the step.
+      .then(([options, models]) => { if (active) setChoices({ harnesses: options.harnesses ?? [], models: (models ?? []).filter(model => model.enabled) }); })
+      .catch(() => { /* the selects fall back to what is already saved; the save still refuses an unrunnable pair */ });
+    return () => { active = false; };
+  }, [repositoryId, editing]);
+
+  async function readHead() {
+    setBusy('head'); setError(''); setHead(null);
+    try {
+      const answer = await repositoryBranchHead(repositoryId, form.baseBranch);
+      if (live.current) { setHead({ commit: answer.commit, account: answer.account }); setForm(previous => ({ ...previous, baseBranch: answer.branch })); }
+    } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
+    finally { if (live.current) setBusy(null); }
+  }
+
+  async function submit() {
+    setBusy('saving'); setError('');
+    try {
+      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...form });
+      if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}, starting from ${form.baseBranch}.`);
+    } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
+    finally { if (live.current) setBusy(null); }
+  }
+
+  const complete = !!form.baseBranch.trim() && !!form.harness && !!form.model;
+  return <FactoryStep number={5} question="How it builds" term="build setup" state={editing ? 'editing' : defaults.revision > 0 ? 'done' : 'missing'}
+    actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
+      onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
+    {defaults.revision > 0
+      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}</b><span className="prov-sub">starts from {defaults.baseBranch}</span></div>
+      : <p className="factory-note">Not set, so every ticket has to be given a branch, a harness and a model by hand.</p>}
+    <p className="factory-note">A prepared task copies these. Changing them here never changes a decision that is already open.</p>
+    {editing && <fieldset className="form-lock factory-form" aria-label="Set up the build" disabled={busy !== null}>
+      <SettingField label="Base branch" scope="build setup" hint="Required. The branch a build starts from. Its head commit is pinned when a task is prepared.">
+        <input aria-label="Base branch" value={form.baseBranch} placeholder="main"
+          onChange={event => { setHead(null); setForm(previous => ({ ...previous, baseBranch: event.target.value })); }} /></SettingField>
+      <div className="prov-actions">
+        <button className="btn-ghost sm" type="button" disabled={busy !== null || !form.baseBranch.trim()} onClick={() => void readHead()}>
+          {busy === 'head' ? 'Reading…' : 'Check this branch'}</button>
+        {head && <span className="prov-sub">head <span className="mono">{head.commit.slice(0, 7)}</span>{head.account === 'REVIEWER' ? ' · read with the reviewer account; the factory account is not bound yet' : ''}</span>}
+      </div>
+      <SettingField label="Harness" scope="build setup" hint="Required. The agent image this deployment runs. A name without an image is refused before a run starts.">
+        <select aria-label="Harness" value={form.harness} onChange={event => setForm(previous => ({ ...previous, harness: event.target.value }))}>
+          <option value="">{choices.harnesses.length ? 'Select a harness' : 'No harness is configured'}</option>
+          {choices.harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
+          {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{form.harness} (not configured here)</option>}
+        </select></SettingField>
+      <SettingField label="Model" scope="build setup" hint="Required. The model the agent calls. A model with no price for input and output tokens stops the item after it has spent.">
+        <select aria-label="Model" value={form.model} onChange={event => setForm(previous => ({ ...previous, model: event.target.value }))}>
+          <option value="">{choices.models.length ? 'Select a model' : 'No model is enabled'}</option>
+          {choices.models.map(model => <option key={model.id} value={model.name} disabled={!priced(model)}>
+            {model.label}{model.name === model.label ? '' : ` (${model.name})`}{priced(model) ? '' : ' — no price for input or output tokens'}</option>)}
+          {form.model && !choices.models.some(model => model.name === form.model) && <option value={form.model}>{form.model} (not in the catalogue)</option>}
+        </select></SettingField>
+      {error && <p className="prov-error" role="alert">{error}</p>}
+      {busy === 'saving' && <p className="factory-note" role="status">Saving the build setup. The form unlocks when the server answers.</p>}
+      <div className="prov-actions">
+        <button className="btn" type="button" disabled={busy !== null || !complete} onClick={() => void submit()}>{busy === 'saving' ? 'Saving…' : 'Save build setup'}</button>
+        <button className="btn-ghost" type="button" disabled={busy !== null} onClick={() => setOpen(null)}>Cancel</button></div>
+    </fieldset>}
+  </FactoryStep>;
+}

@@ -3,6 +3,7 @@ import { fetchLlmModels, type LlmModelView, type WorkItemDetail } from '../../ap
 import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import { branchHead, preparationOptions, resolveArtifact, registerPreparation, type ArtifactReference } from './workPreparationApi';
+import { buildDefaults } from '../repositories/factory/buildDefaultsApi';
 
 /** A model the build can be priced with: an unpriced call stops the item after it has spent. */
 function priced(model: LlmModelView) {
@@ -22,12 +23,22 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
   const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[] }>({ harnesses: [], models: [] });
   useEffect(() => {
     let live = true;
-    Promise.all([preparationOptions(item.id), fetchLlmModels()])
+    // The repository's saved build setup fills the coordinates nobody should retype. It is asked for
+    // separately from the selects, so a repository without one still offers what can be run.
+    Promise.all([preparationOptions(item.id), fetchLlmModels(), buildDefaults(item.repositoryId).catch(() => null)])
       // A wire answer of the wrong shape degrades to "nothing offered" rather than blanking the page.
-      .then(([options, models]) => { if (live) setChoices({ harnesses: options.harnesses ?? [], models: (models ?? []).filter(model => model.enabled) }); })
+      .then(([options, models, defaults]) => {
+        if (!live) return;
+        setChoices({ harnesses: options.harnesses ?? [], models: (models ?? []).filter(model => model.enabled) });
+        // Only what is still empty: a registered preparation, and anything already typed, wins.
+        if (defaults) setForm(previous => ({ ...previous,
+          baseBranch: previous.baseBranch || defaults.baseBranch || '',
+          harness: previous.harness || defaults.harness || '',
+          model: previous.model || defaults.model || '' }));
+      })
       .catch(() => { /* the selects fall back to what is already registered; registration still refuses an unrunnable pair */ });
     return () => { live = false; };
-  }, [item.id]);
+  }, [item.id, item.repositoryId]);
   async function readHead() {
     sequence.current++; setBusy('head'); setError('');
     try { const head = await branchHead(item.id, form.baseBranch); if (active.current) setForm(previous => ({ ...previous, baseBranch: head.branch, baseCommit: head.commit })); }

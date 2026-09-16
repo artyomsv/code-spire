@@ -8,6 +8,8 @@ import FactoryOutcome from './FactoryOutcome';
 import SourceStep from './SourceStep';
 import PeopleStep from './PeopleStep';
 import { CeilingStep, LabelsStep } from './PolicySteps';
+import BuildStep from './BuildStep';
+import { buildDefaults, type BuildDefaults } from './buildDefaultsApi';
 
 interface Props {
   repository: Repository;
@@ -17,7 +19,7 @@ interface Props {
   onChanged: () => void;
 }
 
-interface Loaded { sources: sourcesApi.WorkSource[]; profiles: policyApi.Profile[]; policy: policyApi.Policy }
+interface Loaded { sources: sourcesApi.WorkSource[]; profiles: policyApi.Profile[]; policy: policyApi.Policy; build: BuildDefaults }
 
 /**
  * Everything that lets a ticket start work on one repository, in the order it has to exist. Each part
@@ -31,10 +33,11 @@ export default function RepositoryFactory({ repository, accounts, webhooks, onCh
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    Promise.all([sourcesApi.fetchWorkSources(), policyApi.profiles(), policyApi.policy(repository.id)]).then(([sources, profiles, policy]) => {
-      if (!active) return;
-      setData({ sources: sources.filter(source => source.repositoryId === repository.id), profiles, policy }); setError('');
-    }).catch(failure => { if (active) setError(String(failure)); });
+    Promise.all([sourcesApi.fetchWorkSources(), policyApi.profiles(), policyApi.policy(repository.id), buildDefaults(repository.id)])
+      .then(([sources, profiles, policy, build]) => {
+        if (!active) return;
+        setData({ sources: sources.filter(source => source.repositoryId === repository.id), profiles, policy, build }); setError('');
+      }).catch(failure => { if (active) setError(String(failure)); });
     return () => { active = false; };
   }, [repository.id, refresh]);
 
@@ -48,13 +51,14 @@ export default function RepositoryFactory({ repository, accounts, webhooks, onCh
   // Keyed by revision: a form opened after a save must start from what was saved, not what was typed before.
   const policyKey = `${data.policy.revision}:${data.profiles.length}`;
   return <div className="factory">
-    <FactoryOutcome ready={readiness(data.sources, data.policy)} sources={data.sources} policy={data.policy} />
+    <FactoryOutcome ready={readiness(data.sources, data.policy)} sources={data.sources} policy={data.policy} build={data.build} />
     {notice && <p className="factory-note" role="status">{notice}</p>}
     <ol className="factory-steps">
       <SourceStep repository={repository} sources={data.sources} accounts={accounts} webhooks={webhooks} {...shared} />
       <PeopleStep sources={data.sources} {...shared} />
       <CeilingStep key={`ceiling:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
       <LabelsStep key={`labels:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
+      <BuildStep key={`build:${data.build.revision}`} repositoryId={repository.id} defaults={data.build} {...shared} />
     </ol>
   </div>;
 }

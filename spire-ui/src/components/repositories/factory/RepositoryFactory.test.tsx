@@ -2,8 +2,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sources from '../../work-items/workSourcesApi';
 import * as policies from '../../work-items/workPolicyApi';
+import * as api from '../../../api';
+import * as build from './buildDefaultsApi';
 import RepositoryFactory from './RepositoryFactory';
-import { account, policy, profile, repository, source } from './factoryFixtures';
+import { account, buildSetup, policy, profile, repository, source } from './factoryFixtures';
 
 const field = { selector: 'input,select,textarea' };
 const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
@@ -17,6 +19,16 @@ beforeEach(() => {
   vi.spyOn(policies, 'policy').mockResolvedValue(policy());
   vi.spyOn(policies, 'savePolicy').mockResolvedValue(policy({ revision: 8 }));
   vi.spyOn(policies, 'saveProfile').mockImplementation(async value => value);
+  vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
+  vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'] });
+  vi.spyOn(build, 'saveBuildDefaults').mockResolvedValue(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+  vi.spyOn(build, 'repositoryBranchHead').mockResolvedValue({ branch: 'main', commit: 'a'.repeat(40), account: 'FACTORY' });
+  vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
+    { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z' },
+    { id: 'TEST-unpriced-id', type: 'openai', name: 'TEST-unpriced', label: 'TEST unpriced', pricingMode: 'METERED', rates: { INPUT: 100 },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z' },
+  ]);
 });
 
 describe('outcome', () => {
@@ -196,4 +208,75 @@ describe('presets', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('TEST-policy save failed');
     await waitFor(() => expect(policies.profiles).toHaveBeenCalledTimes(2));
   });
+});
+
+describe('build setup', () => {
+  const open = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Set up the build' })); };
+
+  it('says a ticket still needs its coordinates typed until the build setup exists', async () => {
+    renderFactory();
+    const outcome = (await screen.findByText('Ready — tickets can start work')).closest('.factory-outcome') as HTMLElement;
+    expect(outcome).toHaveTextContent('Each ticket still needs its branch, harness and model typed by hand');
+    expect(within(await step(5)).getByText(/Not set/)).toBeInTheDocument();
+  });
+
+  it('shows the saved coordinates instead of that warning once they exist', async () => {
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+    renderFactory();
+    expect(within(await step(5)).getByText('codex · TEST-model')).toBeInTheDocument();
+    expect((await screen.findByText('Ready — tickets can start work')).closest('.factory-outcome'))
+      .not.toHaveTextContent('still needs its branch');
+  });
+
+  it('saves the chosen coordinates against the revision it loaded', async () => {
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
+      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+    expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
+  });
+
+  /** A model with no output price is refused at dispatch, so it cannot be chosen here either. */
+  it('offers an unpriced model as unselectable and says why', async () => {
+    renderFactory();
+    await open();
+    const unpriced = await screen.findByRole('option', { name: /TEST unpriced/ });
+    expect(unpriced).toBeDisabled();
+    expect(unpriced).toHaveTextContent('no price for input or output tokens');
+  });
+
+  it('reads the branch head through the repository account and keeps the branch the forge named', async () => {
+    vi.mocked(build.repositoryBranchHead).mockResolvedValue({ branch: 'develop', commit: 'b'.repeat(40), account: 'FACTORY' });
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: ' develop ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Check this branch' }));
+    expect(await screen.findByText('bbbbbbb')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Base branch', field)).toHaveValue('develop');
+  });
+
+  it('shows the rule the server refused with, not a status line', async () => {
+    vi.mocked(build.saveBuildDefaults).mockRejectedValue(new Error('Someone else saved the build setup while this form was open. Reload it and try again.'));
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Someone else saved the build setup');
+  });
+
+  // A head read falls back to the reviewer account. Saying so keeps it from reading as factory push access.
+  it('says when the branch head was read with the reviewer account', async () => {
+  vi.mocked(build.repositoryBranchHead).mockResolvedValue({ branch: 'main', commit: 'c'.repeat(40), account: 'REVIEWER' });
+  renderFactory();
+  fireEvent.click(await screen.findByRole('button', { name: 'Set up the build' }));
+  fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Check this branch' }));
+  expect(await screen.findByText(/read with the reviewer account/)).toBeInTheDocument();
+});
 });

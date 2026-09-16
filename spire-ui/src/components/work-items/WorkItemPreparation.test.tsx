@@ -4,6 +4,7 @@ import type { LlmModelView, WorkItemDetail } from '../../api';
 import * as gateway from '../../api';
 import * as auth from '../../auth';
 import * as api from './workPreparationApi';
+import * as defaultsApi from '../repositories/factory/buildDefaultsApi';
 import WorkItemPreparation from './WorkItemPreparation';
 
 afterEach(cleanup);
@@ -138,4 +139,27 @@ it('keeps the typed commit when the forge cannot answer', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Use current head' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-branch head unavailable');
   expect(screen.getByLabelText('Base commit')).toHaveValue('a'.repeat(40));
+});
+// M3.5 part B: the repository's saved build setup fills the coordinates nobody should retype.
+it('fills the branch, harness and model from the repository build setup', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'] });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  vi.spyOn(defaultsApi, 'buildDefaults').mockResolvedValue({ revision: 3, baseBranch: 'main', harness: 'TEST-harness',
+    model: 'TEST-model', updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' });
+  show(vi.fn(), ['spire-admin'], { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail);
+  expect(await screen.findByLabelText('Base branch')).toHaveValue('main');
+  expect(screen.getByLabelText('Harness')).toHaveValue('TEST-harness');
+  expect(screen.getByLabelText('Model')).toHaveValue('TEST-model');
+  expect(defaultsApi.buildDefaults).toHaveBeenCalledWith('TEST-repository');
+});
+// What is already registered is what the gate binds, so a saved setup must not quietly replace it.
+it('keeps a registered preparation rather than replacing it with the repository setup', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'] });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  vi.spyOn(defaultsApi, 'buildDefaults').mockResolvedValue({ revision: 3, baseBranch: 'main', harness: 'TEST-harness',
+    model: 'TEST-model', updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' });
+  const registered = { ...item, repositoryId: 'TEST-repository', preparation: { specification: reference('71').artifact, plan: reference('72').artifact,
+    baseBranch: 'release-1', baseCommit: 'c'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' } } as WorkItemDetail;
+  show(vi.fn(), ['spire-admin'], registered);
+  expect(await screen.findByLabelText('Base branch')).toHaveValue('release-1');
 });
