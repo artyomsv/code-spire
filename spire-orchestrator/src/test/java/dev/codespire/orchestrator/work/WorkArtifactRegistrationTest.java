@@ -87,10 +87,22 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
         forge.stubFor(get(urlEqualTo("/repos/"+scope+"/branches/main")).willReturn(okJson("{\"name\":\"main\",\"commit\":{\"sha\":\""+BASE+"\"}}")));
         assertEquals(new WorkPreparationResource.Head("main",BASE),resource.head(id,"main"));
     }
+    /** A branch the forge will not confirm is a forge refusal, not an outage worth retrying. */
     @Test void aHeadTheForgeWillNotConfirmIsNotOfferedAsACommit() throws Exception {
         String id=admit("autonomous",57);
         forge.stubFor(get(urlEqualTo("/repos/"+scope+"/branches/main")).willReturn(aResponse().withStatus(404)));
-        assertThrows(jakarta.ws.rs.ServiceUnavailableException.class,()->resource.head(id,"main"));
+        var refusal=assertThrows(jakarta.ws.rs.WebApplicationException.class,()->resource.head(id,"main")).getResponse();
+        assertEquals(502,refusal.getStatus());
+        assertEquals(java.util.Map.of("reason","branch_head_unconfirmed"),refusal.getEntity());
+    }
+    /** No bound account is configuration: no retry fixes it, so it must not read as a 503. */
+    @Test void aRepositoryWithNoAccountHasNoHeadToRead() throws Exception {
+        String id=admit("autonomous",57);
+        execute("DELETE FROM repository_account WHERE repository_id=?",repository);
+        var refusal=assertThrows(jakarta.ws.rs.WebApplicationException.class,()->resource.head(id,"main")).getResponse();
+        assertEquals(409,refusal.getStatus());
+        assertEquals(java.util.Map.of("reason","repository_account_missing"),refusal.getEntity());
+        forge.verify(0,getRequestedFor(urlPathMatching("/repos/.*/branches/.*")));
     }
     @Test void aBlankBranchHasNoHeadToRead() throws Exception {
         String id=admit("autonomous",57);

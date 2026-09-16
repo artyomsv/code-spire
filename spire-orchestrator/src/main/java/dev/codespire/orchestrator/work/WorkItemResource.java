@@ -58,6 +58,16 @@ public class WorkItemResource {
                         */
                        List<WorkSourceRegistry.Person> people) {}
     public record Page(List<View> items, long total, int offset, int limit) {}
+
+    /**
+     * Only the people whose ids are already on this item's labels. The source's allowlist is
+     * authorization configuration and the item view reaches viewers, so it is not repeated per item;
+     * an id the view already carries gains only the handle the tracker observed for it.
+     */
+    static List<WorkSourceRegistry.Person> labelAppliers(List<WorkSourceRegistry.Person> allowed,List<WorkPolicy.AppliedLabel> applied) {
+        Set<String> referenced=applied.stream().map(WorkPolicy.AppliedLabel::actorId).collect(java.util.stream.Collectors.toSet());
+        return allowed.stream().filter(person->referenced.contains(person.providerUserId())).toList();
+    }
     public record Tracker(String title, String body, String trackerStatus) {}
 
     @GET
@@ -99,7 +109,7 @@ public class WorkItemResource {
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),source.allowedPeople());
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()));
     }
 
     private List<Build> builds(String id) {

@@ -13,6 +13,7 @@ import java.util.Map;
 @RolesAllowed("spire-admin")
 @Produces(MediaType.APPLICATION_JSON) @Consumes(MediaType.APPLICATION_JSON)
 public class WorkPreparationResource {
+    private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(WorkPreparationResource.class);
     @Inject WorkItemStore store;
     @Inject WorkSourceRegistry sources;
     @Inject WorkArtifacts artifacts;
@@ -43,15 +44,30 @@ public class WorkPreparationResource {
         if(branch==null || branch.isBlank())throw new BadRequestException("A base branch is required");
         var item=store.load(id);if(item==null)throw new NotFoundException();
         var observed=transitions.observe(item);
-        if(observed.evidence().failure()!=null)throw new ServiceUnavailableException(observed.evidence().failure());
+        if(observed.evidence().failure()!=null)throw refused(503,observed.evidence().failure());
+        // A missing binding is configuration, not an outage: no retry fixes it, so it is not a 503.
+        var account=accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
+                .or(()->accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER))
+                .orElseThrow(()->refused(409,"repository_account_missing"));
+        var scm=clients.diffSource(account);
+        String name=branch.trim();
+        // Only the forge call is caught. A fault in this service before it stays a 500, rather than
+        // reading as a forge that could not answer.
         try {
-            var account=accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
-                    .or(()->accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER)).orElseThrow();
-            var scm=clients.diffSource(account);
-            return new Head(branch.trim(),scm.fetchBranchHead(observed.source().repository(),branch.trim()));
-        } catch(RuntimeException unavailable) {
-            throw new ServiceUnavailableException("The branch head could not be read through this repository's account");
+            return new Head(name,scm.fetchBranchHead(observed.source().repository(),name));
+        } catch(UnsupportedOperationException unsupported) {
+            throw refused(501,"branch_head_unsupported");
+        } catch(RuntimeException refusedByForge) {
+            // A wrong branch name and a rejected credential both arrive here as a forge refusal whose
+            // type differs per adapter, so the answer says "not confirmed" and names both causes.
+            LOG.warnf(refusedByForge,"work item %s: the forge did not confirm branch %s",id,name);
+            throw refused(502,"branch_head_unconfirmed");
         }
+    }
+
+    /** The same {reason} body the registration refusals use, so the screen can say what to change. */
+    private static WebApplicationException refused(int status,String reason) {
+        return new WebApplicationException(Response.status(status).type(MediaType.APPLICATION_JSON).entity(Map.of("reason",reason)).build());
     }
 
     @GET @Path("/reference")

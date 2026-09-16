@@ -7,6 +7,9 @@
  */
 const REASONS = new Map(Object.entries({
   specification_required: 'A specification is required before work can continue.',
+  repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
+  branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',
+  branch_head_unconfirmed: 'The forge did not confirm this branch. Check the branch name, and that the repository account can read it.',
   artifacts_registered: 'The prepared task references were registered.',
   specification_supplied: 'The registered specification was fetched and validated.',
   plan_supplied: 'The registered single-step plan was fetched and validated.',
@@ -88,5 +91,5 @@ const DETAILS = new Map(Object.entries({
 
 /** What to tell the operator about a refusal: the rule when the backend named one, else the reason. */
 export function workRefusal(reason: string, detail: string | null): string {
-  return (detail && DETAILS.get(detail)) ?? REASONS.get(reason) ?? reason;
+  return (detail ? DETAILS.get(detail) : undefined) ?? REASONS.get(reason) ?? reason;
 }

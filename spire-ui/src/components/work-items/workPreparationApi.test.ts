@@ -45,3 +45,16 @@ it('registers the checked versions at the item preparation endpoint', async () =
   await expect(api.registerPreparation('TEST-item', input)).resolves.toEqual({ reason: 'artifacts_registered' });
   expect(apiFetch).toHaveBeenCalledWith('/api/work-items/TEST-item/preparation', expect.objectContaining({ method: 'POST', body: JSON.stringify(input) }));
 });
+
+// An empty detail names no rule, so the reason must still produce a sentence rather than nothing.
+it('falls back to the reason when the detail is empty', async () => {
+  vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ reason: 'artifacts_unavailable', detail: '' }), { status: 409 }));
+  await expect(api.registerPreparation('TEST-item', input)).rejects.toThrow('The tracker artifacts could not be read. Check the references and source account.');
+});
+
+// A missing account binding is configuration: the words say where to fix it, not "try again".
+it('says where to fix a repository with no account when reading a branch head', async () => {
+  vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify({ reason: 'repository_account_missing' }), { status: 409 }));
+  await expect(api.branchHead('TEST-item', 'main')).rejects.toThrow(/Bind an account on the Repositories screen/);
+  expect(apiFetch).toHaveBeenCalledWith('/api/work-items/TEST-item/preparation/head?branch=main', undefined);
+});
