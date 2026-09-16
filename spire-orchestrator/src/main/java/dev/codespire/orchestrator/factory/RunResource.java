@@ -105,6 +105,9 @@ public class RunResource {
     LlmModelPricer pricer;
 
     @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry models;
+
+    @Inject
     RunCredentials runCredentials;
 
     /**
@@ -222,6 +225,10 @@ public class RunResource {
      * refusal here costs nothing and leaves no row to explain.
      */
     private void refuseAnUnpriceableModel(String model, String harness) {
+        if (models.isDisabled(model)) {
+            throw conflict("Run not dispatched: model '" + model + "' is switched off in Settings -> LLM ->"
+                    + " Models. Enable it, or dispatch with a model this deployment offers.");
+        }
         var unpriced = pricer.unpricedTypes(model, harness);
         if (unpriced.isEmpty()) {
             return;

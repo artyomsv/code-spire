@@ -14,6 +14,11 @@
 -- So: billing = RATED carries a positive rate, billing = NOT_BILLED carries NO rate, and a type with no
 -- row at all still means nobody has said. Existing rows are RATED by definition -- every one of them was
 -- written under a CHECK demanding a rate above zero.
+-- FORWARD ONLY once an assertion exists. The previous application read this column with getLong and no
+-- wasNull check, so an older image running against this schema would read a NOT_BILLED row as a rate of
+-- ZERO -- the fabricated price this whole change removes -- and could not round-trip the assertion on an
+-- edit. Restoring the old NOT NULL also fails while such a row exists. Roll the application back only
+-- BEFORE the first assertion is saved, and never repair one by inventing a positive rate.
 ALTER TABLE llm_model_rate ADD COLUMN billing VARCHAR(16) NOT NULL DEFAULT 'RATED'
     CHECK (billing IN ('RATED', 'NOT_BILLED'));
 

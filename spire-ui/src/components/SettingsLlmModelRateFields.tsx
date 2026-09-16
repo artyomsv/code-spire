@@ -24,7 +24,7 @@ export function initialNotBilled(initial: LlmModelView | null): Record<RateType,
 /** The assertion as the API takes it: only the optional types can carry one. */
 export function notBilledPayload(mode: EditablePricingMode, notBilled: Record<RateType, boolean>): RateType[] {
   if (mode === 'UNMETERED') return [];
-  return RATE_TYPES.filter(type => !MANDATORY_RATE_TYPES.includes(type) && notBilled[type]);
+  return RATE_TYPES.filter(type => notBilled[type]);
 }
 
 /** Blank when absent, so a never-filled field round-trips as blank rather than as "$0". */
@@ -49,12 +49,11 @@ export function validateRates(mode: EditablePricingMode, rates: Record<RateType,
     const raw = rates[type].trim();
     const mandatory = MANDATORY_RATE_TYPES.includes(type);
     if (notBilled[type]) {
-      if (mandatory) return `${TOKEN_TYPE_LABEL[type]} is charged by every vendor. A model that costs nothing to call is self-hosted.`;
       if (raw !== '') return `${TOKEN_TYPE_LABEL[type]} has both a rate and "not billed". Keep the one that is true.`;
-      continue;
+      continue; // an assertion counts as said, for any type: some vendors bill nothing for one of them
     }
     if (raw === '') {
-      if (mandatory) return `${TOKEN_TYPE_LABEL[type]} rate is required for a metered model.`;
+      if (mandatory) return `${TOKEN_TYPE_LABEL[type]} needs a rate, or the mark saying this vendor does not bill it.`;
       continue; // left blank: nobody has said what it costs, so a call reporting it stays unpriced
     }
     if (!(Number(raw) > 0)) return `${TOKEN_TYPE_LABEL[type]} rate must be greater than zero.`;
@@ -106,7 +105,7 @@ function RateField({ type, value, onChange, notBilled, onNotBilled }: RateFieldP
       </label>
       {/* An assertion, not a zero: the operator says this vendor charges nothing for this type. A run
           that reports a type with neither a rate nor this box stops the item with an unknown cost. */}
-      {optional && (
+      {(
         <label className="field-check">
           <input
             type="checkbox"
@@ -142,7 +141,8 @@ export default function ModelRateFields({ rates, onChange, notBilled, onNotBille
       <small className="field-hint">
         Enter the provider's current published price per 1M tokens for each dimension it bills — used to
         cost each run. A dimension left blank means nobody has said what it costs, and a run that reports
-        it stops with an unknown cost. Tick "the vendor does not bill this" to say so on purpose.
+        it stops with an unknown cost. Tick "the vendor does not bill this" to say so on purpose; input
+        and output need one or the other before the model can be saved.
       </small>
     </>
   );

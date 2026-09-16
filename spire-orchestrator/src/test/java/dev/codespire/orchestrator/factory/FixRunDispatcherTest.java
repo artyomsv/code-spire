@@ -163,6 +163,11 @@ class FixRunDispatcherTest {
                 return priceable ? java.util.List.of() : java.util.List.of(dev.codespire.contract.review.TokenType.OUTPUT);
             }
         };
+        // The dispatcher asks the catalogue whether the model is still offered. Left unset, the real
+        // registry would open a database from a plain unit test — the trap CLAUDE.md names.
+        dispatcher.models = new dev.codespire.orchestrator.llm.LlmModelRegistry() {
+            @Override public boolean isDisabled(String model) { return false; }
+        };
         dispatcher.spendGate = new SpendGate() {
             @Override
             public Decision decide() {

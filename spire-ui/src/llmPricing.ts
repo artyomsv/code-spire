@@ -38,7 +38,10 @@ export function unpricedTypesFor(
   reportedTypes: string[] | undefined,
 ): RateType[] {
   if (model.pricingMode !== 'METERED') return [];
-  const reported = (reportedTypes ?? MANDATORY_RATE_TYPES) as RateType[];
+  // No answer from the server means "assume it reports everything", exactly as the server's own
+  // unknown-harness fallback does (HarnessTokenReport). Falling back to INPUT and OUTPUT would put
+  // back the weaker question that let a run start, spend, and stop on a type nobody priced.
+  const reported = (reportedTypes ?? RATE_TYPES) as RateType[];
   return RATE_TYPES.filter(type => reported.includes(type)
     && model.rates[type] == null && !(model.notBilled ?? []).includes(type));
 }

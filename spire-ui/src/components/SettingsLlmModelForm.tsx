@@ -41,6 +41,15 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
   const [pricingMode, setPricingMode] = useState<EditablePricingMode>(initial?.pricingMode ?? 'METERED');
   const [rates, setRates] = useState<Record<RateType, string>>(() => initialRates(initial));
   const [notBilled, setNotBilled] = useState<Record<RateType, boolean>>(() => initialNotBilled(initial));
+  /**
+   * Ticking the box CLEARS that type's rate. The input goes blank and disabled either way, so leaving
+   * the number in state made the save refuse a value nobody could see or edit — the operator had to
+   * untick, clear it by hand and tick again.
+   */
+  function assert(type: RateType, value: boolean) {
+    setNotBilled(current => ({ ...current, [type]: value }));
+    if (value) setRate(type, '');
+  }
   const [dialect, setDialect] = useState<ApiDialect>({
     outputTokenParam: initial?.outputTokenParam ?? 'MAX_TOKENS',
     supportsTemperature: initial?.supportsTemperature ?? true,
@@ -163,7 +172,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
           </label>
 
           {pricingMode === 'METERED' && <ModelRateFields rates={rates} onChange={setRate}
-            notBilled={notBilled} onNotBilled={(type, value) => setNotBilled(current => ({ ...current, [type]: value }))} />}
+            notBilled={notBilled} onNotBilled={assert} />}
 
           <SettingsLlmModelDialectFields
             type={identity.type}

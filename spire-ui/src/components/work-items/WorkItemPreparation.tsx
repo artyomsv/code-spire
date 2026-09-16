@@ -6,9 +6,14 @@ import { branchHead, preparationOptions, resolveArtifact, registerPreparation, t
 import { buildDefaults } from '../repositories/factory/buildDefaultsApi';
 import { TOKEN_TYPE_LABEL, unpricedTypesFor } from '../../llmPricing';
 
-/** What this model cannot price of what the chosen harness reports; empty means a run may start. */
+/**
+ * What this model cannot price of what the chosen harness reports; empty means a run may start.
+ *
+ * <p>With NO harness chosen the question has no answer yet, so nothing is judged: a missing entry for a
+ * real harness name means "assume it reports everything", but an empty selection is not a harness.
+ */
 function unpriced(model: LlmModelView, harness: string, reported: Record<string, string[]>) {
-  return unpricedTypesFor(model, reported[harness]);
+  return harness ? unpricedTypesFor(model, reported[harness]) : [];
 }
 
 const missingLabel = (types: string[]) => types.map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL]).join(', ');

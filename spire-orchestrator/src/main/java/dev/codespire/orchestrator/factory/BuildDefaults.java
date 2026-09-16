@@ -22,6 +22,7 @@ public class BuildDefaults {
     @Inject DataSource dataSource;
     @Inject FactoryConfig config;
     @Inject LlmModelRegistry models;
+    @Inject dev.codespire.orchestrator.llm.LlmModelPricer pricer;
 
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
@@ -80,14 +81,14 @@ public class BuildDefaults {
         if (harness == null || !config.agentImage().containsKey(harness))
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
-        // Enabled AND priceable. Dispatch prices a model by name and does not read `enabled`
-        // (LlmModelPricer.pricingFor), so refusing a disabled model here is stricter than dispatch on
-        // purpose: a model an operator switched off is not one a repository should silently keep using.
-        // The reverse — a model disabled AFTER this save — is caught by part D, which adds the harness's
-        // own reported types to the dispatch check.
+        // Exactly what the dispatch refuses, asked here: the model must be offered, and it must price
+        // every token type this harness can report. A model disabled AFTER this save is refused at
+        // dispatch too (WorkRunAssembly), so the two no longer disagree in either direction.
         if (models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
             throw new Refused("model_unknown");
-        if (!models.isPriceable(model)) throw new Refused("model_pricing_unavailable");
+        var unpriced = pricer.unpricedTypes(model, harness);
+        if (!unpriced.isEmpty()) throw new Refused("model_pricing_incomplete:"
+                + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
         try (Connection c = dataSource.getConnection()) {
             // Same lock order as the policy save: the repository row first, so a save cannot interleave
             // with a repository or account edit that decides whether these coordinates can run at all.

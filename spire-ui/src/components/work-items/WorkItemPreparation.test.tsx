@@ -119,6 +119,10 @@ it('offers the configured harnesses and the priced models instead of free text',
   show();
   const harness = await screen.findByLabelText('Harness');
   expect(within(harness).getAllByRole('option').map(option => option.textContent)).toEqual(['Select a harness', 'TEST-harness', 'TEST-other-harness']);
+  // Before a harness is chosen there is nothing to judge a model against, so nothing is marked.
+  expect(within(await screen.findByLabelText('Model')).getAllByRole('option').map(option => option.textContent))
+    .toEqual(['Select a model', 'TEST-model', 'TEST-unpriced']);
+  fireEvent.change(harness, { target: { value: 'TEST-harness' } });
   const models = within(await screen.findByLabelText('Model')).getAllByRole('option');
   expect(models.map(option => option.textContent)).toEqual(['Select a model', 'TEST-model', 'TEST-unpriced — no price for Output']);
   expect(models[2]).toBeDisabled();

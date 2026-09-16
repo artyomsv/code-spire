@@ -168,6 +168,32 @@ public class LlmModelRegistry {
         return pricer.priceCall(model, usage);
     }
 
+    /**
+     * Whether an operator has switched this model off. Deliberately NOT part of pricing: a run that has
+     * already happened must still be charged at the rate it was quoted, even if the model was switched
+     * off in between — {@code priceCall} therefore keeps ignoring this, and only the guards that decide
+     * whether a run may START consult it.
+     */
+    public boolean isDisabled(String model) {
+        if (model == null || model.isBlank()) return false;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT enabled FROM llm_model WHERE name = ?")) {
+            ps.setString(1, model);
+            try (ResultSet rs = ps.executeQuery()) {
+                // A model the catalogue does not have is NOT "disabled": it has no rates either, and the
+                // pricing guard already refuses it with the types it cannot price. Answering true here
+                // would replace that precise refusal with a switched-off message for a typo.
+                return rs.next() && !rs.getBoolean("enabled");
+            }
+        } catch (SQLException failure) {
+            // A read fault is not an operator switching a model off. Refusing every run on a database
+            // hiccup is worse than the case this guard exists for.
+            LOG.warnf("Could not read whether model %s is enabled (%s); not treating it as switched off",
+                    model, failure.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     /** @see LlmModelPricer#isPriceable(String) */
     public boolean isPriceable(String model) {
         return pricer.isPriceable(model);

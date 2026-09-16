@@ -20,6 +20,7 @@ public class WorkRunAssembly {
     @Inject HarnessCredentialPool pool;
     @Inject SpendGate spend;
     @Inject LlmModelPricer pricer;
+    @Inject dev.codespire.orchestrator.llm.LlmModelRegistry models;
     @Inject RunCredentials credentials;
     public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
@@ -46,6 +47,7 @@ public class WorkRunAssembly {
         // Every type the chosen harness can report must have a rate or a not-billed assertion. Asking
         // only about INPUT and OUTPUT is what let item 36 start, spend, report CACHED_INPUT and
         // REASONING, and stop with a cost nobody could account for.
+        if(models.isDisabled(in.model()))throw new IllegalStateException("model_disabled");
         var unpriced=pricer.unpricedTypes(in.model(),in.harness());
         if(!unpriced.isEmpty())throw new IllegalStateException("model_pricing_incomplete:"
                 +unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));

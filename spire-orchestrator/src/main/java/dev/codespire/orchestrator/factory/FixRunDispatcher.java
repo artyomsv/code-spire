@@ -75,6 +75,9 @@ public class FixRunDispatcher {
     LlmModelPricer pricer;
 
     @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry models;
+
+    @Inject
     SpendGate spendGate;
 
     @Inject
@@ -284,6 +287,10 @@ public class FixRunDispatcher {
         if (image == null || image.isBlank()) {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");
+        }
+        if (models.isDisabled(model)) {
+            return new Refused("the model '" + model + "' is switched off in the catalogue, so a fix run"
+                    + " cannot call it");
         }
         var unpriced = pricer.unpricedTypes(model, harness);
         if (!unpriced.isEmpty()) {

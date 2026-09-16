@@ -14,6 +14,7 @@ const REASONS = new Map(Object.entries({
   base_branch_blank: 'A base branch is required.',
   base_branch_invalid: 'That is not a valid branch name. A build would refuse it, so it cannot be saved.',
   model_name_invalid: 'That model name has characters a run cannot pass to the agent.',
+  model_disabled: 'That model is switched off in the catalogue, so a run cannot call it.',
   model_pricing_unavailable: 'That model has no price for input and output tokens, so a run with it would be refused.',
   harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
@@ -120,5 +121,5 @@ const DETAILS = new Map(Object.entries({
 
 /** What to tell the operator about a refusal: the rule when the backend named one, else the reason. */
 export function workRefusal(reason: string, detail: string | null): string {
-  return (detail ? DETAILS.get(detail) : undefined) ?? REASONS.get(reason) ?? reason;
+  return (detail ? DETAILS.get(detail) : undefined) ?? workReason(reason);
 }

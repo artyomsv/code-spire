@@ -29,9 +29,11 @@ describe('the not-billed assertion', () => {
     expect(initialRates(model({ INPUT: 100 }, ['CACHED_INPUT'])).CACHED_INPUT).toBe('');
   });
 
-  it('is sent only for the optional types, and never under a self-hosted model', () => {
+  it('is sent for any type it is ticked on, and never under a self-hosted model', () => {
     const asserted = { ...noAssertions(), CACHED_INPUT: true, INPUT: true };
-    expect(notBilledPayload('METERED', asserted)).toEqual(['CACHED_INPUT']);
+    // INPUT included: a vendor that bills nothing for it and charges for OUTPUT is a real schedule,
+    // and UNMETERED would erase the OUTPUT charge instead of stating the free half.
+    expect(notBilledPayload('METERED', asserted)).toEqual(['INPUT', 'CACHED_INPUT']);
     expect(notBilledPayload('UNMETERED', asserted)).toEqual([]);
   });
 
@@ -41,10 +43,15 @@ describe('the not-billed assertion', () => {
       .toContain('both a rate and "not billed"');
   });
 
-  it('refuses an assertion on a type every vendor charges for', () => {
-    const rates = { ...blankRates(), INPUT: '2.50', OUTPUT: '10.00' };
-    expect(validateRates('METERED', rates, { ...noAssertions(), INPUT: true }))
-      .toContain('charged by every vendor');
+  it('accepts an asserted input rate when the output rate is entered', () => {
+    const rates = { ...blankRates(), OUTPUT: '10.00' };
+    expect(validateRates('METERED', rates, { ...noAssertions(), INPUT: true })).toBeNull();
+  });
+
+  it('still refuses SILENCE on a mandatory type: no rate and no mark', () => {
+    const rates = { ...blankRates(), OUTPUT: '10.00' };
+    expect(validateRates('METERED', rates, noAssertions()))
+      .toContain('needs a rate, or the mark saying this vendor does not bill it');
   });
 
   it('accepts an assertion in place of a rate for an optional type', () => {
@@ -71,8 +78,11 @@ describe('what a harness run needs priced', () => {
     expect(unpricedTypesFor(model({ INPUT: 100, OUTPUT: 200 }), ['INPUT', 'OUTPUT'])).toEqual([]);
   });
 
-  it('assumes the two every vendor reports when the server named none', () => {
-    expect(unpricedTypesFor(model({ INPUT: 100 }), undefined)).toEqual(['OUTPUT']);
+  // The server's own unknown-harness fallback demands every priceable type; a narrower guess here
+  // would put back the weaker question that let a run start, spend and stop on an unpriced type.
+  it('assumes a harness reports everything when the server named nothing', () => {
+    expect(unpricedTypesFor(model({ INPUT: 100 }), undefined))
+      .toEqual(['CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING']);
   });
 
   it('asks nothing of a self-hosted model, whose zero is asserted for the whole model', () => {

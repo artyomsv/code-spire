@@ -49,9 +49,10 @@ class LlmModelNotBilledRatesTest {
     }
 
     /**
-     * The discriminating case for the repository read. {@code getLong} answers 0 for SQL NULL, so an
-     * assertion read without {@code wasNull} arrives as a zero PRICE — a metered line at rate 0, which
-     * is a fabricated price rather than a stated one. The line's own mode is what tells them apart.
+     * An assertion must charge as an ASSERTED zero, never as a metered zero: a metered line at rate 0
+     * is a price nobody quoted. (This does not exercise the {@code wasNull} branch in the repository —
+     * V74's pairing constraint makes a RATED row with no rate unstorable, so that branch defends only
+     * against a hand-edited row.)
      */
     @Test
     void anAssertedTypeChargesAnAssertedZeroAndNotAMeteredZero() {
@@ -91,14 +92,26 @@ class LlmModelNotBilledRatesTest {
                 .getMessage().contains("both a rate and a"));
     }
 
-    /** A model that charges for neither is UNMETERED, which says that about the whole model. */
+    /**
+     * A vendor that bills nothing for one headline dimension and charges for the other is a real
+     * schedule. The first draft of this rule refused it and pointed at UNMETERED, which asserts zero
+     * for the WHOLE model — and would have erased the dimension that IS charged.
+     */
     @Test
-    void theTwoTypesEveryVendorChargesForCannotBeAsserted() {
-        for (String required : List.of("INPUT", "OUTPUT")) {
-            assertTrue(assertThrows(IllegalArgumentException.class,
-                    () -> model(name(), Map.of("INPUT", 200_000L, "OUTPUT", 400_000L), List.of(required)))
-                    .getMessage().contains("cannot be asserted as unbilled"));
-        }
+    void aMandatoryTypeMayBeAssertedWhenTheVendorDoesNotBillIt() {
+        String model = name();
+        model(model, Map.of("OUTPUT", 400_000L), List.of("INPUT"));
+        assertTrue(pricer.isPriceable(model));
+        assertEquals(List.of(TokenType.CACHED_INPUT, TokenType.CACHE_WRITE, TokenType.REASONING),
+                pricer.unpricedTypes(model, "codex"));
+    }
+
+    /** What must not happen is SILENCE: an unsaid mandatory type prices a call as unknown. */
+    @Test
+    void aMandatoryTypeMustBeSaidOneWayOrTheOther() {
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> model(name(), Map.of("INPUT", 200_000L), List.of()))
+                .getMessage().contains("or an explicit statement that this vendor does not bill it"));
     }
 
     @Test

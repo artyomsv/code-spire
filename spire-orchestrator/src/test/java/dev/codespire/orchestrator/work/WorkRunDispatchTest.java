@@ -101,6 +101,15 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
         assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
         assertEquals("model_pricing_incomplete:INPUT,CACHED_INPUT,CACHE_WRITE,OUTPUT,REASONING",store.load(id).reason());
     }
+    /** A model switched off in the catalogue is not one a repository may keep calling. */
+    @Test void aDisabledModelCannotStartABuild() throws Exception {
+        String id=ready();execute("UPDATE llm_model SET enabled=FALSE WHERE id=?",modelId);
+        try {
+            dispatcher.drain();
+            assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
+            assertEquals("model_disabled",store.load(id).reason());
+        } finally { execute("UPDATE llm_model SET enabled=TRUE WHERE id=?",modelId); }
+    }
     @Test void aRemovedHarnessImageProducesADurableRefusal() throws Exception {
         String id=ready();
         // Replace only deployment configuration; the existing M2 parser must raise its real validation error.

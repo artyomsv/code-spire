@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.work;
 
+import dev.codespire.contract.review.TokenType;
 import java.util.Set;
 
 /**
@@ -16,19 +17,35 @@ final class WorkRunAssemblyRefusals {
 
     private static final String UNNAMED = "build_configuration_unavailable";
 
-    /** Reasons the dashboard has a sentence for, so only these are passed through. */
+    /** Reasons the dashboard has a sentence for, and which carry no payload at all. */
     private static final Set<String> NAMED = Set.of(
             "factory_account_unavailable", "harness_credential_unavailable", "deployment_spend_cap_reached",
-            "model_pricing_unavailable", "model_pricing_incomplete");
+            "model_pricing_unavailable", "model_disabled");
+
+    /** The one reason that carries a payload: "model_pricing_incomplete:CACHED_INPUT,REASONING". */
+    private static final String PRICING = "model_pricing_incomplete";
 
     private WorkRunAssemblyRefusals() {}
 
+    /**
+     * Matching is EXACT, and the one payload is parsed rather than trusted. A prefix match would let
+     * any text after the first colon through into a durable item reason and onto a page — today's
+     * producers emit fixed literals, but "today's producers are safe" is not a boundary.
+     */
     static String reasonOf(RuntimeException failure) {
         String message = failure.getMessage();
         if (message == null || message.isBlank()) return UNNAMED;
-        // "model_pricing_incomplete:CACHED_INPUT,REASONING" — the detail rides with the reason so the
-        // page can say which rates are missing without a second lookup.
-        String head = message.contains(":") ? message.substring(0, message.indexOf(':')) : message;
-        return NAMED.contains(head) ? message : UNNAMED;
+        if (NAMED.contains(message)) return message;
+        if (!message.startsWith(PRICING + ":")) return UNNAMED;
+        String[] types = message.substring(PRICING.length() + 1).split(",", -1);
+        if (types.length == 0) return UNNAMED;
+        for (String type : types) {
+            try {
+                if (TokenType.valueOf(type) == TokenType.TOTAL) return UNNAMED;
+            } catch (IllegalArgumentException notAType) {
+                return UNNAMED;
+            }
+        }
+        return message;
     }
 }

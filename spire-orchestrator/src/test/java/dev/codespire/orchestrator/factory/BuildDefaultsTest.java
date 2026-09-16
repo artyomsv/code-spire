@@ -59,10 +59,14 @@ class BuildDefaultsTest {
                 "TEST-build", "TEST-repo-" + suffix, true, account, null)).id();
         model = "TEST-model-" + suffix;
         disabled = "TEST-disabled-" + suffix;
+        // Complete for codex: priced where this fake vendor bills, asserted where it does not. Tests
+        // about branches, revisions and harness names must not trip over the pricing rule instead.
         models.create(new LlmModelInput("openai", model, "TEST model", "METERED",
-                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), true, java.util.List.of()));
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), true,
+                java.util.List.of("CACHED_INPUT", "CACHE_WRITE", "REASONING")));
         models.create(new LlmModelInput("openai", disabled, "TEST disabled model", "METERED",
-                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), false, java.util.List.of()));
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), false,
+                java.util.List.of("CACHED_INPUT", "CACHE_WRITE", "REASONING")));
     }
 
     private BuildDefaults.Input input(String branch, String harness, String model, long revision) {
@@ -187,10 +191,22 @@ class BuildDefaultsTest {
     }
 
     /**
-     * Priced for INPUT and OUTPUT, or a run with it is refused (WorkRunAssembly) — and the catalogue's
-     * own save has required both since V30, so the only way to hold such a model is a row that predates
-     * the rule. The OUTPUT rate is removed directly for that reason: creating the model through the
-     * catalogue cannot produce this state, and without it nothing reaches the priceability check.
+     * The save asks exactly what the dispatch asks: every token type this harness can report needs a
+     * price or an explicit not-billed mark. The fixture model is priced for INPUT and OUTPUT only, and
+     * codex reports three more — so the refusal names those three.
+     */
+    @Test
+    void aModelThatCannotPriceWhatTheHarnessReportsIsRefused() {
+        String partial = "TEST-partial-" + UUID.randomUUID().toString().substring(0, 8);
+        models.create(new LlmModelInput("openai", partial, "TEST partial model", "METERED",
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "MAX_TOKENS", true, null, Map.of(), true, java.util.List.of()));
+        assertEquals("model_pricing_incomplete:CACHED_INPUT,CACHE_WRITE,REASONING",
+                refusal(input("main", "codex", partial, 0)));
+    }
+
+    /**
+     * And the legacy shape: a catalogue row from before the rule, whose OUTPUT rate was removed by hand.
+     * Creating the model through the catalogue cannot produce this state.
      */
     @Test
     void aModelWhoseOutputRateIsMissingIsRefused() throws Exception {
@@ -202,7 +218,7 @@ class BuildDefaultsTest {
             ps.setObject(1, UUID.fromString(id));
             assertEquals(1, ps.executeUpdate());
         }
-        assertEquals("model_pricing_unavailable", refusal(input("main", "codex", unpriced, 0)));
+        assertTrue(refusal(input("main", "codex", unpriced, 0)).startsWith("model_pricing_incomplete:"));
     }
 
     /**

@@ -103,10 +103,18 @@ This follows the parent's §5, with decision 4B.
 - **The ledger line.** A `NOT_BILLED` bucket charges an `UNMETERED` line: rate 0 and cost 0, which is what
   the ledger's own check requires (`V30__llm_charge_ledger.sql:94-95`). Copying a null rate into the line
   would violate it.
-- **Which types may be asserted.** The optional ones only: `CACHED_INPUT`, `CACHE_WRITE`, `REASONING`.
-  `INPUT` and `OUTPUT` are what every vendor charges on every call, and a model that charges for neither
-  is `UNMETERED` — which already says that about the whole model. Asserting them would be a second way
-  to say the same thing, and a quieter one.
+- **Which types may be asserted: any of them.** The first draft allowed only the optional three and
+  pointed a vendor that bills nothing for `INPUT` at `UNMETERED` — which asserts zero for the WHOLE
+  model and would erase the `OUTPUT` charge that vendor does make. What the rule enforces instead is
+  that `INPUT` and `OUTPUT` are SAID, one way or the other: a rate, or the mark. Silence on either one
+  is refused, because a call reporting an unsaid type cannot be priced.
+- **A model switched off cannot start a run.** Dispatch priced a model by name and never read `enabled`,
+  so a model an operator had switched off kept running while the setup screen refused to save it. The
+  three dispatch sites now refuse it (`model_disabled`). A model the catalogue never had is left to the
+  pricing refusal, which names what it cannot price rather than calling a typo "switched off".
+- **Rolling back.** V74 is forward-only once an assertion is saved: the previous reader turns a
+  `NOT_BILLED` row into a zero rate. The migration says so at the top, and an older dashboard that omits
+  `notBilled` on a model save clears the assertions, because the payload is a full replacement.
 - **One predicate.** `isPriceable(model, harness)`: every bucket the harness can report has a rate or a
   not-billed assertion. The three dispatch sites (`WorkRunAssembly.java:46`, `FixRunDispatcher.java:288`,
   `RunResource.java:225`) refuse with `model_pricing_incomplete` and the list of missing types. The review

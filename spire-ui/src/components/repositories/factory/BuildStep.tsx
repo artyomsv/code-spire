@@ -15,9 +15,14 @@ interface Props {
   reload: () => void;
 }
 
-/** What this model cannot price of what the chosen harness reports; empty means a run may start. */
+/**
+ * What this model cannot price of what the chosen harness reports; empty means a run may start.
+ *
+ * <p>With NO harness chosen the question has no answer yet, so nothing is judged: a missing entry for a
+ * real harness name means "assume it reports everything", but an empty selection is not a harness.
+ */
 function unpriced(model: LlmModelView, harness: string, reported: Record<string, string[]>) {
-  return unpricedTypesFor(model, reported[harness]);
+  return harness ? unpricedTypesFor(model, reported[harness]) : [];
 }
 
 const missingLabel = (types: string[]) => types.map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL]).join(', ');
@@ -71,7 +76,11 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     finally { if (live.current) setBusy(null); }
   }
 
-  const complete = !!form.baseBranch.trim() && !!form.harness && !!form.model;
+  // The chosen PAIR, not just three non-empty fields. Choosing a model and then changing the harness
+  // can leave a selection the dispatch refuses; the option goes grey, and Save used to stay live.
+  const chosen = choices.models.find(model => model.name === form.model);
+  const missing = chosen ? unpriced(chosen, form.harness, choices.reportedTypes) : [];
+  const complete = !!form.baseBranch.trim() && !!form.harness && !!form.model && missing.length === 0;
   return <FactoryStep number={5} question="How it builds" term="build setup" state={editing ? 'editing' : defaults.revision > 0 ? 'done' : 'missing'}
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
@@ -105,6 +114,9 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
           })}
           {form.model && !choices.models.some(model => model.name === form.model) && <option value={form.model}>{form.model} (not in the catalogue)</option>}
         </select></SettingField>
+      {missing.length > 0 && <p className="prov-error" role="alert">
+        {chosen?.label ?? form.model} has no price for {missingLabel(missing)}, which {form.harness} reports.
+        Enter each rate in Settings → LLM, or mark the type as one this vendor does not bill.</p>}
       {error && <p className="prov-error" role="alert">{error}</p>}
       {/* A stale revision cannot be retried from this form: every attempt resends the number it loaded. */}
       {error.includes('Reload it') && <div className="prov-actions">
