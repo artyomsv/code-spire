@@ -156,6 +156,12 @@ class FixRunDispatcherTest {
             public boolean isPriceable(String model) {
                 return priceable;
             }
+            // Overridden as well, because the dispatcher now asks THIS one. Left to the real method it
+            // would open a database from a plain unit test — the seventh instance of that trap.
+            @Override
+            public java.util.List<dev.codespire.contract.review.TokenType> unpricedTypes(String model, String harness) {
+                return priceable ? java.util.List.of() : java.util.List.of(dev.codespire.contract.review.TokenType.OUTPUT);
+            }
         };
         dispatcher.spendGate = new SpendGate() {
             @Override

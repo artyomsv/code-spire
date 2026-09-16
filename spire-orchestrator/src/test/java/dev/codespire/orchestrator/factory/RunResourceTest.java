@@ -1002,7 +1002,7 @@ class RunResourceTest {
         given().contentType("application/json").body(bodyWithModel(workspace, uncatalogued))
                 .when().post("/api/runs")
                 .then().statusCode(409)
-                .body(containsString("no usable pricing"));
+                .body(containsString("has no price for"));
     }
 
     @Test

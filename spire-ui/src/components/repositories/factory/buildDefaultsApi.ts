@@ -10,7 +10,11 @@ export interface BuildDefaults {
   updatedBy: string | null;
   updatedAt: string | null;
 }
-export interface BuildOptions { harnesses: string[] }
+export interface BuildOptions {
+  harnesses: string[];
+  /** Per harness, the token types it can report. A model that cannot price one of them is refused. */
+  reportedTypes: Record<string, string[]>;
+}
 /** `account` is the role whose account answered: a REVIEWER-read head is not proof the factory can push. */
 export interface BranchHead { branch: string; commit: string; account: string }
 

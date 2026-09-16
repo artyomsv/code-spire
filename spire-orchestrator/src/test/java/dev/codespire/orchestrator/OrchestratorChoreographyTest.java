@@ -116,7 +116,7 @@ class OrchestratorChoreographyTest {
         if (llmModels.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
             llmModels.create(new dev.codespire.orchestrator.llm.LlmModelInput(
                     "openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", Map.of(),
-                    null, null, null, null, true));
+                    null, null, null, null, true, java.util.List.of()));
         }
         if (llmProviders.resolveDefault().isEmpty()) {
             llmProviders.create(new dev.codespire.orchestrator.llm.LlmProviderInput(

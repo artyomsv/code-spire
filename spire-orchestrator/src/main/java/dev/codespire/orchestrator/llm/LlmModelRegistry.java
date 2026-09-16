@@ -76,7 +76,7 @@ public class LlmModelRegistry {
     public LlmModelView create(LlmModelInput in) {
         LlmModelPricingValidator.Validated validated = LlmModelPricingValidator.validate(in);
         PricingMode mode = validated.mode();
-        Map<TokenType, Long> rates = validated.rates();
+        Map<TokenType, ModelRate> rates = validated.rates();
         UUID id = UUID.randomUUID();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
@@ -106,7 +106,7 @@ public class LlmModelRegistry {
     public Optional<LlmModelView> update(UUID id, LlmModelInput in) {
         LlmModelPricingValidator.Validated validated = LlmModelPricingValidator.validate(in);
         PricingMode mode = validated.mode();
-        Map<TokenType, Long> rates = validated.rates();
+        Map<TokenType, ModelRate> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
             String existingName = nameOf(c, id);
             if (existingName == null) {
@@ -244,7 +244,10 @@ public class LlmModelRegistry {
     private LlmModelView toView(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         Map<String, Long> rates = new LinkedHashMap<>();
-        rateRepository.ratesFor(c, id).forEach((type, rate) -> rates.put(type.name(), rate));
+        List<String> notBilled = new java.util.ArrayList<>();
+        rateRepository.ratesFor(c, id).forEach((type, rate) -> {
+            if (rate.billed()) rates.put(type.name(), rate.millicentsPerMillion()); else notBilled.add(type.name());
+        });
         return new LlmModelView(
                 id.toString(),
                 rs.getString("type"), rs.getString("name"), rs.getString("label"),
@@ -253,7 +256,7 @@ public class LlmModelRegistry {
                 rs.getBoolean("supports_temperature"),
                 rs.getString("reasoning_effort"),
                 readExtra(rs.getString("extra_params")),
-                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant());
+                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled));
     }
 
     /** Normalize an operator-supplied token-param name to a valid enum name (default MAX_TOKENS). */

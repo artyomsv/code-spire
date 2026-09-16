@@ -75,7 +75,11 @@ public class WorkRunDispatcher {
             if(refusal!=null) { stop(c,history,item,attempt,refusal);return null; }
             WorkRunAssembly.Prepared prepared;
             try { prepared=assembly.assemble(c,observed.source(),item,observed.artifacts()); }
-            catch(IllegalStateException | jakarta.ws.rs.BadRequestException unavailable) { stop(c,history,item,attempt,"build_configuration_unavailable");return null; }
+            catch(IllegalStateException | jakarta.ws.rs.BadRequestException unavailable) {
+                // The assembly names the rule that refused. Collapsing every cause into one word left an
+                // approved plan stopping with nothing to act on, so a known reason is kept as it came.
+                stop(c,history,item,attempt,WorkRunAssemblyRefusals.reasonOf(unavailable));return null;
+            }
             if(!runs.queued(prepared.row(),"Prepared work item "+item.issue().issueKey(),item.repositoryId())) {
                 refuse(c,attempt,"run_already_recorded");return null;
             }

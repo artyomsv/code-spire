@@ -176,6 +176,7 @@ describe('SettingsLlmProviders — model form', () => {
         label: 'TEST self-hosted',
         pricingMode: 'UNMETERED',
         rates: {},
+        notBilled: [],
         outputTokenParam: 'MAX_TOKENS',
         supportsTemperature: true,
         reasoningEffort: null,

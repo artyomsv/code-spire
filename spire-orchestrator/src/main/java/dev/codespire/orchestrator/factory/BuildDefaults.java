@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.factory;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import java.sql.*;
 import java.time.Instant;
 import java.util.UUID;
@@ -59,18 +60,34 @@ public class BuildDefaults {
         }
     }
 
+    /**
+     * Transactional for the same reason {@code WorkPolicyRegistry.save} is: without one, every
+     * statement commits on its own and the two {@code FOR UPDATE} locks below are released the moment
+     * they are taken. Two operators could then both read revision N and both write, and the second
+     * would silently overwrite the first — the exact loss the expected revision exists to prevent.
+     */
+    @Transactional
     public Defaults save(UUID repository, Input input, String actor) {
         if (input == null) throw new Refused("build_defaults_required");
         if (actor == null || actor.isBlank()) throw new Refused("operator_identity_required");
-        String branch = trimmed(input.baseBranch()), harness = trimmed(input.harness()), model = trimmed(input.model());
+        String branch = strip(input.baseBranch()), harness = strip(input.harness()), model = strip(input.model());
         if (branch == null) throw new Refused("base_branch_blank");
-        // Exactly the lookup the dispatch parser performs (DispatchRequestParser.java:73): an exact key,
-        // no case folding. Saving a name that only matches after folding would store a harness that
-        // refuses at dispatch, which is the refusal this check exists to move forward.
+        // The branch, the harness and the model are checked against the rules the DISPATCH applies, not
+        // against a second opinion written here. A value that passes here and fails there would put the
+        // refusal back where this slice is taking it away from: after an approval, mid-item.
+        if (!DispatchRequestParser.isRefName(branch)) throw new Refused("base_branch_invalid");
+        // An exact key, no case folding, as at DispatchRequestParser.java:73.
         if (harness == null || !config.agentImage().containsKey(harness))
             throw new Refused("harness_unconfigured");
-        if (model == null || models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
+        if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
+        // Enabled AND priceable. Dispatch prices a model by name and does not read `enabled`
+        // (LlmModelPricer.pricingFor), so refusing a disabled model here is stricter than dispatch on
+        // purpose: a model an operator switched off is not one a repository should silently keep using.
+        // The reverse — a model disabled AFTER this save — is caught by part D, which adds the harness's
+        // own reported types to the dispatch check.
+        if (models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
             throw new Refused("model_unknown");
+        if (!models.isPriceable(model)) throw new Refused("model_pricing_unavailable");
         try (Connection c = dataSource.getConnection()) {
             // Same lock order as the policy save: the repository row first, so a save cannot interleave
             // with a repository or account edit that decides whether these coordinates can run at all.
@@ -99,7 +116,8 @@ public class BuildDefaults {
         return new IllegalStateException("The repository build defaults could not be read or saved", failure);
     }
 
-    private static String trimmed(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
+    /** strip(), not trim(): the dispatch parser strips, and two whitespace rules is one rule too many. */
+    private static String strip(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 }

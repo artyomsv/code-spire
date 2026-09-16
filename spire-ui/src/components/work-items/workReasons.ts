@@ -1,3 +1,5 @@
+import { TOKEN_TYPE_LABEL } from '../../llmPricing';
+
 /**
  * One place for the words the factory puts on screen for a machine reason.
  *
@@ -10,6 +12,9 @@ const REASONS = new Map(Object.entries({
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',
   base_branch_blank: 'A base branch is required.',
+  base_branch_invalid: 'That is not a valid branch name. A build would refuse it, so it cannot be saved.',
+  model_name_invalid: 'That model name has characters a run cannot pass to the agent.',
+  model_pricing_unavailable: 'That model has no price for input and output tokens, so a run with it would be refused.',
   harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
   build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
@@ -82,7 +87,25 @@ const REASONS = new Map(Object.entries({
   spec_approval_unavailable: 'Specification needs approval, but this approval capability is not available yet.',
 }));
 
-export function workReason(reason: string) { return REASONS.get(reason) ?? reason; }
+/**
+ * A reason may carry its own payload after a colon: "model_pricing_incomplete:CACHED_INPUT,REASONING"
+ * names the token types nobody priced. The types ride with the reason because the screen that shows it
+ * has no second call to make, and "pricing" alone sent operators to re-enter rates they already had.
+ */
+function pricingSentence(types: string): string {
+  const named = types.split(',').filter(Boolean)
+    .map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL] ?? type).join(', ');
+  return named
+    ? `The build model has no price for ${named}, and this harness reports those. Enter each rate in`
+      + ' Settings → LLM, or mark the type as one this vendor does not bill.'
+    : 'The build model cannot price what this harness reports.';
+}
+
+export function workReason(reason: string) {
+  const [head, payload] = reason.split(/:(.*)/s);
+  if (head === 'model_pricing_incomplete') return pricingSentence(payload ?? '');
+  return REASONS.get(reason) ?? reason;
+}
 
 /** The rule that refused a registration. The backend sends these beside the coarse reason. */
 const DETAILS = new Map(Object.entries({

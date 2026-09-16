@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.llm.HarnessTokenReport;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRole;
@@ -35,8 +36,12 @@ public class RepositoryBuildResource {
     @Inject ProviderClients clients;
     @Inject SecurityIdentity identity;
 
-    /** The harness names this deployment can actually run; a name without an agent image refuses at dispatch. */
-    public record Options(List<String> harnesses) {}
+    /**
+     * The harnesses this deployment can actually run, each with the token types it can report. A name
+     * without an agent image refuses at dispatch; a model that cannot price one of those types refuses
+     * there too, so the screen is told both rather than guessing at either.
+     */
+    public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes) {}
     /** @param account the role whose account answered, so a reviewer-confirmed head is not read as factory push access */
     public record Head(String branch, String commit, String account) {}
 
@@ -48,7 +53,10 @@ public class RepositoryBuildResource {
 
     @GET @Path("/build/options")
     public Options options() {
-        return new Options(config.agentImage().keySet().stream().sorted().toList());
+        List<String> harnesses = config.agentImage().keySet().stream().sorted().toList();
+        return new Options(harnesses, harnesses.stream().collect(java.util.stream.Collectors.toMap(
+                harness -> harness,
+                harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
     }
 
     @PUT @Path("/build")
@@ -83,8 +91,11 @@ public class RepositoryBuildResource {
                 .orElseThrow(() -> refused(409, "repository_account_missing"));
         ProviderRole role = factory.isPresent() ? ProviderRole.FACTORY : ProviderRole.REVIEWER;
         String name = branch.trim();
+        // Built OUTSIDE the try, so a local client-construction fault stays a 500 rather than being
+        // reported as a forge that did not confirm the branch. Only the forge call is caught below.
+        var scm = clients.diffSource(account);
         try {
-            return new Head(name, clients.diffSource(account).fetchBranchHead(new RepoRef(view.workspace(), view.slug()), name), role.name());
+            return new Head(name, scm.fetchBranchHead(new RepoRef(view.workspace(), view.slug()), name), role.name());
         } catch (UnsupportedOperationException unsupported) {
             throw refused(501, "branch_head_unsupported");
         } catch (RuntimeException refusedByForge) {

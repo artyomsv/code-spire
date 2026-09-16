@@ -16,6 +16,12 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.is;
@@ -38,6 +44,7 @@ class BuildDefaultsTest {
     @Inject RepositoryRegistry repositories;
     @Inject ProviderRegistry providers;
     @Inject LlmModelRegistry models;
+    @Inject javax.sql.DataSource dataSource;
 
     UUID repository;
     String model, disabled;
@@ -53,9 +60,9 @@ class BuildDefaultsTest {
         model = "TEST-model-" + suffix;
         disabled = "TEST-disabled-" + suffix;
         models.create(new LlmModelInput("openai", model, "TEST model", "METERED",
-                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), true));
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), true, java.util.List.of()));
         models.create(new LlmModelInput("openai", disabled, "TEST disabled model", "METERED",
-                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), false));
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "max_tokens", true, null, Map.of(), false, java.util.List.of()));
     }
 
     private BuildDefaults.Input input(String branch, String harness, String model, long revision) {
@@ -152,10 +159,73 @@ class BuildDefaultsTest {
                 .body("reason", is("repository_unknown"));
     }
 
-    /** A repository with no bound account cannot read a head, and says so instead of failing as a 500. */
     @Test
-    void aBranchHeadNeedsAnAccountAndABranch() {
+    void aBranchHeadNeedsABranchAndAnExistingRepository() {
         given().get("/api/repositories/" + repository + "/factory/branch-head").then().statusCode(400);
         given().get("/api/repositories/" + UUID.randomUUID() + "/factory/branch-head?branch=main").then().statusCode(404);
+    }
+
+    /**
+     * The discriminating case for the account guard: an existing repository, a real branch name, and
+     * no account bound at all. The two cases above reach the branch and repository checks instead, so
+     * they pass with the account guard deleted.
+     */
+    @Test
+    void aRepositoryWithNoAccountSaysSoInsteadOfFailing() {
+        UUID bare = repositories.create(new RepositoryInput("github", "https://github.example.invalid",
+                "TEST-build", "TEST-bare-" + UUID.randomUUID().toString().substring(0, 8), true, null, null)).id();
+        given().get("/api/repositories/" + bare + "/factory/branch-head?branch=main").then().statusCode(409)
+                .body("reason", is("repository_account_missing"));
+    }
+
+    /** A branch a build would refuse cannot be stored as the branch every build starts from. */
+    @Test
+    void aBranchNameADispatchWouldRefuseIsRefusedHere() {
+        assertEquals("base_branch_invalid", refusal(input("feature..broken", "codex", model, 0)));
+        assertEquals("base_branch_invalid", refusal(input("-main", "codex", model, 0)));
+        assertEquals("base_branch_invalid", refusal(input("feature branch", "codex", model, 0)));
+    }
+
+    /**
+     * Priced for INPUT and OUTPUT, or a run with it is refused (WorkRunAssembly) — and the catalogue's
+     * own save has required both since V30, so the only way to hold such a model is a row that predates
+     * the rule. The OUTPUT rate is removed directly for that reason: creating the model through the
+     * catalogue cannot produce this state, and without it nothing reaches the priceability check.
+     */
+    @Test
+    void aModelWhoseOutputRateIsMissingIsRefused() throws Exception {
+        String unpriced = "TEST-unpriced-" + UUID.randomUUID().toString().substring(0, 8);
+        String id = models.create(new LlmModelInput("openai", unpriced, "TEST unpriced model", "METERED",
+                Map.of("INPUT", 100L, "OUTPUT", 200L), "MAX_TOKENS", true, null, Map.of(), true, java.util.List.of())).id();
+        try (java.sql.Connection c = dataSource.getConnection();
+             java.sql.PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model_rate WHERE model_id=? AND token_type='OUTPUT'")) {
+            ps.setObject(1, UUID.fromString(id));
+            assertEquals(1, ps.executeUpdate());
+        }
+        assertEquals("model_pricing_unavailable", refusal(input("main", "codex", unpriced, 0)));
+    }
+
+    /**
+     * Two operators saving at once. Without a transaction the two FOR UPDATE locks release immediately,
+     * both reads see the same revision and the second write silently overwrites the first — the loss the
+     * expected revision exists to prevent. Exactly one save must win, and the row must advance by one.
+     */
+    @Test
+    void twoSavesAtOnceLeaveOneWinnerAndOneRefusal() throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<String> attempt = () -> {
+                start.await(5, TimeUnit.SECONDS);
+                try { return "saved:" + defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").revision(); }
+                catch (BuildDefaults.Refused refused) { return refused.reason(); }
+            };
+            Future<String> first = pool.submit(attempt), second = pool.submit(attempt);
+            start.countDown();
+            List<String> answers = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+            assertEquals(1, answers.stream().filter(answer -> answer.equals("saved:1")).count(), "answers: " + answers);
+            assertEquals(1, answers.stream().filter(answer -> answer.equals("build_defaults_changed")).count(), "answers: " + answers);
+            assertEquals(1, defaults.get(repository).revision());
+        } finally { pool.shutdownNow(); }
     }
 }

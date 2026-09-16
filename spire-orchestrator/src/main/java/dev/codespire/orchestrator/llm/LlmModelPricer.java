@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.llm;
 
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenCount;
+import dev.codespire.contract.llm.HarnessTokenReport;
 import dev.codespire.contract.review.TokenType;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -84,14 +85,48 @@ public class LlmModelPricer {
                 && LlmModelPricingValidator.REQUIRED_RATES.stream().allMatch(pricing.rates()::containsKey);
     }
 
+    /**
+     * Whether a HARNESS run may start against this model: every token type that harness can report has
+     * a rate or an operator's not-billed assertion.
+     *
+     * <p>The weaker question — {@link #isPriceable(String)}, which asks only about INPUT and OUTPUT —
+     * is what let work item 36 start, spend, report CACHED_INPUT and REASONING, and then stop with an
+     * unknown cost. A harness reports what it reports; asking after the money is gone is too late.
+     */
+    public boolean isPriceable(String model, String harness) {
+        return unpricedTypes(model, harness).isEmpty();
+    }
+
+    /**
+     * The token types this harness can report that this model cannot price, in a stable order, so a
+     * refusal can name what to enter instead of saying "pricing".
+     */
+    public List<TokenType> unpricedTypes(String model, String harness) {
+        Pricing pricing = pricingFor(model);
+        if (pricing.mode() == PricingMode.UNMETERED) {
+            return List.of();
+        }
+        if (pricing.mode() != PricingMode.METERED) {
+            return List.copyOf(HarnessTokenReport.reportedBy(harness).stream().sorted().toList());
+        }
+        return HarnessTokenReport.reportedBy(harness).stream().sorted()
+                .filter(type -> !pricing.rates().containsKey(type)).toList();
+    }
+
     private static ChargeLine line(Pricing pricing, TokenCount count) {
         if (pricing.mode() == PricingMode.UNMETERED) {
             return ChargeLine.unmetered(count.type(), count.tokens());
         }
-        Long rate = pricing.rates().get(count.type());
-        if (pricing.mode() == PricingMode.UNKNOWN || rate == null) {
+        ModelRate known = pricing.rates().get(count.type());
+        if (pricing.mode() == PricingMode.UNKNOWN || known == null) {
             return ChargeLine.unknown(count.type(), count.tokens());
         }
+        // An asserted zero: the operator said this vendor bills nothing for this type. It is a measured
+        // line with a zero cost, not an unpriced one, and the ledger's own check requires that shape.
+        if (!known.billed()) {
+            return ChargeLine.unmetered(count.type(), count.tokens());
+        }
+        long rate = known.millicentsPerMillion();
         try {
             return ChargeLine.metered(count.type(), count.tokens(), rate);
         } catch (ArithmeticException overflow) {
@@ -108,7 +143,7 @@ public class LlmModelPricer {
     }
 
     /** What the catalog says about a model's pricing; UNKNOWN with no rates when it cannot be read. */
-    private record Pricing(PricingMode mode, Map<TokenType, Long> rates) {
+    private record Pricing(PricingMode mode, Map<TokenType, ModelRate> rates) {
         static final Pricing UNKNOWN = new Pricing(PricingMode.UNKNOWN, Map.of());
     }
 

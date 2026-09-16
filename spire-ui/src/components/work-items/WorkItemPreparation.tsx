@@ -4,11 +4,14 @@ import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import { branchHead, preparationOptions, resolveArtifact, registerPreparation, type ArtifactReference } from './workPreparationApi';
 import { buildDefaults } from '../repositories/factory/buildDefaultsApi';
+import { TOKEN_TYPE_LABEL, unpricedTypesFor } from '../../llmPricing';
 
-/** A model the build can be priced with: an unpriced call stops the item after it has spent. */
-function priced(model: LlmModelView) {
-  return model.pricingMode !== 'METERED' || (!!model.rates.INPUT && !!model.rates.OUTPUT);
+/** What this model cannot price of what the chosen harness reports; empty means a run may start. */
+function unpriced(model: LlmModelView, harness: string, reported: Record<string, string[]>) {
+  return unpricedTypesFor(model, reported[harness]);
 }
+
+const missingLabel = (types: string[]) => types.map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL]).join(', ');
 
 export default function WorkItemPreparation({ item, changed }: { item: WorkItemDetail; changed: () => void }) {
   const { me } = useMe();
@@ -17,35 +20,43 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
   const [form, setForm] = useState({ specification: item.preparation?.specification.location.issueKey ?? '', plan: item.preparation?.plan.location.issueKey ?? '',
     baseBranch: item.preparation?.baseBranch ?? '', baseCommit: item.preparation?.baseCommit ?? '', harness: item.preparation?.harness ?? '', model: item.preparation?.model ?? '' });
   const [references, setReferences] = useState<{ specification: ArtifactReference; plan: ArtifactReference | null } | null>(null);
+  /** Which coordinates the operator has changed, so a late default cannot undo a deliberate clear. */
+  const touched = useRef(new Set<string>());
   const [busy, setBusy] = useState<'checking' | 'saving' | 'head' | null>(null), [error, setError] = useState('');
   // What this deployment can actually run. A harness with no agent image, and a model with no price,
   // are both refused at dispatch — after the operator has typed them and waited.
-  const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[] }>({ harnesses: [], models: [] });
+  const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]> }>(
+    { harnesses: [], models: [], reportedTypes: {} });
   useEffect(() => {
     let live = true;
-    // The repository's saved build setup fills the coordinates nobody should retype. It is asked for
-    // separately from the selects, so a repository without one still offers what can be run.
-    Promise.all([preparationOptions(item.id), fetchLlmModels(), buildDefaults(item.repositoryId).catch(() => null)])
+    Promise.all([preparationOptions(item.id), fetchLlmModels()])
       // A wire answer of the wrong shape degrades to "nothing offered" rather than blanking the page.
-      .then(([options, models, defaults]) => {
-        if (!live) return;
-        setChoices({ harnesses: options.harnesses ?? [], models: (models ?? []).filter(model => model.enabled) });
-        // Only what is still empty: a registered preparation, and anything already typed, wins.
-        if (defaults) setForm(previous => ({ ...previous,
-          baseBranch: previous.baseBranch || defaults.baseBranch || '',
-          harness: previous.harness || defaults.harness || '',
-          model: previous.model || defaults.model || '' }));
-      })
+      .then(([options, models]) => { if (live) setChoices({ harnesses: options.harnesses ?? [],
+        models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {} }); })
       .catch(() => { /* the selects fall back to what is already registered; registration still refuses an unrunnable pair */ });
     return () => { live = false; };
-  }, [item.id, item.repositoryId]);
+  }, [item.id]);
+  // The repository's saved build setup, on its OWN request: it is optional, and a slow answer for it
+  // must not hold back the harness and model this deployment can run.
+  useEffect(() => {
+    if (item.preparation) return; // what is registered is what a gate binds; never overwrite it
+    let live = true;
+    buildDefaults(item.repositoryId)
+      // A coordinate the operator has touched is theirs, including one they deliberately cleared.
+      .then(defaults => { if (live) setForm(previous => ({ ...previous,
+        baseBranch: touched.current.has('baseBranch') ? previous.baseBranch : previous.baseBranch || defaults.baseBranch || '',
+        harness: touched.current.has('harness') ? previous.harness : previous.harness || defaults.harness || '',
+        model: touched.current.has('model') ? previous.model : previous.model || defaults.model || '' })); })
+      .catch(() => { /* a repository without a saved setup prepares by hand, as before */ });
+    return () => { live = false; };
+  }, [item.repositoryId, item.preparation]);
   async function readHead() {
     sequence.current++; setBusy('head'); setError('');
     try { const head = await branchHead(item.id, form.baseBranch); if (active.current) setForm(previous => ({ ...previous, baseBranch: head.branch, baseCommit: head.commit })); }
     catch (failure) { if (active.current) setError(String(failure)); }
     finally { if (active.current) setBusy(null); }
   }
-  function edit(key: keyof typeof form, value: string) { sequence.current++; setForm(previous => ({ ...previous, [key]: value })); setReferences(null); setBusy(null); }
+  function edit(key: keyof typeof form, value: string) { touched.current.add(key); sequence.current++; setForm(previous => ({ ...previous, [key]: value })); setReferences(null); setBusy(null); }
   async function inspect(onlySpecification = false) {
     const request = ++sequence.current; setBusy('checking'); setError(''); setReferences(null);
     try {
@@ -88,8 +99,12 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
       </select></label>
       <label className="field">Model<select value={form.model} onChange={event => edit('model', event.target.value)}>
         <option value="">{choices.models.length ? 'Select a model' : 'No model is enabled'}</option>
-        {choices.models.map(model => <option key={model.id} value={model.name} disabled={!priced(model)}>
-          {model.label}{model.name === model.label ? '' : ` (${model.name})`}{priced(model) ? '' : ' — no price for input or output tokens'}</option>)}
+        {choices.models.map(model => {
+          const missing = unpriced(model, form.harness, choices.reportedTypes);
+          return <option key={model.id} value={model.name} disabled={missing.length > 0}>
+            {model.label}{model.name === model.label ? '' : ` (${model.name})`}
+            {missing.length > 0 ? ` — no price for ${missingLabel(missing)}` : ''}</option>;
+        })}
         {form.model && !choices.models.some(model => model.name === form.model) && <option value={form.model}>{form.model} (not in the catalogue)</option>}
       </select></label>
       <button className="btn" disabled={busy !== null || !form.specification.trim()} onClick={() => void inspect(true)}>

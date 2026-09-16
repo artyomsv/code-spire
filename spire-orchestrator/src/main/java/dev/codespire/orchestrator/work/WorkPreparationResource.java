@@ -24,8 +24,11 @@ public class WorkPreparationResource {
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     public record Input(long expectedRevision,WorkPreparation.Artifact specification,WorkPreparation.Artifact plan,
                         String baseBranch,String baseCommit,String harness,String model) {}
-    /** The harness names this deployment can actually run: a key without an agent image refuses at dispatch. */
-    public record Options(java.util.List<String> harnesses) {}
+    /**
+     * The harnesses this deployment can run, each with the token types it can report: a key without an
+     * agent image refuses at dispatch, and so does a model with no price for a type the harness reports.
+     */
+    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes) {}
     public record Head(String branch,String commit) {}
     /**
      * What an approver is asked to approve, read from the tracker now: the specification text and the
@@ -48,7 +51,9 @@ public class WorkPreparationResource {
 
     @GET @Path("/options")
     public Options options() {
-        return new Options(factoryConfig.agentImage().keySet().stream().sorted().toList());
+        java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
+        return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
+                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
     }
 
     /**

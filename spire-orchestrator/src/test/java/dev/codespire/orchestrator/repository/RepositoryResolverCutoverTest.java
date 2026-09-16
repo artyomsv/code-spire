@@ -207,6 +207,8 @@ class RepositoryResolverCutoverTest extends RepositoryFixture {
         });
         set(fix, "pricer", new LlmModelPricer() {
             @Override public boolean isPriceable(String model) { return true; }
+            // The dispatcher asks this one now; the real method would reach a database from a unit test.
+            @Override public java.util.List<dev.codespire.contract.review.TokenType> unpricedTypes(String model, String harness) { return java.util.List.of(); }
         });
         set(fix, "config", new FactoryConfig() {
             public Map<String, String> agentImage() { return Map.of("codex", "TEST-image"); }

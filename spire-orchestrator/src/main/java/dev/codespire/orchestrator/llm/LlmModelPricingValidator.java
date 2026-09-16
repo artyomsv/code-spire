@@ -38,23 +38,39 @@ final class LlmModelPricingValidator {
     }
 
     /** What a save should persist once validation has passed. */
-    record Validated(PricingMode mode, Map<TokenType, Long> rates) {
+    record Validated(PricingMode mode, Map<TokenType, ModelRate> rates) {
     }
 
     /** @throws IllegalArgumentException if the mode or rates are not a saveable combination */
     static Validated validate(LlmModelInput in) {
         PricingMode mode = parseMode(in.pricingMode());
         Map<String, Long> rawRates = in.rates() == null ? Map.of() : in.rates();
+        List<String> notBilled = in.notBilled() == null ? List.of() : in.notBilled();
         if (mode == PricingMode.UNMETERED) {
-            if (!rawRates.isEmpty()) {
+            if (!rawRates.isEmpty() || !notBilled.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "An UNMETERED model asserts a zero cost, so it must carry no rates");
+                        "An UNMETERED model asserts a zero cost for the whole model, so it must carry"
+                        + " no rates and no per-type assertions");
             }
             return new Validated(mode, Map.of());
         }
         requireEveryMandatoryRate(rawRates);
         rawRates.forEach(LlmModelPricingValidator::requireRateInRange);
-        return new Validated(mode, parseRates(rawRates));
+        Map<TokenType, ModelRate> parsed = parseRates(rawRates);
+        for (String raw : notBilled) {
+            TokenType type = parseRateType(raw);
+            if (REQUIRED_RATES.contains(type)) {
+                throw new IllegalArgumentException(type.name() + " cannot be asserted as unbilled: every"
+                        + " vendor charges for it on every call. A model that costs nothing to call is"
+                        + " UNMETERED, which says that about the whole model.");
+            }
+            if (parsed.containsKey(type)) {
+                throw new IllegalArgumentException(type.name() + " has both a rate and a"
+                        + " not-billed assertion. Keep the one that is true of this vendor.");
+            }
+            parsed.put(type, ModelRate.notBilled());
+        }
+        return new Validated(mode, parsed);
     }
 
     /**
@@ -101,9 +117,9 @@ final class LlmModelPricingValidator {
         return mode;
     }
 
-    private static Map<TokenType, Long> parseRates(Map<String, Long> rates) {
-        Map<TokenType, Long> parsed = new EnumMap<>(TokenType.class);
-        rates.forEach((key, rate) -> parsed.put(parseRateType(key), rate));
+    private static Map<TokenType, ModelRate> parseRates(Map<String, Long> rates) {
+        Map<TokenType, ModelRate> parsed = new EnumMap<>(TokenType.class);
+        rates.forEach((key, rate) -> parsed.put(parseRateType(key), ModelRate.rated(rate)));
         return parsed;
     }
 

@@ -48,7 +48,7 @@ class LlmProviderCheckTest {
         // (LlmProviderModelGuardTest) — idempotent, since this runs before every test.
         if (models.list().stream().noneMatch(m -> m.name().equals("TEST-MODEL"))) {
             models.create(new LlmModelInput("openai", "TEST-MODEL", "TEST-MODEL", "UNMETERED", Map.of(),
-                    null, null, null, null, true));
+                    null, null, null, null, true, java.util.List.of()));
         }
     }
 

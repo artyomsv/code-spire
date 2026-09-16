@@ -20,14 +20,14 @@ beforeEach(() => {
   vi.spyOn(policies, 'savePolicy').mockResolvedValue(policy({ revision: 8 }));
   vi.spyOn(policies, 'saveProfile').mockImplementation(async value => value);
   vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
-  vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'] });
+  vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: ['INPUT','CACHED_INPUT','CACHE_WRITE','OUTPUT','REASONING'] } });
   vi.spyOn(build, 'saveBuildDefaults').mockResolvedValue(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
   vi.spyOn(build, 'repositoryBranchHead').mockResolvedValue({ branch: 'main', commit: 'a'.repeat(40), account: 'FACTORY' });
   vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
     { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z' },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: [] },
     { id: 'TEST-unpriced-id', type: 'openai', name: 'TEST-unpriced', label: 'TEST unpriced', pricingMode: 'METERED', rates: { INPUT: 100 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z' },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: [] },
   ]);
 });
 
@@ -246,7 +246,7 @@ describe('build setup', () => {
     await open();
     const unpriced = await screen.findByRole('option', { name: /TEST unpriced/ });
     expect(unpriced).toBeDisabled();
-    expect(unpriced).toHaveTextContent('no price for input or output tokens');
+    expect(unpriced).toHaveTextContent('no price for Output');
   });
 
   it('reads the branch head through the repository account and keeps the branch the forge named', async () => {
@@ -271,6 +271,36 @@ describe('build setup', () => {
   });
 
   // A head read falls back to the reviewer account. Saying so keeps it from reading as factory push access.
+  // A stale revision cannot be retried from the open form: every attempt resends the number it loaded.
+  it('offers a reload after a refusal that says the setup changed', async () => {
+    vi.mocked(build.saveBuildDefaults).mockRejectedValueOnce(new Error('Someone else saved the build setup while this form was open. Reload it and try again.'));
+    vi.mocked(build.buildDefaults).mockResolvedValueOnce(buildSetup())
+      .mockResolvedValue(buildSetup({ revision: 4, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reload the saved setup' }));
+    expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
+  });
+
+  // M3.5 part D: the harness's own reported types decide, and the server sends them with the list.
+  it('refuses a model that cannot price what the chosen harness reports', async () => {
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'],
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] } });
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    const offered = await screen.findByRole('option', { name: /TEST model/ });
+    expect(offered).toBeDisabled();
+    expect(offered).toHaveTextContent('no price for Cached input, Cache write, Reasoning');
+    // The discriminating half: the same model, offered by a harness that reports only those two.
+    fireEvent.change(screen.getByLabelText('Harness', field), { target: { value: 'TEST-two-types' } });
+    expect(await screen.findByRole('option', { name: 'TEST model (TEST-model)' })).toBeEnabled();
+  });
+
   it('says when the branch head was read with the reviewer account', async () => {
   vi.mocked(build.repositoryBranchHead).mockResolvedValue({ branch: 'main', commit: 'c'.repeat(40), account: 'REVIEWER' });
   renderFactory();

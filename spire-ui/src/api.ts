@@ -934,6 +934,8 @@ export interface LlmModelView {
   label: string;
   pricingMode: Exclude<PricingMode, 'UNKNOWN'>; // UNKNOWN is a runtime outcome, never a catalog entry
   rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>; // millicents per 1M tokens; empty under UNMETERED
+  /** Types the operator asserts this vendor does not charge for. A type in neither list is UNPRICED. */
+  notBilled: Exclude<TokenType, 'TOTAL'>[];
   outputTokenParam: OutputTokenParam; // max_tokens (chat) vs max_completion_tokens (reasoning)
   supportsTemperature: boolean; // false = omit temperature (reasoning models)
   reasoningEffort: string | null; // low | medium | high, or null
@@ -948,6 +950,7 @@ export interface LlmModelInput {
   label: string;
   pricingMode: Exclude<PricingMode, 'UNKNOWN'>;
   rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>;
+  notBilled?: Exclude<TokenType, 'TOTAL'>[];
   outputTokenParam?: OutputTokenParam;
   supportsTemperature?: boolean;
   reasoningEffort?: string | null;

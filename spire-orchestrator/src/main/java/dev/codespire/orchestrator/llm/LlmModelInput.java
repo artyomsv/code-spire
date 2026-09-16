@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -12,6 +13,12 @@ import java.util.Map;
  * for them cannot be asked to price them.
  *
  * <p>Under UNMETERED, {@code rates} must be empty: the cost is an asserted zero.
+ *
+ * <p>{@code notBilled} names the optional dimensions the operator asserts this vendor does not charge
+ * for. It is a third state beside a rate and an absent entry: a rate is a price somebody read off a
+ * vendor's page, an assertion is a person saying "nothing is charged for this", and an absent entry is
+ * nobody having said — which keeps a call reporting it UNPRICED rather than free. INPUT and OUTPUT
+ * cannot be asserted: a model that charges for neither is UNMETERED, which already says exactly that.
  */
 public record LlmModelInput(
         String type,
@@ -23,5 +30,6 @@ public record LlmModelInput(
         Boolean supportsTemperature,
         String reasoningEffort,
         Map<String, Object> extraParams,
-        Boolean enabled) {
+        Boolean enabled,
+        List<String> notBilled) {
 }

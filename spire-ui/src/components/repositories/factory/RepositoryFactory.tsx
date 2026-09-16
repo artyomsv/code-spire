@@ -58,7 +58,7 @@ export default function RepositoryFactory({ repository, accounts, webhooks, onCh
       <PeopleStep sources={data.sources} {...shared} />
       <CeilingStep key={`ceiling:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
       <LabelsStep key={`labels:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
-      <BuildStep key={`build:${data.build.revision}`} repositoryId={repository.id} defaults={data.build} {...shared} />
+      <BuildStep key={`build:${data.build.revision}`} repositoryId={repository.id} defaults={data.build} reload={reload} {...shared} />
     </ol>
   </div>;
 }

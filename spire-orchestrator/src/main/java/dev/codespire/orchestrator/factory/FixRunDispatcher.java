@@ -285,13 +285,17 @@ public class FixRunDispatcher {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");
         }
-        if (!pricer.isPriceable(model)) {
+        var unpriced = pricer.unpricedTypes(model, harness);
+        if (!unpriced.isEmpty()) {
             // Pricing is post-hoc -- the charge lands when the run is over -- so this is the last
             // point at which an unpriceable run can be REFUSED rather than merely noticed. Every such
             // charge records as UNKNOWN, which SUM() skips, so the spend cap would be reading a total
-            // that omits precisely the runs it cannot price.
-            return new Refused("the model '" + model + "' has no usable pricing, so a fix "
-                    + "run could not be counted against the spend cap");
+            // that omits precisely the runs it cannot price. The types are named because "no usable
+            // pricing" sent operators to re-enter rates they had already entered.
+            return new Refused("the model '" + model + "' has no price for "
+                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
+                    + ", which the '" + harness + "' harness reports, so a fix run could not be counted"
+                    + " against the spend cap");
         }
         return null;
     }
