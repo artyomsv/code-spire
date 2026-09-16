@@ -16,7 +16,7 @@ interface Props {
   onDecided: (notice: string) => void;
 }
 
-interface Loaded { approval: approvalsApi.Approval | null; item: WorkItemDetail; evidence: PreparationEvidence | null; evidenceError: string }
+interface Loaded { approval: approvalsApi.Approval | null; item: WorkItemDetail }
 
 /**
  * One open decision, beside the list it came from. It shows what the gate binds — the specification,
@@ -28,6 +28,7 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const admin = canAdminister(me);
   const [loaded, setLoaded] = useState<Loaded | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | null>(null);
+  const [evidence, setEvidence] = useState<{ value: PreparationEvidence | null; error: string }>({ value: null, error: '' });
   // Reuse an answer identity after a transport failure, but never attach it to a different gate, answer or note.
   const attempt = useRef<{ key: string; gate: string; approve: boolean; note: string } | null>(null);
   const live = useRef(true);
@@ -36,16 +37,24 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   useEffect(() => {
     let current = true;
     setLoaded(null); setError('');
-    Promise.all([approvalsApi.approvals(false), getWorkItem(itemId)]).then(async ([open, item]) => {
-      const approval = open.find(row => row.workItemId === itemId) ?? null;
-      let evidence: PreparationEvidence | null = null, evidenceError = '';
-      if (approval && item.preparation && admin) {
-        try { evidence = await preparationEvidence(itemId); } catch (failure) { evidenceError = String(failure); }
-      }
-      if (current) setLoaded({ approval, item, evidence, evidenceError });
+    Promise.all([approvalsApi.approvals(false), getWorkItem(itemId)]).then(([open, item]) => {
+      if (current) setLoaded({ approval: open.find(row => row.workItemId === itemId) ?? null, item });
     }).catch(failure => { if (current) setError(String(failure)); });
     return () => { current = false; };
-  }, [itemId, admin]);
+  }, [itemId]);
+
+  // The ticket texts are an admin read, loaded beside the decision rather than before it: the session
+  // answers after the panel opens, and waiting for it must not blank a decision already on screen.
+  const gateKey = loaded?.approval ? `${loaded.approval.gate.id}:${loaded.approval.gate.version}` : null;
+  const prepared = !!loaded?.item.preparation;
+  useEffect(() => {
+    let current = true;
+    setEvidence({ value: null, error: '' });
+    if (!admin || !gateKey || !prepared) return;
+    preparationEvidence(itemId).then(value => { if (current) setEvidence({ value, error: '' }); })
+      .catch(failure => { if (current) setEvidence({ value: null, error: String(failure) }); });
+    return () => { current = false; };
+  }, [itemId, admin, gateKey, prepared]);
 
   async function decide(approve: boolean) {
     const gate = loaded?.approval?.gate;
@@ -75,9 +84,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     {!loaded && !error && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
-      <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={loaded.evidence} evidenceError={loaded.evidenceError} />
+      <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={evidence.value} evidenceError={evidence.error} />
       {admin ? <SettingField label="Decision note" scope="approval" hint="Optional. Recorded with the decision and shown in the item's history.">
-        <textarea value={note} onChange={event => setNote(event.target.value)} placeholder="Why you approve or reject" /></SettingField>
+        <textarea aria-label="Decision note" value={note} onChange={event => setNote(event.target.value)} placeholder="Why you approve or reject" /></SettingField>
         : <p className="prov-note">Only an administrator can answer this decision.</p>}
       {answering !== null && <p className="prov-note" role="status">Recording your decision. The panel unlocks when the server answers.</p>}
     </>}

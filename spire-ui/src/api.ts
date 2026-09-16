@@ -45,7 +45,7 @@ export interface WorkItemDetail extends WorkItemSummary {
   people?: { providerUserId: string; handle: string | null; displayName: string | null }[];
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
   events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
-    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
+    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];
 }
 
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */

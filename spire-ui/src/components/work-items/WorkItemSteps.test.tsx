@@ -11,7 +11,7 @@ const gate: Gate = { id: 'TEST-plan-gate', version: 1, state: 'OPEN', phase: 'pl
   artifact: 'TEST-digest', openedAt: '2026-09-14T00:00:00Z', expiresAt: '2026-09-14T01:00:00Z', resolver: null, channel: null, note: null };
 type Item = Parameters<typeof WorkItemSteps>[0]['item'];
 function item(overrides: Partial<Item> = {}): Item {
-  return { id: 'TEST-item', phase: 'plan', workflowStatus: 'waiting_approval', reason: 'approval_required', effectiveModes: ASSISTED,
+  return { id: 'TEST-item', generation: 1, phase: 'plan', workflowStatus: 'waiting_approval', reason: 'approval_required', effectiveModes: ASSISTED,
     profile: { id: 'TEST-profile', name: 'TEST-assisted', version: 1 }, appliedLabels: [], ignoredLabels: [], people: [], builds: [], gate, events: [], ...overrides };
 }
 function show(value: Item, current = <button type="button">TEST-current action</button>) {
@@ -78,4 +78,18 @@ it('links the pinned specification and plan', () => {
   show(item({ preparation: { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' } }));
   expect(step('Specification').getByRole('link', { name: 'Specification #71' })).toHaveAttribute('href', 'https://TEST.example/71');
   expect(step('Plan').getByRole('link', { name: 'Plan #72' })).toHaveAttribute('href', 'https://TEST.example/72');
+});
+
+// Review finding: decisions and runs from an earlier attempt read as proof for the current one.
+it('keeps an earlier attempt out of the current proof', () => {
+  const execution = { runId: 'TEST-old-run', build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-old', preparationBinding: 'a'.repeat(64) },
+    head: 'e'.repeat(40), verificationAttempt: null, pullRequest: null, reviewId: null };
+  show(item({ generation: 2, phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null, progress: { execution },
+    builds: [{ attemptId: 'TEST-old', state: 'sent', runId: 'TEST-old-run', reason: null, generation: 1 }],
+    events: [{ sequence: 3, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human', generation: 1 }] }));
+  expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
+  expect(step('Plan').getByText('1 decision from an earlier attempt, in the history below')).toBeInTheDocument();
+  expect(step('Build').getByText('Runs recorded: 0')).toBeInTheDocument();
+  expect(step('Build').getByText('1 dispatch from an earlier attempt')).toBeInTheDocument();
+  expect(step('Build').queryByText(/Built commit/)).toBeNull();
 });

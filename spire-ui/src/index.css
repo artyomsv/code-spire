@@ -1877,6 +1877,8 @@
   .work-steps .factory-k { margin-left: auto; }
   .work-reason { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text); font-weight: 560; }
   .work-actions { display: flex; flex-direction: column; gap: 8px; }
+  /* A finished journey has no current step; its actions sit under the last one, aligned with the cards. */
+  .work-finished { padding-left: 42px; }
   .factory-step.failed .factory-num { border-color: var(--crit); color: #fff; background: var(--crit); }
   .factory-step.failed .factory-card { border-color: color-mix(in srgb, var(--crit) 45%, var(--border)); }
   .factory-step.stopped .factory-num { border-color: var(--muted); color: #fff; background: var(--muted); }

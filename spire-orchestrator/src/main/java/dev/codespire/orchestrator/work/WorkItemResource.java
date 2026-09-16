@@ -39,8 +39,12 @@ public class WorkItemResource {
         return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
     }
     public record Profile(UUID id, String name, long version) {}
+    /**
+     * @param generation the attempt this entry belongs to. A re-admitted item keeps its history, so a
+     *     decision from an earlier attempt must not read as approval of the current one.
+     */
     public record Milestone(long sequence, String type, String reason, Instant occurredAt,String phase,String workflowStatus,
-                            UUID attemptId,UUID gateId,String gateState,String resolver) {}
+                            UUID attemptId,UUID gateId,String gateState,String resolver,long generation) {}
     public record Build(UUID attemptId,String state,String runId,String reason,long generation) {}
     public record View(String id, UUID sourceId, UUID repositoryId, String repository, String issueKey, String trackerUrl,
                        long generation, String phase, String workflowStatus, String reason, Profile profile, long revision,
@@ -120,7 +124,7 @@ public class WorkItemResource {
                     boolean clamp = "POLICY_CLAMPED".equals(state.milestone());
                     return new Milestone(event.sequence(), "POLICY_OBSERVED".equals(state.milestone()) ? event.eventType() : state.milestone(),
                             clamp ? state.policy().reason() : state.reason(), event.occurredAt(),state.phase(),state.workflowStatus(),
-                            state.progress().attemptId(),state.gate()==null?null:state.gate().id(),state.gate()==null?null:state.gate().state(),state.gate()==null?null:state.gate().resolver());
+                            state.progress().attemptId(),state.gate()==null?null:state.gate().id(),state.gate()==null?null:state.gate().state(),state.gate()==null?null:state.gate().resolver(),state.generation());
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),

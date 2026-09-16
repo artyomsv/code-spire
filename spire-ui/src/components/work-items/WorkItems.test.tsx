@@ -22,6 +22,10 @@ function detail(): Detail {
     ceiling: item().profile, appliedLabels: [{ label: 'TEST-autonomous', actorId: '900123', origin: 'AUDIT_TRAIL', eventId: 'TEST-event', profileId: 'TEST-profile', profileVersion: 1 }],
     ignoredLabels: [], events: [{ sequence: 0, type: 'Admitted', reason: 'Allowed current label.', occurredAt: item().updatedAt }] };
 }
+function prepared(): NonNullable<Detail['preparation']> {
+  const artifact = (key: string) => ({ sha256: key.repeat(64).slice(0, 64), location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
+  return { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'c'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' };
+}
 function showDetail() {
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
     <Route path="/work-items/:id" element={<WorkItemDetail />} />
@@ -47,7 +51,7 @@ it('rechecks the displayed item revision before resuming', async () => {
 });
 
 it('requires an operator note to resume suspended work and shows the recorded head', async () => {
-  const suspended = { ...detail(), workflowStatus: 'suspended', control: { operator: '900123', note: 'TEST-human takeover', observedHead: 'b'.repeat(40) } };
+  const suspended = { ...detail(), workflowStatus: 'suspended', preparation: prepared(), control: { operator: '900123', note: 'TEST-human takeover', observedHead: 'b'.repeat(40) } };
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(suspended);
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
@@ -446,4 +450,72 @@ it('starts a fresh decision when the address names another item', async () => {
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next decision' }));
   await waitFor(() => expect(api.getWorkItem).toHaveBeenLastCalledWith('TEST-item-1'));
   expect(await screen.findByLabelText('Decision note', { selector: 'textarea' })).toHaveValue('');
+});
+
+// Review finding: a suspended item with no branch to re-observe offered a Resume the server always refuses.
+it('offers no resume for a suspended item with nothing to re-observe, and says why', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'suspended', preparation: null });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  expect(await screen.findByText(/has no branch to re-observe/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).toBeNull();
+});
+// Review finding: a finished journey has no current step, so re-admission had nowhere to appear.
+it('keeps re-admission reachable once every step is done', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  expect(await screen.findByRole('button', { name: 'Re-admit under current policy' })).toBeInTheDocument();
+});
+// Review finding: a re-read blanked the item, which unmounted an open panel and hid the notice.
+it('keeps the item and an open panel on screen while the page re-reads', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
+  const reads = vi.mocked(api.getWorkItem).mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+  // The panel reads the item too, so wait for the page's own re-read to start rather than a count.
+  await waitFor(() => expect(vi.mocked(api.getWorkItem).mock.calls.length).toBeGreaterThan(reads));
+  await act(async () => {});
+  expect(screen.getByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { level: 2, name: 'TEST-title' })).toBeInTheDocument();
+});
+it('shows a failed re-read beside the item it could not refresh', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockRejectedValueOnce(new Error('TEST-re-read failed'));
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh workflow' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-re-read failed');
+  expect(screen.getByRole('heading', { level: 2, name: 'TEST-title' })).toBeInTheDocument();
+});
+// Review finding: both panels could be open at once from the address.
+it('opens one panel at a time', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1&decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+});
+// Review finding: a recheck answering after a panel opened brought its notice back and re-read under the panel.
+it('ignores a recheck that answers after a panel was opened', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), reason: 'specification_required' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  let answer!: (value: api.WorkItemOutcome) => void;
+  vi.spyOn(api, 'resumeWorkItem').mockReturnValue(new Promise(resolve => { answer = resolve; }));
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare the task' }));
+  expect(await screen.findByRole('dialog', { name: 'Prepare the task' })).toBeInTheDocument();
+  const reads = vi.mocked(api.getWorkItem).mock.calls.length;
+  await act(async () => answer({ reason: 'artifacts_changed', detail: 'plan_changed' }));
+  expect(screen.queryByText(/The plan ticket changed/)).toBeNull();
+  expect(api.getWorkItem).toHaveBeenCalledTimes(reads);
 });

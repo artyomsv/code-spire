@@ -5,8 +5,11 @@ import { actorLabel } from '../actorsApi';
 import { JOURNEY, journeyCells, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 
-type Item = Pick<WorkItemDetail, 'id' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
+type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress'>;
+
+/** An entry with no generation predates the field and is treated as belonging to the current attempt. */
+const current = (item: Item, generation: number | undefined) => generation === undefined || generation === item.generation;
 
 const QUESTIONS: Record<JourneyPhase, string> = {
   intake: 'Picked up', spec: 'Specification', plan: 'Plan', build: 'Build', verify: 'Verify', deliver: 'Deliver', review: 'Review', land: 'Land',
@@ -57,19 +60,25 @@ function Prepared({ item, part }: { item: Item; part: 'specification' | 'plan' }
 }
 
 function Decisions({ item, phase }: { item: Item; phase: string }) {
-  const resolved = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase);
+  const resolved = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase && current(item, event.generation));
+  const earlier = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase && !current(item, event.generation)).length;
   const open = item.gate?.state === 'OPEN' && item.gate.phase === phase;
   return <>
     {open && <p className="factory-note">Waiting for the {phase} decision.</p>}
     {resolved.map(event => <p key={event.sequence} className="factory-note">{phase} decision: {event.gateState} by {event.resolver}</p>)}
+    {earlier > 0 && <p className="prov-sub">{earlier === 1 ? '1 decision' : `${earlier} decisions`} from an earlier attempt, in the history below</p>}
   </>;
 }
 
 function Build({ item }: { item: Item }) {
-  const builds = item.builds ?? [];
-  const execution = item.progress?.execution;
+  const all = item.builds ?? [];
+  const builds = all.filter(build => current(item, build.generation));
+  const earlier = all.length - builds.length;
+  const recorded = item.progress?.execution;
+  const execution = recorded && current(item, recorded.build.generation) ? recorded : null;
   return <>
     <p className="factory-note">Runs recorded: {builds.filter(build => build.runId !== null).length}</p>
+    {earlier > 0 && <p className="prov-sub">{earlier === 1 ? '1 dispatch' : `${earlier} dispatches`} from an earlier attempt</p>}
     {builds.length > 0 && <ul className="factory-runs" aria-label="Build dispatches">{builds.map(build => <li key={build.attemptId}>
       {build.runId ? <Link to={`/runs/${encodeURIComponent(build.runId)}`}>Open run</Link> : 'Build dispatch pending'} · {build.state}
       {build.reason && <> · {workReason(build.reason)}</>}
@@ -80,7 +89,7 @@ function Build({ item }: { item: Item }) {
 
 function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | 'review' }) {
   const execution = item.progress?.execution;
-  if (!execution) return null;
+  if (!execution || !current(item, execution.build.generation)) return null;
   if (phase === 'verify') return <p className="factory-note">{execution.verificationAttempt ? 'Verification recorded' : 'Verification not recorded'}</p>;
   if (phase === 'review') return execution.reviewId ? <p className="factory-note">Review recorded for this build.</p> : null;
   const pr = execution.pullRequest;
@@ -105,9 +114,10 @@ function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
  * steps carry their proof, the current step carries why it stands where it does and what a person can
  * do, and later steps say who will decide them. The page is the answer to "where is this and what next".
  */
-export default function WorkItemSteps({ item, current }: { item: Item; current: ReactNode }) {
+export default function WorkItemSteps({ item, current: actions }: { item: Item; current: ReactNode }) {
   const cells = journeyCells(item);
-  return <ol className="factory-steps work-steps" aria-label="Journey">
+  const hasCurrent = cells.some(cell => cell.startsWith('now-'));
+  return <><ol className="factory-steps work-steps" aria-label="Journey">
     {JOURNEY.map((phase, index) => {
       const cell = cells[index];
       const now = cell.startsWith('now-');
@@ -122,10 +132,12 @@ export default function WorkItemSteps({ item, current }: { item: Item; current: 
           {!later && <div className="factory-body">
             {now && <p className="work-reason">{workReason(item.reason)}</p>}
             <Evidence item={item} phase={phase} />
-            {now && current}
+            {now && actions}
           </div>}
         </div>
       </li>;
     })}
-  </ol>;
+  </ol>
+  {!hasCurrent && <div className="work-actions work-finished" aria-label="After the journey">{actions}</div>}
+  </>;
 }

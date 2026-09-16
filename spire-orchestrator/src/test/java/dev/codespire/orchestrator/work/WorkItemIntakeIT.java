@@ -50,6 +50,8 @@ class WorkItemIntakeIT extends WorkSourceParityCases {
         assertTrue(view.appliedLabels().stream().anyMatch(label->"900123".equals(label.actorId())),"the label keeps the id");
         var person=view.people().stream().filter(row->"900123".equals(row.providerUserId())).findFirst().orElseThrow();
         assertEquals("TEST-person",person.handle());
+        // Every history entry names its attempt, so an earlier attempt cannot read as proof for this one.
+        assertTrue(view.events().stream().allMatch(event->event.generation()==view.generation()));
     }
     @Test void anAccountOutageCannotRetireOrDeleteTheWorkflow() throws Exception {
         intake.accept(signed("900123"));

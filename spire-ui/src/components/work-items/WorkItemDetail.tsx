@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { getWorkItem, getWorkItemTracker, type WorkItemDetail as Detail, type WorkItemTracker } from '../../api';
 import { formatEventTime } from '../../format';
@@ -26,27 +26,38 @@ export default function WorkItemDetail() {
   const [notice, setNotice] = useState('');
   const [state, setState] = useState<{ item: Detail | null; error: string | null }>({ item: null, error: null });
   const [tracker, setTracker] = useState<{ value: WorkItemTracker | null; error: string | null }>({ value: null, error: null });
+  // Every action takes a number. A recheck that answers after a newer action started must not bring
+  // its notice back, nor re-read the page under a panel the operator has since opened.
+  const action = useRef(0);
+  // The item the page last showed, so a re-read of it keeps its tracker text while a new item starts blank.
+  const shown = useRef('');
+  const panel = params.get('decide') ? 'decide' : params.get('prepare') ? 'prepare' : null;
   useEffect(() => { setNotice(''); }, [id]);
+  useEffect(() => { if (panel) { action.current++; setNotice(''); } }, [panel]);
   useEffect(() => {
     let active = true;
-    setState({ item: null, error: null });
-    setTracker({ value: null, error: null });
-    getWorkItem(id).then(item => { if (active) setState({ item, error: null }); })
-      .catch(error => { if (active) setState({ item: null, error: String(error) }); });
+    // A re-read of the same item keeps it on screen: blanking it would unmount an open panel and
+    // hide the notice the re-read was started for.
+    setState(previous => previous.item?.id === id ? previous : { item: null, error: null });
+    setTracker(previous => shown.current === id ? previous : { value: null, error: null });
+    getWorkItem(id).then(item => { if (active) { shown.current = id; setState({ item, error: null }); } })
+      .catch(error => { if (active) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
     getWorkItemTracker(id).then(value => { if (active) setTracker({ value, error: null }); })
       .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
     return () => { active = false; };
   }, [id, refresh]);
 
   function reread(message = '') { setNotice(message); setRefresh(value => value + 1); }
-  function open(panel: 'decide' | 'prepare') { setNotice(''); setParams({ [panel]: '1' }); }
+  function start() { setNotice(''); return ++action.current; }
+  function open(name: 'decide' | 'prepare') { setParams({ [name]: '1' }); }
   function close() { setParams({}); }
   const { item, error } = state;
-  const action = item ? nextAction(item) : null;
+  const next = item ? nextAction(item) : null;
 
   return <section className="content"><div className="card work-detail">
     <Link to="/work-items">← Work items</Link>
-    {error ? <p className="prov-error" role="alert">{error}</p> : !item ? <p className="prov-note" role="status" aria-busy="true">Loading work item…</p> : <>
+    {error && <p className="prov-error" role="alert">{error}</p>}
+    {!item ? !error && <p className="prov-note" role="status" aria-busy="true">Loading work item…</p> : <>
       {/* The ticket title names the work; the key alone is a bare number on GitHub. The title comes
           from the separate tracker read, which may fail on its own, so the key heads until it lands. */}
       <div className="work-head">
@@ -66,9 +77,10 @@ export default function WorkItemDetail() {
       {notice && <p className="prov-note work-notice" role="status">{notice}</p>}
       <WorkItemSteps item={item} current={<>
         {item.reason === 'run_usage_unknown' && <Link className="btn-ghost sm" to="/settings/llm">Model prices</Link>}
-        {action?.label === 'Prepare the task' && <button className="btn sm" type="button" onClick={() => open('prepare')}>Prepare the task</button>}
+        {next?.label === 'Prepare the task' && <button className="btn sm" type="button" onClick={() => open('prepare')}>Prepare the task</button>}
         {item.gate?.state === 'OPEN' && <button className="btn sm" type="button" onClick={() => open('decide')}>Review the {item.gate.phase} decision</button>}
-        <WorkItemActions key={`${item.id}:${item.revision}`} item={item} started={() => setNotice('')} changed={reread} />
+        <WorkItemActions key={`${item.id}:${item.revision}`} item={item} started={start}
+          changed={(message, started) => { if (started === action.current) reread(message); }} />
       </>} />
       <details className="work-more"><summary>Policy and limits</summary><WorkItemPolicy item={item} /></details>
       <details className="work-more" open={tracker.error !== null}><summary>Ticket</summary>
@@ -86,9 +98,9 @@ export default function WorkItemDetail() {
           <span>{event.type === 'WorkItemEvent' ? 'Workflow updated' : event.type}: {workReason(event.reason)}</span>
         </li>)}</ol>
       </details>
-      {params.get('decide') && <DecisionPanel key={item.id} itemId={item.id} title={tracker.value?.title ?? null} onClose={close}
+      {panel === 'decide' && <DecisionPanel key={item.id} itemId={item.id} title={tracker.value?.title ?? null} onClose={close}
         onDecided={message => { close(); reread(message); }} />}
-      {params.get('prepare') && <SidePanel title="Prepare the task" subtitle={`${item.issueKey} · ${item.repository}`} busy={false} onClose={close}
+      {panel === 'prepare' && <SidePanel title="Prepare the task" subtitle={`${item.issueKey} · ${item.repository}`} busy={false} onClose={close}
         actions={<button className="btn-ghost" type="button" onClick={close}>Close</button>}>
         <WorkItemPreparation key={`preparation:${item.id}:${item.revision}`} item={item} changed={() => { close(); reread('The prepared task was registered.'); }} />
       </SidePanel>}

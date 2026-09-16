@@ -7,10 +7,10 @@ import { workRefusal } from './workReasons';
 
 interface Props {
   item: WorkItemDetail;
-  /** Starting an action; the page clears what an earlier action said. */
-  started: () => void;
-  /** The item changed. `notice` names the rule that stopped a recheck, when one did. */
-  changed: (notice?: string) => void;
+  /** Starting an action; the page clears what an earlier action said and numbers this one. */
+  started: () => number;
+  /** The item changed. `notice` names the rule that stopped a recheck; `started` is the number this action was given. */
+  changed: (notice: string | undefined, started: number) => void;
 }
 
 /**
@@ -24,20 +24,25 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const [busy, setBusy] = useState<'resume' | 'readmit' | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState('');
   async function resume(readmit: boolean) {
-    started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
+    const number = started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
     try {
       const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note) : await resumeWorkItem(item, readmit);
-      if (active.current) changed(outcome.detail ? workRefusal(outcome.reason, outcome.detail) : undefined);
+      if (active.current) changed(outcome.detail ? workRefusal(outcome.reason, outcome.detail) : undefined, number);
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(null); }
   }
   if (!canAdminister(me)) return null;
+  // A suspended item is resumed by re-observing a branch: the pull request's, or the prepared base.
+  // Without either the server can only refuse, so no button is offered for it.
+  const coordinates = item.preparation != null || item.progress?.execution?.pullRequest != null;
   const canResume = ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   const canReadmit = ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
+  if (item.workflowStatus === 'suspended' && !coordinates)
+    return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;
   if (!canResume && !canReadmit) return null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">
-      <textarea disabled={busy !== null} value={note} onChange={event => setNote(event.target.value)} /></SettingField>}
+      <textarea aria-label="Resume note" disabled={busy !== null} value={note} onChange={event => setNote(event.target.value)} /></SettingField>}
     <div className="prov-actions">
       {canResume && <button className="btn sm" type="button" disabled={busy !== null || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}
