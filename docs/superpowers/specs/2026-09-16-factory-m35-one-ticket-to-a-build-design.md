@@ -103,10 +103,16 @@ This follows the parent's §5, with decision 4B.
 - **The ledger line.** A `NOT_BILLED` bucket charges an `UNMETERED` line: rate 0 and cost 0, which is what
   the ledger's own check requires (`V30__llm_charge_ledger.sql:94-95`). Copying a null rate into the line
   would violate it.
+- **Which types may be asserted.** The optional ones only: `CACHED_INPUT`, `CACHE_WRITE`, `REASONING`.
+  `INPUT` and `OUTPUT` are what every vendor charges on every call, and a model that charges for neither
+  is `UNMETERED` — which already says that about the whole model. Asserting them would be a second way
+  to say the same thing, and a quieter one.
 - **One predicate.** `isPriceable(model, harness)`: every bucket the harness can report has a rate or a
   not-billed assertion. The three dispatch sites (`WorkRunAssembly.java:46`, `FixRunDispatcher.java:288`,
   `RunResource.java:225`) refuse with `model_pricing_incomplete` and the list of missing types. The review
-  predicate `isPriceable(model)` stays for the reviewer, which is not a harness.
+  predicate `isPriceable(model)` stays for the reviewer, which is not a harness. The refusal carries the
+  types with it (`model_pricing_incomplete:CACHED_INPUT,REASONING`), and the work item keeps that reason
+  instead of the one word every cause used to collapse into.
 - **Where the operator sees it.** Settings → LLM: each token type takes a rate or "The vendor does not
   bill this", and a model lists its gaps. Factory step 5 and the preparation select show the gap. The
   attention panel raises one row per repository whose build defaults cannot be priced; it keeps

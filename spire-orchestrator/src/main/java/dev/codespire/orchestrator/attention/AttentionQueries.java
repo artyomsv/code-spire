@@ -6,6 +6,7 @@ import dev.codespire.orchestrator.caps.CapPolicy;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.caps.SpendWindow;
 import dev.codespire.orchestrator.dlq.DlqRepository;
+import dev.codespire.contract.review.TokenType;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -81,6 +82,7 @@ public class AttentionQueries {
             contextMigrationRows(c, rows);
             dev.codespire.orchestrator.repository.RepositoryAttentionRows.collect(c, rows);
             dev.codespire.orchestrator.work.WorkAttentionRows.collect(c, rows);
+            buildDefaultsPricingRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);
@@ -141,6 +143,43 @@ public class AttentionQueries {
                 "The default LLM provider's model has no usable pricing, so every review stops before"
                         + " it calls the model. Set input and output rates in Settings → LLM → Models,"
                         + " or mark the model unmetered if it is self-hosted.", "/settings/llm"));
+    }
+
+    /**
+     * A repository whose saved build setup names a model that cannot price what its harness reports.
+     *
+     * <p>The refusal itself happens at dispatch, which is correct — but by then a person has written a
+     * ticket, applied a label and approved a plan, and the item stops with a rate nobody was asked for.
+     * This row says it before any of that, and it is the repository's row rather than the deployment's,
+     * because each repository chooses its own harness and model.
+     *
+     * <p>Priceability comes from the same {@link LlmModelPricer} the dispatch consults, for the reason
+     * the row above gives: a second definition of "priced" could disagree with the gate that actually
+     * refuses the run.
+     */
+    private void buildDefaultsPricingRows(Connection c, List<AttentionView> rows) throws SQLException {
+        record Setup(String repository, String harness, String model) {}
+        List<Setup> setups = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT r.workspace || '/' || r.slug AS repository, d.harness, d.model
+                  FROM repository_build_defaults d JOIN repository r ON r.id = d.repository_id
+                 WHERE r.enabled = TRUE
+                """);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) setups.add(new Setup(rs.getString("repository"), rs.getString("harness"), rs.getString("model")));
+        }
+        for (Setup setup : setups) {
+            List<TokenType> unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
+            if (unpriced.isEmpty()) {
+                continue;
+            }
+            rows.add(new AttentionView("BUILD_MODEL_NOT_PRICEABLE", Severity.WARNING, setup.repository(),
+                    "This repository builds with " + setup.model() + " on " + setup.harness()
+                            + ", which has no price for "
+                            + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
+                            + ". A build is refused before it starts until each type has a rate, or is marked"
+                            + " as one this vendor does not bill, in Settings → LLM → Models.", "/settings/llm"));
+        }
     }
 
     /** The model the default provider would use, or null when no enabled default is set. */
