@@ -74,3 +74,30 @@ it('does not notify a different screen when a registration finishes after unmoun
 });
 it('offers no preparation controls to a viewer', async () => { show(vi.fn(), ['spire-viewer']);await act(async () => {});expect(screen.queryByRole('region', { name: 'Prepare work item' })).toBeNull(); });
 it('offers no artifact replacement while the item is active', async () => { show(vi.fn(), ['spire-admin'], { ...item, workflowStatus: 'active' });await act(async () => {});expect(screen.queryByRole('region', { name: 'Prepare work item' })).toBeNull(); });
+
+// The server re-reads both tickets on register. A refusal means what was checked is no longer
+// proven, so offering "Register these versions" again would resend a pair the server just refused.
+it('drops the checked versions after a refused registration', async () => {
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));
+  vi.spyOn(api, 'registerPreparation').mockRejectedValue(new Error('TEST-409 artifacts changed'));show();await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Check artifact references' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Register these versions' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Check the artifact references again before registering.');
+  expect(screen.queryByRole('button', { name: 'Register these versions' })).toBeNull();
+  expect(screen.getByLabelText('Plan ticket')).toHaveValue('72');
+});
+it('shows the plan digest beside the specification digest', async () => {
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));show();await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Check artifact references' }));
+  expect(await screen.findByText(reference('72').artifact.sha256)).toBeInTheDocument();
+});
+it('says which answer is in flight while the registration is recorded', async () => {
+  const pending = deferred<{ reason: string }>();
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));
+  vi.spyOn(api, 'registerPreparation').mockReturnValue(pending.promise);show();await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Check artifact references' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Register these versions' }));
+  expect(await screen.findByRole('button', { name: 'Registering…' })).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Registering the checked versions.');
+  await act(async () => pending.resolve({ reason: 'TEST-registered' }));
+});

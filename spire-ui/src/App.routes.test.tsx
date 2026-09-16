@@ -240,8 +240,10 @@ describe('App — routing shell', () => {
     if (path === '/work-items/TEST-item') {
       // The shell's Loading… is not the page's Loading work item…. Await both actual responses
       // so a malformed detail payload cannot pass against the wrapper's initial loading render.
-      expect(await screen.findByRole('heading', { level: 2, name: 'TEST-1' })).toBeInTheDocument();
-      expect(await screen.findByRole('heading', { level: 4, name: 'TEST-ticket' })).toBeInTheDocument();
+      // The detail heads with the ticket title; the key stays beside it as the subtitle.
+      expect(await screen.findByRole('heading', { level: 2, name: 'TEST-ticket' })).toBeInTheDocument();
+      expect(await screen.findByText('TEST-1 · TEST-WS/TEST-REPO')).toBeInTheDocument();
+      expect(await screen.findByText('TEST-body')).toBeInTheDocument();
     }
     expect(document.querySelector('main .content')).toBeInTheDocument();
   });
@@ -337,6 +339,35 @@ describe('App — rail highlighting', () => {
       (a.textContent ?? '').trim(),
     );
     expect(active).toEqual([expected]);
+  });
+
+  // Approvals shipped as the one rail entry without an icon, which reads as an unfinished screen.
+  // Asserted over every entry, so the next entry added cannot repeat it.
+  it('gives every rail entry an icon', async () => {
+    render(
+      <MemoryRouter initialEntries={['/work-items']}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/approvals"]')).toBeTruthy());
+    const missing = Array.from(document.querySelectorAll('nav.nav a'))
+      .filter((entry) => !entry.querySelector('.ic'))
+      .map((entry) => (entry.textContent ?? '').trim());
+    expect(missing).toEqual([]);
+  });
+
+  // The rail reads item, then decision, then execution. A run carries out what was approved.
+  it('lists Work items, Approvals and Runs in that order', async () => {
+    render(
+      <MemoryRouter initialEntries={['/work-items']}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/approvals"]')).toBeTruthy());
+    const entries = Array.from(document.querySelectorAll('nav.nav a')).map((a) => (a.textContent ?? '').trim());
+    expect(entries.filter((name) => ['Work items', 'Approvals', 'Runs'].includes(name))).toEqual(['Work items', 'Approvals', 'Runs']);
   });
 });
 

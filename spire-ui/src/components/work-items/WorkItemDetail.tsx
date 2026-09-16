@@ -26,9 +26,13 @@ export default function WorkItemDetail() {
   const { item, error } = state;
   return <section className="content"><div className="card" style={{ padding: 18 }}>
     <Link to="/work-items">← Work items</Link>
-    {error ? <p role="alert">{error}</p> : !item ? <p>Loading work item…</p> : <>
-      <h2>{item.issueKey}</h2>
-      <p><a href={item.trackerUrl} target="_blank" rel="noreferrer">Open ticket in tracker</a> · {item.repository}</p>
+    {error ? <p role="alert">{error}</p> : !item ? <p role="status" aria-busy="true">Loading work item…</p> : <>
+      {/* The ticket title names the work; the key alone is a bare number on GitHub and sends the
+          reader to the tracker to find out what this item is. The title comes from the separate
+          tracker read, which may fail on its own, so the key remains the heading until it lands. */}
+      <h2>{tracker.value ? tracker.value.title : item.issueKey}</h2>
+      <p className="prov-sub">{item.issueKey} · {item.repository}</p>
+      <p><a href={item.trackerUrl} target="_blank" rel="noreferrer">Open ticket in tracker</a></p>
       {item.preparation ? <WorkItemJourney item={item} /> : <><h3>Workflow</h3><WorkflowStatus status={item.workflowStatus} />
       <p>{workReason(item.reason)}</p>
       <p>Phase: {item.phase} · Generation: {item.generation}</p></>}
@@ -48,8 +52,9 @@ export default function WorkItemDetail() {
       <ol>{item.events.map(event => <li key={event.sequence}>{event.type === 'WorkItemEvent' ? 'Workflow updated' : event.type}: {workReason(event.reason)}</li>)}</ol>
       <h3>Current tracker content</h3>
       {tracker.error ? <p role="alert">Tracker unavailable: {tracker.error}. The workflow above remains available.</p> :
-        !tracker.value ? <p>Loading current tracker content…</p> : <>
-          <h4>{tracker.value.title}</h4><p>Tracker status: {tracker.value.trackerStatus}</p>
+        !tracker.value ? <p role="status" aria-busy="true">Loading current tracker content…</p> : <>
+          {/* The title already heads the page; repeating it here only competes with it. */}
+          <p>Tracker status: {tracker.value.trackerStatus}</p>
           <p style={{ whiteSpace: 'pre-wrap' }}>{tracker.value.body}</p>
         </>}
     </>}
@@ -75,9 +80,12 @@ function WorkItemActions({ item, changed }: { item: Detail; changed: () => void 
   return <div>
     {item.workflowStatus === 'suspended' && <label className="field">Resume note<textarea disabled={busy} value={note} onChange={event => setNote(event.target.value)} /></label>}
     {['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus) &&
-      <button className="btn" disabled={busy || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>Recheck and resume</button>}
+      <button className="btn" disabled={busy || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>
+        {busy ? 'Rechecking…' : 'Recheck and resume'}</button>}
     {['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus) &&
-      <button className="btn" disabled={busy} onClick={() => void resume(true)}>Re-admit under current policy</button>}
+      <button className="btn" disabled={busy} onClick={() => void resume(true)}>
+        {busy ? 'Re-admitting…' : 'Re-admit under current policy'}</button>}
+    {busy && <p role="status">Working. The buttons unlock when the server answers.</p>}
     {error && <p role="alert">{error}</p>}
   </div>;
 }

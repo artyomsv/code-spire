@@ -19,13 +19,17 @@ export interface SourceStepProps {
 
 export default function SourceStep({ repository, sources, accounts, webhooks, open, setOpen, changed }: SourceStepProps) {
   const [scanError, setScanError] = useState('');
+  const [scanning, setScanning] = useState<string | null>(null);
   const reading = sources.some(source => source.enabled);
   const adding = open === 'source:new';
   const accountName = (id: string) => accounts.find(account => account.id === id)?.name ?? 'an unavailable account';
+  // The request only sets a flag; the scanner picks it up on its next sweep, about half a minute
+  // later. So the button reports the request, and never claims the scan itself has finished.
   async function rescan(source: api.WorkSource) {
-    setScanError('');
-    try { await api.rescanWorkSource(source.id); changed(`Scan requested for ${source.name}.`); }
+    setScanError(''); setScanning(source.id);
+    try { await api.rescanWorkSource(source.id); changed(`Scan requested for ${source.name}. The scanner reads it within about 30 seconds.`); }
     catch (failure) { setScanError(String(failure)); }
+    finally { setScanning(null); }
   }
   return <FactoryStep number={1} question="Where tickets come from" term="work source"
     state={open?.startsWith('source') ? 'editing' : reading ? 'done' : 'missing'}
@@ -43,8 +47,8 @@ export default function SourceStep({ repository, sources, accounts, webhooks, op
               read with <span className="mono">{accountName(source.accountId)}</span></span>
             <span className="grow" />
             <span className={`chip ${source.enabled ? 'ok' : 'no'}`}>{source.enabled ? source.health.split('_').join(' ') : 'unavailable'}</span>
-            <button className="btn-ghost sm" type="button" disabled={open !== null || !source.enabled} onClick={() => void rescan(source)}
-              aria-label={`Scan ${source.name} now`}>Scan now</button>
+            <button className="btn-ghost sm" type="button" disabled={open !== null || !source.enabled || scanning !== null} onClick={() => void rescan(source)}
+              aria-label={`Scan ${source.name} now`}>{scanning === source.id ? 'Asking…' : 'Scan now'}</button>
             <button className="btn-ghost sm" type="button" disabled={open !== null} onClick={() => setOpen(`source:${source.id}`)}
               aria-label={`Edit ${source.name}`}>Edit</button>
           </div>

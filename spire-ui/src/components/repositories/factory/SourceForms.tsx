@@ -65,7 +65,7 @@ export function CreateSourceForm({ repository, accounts, saved, cancelled }: Cre
     {type === 'JIRA' && <p className="prov-note">Jira is polled. The Jira credential stays on the tracker. Unconfirmed label authors select no profile.</p>}
     {error && <p className="prov-error" role="alert">{error}</p>}
     <div className="prov-actions">
-      <button className="btn" type="button" disabled={busy || !ready} onClick={() => void submit()}>Register work source</button>
+      <button className="btn" type="button" disabled={busy || !ready} onClick={() => void submit()}>{busy ? 'Registering…' : 'Register work source'}</button>
       <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></div>
   </fieldset>;
 }
@@ -95,10 +95,10 @@ export function EditSourceForm({ source, repository, accounts, saved, cancelled 
     {error && <p className="prov-error" role="alert">{error}</p>}
     <div className="prov-actions">
       <button className="btn-ghost" type="button" disabled={busy || !source.enabled}
-        onClick={() => void run(async () => setCapabilities(await api.workCapabilities(source.id)))}>Check supported operations</button>
+        onClick={() => void run(async () => setCapabilities(await api.workCapabilities(source.id)))}>{busy ? 'Checking…' : 'Check supported operations'}</button>
       <span className="grow" />
       <button className="btn" type="button" disabled={busy || !name.trim()}
-        onClick={() => void run(async () => { await api.editWorkSource(source, { name, accountId, enabled }); saved(); })}>Save source</button>
+        onClick={() => void run(async () => { await api.editWorkSource(source, { name, accountId, enabled }); saved(); })}>{busy ? 'Saving…' : 'Save source'}</button>
       <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></div>
   </fieldset>;
 }

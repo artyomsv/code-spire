@@ -2,7 +2,7 @@ import Approvals from './components/work-items/Approvals';
 import WorkPolicies from './components/work-items/WorkPolicies';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Bot, Brain, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, ClipboardCheck, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -218,17 +218,23 @@ export default function App() {
             <BarChart3 className="ic" size={16} />
             Analytics
           </a>
+          <a className={onWorkItems ? 'active' : ''} href="#/work-items">
+            <ListTodo className="ic" size={16} />
+            Work items
+          </a>
+          {/* Item, then decision, then execution: an approval belongs to the work item above it,
+              and the run below it carries out what was approved. Every entry carries an icon — an
+              entry without one reads as unfinished, which is how Approvals shipped. */}
+          <a className={location.pathname.startsWith('/approvals') ? 'active' : ''} href="#/approvals">
+            <ClipboardCheck className="ic" size={16} />
+            Approvals
+          </a>
           {/* Viewer-readable for the same reason: GET /api/runs is viewer-and-admin, matching the
               run detail endpoint beside it. Dispatching is the privilege that matters and stays
               admin-only on the POST. */}
           <a className={onRuns ? 'active' : ''} href="#/runs">
             <Bot className="ic" size={16} />
             Runs
-          </a>
-          <a className={location.pathname.startsWith('/approvals') ? 'active' : ''} href="#/approvals">Approvals</a>
-          <a className={onWorkItems ? 'active' : ''} href="#/work-items">
-            <ListTodo className="ic" size={16} />
-            Work items
           </a>
           <a className={onMyActivity ? 'active' : ''} href="#/analytics/me">
             <UserRound className="ic" size={16} />

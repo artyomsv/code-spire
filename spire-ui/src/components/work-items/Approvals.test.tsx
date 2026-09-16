@@ -59,7 +59,7 @@ it('disables a second submission while the first answer is pending', async () =>
   let resolve!: () => void;
   vi.mocked(api.answer).mockReturnValue(new Promise(done => { resolve = done; }));
   show();fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();expect(api.answer).toHaveBeenCalledTimes(1);
+  expect(await screen.findByRole('button', { name: 'Approving…' })).toBeDisabled();expect(api.answer).toHaveBeenCalledTimes(1);
   await act(async () => { resolve(); });
 });
 it('never offers answer controls to a viewer', async () => {
@@ -80,4 +80,25 @@ it('ignores an old open-list response after selecting history', async () => {
   show(); fireEvent.click(screen.getByLabelText('Show decision history')); await screen.findByText('No past decisions.');
   await act(async () => { resolve([row]); });
   expect(screen.queryByText('TEST-42')).not.toBeInTheDocument();
+});
+
+// A locked card whose buttons keep their names looks like a click that did nothing.
+it('names the answer it is recording until the server replies', async () => {
+  let release!: () => void;
+  vi.mocked(api.answer).mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  expect(await screen.findByRole('button', { name: 'Approving…' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Recording your decision.');
+  await act(async () => { release(); });
+});
+it('names a rejection separately from an approval', async () => {
+  let release!: () => void;
+  vi.mocked(api.answer).mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Reject' }));
+  expect(await screen.findByRole('button', { name: 'Rejecting…' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  await act(async () => { release(); });
 });

@@ -45,7 +45,7 @@ export default function PresetForm({ repositoryId, policy, profiles, cancelled, 
         {PRESETS.map(preset => <option key={preset.name} value={preset.name}>{preset.name}</option>)}</select></SettingField>
     {error && <p className="prov-error" role="alert">{error}</p>}
     <div className="prov-actions">
-      <button className="btn" type="button" disabled={busy} onClick={() => void apply()}>Apply presets</button>
+      <button className="btn" type="button" disabled={busy} onClick={() => void apply()}>{busy ? 'Applying…' : 'Apply presets'}</button>
       <button className="btn-ghost" type="button" onClick={cancelled}>Cancel</button></div>
   </fieldset>;
 }

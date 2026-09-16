@@ -47,7 +47,7 @@ export default function InstantUpdates({ repository, source, hooks, hooksUnavail
         {' '}<span className="mono">{webhookPath(hook)}</span></span>
       : <span className="factory-note">Instant updates are off. New labels are seen within five minutes.</span>}
     {!hook && <button className="btn-ghost sm" type="button" disabled={busy || hooksUnavailable} onClick={() => void enable()}>
-      Turn on instant updates</button>}
+      {busy ? 'Turning on…' : 'Turn on instant updates'}</button>}
     {hooksUnavailable && !hook && <span className="prov-sub">Webhooks cannot be loaded right now.</span>}
     {error && <p className="prov-error" role="alert">{error}</p>}
     {revealed && <WebhookSecretReveal revealed={revealed} onDone={() => setRevealed(null)} />}

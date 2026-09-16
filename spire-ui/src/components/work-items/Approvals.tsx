@@ -17,9 +17,10 @@ export default function Approvals() {
   return <section className="content"><div className="card" style={{ padding: 18 }}>
     <h2>Approvals</h2>
     <label><input type="checkbox" checked={history} onChange={event => setHistory(event.target.checked)} />Show decision history</label>
-    <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh approvals</button>
+    <button className="btn" disabled={!rows && !error} onClick={() => setRefresh(value => value + 1)}>
+      {!rows && !error ? 'Refreshing…' : 'Refresh approvals'}</button>
     {error && <p role="alert">{error}</p>}
-    {!rows ? <p>Loading approvals…</p> : rows.length === 0 ? <div className="wh-empty">
+    {!rows ? <p role="status" aria-busy="true">Loading approvals…</p> : rows.length === 0 ? <div className="wh-empty">
       <div className="wh-empty-icon"><ClipboardCheck size={22} aria-hidden="true" /></div>
       <div className="wh-empty-title">{history ? 'No past decisions.' : 'No open approvals.'}</div>
       <p className="wh-empty-text">{history ? 'Decisions will appear here after an approval is answered or expires.' : 'When a work item needs your approval, its phase and supporting evidence will appear here.'}</p>
@@ -51,7 +52,12 @@ function Decision({ row, admin, resolved }: { row: api.Approval; admin: boolean;
     {row.gate.note && <p>{row.gate.note}</p>}
     {admin && row.gate.state === 'OPEN' && <fieldset className="modal-body" style={{ borderWidth: 0, borderStyle: 'none', margin: 0, minWidth: 0 }} disabled={busy}><legend className="field-sep">Record a decision</legend>
       <label className="field">Decision note<textarea value={note} onChange={event => setNote(event.target.value)} /></label>
-      <div className="prov-actions"><button className="btn" onClick={() => void submit(true)}>Approve</button><button className="btn" onClick={() => void submit(false)}>Reject</button></div>
+      {/* An answer takes a round trip and may be refused. A locked card with unchanged labels looks
+          like a click that did nothing, so the label says which answer is being recorded. */}
+      <div className="prov-actions">
+        <button className="btn" onClick={() => void submit(true)}>{busy && attempt?.approve ? 'Approving…' : 'Approve'}</button>
+        <button className="btn" onClick={() => void submit(false)}>{busy && attempt && !attempt.approve ? 'Rejecting…' : 'Reject'}</button></div>
+      {busy && <p role="status">Recording your decision. The card unlocks when the server answers.</p>}
     </fieldset>}
     {error && <p role="alert">{error}</p>}
   </article>;

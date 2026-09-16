@@ -150,3 +150,15 @@ it('cannot turn on instant updates while webhooks are unavailable', async () => 
   renderFactory({ unavailable: true });
   expect(within(await step(1)).getByRole('button', { name: 'Turn on instant updates' })).toBeDisabled();
 });
+
+// The request only sets a flag. The button must report the request, not a finished scan.
+it('reports a scan request while it is in flight and says when the scanner reads it', async () => {
+  let release!: () => void;
+  vi.mocked(sources.rescanWorkSource).mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
+  renderFactory();
+  fireEvent.click(within(await step(1)).getByRole('button', { name: 'Scan TEST-source name now' }));
+  expect(await screen.findByRole('button', { name: 'Scan TEST-source name now' })).toHaveTextContent('Asking…');
+  expect(screen.getByRole('button', { name: 'Scan TEST-source name now' })).toBeDisabled();
+  await act(async () => { release(); });
+  expect(await screen.findByText(/within about 30 seconds/)).toBeInTheDocument();
+});

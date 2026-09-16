@@ -106,11 +106,14 @@ export default function WorkItems() {
   const { page, error } = state;
   return <section className="content"><div className="card" style={{ padding: 18 }}>
     <div className="prov-head"><h2 className="prov-title">Work items</h2>
-      <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh work items</button></div>
+      {/* A disabled button with an unchanged label looks like a button that did nothing. The label
+          says what is happening, and the read below announces itself for assistive tech. */}
+      <button className="btn" disabled={!page && !error} onClick={() => setRefresh(value => value + 1)}>
+        {!page && !error ? 'Refreshing…' : 'Refresh work items'}</button></div>
     <label className="field">Workflow status<select value={status} onChange={event => { setStatus(event.target.value as WorkWorkflowStatus | ''); setOffset(0); }}>
       <option value="">All states</option>{[...STATES].map(([value, state]) => <option key={value} value={value}>{state.label}</option>)}
     </select></label>
-    {error ? <p role="alert">{error}</p> : !page ? <p>Loading work items…</p> : <>
+    {error ? <p role="alert">{error}</p> : !page ? <p role="status" aria-busy="true">Loading work items…</p> : <>
       {page.items.length === 0 ? <div className="wh-empty">
         <div className="wh-empty-icon"><ListTodo size={22} aria-hidden="true" /></div>
         <div className="wh-empty-title">{status ? 'No work items match this status.' : 'No work items yet.'}</div>

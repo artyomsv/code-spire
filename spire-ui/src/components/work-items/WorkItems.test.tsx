@@ -98,7 +98,7 @@ it('ignores an older list response after refresh', async () => {
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
+  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
   await screen.findByText('TEST-1');
   await act(async () => old.resolve({ items: [item(0)], total: 1, offset: 0, limit: 50 }));
   expect(screen.getByText('TEST-1')).toBeInTheDocument();
@@ -110,7 +110,7 @@ it('ignores an older list error after refresh', async () => {
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
+  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
   await screen.findByText('TEST-1');
   await act(async () => old.reject(new Error('TEST-old failure')));
   expect(screen.queryByRole('alert')).toBeNull();
@@ -123,9 +123,9 @@ it('ignores an older workflow response after navigation', async () => {
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-current title', body: 'TEST-body', trackerStatus: 'open' });
   showDetail();
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
-  await screen.findByRole('heading', { name: 'TEST-1' });
+  await screen.findByText('TEST-1 · TEST-owner/TEST-repo');
   await act(async () => old.resolve(detail()));
-  expect(screen.getByRole('heading', { name: 'TEST-1' })).toBeInTheDocument();
+  expect(screen.getByText('TEST-1 · TEST-owner/TEST-repo')).toBeInTheDocument();
 });
 
 it('ignores an older workflow error after navigation', async () => {
@@ -133,7 +133,7 @@ it('ignores an older workflow error after navigation', async () => {
   vi.spyOn(api, 'getWorkItem').mockReturnValueOnce(old.promise).mockResolvedValue({ ...detail(), ...item(1) });
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-current title', body: 'TEST-body', trackerStatus: 'open' });
   showDetail(); fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
-  await screen.findByRole('heading', { name: 'TEST-1' });
+  await screen.findByText('TEST-1 · TEST-owner/TEST-repo');
   await act(async () => old.reject(new Error('TEST-old workflow failure')));
   expect(screen.queryByRole('alert')).toBeNull();
 });
@@ -229,4 +229,36 @@ it('shows a list failure and recovers when refreshed', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
   await screen.findByText('TEST-0');
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
+// A read with no visible progress reads as a dead button; the label carries the state.
+it('says it is refreshing while the list reloads', async () => {
+  let release!: (page: { items: WorkItemSummary[]; total: number; offset: number; limit: number }) => void;
+  vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 })
+    .mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
+  expect(await screen.findByRole('button', { name: 'Refreshing…' })).toBeDisabled();
+  expect(screen.getByRole('status')).toHaveTextContent('Loading work items…');
+  await act(async () => release({ items: [item()], total: 1, offset: 0, limit: 50 }));
+  expect(await screen.findByRole('button', { name: 'Refresh work items' })).toBeEnabled();
+});
+
+// The ticket key is a bare number on GitHub. The title says what the work is.
+it('heads the detail with the ticket title and keeps the key beside it', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-headline', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+  expect(await screen.findByRole('heading', { level: 2, name: 'TEST-headline' })).toBeInTheDocument();
+  expect(screen.getByText((_text, node) => node?.textContent === 'TEST-0 · TEST-owner/TEST-repo')).toBeTruthy();
+});
+
+// The tracker read fails on its own, and the item must stay readable when it does.
+it('heads the detail with the key while the tracker read is unavailable', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-forge read failed'));
+  showDetail();
+  expect(await screen.findByRole('heading', { level: 2, name: 'TEST-0' })).toBeInTheDocument();
 });

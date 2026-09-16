@@ -50,7 +50,7 @@ export function CeilingStep({ repositoryId, policy, profiles, open, setOpen, cha
           <option value="">Select a version</option>{versionOptions(profiles)}</select></SettingField>
       {error && <p className="prov-error" role="alert">{error}</p>}
       <div className="prov-actions">
-        <button className="btn" type="button" disabled={busy || !ceiling} onClick={() => void submit()}>Save ceiling</button>
+        <button className="btn" type="button" disabled={busy || !ceiling} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save ceiling'}</button>
         <button className="btn-ghost" type="button" onClick={() => setOpen(null)}>Cancel</button></div>
     </fieldset>}
   </FactoryStep>;
@@ -96,7 +96,7 @@ export function LabelsStep({ repositoryId, policy, profiles, open, setOpen, chan
       <div className="prov-actions"><button className="btn-ghost sm" type="button" onClick={() => setRows(current => [...current, { label: '', profile: '' }])}>Add label mapping</button></div>
       {error && <p className="prov-error" role="alert">{error}</p>}
       <div className="prov-actions">
-        <button className="btn" type="button" disabled={busy} onClick={() => void submit()}>Save labels</button>
+        <button className="btn" type="button" disabled={busy} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save labels'}</button>
         <button className="btn-ghost" type="button" onClick={() => setOpen(null)}>Cancel</button></div>
     </fieldset>}
   </FactoryStep>;
