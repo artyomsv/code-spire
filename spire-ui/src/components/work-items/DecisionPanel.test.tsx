@@ -197,4 +197,14 @@ it('does not hold a land decision back on the task texts', async () => {
   vi.mocked(preparation.preparationEvidence).mockReturnValue(new Promise(() => {}));
   show();
   await approvable();
+  expect(screen.queryByText(/Reading the tickets/)).toBeNull();
+});
+
+// Review finding: a decision bound to a preparation the item no longer has skipped the text check entirely.
+it('offers no Approve for a decision whose prepared task the item no longer has', async () => {
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, preparation: null });
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('binds a prepared task the item no longer has');
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
 });

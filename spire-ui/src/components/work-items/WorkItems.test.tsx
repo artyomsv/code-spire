@@ -552,6 +552,8 @@ it('never commits one item under another item address', async () => {
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
     <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>);
   expect(await screen.findByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
+  // The probe's selector must find the first item, or a renamed class would let the check pass on nothing.
+  expect(document.querySelector('.work-head .prov-sub')?.textContent).toBe('TEST-0 · TEST-owner/TEST-repo');
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
   expect(committed.find(entry => entry.id === 'TEST-item-1')).toEqual({ id: 'TEST-item-1', subtitle: null });
 });

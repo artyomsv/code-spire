@@ -77,11 +77,14 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   // screen were read against the very binding the decision stores. A land decision binds a commit,
   // not these texts, so it does not wait for them. Rejecting needs no evidence and stays available.
   const needsTexts = !!preparation && !!gate && gate.phase !== 'land';
+  // The decision and the item are read separately. A decision that binds a preparation the item no
+  // longer has cannot be matched to any texts, so it is not approvable either.
+  const orphaned = !preparation && !!gate && gate.phase !== 'land' && gate.artifact !== null;
   const readable = !!evidence.value && !evidence.value.reason;
   const reported = evidence.value?.binding;
   const unreported = needsTexts && readable && reported === undefined;
   const mismatched = needsTexts && readable && reported !== undefined && reported !== gate?.artifact;
-  const bound = !needsTexts || readable && reported !== undefined && reported === gate?.artifact;
+  const bound = !orphaned && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
   const heading = gate ? `Approve the ${gate.phase}` : 'Decision';
   const subtitle = !loaded ? undefined : title ? `${title} · ${loaded.item.issueKey} · ${loaded.item.repository}` : `${loaded.item.issueKey} · ${loaded.item.repository}`;
   return <SidePanel title={heading} subtitle={subtitle} busy={answering !== null} onClose={onClose} wide
@@ -95,9 +98,10 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
       <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
-      {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering replaces it with a new decision.</p>}
+      {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering only closes this decision. Register the current versions to get a new one.</p>}
+      {orphaned && <p className="prov-error" role="alert">This decision binds a prepared task the item no longer has. Approve is not offered; answering only closes this decision.</p>}
       {unreported && <p className="prov-error" role="alert">The server does not say which prepared version these tickets belong to, so Approve is not offered. Update the orchestrator to the version this dashboard expects.</p>}
-      {admin && preparation && !evidence.value && !evidence.error && <p className="prov-note" role="status">Reading the tickets. Approve is offered once they are on screen.</p>}
+      {admin && needsTexts && !evidence.value && !evidence.error && <p className="prov-note" role="status">Reading the tickets. Approve is offered once they are on screen.</p>}
       {admin ? <SettingField label="Decision note" scope="approval" hint="Optional. Recorded with the decision and shown in the item's history.">
         <textarea aria-label="Decision note" value={note} onChange={event => setNote(event.target.value)} placeholder="Why you approve or reject" /></SettingField>
         : <p className="prov-note">Only an administrator can answer this decision.</p>}
