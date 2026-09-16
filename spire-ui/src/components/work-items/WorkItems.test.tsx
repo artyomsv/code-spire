@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../../api';
@@ -55,7 +55,7 @@ it('requires an operator note to resume suspended work and shows the recorded he
   const resume = await screen.findByRole('button', { name: 'Recheck and resume' });expect(resume).toBeDisabled();
   expect(screen.getByText(/Operator: 900123/)).toHaveTextContent('TEST-human takeover');
   expect(screen.getByText(/Observed head:/)).toHaveTextContent('b'.repeat(40));
-  fireEvent.change(screen.getByLabelText('Resume note'), { target: { value: 'TEST-reviewed human changes' } });
+  fireEvent.change(screen.getByLabelText('Resume note', { selector: 'textarea' }), { target: { value: 'TEST-reviewed human changes' } });
   expect(resume).toBeEnabled();fireEvent.click(resume);
   await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(suspended, false, 'TEST-reviewed human changes'));
 });
@@ -209,7 +209,7 @@ it('shows the ignored reason and no selected profile', async () => {
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-live title', body: 'TEST-live body', trackerStatus: 'open' });
   showDetail();
   await screen.findByText('Not eligible');
-  expect(screen.getByText('No profile selected')).toBeInTheDocument();
+  expect(within(screen.getByRole('listitem', { name: 'Step 1: Picked up' })).getByText('No profile selected')).toBeInTheDocument();
   expect(screen.getByText(/Current label applier is unattributed/)).toBeInTheDocument();
 });
 
@@ -373,4 +373,35 @@ it('says a cost is unknown rather than showing the priced part as the total', as
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
   expect(await screen.findByText('unknown')).toBeInTheDocument();
   expect(screen.queryByText('$0.095')).toBeNull();
+});
+
+// Review finding: a rule from an earlier recheck stayed beside later, different outcomes.
+it('clears the rule notice when the page is refreshed or a later action starts', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValueOnce({ reason: 'artifacts_changed', detail: 'plan_changed' })
+    .mockReturnValueOnce(new Promise(() => {}));
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  const notice = 'The plan ticket changed after it was checked. Check the references again.';
+  expect(await screen.findByText(notice)).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
+});
+it('clears the rule notice on a manual refresh', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'artifacts_changed', detail: 'plan_changed' });
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  const notice = 'The plan ticket changed after it was checked. Check the references again.';
+  expect(await screen.findByText(notice)).toBeInTheDocument();
+  const reads = vi.mocked(api.getWorkItem).mock.calls.length;
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh workflow' }));
+  // Judge the page after the re-read lands; during it the whole item is a loading line.
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(reads + 1));
+  expect(await screen.findByRole('button', { name: 'Refresh workflow' })).toBeInTheDocument();
+  expect(screen.queryByText(notice)).toBeNull();
 });

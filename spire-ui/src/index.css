@@ -1865,3 +1865,28 @@
   .decision-facts { margin: 0; }
   .decision-quote.step { border-left-color: var(--iris); }
   .decision-history li { align-items: flex-start; }
+  /* ---------- one work item, as its journey ----------
+     The factory-step list again: one vocabulary for "parts in order". A run adds three states the
+     setup never has — failed, stopped, and later (a phase not reached yet, shown by who decides it). */
+  .work-detail { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .work-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .work-head .grow { flex: 1; min-width: 220px; }
+  .work-head h2 { margin: 2px 0 2px; font-size: 19px; font-weight: 660; letter-spacing: -0.012em; }
+  .work-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .work-notice { padding: 10px 12px; border-radius: 9px; background: var(--iris-soft); color: var(--text); }
+  .work-steps .factory-k { margin-left: auto; }
+  .work-reason { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text); font-weight: 560; }
+  .work-actions { display: flex; flex-direction: column; gap: 8px; }
+  .factory-step.failed .factory-num { border-color: var(--crit); color: #fff; background: var(--crit); }
+  .factory-step.failed .factory-card { border-color: color-mix(in srgb, var(--crit) 45%, var(--border)); }
+  .factory-step.stopped .factory-num { border-color: var(--muted); color: #fff; background: var(--muted); }
+  .factory-step.later .factory-num { border-color: var(--border-strong); color: var(--text-3); }
+  .factory-step.later .factory-card { background: transparent; border-style: dashed; }
+  .factory-step.later .factory-q { color: var(--text-2); font-weight: 560; }
+  .work-more { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .work-more > summary { cursor: pointer; padding: 10px 12px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+  .work-more > :not(summary) { margin-left: 12px; margin-right: 12px; }
+  .work-more[open] { padding-bottom: 12px; }
+  .work-body { margin: 6px 0 0; white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: var(--text); }
+  .work-history { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+  .work-history time { margin-right: 8px; }

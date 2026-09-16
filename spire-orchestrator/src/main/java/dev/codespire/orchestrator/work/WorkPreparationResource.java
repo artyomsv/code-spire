@@ -74,7 +74,9 @@ public class WorkPreparationResource {
         } catch(RuntimeException refusedByForge) {
             // A wrong branch name and a rejected credential both arrive here as a forge refusal whose
             // type differs per adapter, so the answer says "not confirmed" and names both causes.
-            LOG.warnf(refusedByForge,"work item %s: the forge did not confirm branch %s",id,name);
+            // Only the failure type is logged. Adapter messages carry request paths and response-body
+            // snippets from the forge, and the branch is operator input, so neither goes to the log.
+            LOG.warnf("work item %s: the forge did not confirm the requested branch (%s)",id,refusedByForge.getClass().getSimpleName());
             throw refused(502,"branch_head_unconfirmed");
         }
     }
