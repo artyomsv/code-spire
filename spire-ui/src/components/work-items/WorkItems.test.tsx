@@ -39,7 +39,7 @@ it('rechecks the displayed item revision before resuming', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
-  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue();showDetail();
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'phase_started' });showDetail();
   fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
   await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(detail(), false));
 });
@@ -49,7 +49,7 @@ it('requires an operator note to resume suspended work and shows the recorded he
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(suspended);
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
-  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue();showDetail();
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'phase_started' });showDetail();
   const resume = await screen.findByRole('button', { name: 'Recheck and resume' });expect(resume).toBeDisabled();
   expect(screen.getByText(/Operator: 900123/)).toHaveTextContent('TEST-human takeover');
   expect(screen.getByText(/Observed head:/)).toHaveTextContent('b'.repeat(40));
@@ -277,4 +277,28 @@ it('says the applier is unknown rather than showing a bare id as a name', async 
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   showDetail();
   expect(await screen.findByText(/added by an unknown person/)).toBeInTheDocument();
+});
+
+// A recheck stopped by a moved ticket said only "artifacts changed"; the operator had to guess which.
+it('names the rule that stopped a recheck and keeps it after the page re-reads', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'artifacts_changed', detail: 'plan_changed' });
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  expect(await screen.findByText('The plan ticket changed after it was checked. Check the references again.')).toBeInTheDocument();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  expect(screen.getByText('The plan ticket changed after it was checked. Check the references again.')).toBeInTheDocument();
+});
+
+it('adds no notice when a recheck names no rule', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'phase_started' });
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText(/changed after it was checked/)).toBeNull();
 });

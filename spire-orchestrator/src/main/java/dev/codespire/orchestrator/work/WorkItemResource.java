@@ -36,7 +36,7 @@ public class WorkItemResource {
         var result=item!=null && "suspended".equals(item.workflowStatus())
                 ?control.resume(id,input.expectedRevision(),subject,input.note())
                 :transitions.resume(id,input.expectedRevision(),input.readmit());
-        return jakarta.ws.rs.core.Response.status(result.status()).entity(Map.of("reason",result.reason())).build();
+        return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
     }
     public record Profile(UUID id, String name, long version) {}
     public record Milestone(long sequence, String type, String reason, Instant occurredAt,String phase,String workflowStatus,

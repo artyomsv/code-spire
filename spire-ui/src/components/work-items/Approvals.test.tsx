@@ -102,3 +102,11 @@ it('names a rejection separately from an approval', async () => {
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   await act(async () => { release(); });
 });
+
+// A superseded plan decision is answered with the ticket that moved; the approver re-reads that one.
+it('names the ticket that moved when a decision is superseded', async () => {
+  vi.mocked(api.answer).mockRestore();
+  vi.spyOn(auth, 'apiFetch').mockResolvedValue(new Response(JSON.stringify({ reason: 'artifacts_changed_requires_new_decision', detail: 'specification_changed' }), { status: 409 }));
+  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('The decision changed. The specification ticket changed after it was checked.');
+});

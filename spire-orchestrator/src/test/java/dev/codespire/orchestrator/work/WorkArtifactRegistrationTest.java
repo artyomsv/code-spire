@@ -19,12 +19,29 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
         assertTrue(sources.get(source).orElseThrow().enabled());assertTrue(sources.get(source).orElseThrow().allowedActors().contains("900123"));
         var result=transitions.answer(gate.id(),gate.version(),"TEST-changed-spec",true,"TEST-note","TEST-human");
         assertEquals(409,result.status());assertEquals("artifacts_changed_requires_new_decision",store.load(id).reason());
+        assertEquals("specification_changed",result.detail(),"the approver has to know which ticket to re-read");
         assertEquals("SUPERSEDED",store.load(id).gate().state());assertFalse(store.load(id).progress().reserved());dispatcher.drain();assertEquals(0,runCount(id));
     }
     @Test void changedPlanRequiresANewPlanDecision() throws Exception {
         String id=waiting();var gate=store.load(id).gate();stubArtifact(72,57002,plan+" ");
         var result=transitions.answer(gate.id(),gate.version(),"TEST-changed-plan",true,null,"TEST-human");
         assertEquals(409,result.status());assertEquals("SUPERSEDED",store.load(id).gate().state());assertEquals(0,runCount(id));
+        assertEquals("plan_changed",result.detail());
+    }
+    /** A recheck stopped by a moved ticket names that ticket, as the registration refusal already does. */
+    @Test void aRecheckStoppedByAChangedTicketNamesIt() throws Exception {
+        String id=waiting();var gate=store.load(id).gate();stubArtifact(71,57001,"TEST-revised specification");
+        transitions.answer(gate.id(),gate.version(),"TEST-superseded",true,null,"TEST-human");
+        var result=transitions.resume(id,store.history(id).size(),false);
+        assertEquals("artifacts_changed",store.load(id).reason());
+        assertEquals("specification_changed",result.detail());
+        assertEquals(java.util.Map.of("reason","artifacts_changed","detail","specification_changed"),result.body());
+    }
+    /** A recheck that is not stopped by the artifacts names no rule. */
+    @Test void aRecheckWithUnchangedTicketsNamesNoRule() throws Exception {
+        String id=admit("autonomous",57);
+        var result=transitions.resume(id,store.history(id).size(),false);
+        assertNull(result.detail());assertFalse(result.body().containsKey("detail"));
     }
     @Test void unavailableArtifactsDoNotClaimAnApproval() throws Exception {
         String id=waiting();var gate=store.load(id).gate();long revision=store.history(id).size();

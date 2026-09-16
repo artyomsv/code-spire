@@ -1,4 +1,5 @@
 import { apiFetch } from '../../auth';
+import { workRefusal } from './workReasons';
 
 export interface Gate {
   id: string; version: number; state: 'OPEN' | 'APPROVED' | 'REJECTED' | 'EXPIRED' | 'SUPERSEDED';
@@ -16,6 +17,10 @@ export async function answer(gate: Gate, idempotencyKey: string, approve: boolea
     body: JSON.stringify({ expectedVersion: gate.version, idempotencyKey, approve, note }) });
   if (!response.ok) {
     const detail = await response.text();
+    // A superseded plan decision names the ticket that moved, which is what the approver re-reads.
+    let refusal: { reason?: string; detail?: string } = {};
+    try { refusal = JSON.parse(detail) as typeof refusal; } catch { /* not a refusal this API shaped */ }
+    if (response.status === 409 && refusal.detail) throw new Error(`The decision changed. ${workRefusal(refusal.reason ?? '', refusal.detail)}`);
     if (response.status === 409) throw new Error(`The decision changed or expired. Refresh approvals before deciding again. ${detail}`);
     if (response.status === 503) throw new Error(`Current policy could not be confirmed. No approval was recorded; retry when the source is available. ${detail}`);
     throw new Error(`${response.status}: ${detail}`);

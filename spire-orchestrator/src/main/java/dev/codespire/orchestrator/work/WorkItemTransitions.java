@@ -34,6 +34,10 @@ public class WorkItemTransitions {
      */
     public record Outcome(int status,String reason,String detail,WorkItemEvent item) {
         public Outcome(int status,String reason,WorkItemEvent item) { this(status,reason,null,item); }
+        /** The response body every operator-facing endpoint returns: the reason, and the rule when one refused. */
+        public java.util.Map<String,String> body() {
+            return detail==null?java.util.Map.of("reason",reason):java.util.Map.of("reason",reason,"detail",detail);
+        }
     }
     public record PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown,WorkExecution execution) {
         public PhaseResult(UUID attemptId,boolean successful,long wallSeconds,long costMillicents,long calls,boolean usageKnown) {
@@ -161,7 +165,10 @@ public class WorkItemTransitions {
                     history=store.history(id);
                 }
                 store.appendDecision(c,history,next,"transition:"+UUID.randomUUID());
-                return new Outcome(200,next.reason(),next);
+                // The rule travels only when the artifacts are what stopped the item; an authority
+                // outage checked first owns the reason, and naming a plan rule there would mislead.
+                String detail=observed.evidence().failure()==null && observed.artifacts().failure()!=null?observed.artifacts().detail():null;
+                return new Outcome(200,next.reason(),detail,next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode phase decision",failure);}
         });
@@ -234,7 +241,10 @@ public class WorkItemTransitions {
                 else if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),current);
                 else if("artifacts_unavailable".equals(observed.artifacts().failure()))return new Outcome(503,"artifacts_unavailable",current);
                 else if(observed.artifacts().failure()!=null || !Objects.equals(gate.artifact(),WorkGate.artifactOf(current))) {
-                    next=state(current,"awaiting_input","artifacts_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));status=409;
+                    next=state(current,"awaiting_input","artifacts_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));
+                    store.appendDecision(c,history,next,"gate:"+gateId+":"+key);
+                    // Which ticket moved is what the approver has to re-read before a new decision.
+                    return new Outcome(409,next.reason(),observed.artifacts().detail(),next);
                 }
                 else if(gate.policyRevision()!=observed.policy().revision() || !gate.authority().equals(authority(observed.source()))
                         || gate.itemRevision()!=history.size() || gate.generation()!=current.generation() || !gate.phase().equals(current.phase())) {

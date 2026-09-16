@@ -42,6 +42,6 @@ public class WorkGateResource {
         String subject=OidcSubjects.of(identity);
         if(subject.isBlank())throw new ForbiddenException("A verified operator identity is required");
         var result=transitions.answer(id,input.expectedVersion(),input.idempotencyKey(),input.approve(),input.note(),subject);
-        return Response.status(result.status()).entity(Map.of("reason",result.reason())).build();
+        return Response.status(result.status()).entity(result.body()).build();
     }
 }

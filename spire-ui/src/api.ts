@@ -45,10 +45,14 @@ export interface WorkItemDetail extends WorkItemSummary {
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null }[];
 }
 
-export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<void> {
+/** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */
+export interface WorkItemOutcome { reason: string; detail?: string }
+
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<WorkItemOutcome> {
   const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
   if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
+  return response.json();
 }
 
 /** Fetched for the current detail request; these fields are never workflow projection columns. */

@@ -85,8 +85,6 @@ public class WorkPreparationResource {
         var result=transitions.prepare(id,input.expectedRevision(),preparation);
         // The reason is the contract other code keys on; the detail says which rule refused, so the
         // operator is told what to change instead of being handed one word for three plan rules.
-        Map<String,String> body=result.detail()==null?Map.of("reason",result.reason())
-                :Map.of("reason",result.reason(),"detail",result.detail());
-        return Response.status(result.status()).entity(body).build();
+        return Response.status(result.status()).entity(result.body()).build();
     }
 }

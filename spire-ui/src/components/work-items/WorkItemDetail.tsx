@@ -8,10 +8,14 @@ import { useMe } from '../../hooks/useMe';
 import { canAdminister } from '../../auth';
 import { WorkflowStatus, workReason } from './WorkItems';
 import { actorLabel } from '../actorsApi';
+import { workRefusal } from './workReasons';
 
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
   const [refresh, setRefresh] = useState(0);
+  // Survives the re-read a recheck triggers, so the rule that stopped it is still on screen after.
+  const [notice, setNotice] = useState('');
+  useEffect(() => { setNotice(''); }, [id]);
   const [state, setState] = useState<{ item: Detail | null; error: string | null }>({ item: null, error: null });
   const [tracker, setTracker] = useState<{ value: WorkItemTracker | null; error: string | null }>({ value: null, error: null });
   useEffect(() => {
@@ -39,7 +43,8 @@ export default function WorkItemDetail() {
       <p>Phase: {item.phase} · Generation: {item.generation}</p></>}
       <WorkItemPolicy item={item} />
       {item.gate && <p>Approval: {item.gate.state} · <Link to="/approvals">Open approvals</Link></p>}
-      <WorkItemActions key={`${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
+      {notice && <p className="prov-note" role="status">{notice}</p>}
+      <WorkItemActions key={`${item.id}:${item.revision}`} item={item} changed={value => { setNotice(value ?? ''); setRefresh(previous => previous + 1); }} />
       <WorkItemPreparation key={`preparation:${item.id}:${item.revision}`} item={item} changed={() => setRefresh(value => value + 1)} />
       <button className="btn" onClick={() => setRefresh(value => value + 1)}>Refresh workflow</button>
       <h3>Applied labels</h3>
@@ -68,7 +73,7 @@ export default function WorkItemDetail() {
   </div></section>;
 }
 
-function WorkItemActions({ item, changed }: { item: Detail; changed: () => void }) {
+function WorkItemActions({ item, changed }: { item: Detail; changed: (notice?: string) => void }) {
   const { me } = useMe();
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -77,9 +82,8 @@ function WorkItemActions({ item, changed }: { item: Detail; changed: () => void 
   async function resume(readmit: boolean) {
     setBusy(true); setError('');
     try {
-      if (item.workflowStatus === 'suspended') await resumeWorkItem(item, readmit, note);
-      else await resumeWorkItem(item, readmit);
-      if (active.current) changed();
+      const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note) : await resumeWorkItem(item, readmit);
+      if (active.current) changed(outcome.detail ? workRefusal(outcome.reason, outcome.detail) : undefined);
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(false); }
   }
