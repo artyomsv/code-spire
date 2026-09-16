@@ -405,3 +405,45 @@ it('clears the rule notice on a manual refresh', async () => {
   expect(await screen.findByRole('button', { name: 'Refresh workflow' })).toBeInTheDocument();
   expect(screen.queryByText(notice)).toBeNull();
 });
+
+// Review finding: polls overlapped, so on a server slower than the interval no answer was ever shown.
+it('never starts a poll while a read is still out', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 }).mockReturnValue(new Promise(() => {}));
+    render(<MemoryRouter><WorkItems /></MemoryRouter>);
+    await screen.findByText('TEST-0');
+    await act(async () => { vi.advanceTimersByTime(15_000); });
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+    await act(async () => { vi.advanceTimersByTime(45_000); });
+    expect(api.getWorkItems).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
+// Review finding: each page turn started three more title reads while the old page's kept going.
+it('keeps the tracker read limit across page turns', async () => {
+  vi.mocked(api.getWorkItemTracker).mockReturnValue(new Promise(() => {}));
+  vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0) => ({
+    items: Array.from({ length: 5 }, (_, index) => item(offset + index)), total: 100, offset, limit: 50 }));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  await screen.findByText('TEST-0');
+  await waitFor(() => expect(api.getWorkItemTracker).toHaveBeenCalledTimes(3));
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await screen.findByText('TEST-50');
+  await act(async () => {});
+  expect(api.getWorkItemTracker).toHaveBeenCalledTimes(3);
+});
+// Review finding: moving the address from one decision to another kept the first decision's note and answer.
+it('starts a fresh decision when the address names another item', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item(0), item(1)], total: 2, offset: 0, limit: 50 });
+  vi.spyOn(api, 'getWorkItem').mockImplementation(async id => ({ ...detail(), id, issueKey: id }));
+  const open = (id: string) => ({ workItemId: id, issueKey: id, gate: { id: `${id}-gate`, version: 1, state: 'OPEN' as const, phase: 'plan', generation: 1,
+    itemRevision: 1, policyRevision: 1, artifact: null, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } });
+  vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([open('TEST-item-0'), open('TEST-item-1')]);
+  render(<MemoryRouter initialEntries={['/work-items?decide=TEST-item-0']}><Link to="/work-items?decide=TEST-item-1">TEST-next decision</Link><Routes>
+    <Route path="/work-items" element={<WorkItems />} /></Routes></MemoryRouter>);
+  fireEvent.change(await screen.findByLabelText('Decision note', { selector: 'textarea' }), { target: { value: 'TEST-note for the first item' } });
+  fireEvent.click(screen.getByRole('link', { name: 'TEST-next decision' }));
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenLastCalledWith('TEST-item-1'));
+  expect(await screen.findByLabelText('Decision note', { selector: 'textarea' })).toHaveValue('');
+});

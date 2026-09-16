@@ -65,7 +65,7 @@ export default function WorkItemDetail() {
       </div>
       {notice && <p className="prov-note work-notice" role="status">{notice}</p>}
       <WorkItemSteps item={item} current={<>
-        {action?.label === 'Add missing prices' && <Link className="btn sm" to={action.to}>Add missing prices</Link>}
+        {item.reason === 'run_usage_unknown' && <Link className="btn-ghost sm" to="/settings/llm">Model prices</Link>}
         {action?.label === 'Prepare the task' && <button className="btn sm" type="button" onClick={() => open('prepare')}>Prepare the task</button>}
         {item.gate?.state === 'OPEN' && <button className="btn sm" type="button" onClick={() => open('decide')}>Review the {item.gate.phase} decision</button>}
         <WorkItemActions key={`${item.id}:${item.revision}`} item={item} started={() => setNotice('')} changed={reread} />
@@ -86,7 +86,7 @@ export default function WorkItemDetail() {
           <span>{event.type === 'WorkItemEvent' ? 'Workflow updated' : event.type}: {workReason(event.reason)}</span>
         </li>)}</ol>
       </details>
-      {params.get('decide') && <DecisionPanel itemId={item.id} title={tracker.value?.title ?? null} onClose={close}
+      {params.get('decide') && <DecisionPanel key={item.id} itemId={item.id} title={tracker.value?.title ?? null} onClose={close}
         onDecided={message => { close(); reread(message); }} />}
       {params.get('prepare') && <SidePanel title="Prepare the task" subtitle={`${item.issueKey} · ${item.repository}`} busy={false} onClose={close}
         actions={<button className="btn-ghost" type="button" onClick={close}>Close</button>}>

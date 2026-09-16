@@ -28,8 +28,8 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const admin = canAdminister(me);
   const [loaded, setLoaded] = useState<Loaded | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | null>(null);
-  // Reuse an answer identity after a transport failure, but never attach it to a different answer or note.
-  const attempt = useRef<{ key: string; approve: boolean; note: string } | null>(null);
+  // Reuse an answer identity after a transport failure, but never attach it to a different gate, answer or note.
+  const attempt = useRef<{ key: string; gate: string; approve: boolean; note: string } | null>(null);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
@@ -50,8 +50,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   async function decide(approve: boolean) {
     const gate = loaded?.approval?.gate;
     if (!gate) return;
-    const previous = attempt.current;
-    const decision = previous && previous.approve === approve && previous.note === note ? previous : { key: crypto.randomUUID(), approve, note };
+    const previous = attempt.current, bound = `${gate.id}:${gate.version}`;
+    const decision = previous && previous.gate === bound && previous.approve === approve && previous.note === note
+      ? previous : { key: crypto.randomUUID(), gate: bound, approve, note };
     attempt.current = decision; setAnswering(approve); setError('');
     try {
       await approvalsApi.answer(gate, decision.key, approve, note);

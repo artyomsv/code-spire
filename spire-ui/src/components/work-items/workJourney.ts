@@ -13,7 +13,7 @@ export type JourneyPhase = typeof JOURNEY[number];
 /** What a list row carries: the summary, plus the parts of the detail view the list endpoint also returns. */
 export type WorkItemRow = WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate'>>;
 
-/** How the current phase stands. `ignored` is an item that never started; `done` is past `land`. */
+/** How the current phase stands. `ignored` is an item its policy does not run at this phase; `done` is past `land`. */
 export type Standing = 'waiting' | 'blocked' | 'running' | 'stopped' | 'failed' | 'ignored' | 'done';
 
 export type Cell = 'done' | `now-${Standing}` | 'later-auto' | 'later-ask' | 'later-off' | 'later-unknown';
@@ -31,7 +31,7 @@ export const FILTERS: Filter[] = [
   { id: 'needs-you', label: 'Needs you', statuses: ['waiting_approval', 'awaiting_input', 'suspended'] },
   { id: 'running', label: 'Running', statuses: ['active'] },
   { id: 'stopped', label: 'Stopped', statuses: ['stopped', 'failed', 'capability_unavailable'] },
-  { id: 'ignored', label: 'Ignored', statuses: ['not_eligible'] },
+  { id: 'ignored', label: 'Not eligible', statuses: ['not_eligible'] },
   { id: 'finished', label: 'Finished', statuses: ['completed', 'retired'] },
 ];
 
@@ -47,7 +47,9 @@ export function standing(status: string): Standing {
     case 'stopped': case 'capability_unavailable': return 'stopped';
     case 'failed': return 'failed';
     case 'not_eligible': return 'ignored';
-    case 'completed': case 'retired': return 'done';
+    case 'completed': return 'done';
+    // A retired item stopped wherever it was when its ticket was deleted or moved; it did not finish.
+    case 'retired': return 'stopped';
     // An unknown status stops the strip rather than painting it as progress.
     default: return 'stopped';
   }
@@ -93,8 +95,10 @@ const PREPARATION_REASONS = new Set(['specification_required', 'artifacts_change
 export function nextAction(item: WorkItemRow): NextAction | null {
   if (item.workflowStatus === 'waiting_approval' && item.gate?.state === 'OPEN')
     return { label: `Review the ${item.gate.phase} decision`, to: `/work-items?filter=needs-you&decide=${encodeURIComponent(item.id)}` };
+  // Unknown usage is a missing price or a missing measurement; the row cannot tell which, so it sends
+  // the reader to the item, whose build step links the run and the model prices.
   if (item.workflowStatus === 'awaiting_input' && item.reason === 'run_usage_unknown')
-    return { label: 'Add missing prices', to: '/settings/llm' };
+    return { label: 'Check the run cost', to: `/work-items/${encodeURIComponent(item.id)}` };
   if (item.workflowStatus === 'awaiting_input' && PREPARATION_REASONS.has(item.reason))
     return { label: 'Prepare the task', to: `/work-items/${encodeURIComponent(item.id)}` };
   if (item.workflowStatus === 'suspended') return { label: 'Resume', to: `/work-items/${encodeURIComponent(item.id)}` };

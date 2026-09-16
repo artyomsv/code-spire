@@ -31,8 +31,14 @@ it('treats an unknown status as stopped', () => {
   expect(journeyCells(row({ workflowStatus: 'TEST-future' }))[4]).toBe('now-stopped');
 });
 
-it('sends an unpriced run to the model prices', () => {
-  expect(nextAction(row())).toEqual({ label: 'Add missing prices', to: '/settings/llm' });
+// Unknown usage is a missing price or a missing measurement; the row cannot tell which.
+it('sends an unknown run cost to the item rather than claiming a price is missing', () => {
+  expect(nextAction(row())).toEqual({ label: 'Check the run cost', to: '/work-items/TEST-item' });
+});
+// A ticket deleted or moved mid-build stopped the item; it did not finish.
+it('draws a retired item as stopped where it was, not as done', () => {
+  expect(standing('retired')).toBe('stopped');
+  expect(journeyCells(row({ phase: 'build', workflowStatus: 'retired' })).slice(2, 5)).toEqual(['done', 'now-stopped', 'later-auto']);
 });
 it('opens an open decision beside the list', () => {
   const gate = { id: 'TEST-gate', version: 1, state: 'OPEN' as const, phase: 'plan', generation: 1, itemRevision: 1, policyRevision: 1, artifact: null,

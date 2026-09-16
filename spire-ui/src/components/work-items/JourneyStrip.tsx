@@ -2,7 +2,7 @@ import { JOURNEY, journeyCells, standing, type WorkItemRow } from './workJourney
 
 const STANDING_WORDS: Record<string, string> = {
   waiting: 'waiting for a decision', blocked: 'waiting for input', running: 'running', stopped: 'stopped',
-  failed: 'failed', ignored: 'not started', done: 'finished',
+  failed: 'failed', ignored: 'not eligible', done: 'finished',
 };
 
 /**

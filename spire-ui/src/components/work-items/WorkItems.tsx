@@ -45,22 +45,26 @@ export default function WorkItems() {
   const [params, setParams] = useSearchParams();
   const filter = filterById(params.get('filter'));
   const [offset, setOffset] = useState(0), [refresh, setRefresh] = useState(0);
-  const [page, setPage] = useState<WorkItemPage | null>(null), [error, setError] = useState<string | null>(null);
+  // A page remembers which filter and offset it answers, so a new filter never shows the old rows.
+  const [loaded, setLoaded] = useState<{ key: string; page: WorkItemPage } | null>(null), [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true), [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const sequence = useRef(0);
+  const inFlight = useRef(false);
+  const viewKey = `${filter.id}:${offset}`;
+  const page = loaded?.key === viewKey ? loaded.page : null;
 
   // A read that answers after a newer one started is dropped, so a slow page never replaces a fresh one.
   const load = useCallback(async (clear: boolean) => {
     const request = ++sequence.current;
-    if (clear) setPage(null);
-    setLoading(true);
+    if (clear) setLoaded(null);
+    setLoading(true); inFlight.current = true;
     try {
       const next = await getWorkItems(offset, PAGE_SIZE, filter.statuses);
       if (request !== sequence.current) return;
-      setPage(next); setError(null); setUpdatedAt(new Date().toISOString());
+      setLoaded({ key: `${filter.id}:${offset}`, page: next }); setError(null); setUpdatedAt(new Date().toISOString());
     } catch (failure) { if (request === sequence.current) setError(String(failure)); }
-    finally { if (request === sequence.current) setLoading(false); }
+    finally { if (request === sequence.current) { setLoading(false); inFlight.current = false; } }
   }, [offset, filter]);
   const latest = useRef(load);
   latest.current = load;
@@ -68,7 +72,9 @@ export default function WorkItems() {
   useEffect(() => { void load(true); }, [load]);
   useEffect(() => { if (refresh > 0) void latest.current(false); }, [refresh]);
   useEffect(() => {
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') void latest.current(false); }, POLL_MILLISECONDS);
+    // A poll never overlaps a read still out: each would supersede the last, and on a server slower
+    // than the interval no answer would ever be shown.
+    const timer = setInterval(() => { if (document.visibilityState === 'visible' && !inFlight.current) void latest.current(false); }, POLL_MILLISECONDS);
     return () => { clearInterval(timer); sequence.current++; };
   }, []);
 
@@ -114,7 +120,7 @@ export default function WorkItems() {
         <button className="btn-ghost" type="button" disabled={page.offset + rows.length >= page.total} onClick={() => setOffset(page.offset + page.limit)}>Next page</button>
       </div>
     </>}
-    {deciding && <DecisionPanel itemId={deciding} title={titles.get(deciding) ?? null} onClose={() => without('decide')}
+    {deciding && <DecisionPanel key={deciding} itemId={deciding} title={titles.get(deciding) ?? null} onClose={() => without('decide')}
       onDecided={message => { setNotice(message); without('decide'); setRefresh(value => value + 1); }} />}
     {params.get('history') && <PastDecisions onClose={() => without('history')} />}
   </div></section>;

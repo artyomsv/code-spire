@@ -94,6 +94,8 @@ it('names the answer it is recording and locks every control until the server re
   expect(await screen.findByRole('button', { name: 'Approving…' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  // The header close sits outside the panel's fieldset; closing mid-answer hides an answer still landing.
+  expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
   expect(screen.getByText(/Recording your decision/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Approving…' }));
   expect(api.answer).toHaveBeenCalledTimes(1);

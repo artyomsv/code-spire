@@ -47,7 +47,8 @@ export default function SidePanel({ title, subtitle, busy, onClose, tabs, tab, o
             <h3>{title}</h3>
             {subtitle && <div className="panel-sub">{subtitle}</div>}
           </div>
-          <button className="iconbtn" type="button" onClick={onClose} aria-label="Close">
+          {/* Outside the fieldset, so the save lock is repeated: closing mid-save leaves an answer nobody sees land. */}
+          <button className="iconbtn" type="button" onClick={onClose} aria-label="Close" disabled={busy}>
             <X size={15} aria-hidden="true" />
           </button>
         </div>
