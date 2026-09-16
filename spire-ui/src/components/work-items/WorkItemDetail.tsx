@@ -51,7 +51,11 @@ export default function WorkItemDetail() {
   function start() { setNotice(''); return ++action.current; }
   function open(name: 'decide' | 'prepare') { setParams({ [name]: '1' }); }
   function close() { setParams({}); }
-  const { item, error } = state;
+  // The item on screen must be the one the address names; until its own read lands, show none. The
+  // gap is the one render before the read effect clears the old item, which a test inside act() never
+  // sees because act() flushes that effect first, so this guard is reasoned rather than tested.
+  const item = state.item?.id === id ? state.item : null;
+  const { error } = state;
   const next = item ? nextAction(item) : null;
 
   return <section className="content"><div className="card work-detail">
@@ -67,7 +71,7 @@ export default function WorkItemDetail() {
         </div>
         <div className="prov-actions">
           <a className="btn-ghost sm" href={item.trackerUrl} target="_blank" rel="noreferrer">Open ticket in tracker</a>
-          <button className="btn-ghost sm" type="button" onClick={() => reread()}>Refresh workflow</button>
+          <button className="btn-ghost sm" type="button" onClick={() => { start(); reread(); }}>Refresh workflow</button>
         </div>
       </div>
       <div className="work-status">
@@ -80,7 +84,7 @@ export default function WorkItemDetail() {
         {next?.label === 'Prepare the task' && <button className="btn sm" type="button" onClick={() => open('prepare')}>Prepare the task</button>}
         {item.gate?.state === 'OPEN' && <button className="btn sm" type="button" onClick={() => open('decide')}>Review the {item.gate.phase} decision</button>}
         <WorkItemActions key={`${item.id}:${item.revision}`} item={item} started={start}
-          changed={(message, started) => { if (started === action.current) reread(message); }} />
+          changed={(message, started) => started === action.current ? reread(message) : setRefresh(value => value + 1)} />
       </>} />
       <details className="work-more"><summary>Policy and limits</summary><WorkItemPolicy item={item} /></details>
       <details className="work-more" open={tracker.error !== null}><summary>Ticket</summary>

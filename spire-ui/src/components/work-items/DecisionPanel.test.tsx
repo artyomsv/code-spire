@@ -18,7 +18,8 @@ const item = { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-rep
   effectiveLimits: { gateTtlSeconds: 86400, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] },
   preparation: { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'a0f8a41'.padEnd(40, '0'), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' },
 } satisfies gateway.WorkItemDetail;
-const evidence: preparation.PreparationEvidence = { reason: null, detail: null, specification: 'TEST-specification text', instruction: 'TEST-the one step' };
+const evidence: preparation.PreparationEvidence = { reason: null, detail: null, specification: 'TEST-specification text', instruction: 'TEST-the one step',
+  specificationSha256: item.preparation.specification.sha256, planSha256: item.preparation.plan.sha256 };
 const decided = vi.fn();
 
 afterEach(cleanup);
@@ -30,6 +31,12 @@ beforeEach(() => {
   vi.spyOn(gateway, 'getWorkItem').mockResolvedValue(item);
   vi.spyOn(preparation, 'preparationEvidence').mockResolvedValue(evidence);
 });
+/** Approve is offered only once the bound texts are on screen; a test that approves waits for that. */
+async function approvable() {
+  const button = await screen.findByRole('button', { name: 'Approve' });
+  await waitFor(() => expect(button).toBeEnabled());
+  return button;
+}
 function show() { return render(<MemoryRouter><DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter>); }
 
 // The old card showed a digest and a generation number. An approver has to see what they approve.
@@ -63,14 +70,14 @@ it('submits the displayed gate version and reports the decision', async () => {
 });
 it('keeps the decision open after a failed answer', async () => {
   vi.mocked(api.answer).mockRejectedValue(new Error('TEST-409 decision changed'));
-  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  show(); fireEvent.click(await approvable());
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-409 decision changed');
   expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
   expect(decided).not.toHaveBeenCalled();
 });
 it('reuses an answer identity after transport failure but replaces it for a different decision', async () => {
   vi.mocked(api.answer).mockRejectedValue(new Error('TEST-timeout'));
-  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' })); await screen.findByRole('alert');
+  show(); fireEvent.click(await approvable()); await screen.findByRole('alert');
   const first = vi.mocked(api.answer).mock.calls[0][1];
   fireEvent.click(screen.getByRole('button', { name: 'Approve' })); await waitFor(() => expect(api.answer).toHaveBeenCalledTimes(2));
   await screen.findByRole('alert');
@@ -80,7 +87,7 @@ it('reuses an answer identity after transport failure but replaces it for a diff
 });
 it('gives an edited note a new answer identity', async () => {
   vi.mocked(api.answer).mockRejectedValue(new Error('TEST-timeout'));
-  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' })); await screen.findByRole('alert');
+  show(); fireEvent.click(await approvable()); await screen.findByRole('alert');
   const first = vi.mocked(api.answer).mock.calls[0][1];
   fireEvent.change(screen.getByLabelText('Decision note', { selector: 'textarea' }), { target: { value: 'TEST-revised note' } });
   fireEvent.click(screen.getByRole('button', { name: 'Approve' })); await waitFor(() => expect(api.answer).toHaveBeenCalledTimes(2));
@@ -90,7 +97,7 @@ it('gives an edited note a new answer identity', async () => {
 it('names the answer it is recording and locks every control until the server replies', async () => {
   let release!: () => void;
   vi.mocked(api.answer).mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
-  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  show(); fireEvent.click(await approvable());
   expect(await screen.findByRole('button', { name: 'Approving…' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
@@ -130,7 +137,7 @@ it('offers the tracker command, and mentions pull request reviews only for a lan
 it('names the ticket that moved when a decision is superseded', async () => {
   vi.mocked(api.answer).mockRestore();
   vi.spyOn(auth, 'apiFetch').mockResolvedValue(new Response(JSON.stringify({ reason: 'artifacts_changed_requires_new_decision', detail: 'specification_changed' }), { status: 409 }));
-  show(); fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+  show(); fireEvent.click(await approvable());
   expect(await screen.findByRole('alert')).toHaveTextContent('The decision changed. The specification ticket changed after it was checked.');
 });
 
@@ -145,4 +152,34 @@ it('says when no decision is closed yet', async () => {
   vi.mocked(api.approvals).mockResolvedValue([]);
   render(<MemoryRouter><PastDecisions onClose={vi.fn()} /></MemoryRouter>);
   expect(await screen.findByText(/No decision has been answered/)).toBeInTheDocument();
+});
+
+// Review finding: Approve was offered before, and without, the texts it promises to show.
+it('offers Approve only once the bound texts are on screen, and keeps Reject', async () => {
+  let release!: (value: preparation.PreparationEvidence) => void;
+  vi.mocked(preparation.preparationEvidence).mockReturnValue(new Promise(resolve => { release = resolve; }));
+  show();
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+  expect(screen.getByText(/Reading the tickets/)).toBeInTheDocument();
+  await act(async () => release(evidence));
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+});
+it('keeps Approve unavailable when the tickets cannot be read or have moved', async () => {
+  vi.mocked(preparation.preparationEvidence).mockRejectedValue(new Error('TEST-tracker down'));
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-tracker down');
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  cleanup();
+  vi.mocked(preparation.preparationEvidence).mockResolvedValue({ ...evidence, reason: 'artifacts_changed', detail: 'plan_changed', specification: null, instruction: null });
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('The plan ticket changed');
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+});
+it('refuses to show texts read for another preparation than the decision binds', async () => {
+  vi.mocked(preparation.preparationEvidence).mockResolvedValue({ ...evidence, planSha256: 'f'.repeat(64), instruction: 'TEST-a newer step' });
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('The prepared task changed while this panel was open.');
+  expect(screen.queryByText('TEST-a newer step')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 });

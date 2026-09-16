@@ -50,7 +50,7 @@ it('shows why an ignored ticket never started', () => {
 it('shows a recorded decision and the run it started', () => {
   show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: { ...gate, state: 'APPROVED', resolver: 'TEST-human' },
     builds: [{ attemptId: 'TEST-attempt', state: 'sent', runId: 'TEST-assisted-run', reason: null, generation: 1 }],
-    events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human' }] }));
+    events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human', generation: 1 }] }));
   expect(step('Plan').getByText('plan decision: APPROVED by TEST-human')).toBeInTheDocument();
   expect(step('Plan').queryByText('Waiting for the plan decision.')).toBeNull();
   expect(step('Build').getByText('Runs recorded: 1')).toBeInTheDocument();
@@ -88,8 +88,16 @@ it('keeps an earlier attempt out of the current proof', () => {
     builds: [{ attemptId: 'TEST-old', state: 'sent', runId: 'TEST-old-run', reason: null, generation: 1 }],
     events: [{ sequence: 3, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human', generation: 1 }] }));
   expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
-  expect(step('Plan').getByText('1 decision from an earlier attempt, in the history below')).toBeInTheDocument();
+  expect(step('Plan').getByText('1 decision from another attempt, in the history below')).toBeInTheDocument();
   expect(step('Build').getByText('Runs recorded: 0')).toBeInTheDocument();
   expect(step('Build').getByText('1 dispatch from an earlier attempt')).toBeInTheDocument();
   expect(step('Build').queryByText(/Built commit/)).toBeNull();
+});
+
+// Review finding: an entry that does not say its attempt was drawn as proof for the current one.
+it('keeps a decision that does not name its attempt out of the current proof', () => {
+  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null,
+    events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human' }] }));
+  expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
+  expect(step('Plan').getByText('1 decision from another attempt, in the history below')).toBeInTheDocument();
 });

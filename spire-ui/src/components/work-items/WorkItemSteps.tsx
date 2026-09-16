@@ -8,8 +8,8 @@ import { workReason } from './workReasons';
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress'>;
 
-/** An entry with no generation predates the field and is treated as belonging to the current attempt. */
-const current = (item: Item, generation: number | undefined) => generation === undefined || generation === item.generation;
+/** Proof only from this attempt. An entry that does not say its attempt is history, never current proof. */
+const current = (item: Item, generation: number | undefined) => generation !== undefined && generation === item.generation;
 
 const QUESTIONS: Record<JourneyPhase, string> = {
   intake: 'Picked up', spec: 'Specification', plan: 'Plan', build: 'Build', verify: 'Verify', deliver: 'Deliver', review: 'Review', land: 'Land',
@@ -66,7 +66,7 @@ function Decisions({ item, phase }: { item: Item; phase: string }) {
   return <>
     {open && <p className="factory-note">Waiting for the {phase} decision.</p>}
     {resolved.map(event => <p key={event.sequence} className="factory-note">{phase} decision: {event.gateState} by {event.resolver}</p>)}
-    {earlier > 0 && <p className="prov-sub">{earlier === 1 ? '1 decision' : `${earlier} decisions`} from an earlier attempt, in the history below</p>}
+    {earlier > 0 && <p className="prov-sub">{earlier === 1 ? '1 decision' : `${earlier} decisions`} from another attempt, in the history below</p>}
   </>;
 }
 

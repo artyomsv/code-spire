@@ -517,5 +517,22 @@ it('ignores a recheck that answers after a panel was opened', async () => {
   const reads = vi.mocked(api.getWorkItem).mock.calls.length;
   await act(async () => answer({ reason: 'artifacts_changed', detail: 'plan_changed' }));
   expect(screen.queryByText(/The plan ticket changed/)).toBeNull();
-  expect(api.getWorkItem).toHaveBeenCalledTimes(reads);
+  // Its outcome is still real: the page re-reads, under the panel, without the stale notice.
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(reads + 1));
+  expect(screen.getByRole('dialog', { name: 'Prepare the task' })).toBeInTheDocument();
+});
+
+// Review finding: a manual refresh did not count as an action, so an older recheck could restore its notice.
+it('keeps a recheck that answers after a manual refresh from restoring its notice', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  let answer!: (value: api.WorkItemOutcome) => void;
+  vi.spyOn(api, 'resumeWorkItem').mockReturnValue(new Promise(resolve => { answer = resolve; }));
+  showDetail();
+  fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+  await act(async () => answer({ reason: 'artifacts_changed', detail: 'plan_changed' }));
+  await act(async () => {});
+  expect(screen.queryByText(/The plan ticket changed/)).toBeNull();
 });

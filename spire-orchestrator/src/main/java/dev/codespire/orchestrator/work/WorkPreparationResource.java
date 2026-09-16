@@ -31,7 +31,7 @@ public class WorkPreparationResource {
      * What an approver is asked to approve, read from the tracker now: the specification text and the
      * one plan step, or the rule that makes them unusable. Bodies are returned and never stored.
      */
-    public record Evidence(String reason,String detail,String specification,String instruction) {}
+    public record Evidence(String reason,String detail,String specification,String instruction,String specificationSha256,String planSha256) {}
 
     @GET @Path("/evidence")
     public Evidence evidence(@PathParam("id") String id) {
@@ -39,7 +39,8 @@ public class WorkPreparationResource {
         if(item.preparation()==null)throw refused(409,"preparation_missing");
         var source=sources.get(item.sourceId()).orElseThrow(NotFoundException::new);
         var observed=artifacts.observe(source,item.preparation());
-        return new Evidence(observed.failure(),observed.detail(),observed.specification(),observed.instruction());
+        return new Evidence(observed.failure(),observed.detail(),observed.specification(),observed.instruction(),
+                item.preparation().specification().sha256(),item.preparation().plan().sha256());
     }
 
     @GET @Path("/options")
