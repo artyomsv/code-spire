@@ -49,7 +49,18 @@ public final class DockerSignInRuntime implements SignInRuntime {
 
     private final DockerClient client;
 
-    public DockerSignInRuntime(DockerClient client) {
+    public DockerSignInRuntime() {
+        com.github.dockerjava.core.DefaultDockerClientConfig config =
+                com.github.dockerjava.core.DefaultDockerClientConfig.createDefaultConfigBuilder().build();
+        this.client = com.github.dockerjava.core.DockerClientImpl.getInstance(config,
+                new com.github.dockerjava.httpclient5.ApacheDockerHttpClient.Builder()
+                        .dockerHost(config.getDockerHost())
+                        .sslConfig(config.getSSLConfig())
+                        .build());
+    }
+
+    /** For a test that already holds a client, and for nothing else. */
+    DockerSignInRuntime(DockerClient client) {
         this.client = client;
     }
 

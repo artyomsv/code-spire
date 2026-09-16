@@ -215,7 +215,35 @@ mp:
         throttled:
           unprocessed-record-max-age:
             ms: 3900000
+      # The sign-in unit's own channel (M3.5 part F). Separate from run commands on purpose: a
+      # sign-in is not a run, it holds no claim, and it must not share the ack budget of a path
+      # tuned for hour-long agent runs.
+      harness-sign-in-commands-in:
+        connector: smallrye-kafka
+        topic: cs.harness-sign-in-commands
+        group:
+          id: spire-run-worker-sign-in
+        value:
+          deserializer: dev.codespire.runworker.HarnessSignInCommandDeserializer
+        # Latest: a restart must not re-open sign-ins whose codes expired days ago and whose
+        # operator has long gone. An abandoned one is re-started from the screen, by a person.
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
     outgoing:
+      harness-sign-in-results-out:
+        connector: smallrye-kafka
+        topic: cs.harness-sign-in-results
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.HarnessSignInResultSerializer
+        # The operator is watching a screen for these. A prompt that is written lazily is a person
+        # staring at a spinner while the code they need is already printed.
+        waitForWriteCompletion: true
       run-results-out:
         connector: smallrye-kafka
         topic: cs.run-results

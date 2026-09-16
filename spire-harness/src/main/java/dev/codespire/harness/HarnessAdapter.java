@@ -40,4 +40,34 @@ public interface HarnessAdapter {
      *         reported nothing this adapter recognises — never a zeroed report.
      */
     UsageReport usage(RunEventSummary seen);
+
+    /**
+     * How an OPERATOR signs this arm in, for a run paid by a subscription rather than a key
+     * (M3.5 part F).
+     *
+     * <p>Here rather than in the worker for the reason {@link #command} is here: which binary to run
+     * and where it writes are this vendor's knowledge, and a worker that held them would be a core
+     * module naming one arm — which the provider-neutrality guard fails the build over, correctly.
+     *
+     * <p>Empty for an arm that has no such flow, and then this deployment refuses a subscription
+     * sign-in for it rather than starting a container that cannot do anything.
+     */
+    default Optional<SignInFlow> signIn() {
+        return Optional.empty();
+    }
+
+    /**
+     * @param command argv for a trusted unit, never a shell string
+     * @param resultPath where the arm writes the finished sign-in, read out of the stopped container
+     *     rather than from its output — a credential on stdout is a credential in the daemon's log
+     */
+    record SignInFlow(List<String> command, String resultPath) {
+        public SignInFlow {
+            command = List.copyOf(command);
+            if (command.isEmpty()) throw new IllegalArgumentException("a sign-in flow needs a command");
+            if (resultPath == null || !resultPath.startsWith("/")) {
+                throw new IllegalArgumentException("the result path must be absolute inside the unit");
+            }
+        }
+    }
 }

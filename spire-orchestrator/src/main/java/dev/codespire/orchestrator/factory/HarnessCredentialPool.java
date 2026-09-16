@@ -352,6 +352,47 @@ public class HarnessCredentialPool {
     }
 
     /**
+     * Whether a label is already taken, on the caller's own connection.
+     *
+     * <p>Needed by the sign-in, which must refuse a duplicate BEFORE it starts a container and sends a
+     * person to their phone. Finding out afterwards means a completed sign-in with nowhere to go.
+     */
+    public boolean hasLabel(Connection c, String label) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM harness_credential WHERE label = ?")) {
+            ps.setString(1, label);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        }
+    }
+
+    /**
+     * Store a completed subscription sign-in as a pool member (M3.5 part F).
+     *
+     * <p>On the caller's connection, so the member and the sign-in row that produced it commit
+     * together: a member with no sign-in to explain it, or a sign-in claiming a member that does not
+     * exist, are both states nothing could repair afterwards.
+     *
+     * <p>{@code base_url} is empty. A subscription has no endpoint to override — the CLI knows where to
+     * go — and inventing one would put a value in a column that something later reads as configuration.
+     *
+     * @param body the whole sign-in file, opaque to this system and encrypted here like any secret
+     * @return the new member's id
+     */
+    public UUID addSubscription(Connection c, String label, String type, String body) throws SQLException {
+        UUID id = UUID.randomUUID();
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO harness_credential (id, label, type, base_url, api_key, auth_mode)
+                VALUES (?, ?, ?, '', ?, 'SUBSCRIPTION')
+                """)) {
+            ps.setObject(1, id);
+            ps.setString(2, label);
+            ps.setString(3, type);
+            ps.setString(4, encryption.encryptString(body, aad(id)));
+            ps.executeUpdate();
+        }
+        return id;
+    }
+
+    /**
      * Take a member out of rotation, keeping the row.
      *
      * <p>Disabled rather than deleted because a {@code factory_run} row references it: the foreign

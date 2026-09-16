@@ -139,6 +139,11 @@ class CoreIsProviderNeutralTest {
         allowed.put("spire-run-worker/src/main/java/dev/codespire/runworker/WorkerRuntimes.java",
                 "Composition root: produces the RunRuntime arm as a CDI bean. spire-runtime-docker is "
                         + "framework-free, so something in the worker must name it.");
+        allowed.put("spire-run-worker/src/main/java/dev/codespire/runworker/WorkerSignInRuntime.java",
+                "Composition root: produces the SignInRuntime arm as a CDI bean, exactly as WorkerRuntimes "
+                        + "does for RunRuntime. WHICH CLI a sign-in runs is NOT here -- that moved onto "
+                        + "HarnessAdapter.signIn() when this guard caught it in the worker, which is the "
+                        + "resolution this rule prefers.");
         allowed.put("spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/FactoryCloneUrls.java",
                 "Composition root: maps a provider's API base URL to its clone host. GitHub's cloud API "
                         + "answers on api.github.com while clones go to github.com; a GHE server keeps "

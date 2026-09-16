@@ -1725,3 +1725,56 @@ export const disableHarnessCredential = (id: string) => credentialAction(id, '',
 export const enableHarnessCredential = (id: string) => credentialAction(id, '/enable', 'POST', 'Failed to switch the credential on');
 export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
 export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');
+
+/**
+ * A subscription sign-in in progress (M3.5 part F).
+ *
+ * <p>None of these fields is a secret. The code authorises nothing on its own — only the account
+ * holder can approve it, and only the unit that started the flow can collect the result — which is
+ * why it can be shown on a screen at all.
+ */
+export interface HarnessSignInView {
+  id: string;
+  label: string;
+  harness: string;
+  state: 'PENDING' | 'PROMPTED' | 'COMPLETE' | 'FAILED';
+  verificationUri: string | null;
+  userCode: string | null;
+  expiresAt: string | null;
+  reason: string | null;
+  credentialId: string | null;
+}
+
+export async function startHarnessSignIn(label: string, harness: string): Promise<HarnessSignInView> {
+  const res = await apiFetch('/api/harness-credentials/sign-in', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label, harness }),
+  });
+  if (!res.ok) {
+    // A refusal is a rule with a name, so the screen can say which one rather than showing a status.
+    const body = await res.text();
+    try { throw new Error((JSON.parse(body) as { reason?: string }).reason ?? body); }
+    catch (parsed) { throw parsed instanceof Error ? parsed : new Error(body); }
+  }
+  return res.json();
+}
+
+export async function fetchHarnessSignIn(id: string): Promise<HarnessSignInView> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in/${encodeURIComponent(id)}`);
+  if (!res.ok) return throwResponse(res, 'Failed to read the sign-in');
+  return res.json();
+}
+
+/** The one in flight for this harness, or null. A reopened screen finds it instead of starting a second. */
+export async function fetchHarnessSignInProgress(harness: string): Promise<HarnessSignInView | null> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in?harness=${encodeURIComponent(harness)}`);
+  if (res.status === 204) return null;
+  if (!res.ok) return throwResponse(res, 'Failed to read the sign-in');
+  return res.json();
+}
+
+export async function cancelHarnessSignIn(id: string): Promise<void> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) return throwResponse(res, 'Failed to cancel the sign-in');
+}

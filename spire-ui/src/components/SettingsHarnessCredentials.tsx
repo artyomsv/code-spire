@@ -5,8 +5,13 @@ import {
   enableHarnessCredential, fetchHarnessCredentials, restHarnessCredential,
   type HarnessCredentialView,
 } from '../api';
+import HarnessSubscriptionSignIn from './HarnessSubscriptionSignIn';
 import SettingField from './SettingField';
 import SidePanel from './SidePanel';
+
+/** The harness a subscription can pay for. One arm has one today, and the screen says so rather than
+ * offering a choice with a single entry in it. */
+const SUBSCRIPTION_HARNESS = 'codex';
 
 /** The vendor kinds the pool accepts, as the API validates them. */
 const TYPES = ['openai', 'anthropic', 'gemini'] as const;
@@ -35,6 +40,7 @@ export default function SettingsHarnessCredentials() {
   const [members, setMembers] = useState<HarnessCredentialView[] | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [adding, setAdding] = useState(false), [busy, setBusy] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [form, setForm] = useState({ label: '', type: 'openai', baseUrl: '', apiKey: '' });
   const [refresh, setRefresh] = useState(0);
 
@@ -68,9 +74,17 @@ export default function SettingsHarnessCredentials() {
       <div className="card">
         <div className="prov-head">
           <h2 className="prov-title"><KeyRound size={15} className="an-title-icon" /> Harness credentials</h2>
-          <button className="btn" type="button" disabled={busy || adding} onClick={() => { setNotice(''); setAdding(true); }}>
-            Add an API key
-          </button>
+          <div className="prov-actions">
+            <button className="btn" type="button" disabled={busy || adding} onClick={() => { setNotice(''); setAdding(true); }}>
+              Add an API key
+            </button>
+            {/* The other way to pay. A button rather than a second field on the key form: nothing is
+                typed here, and putting the two side by side would suggest a file to paste. */}
+            <button className="btn-ghost" type="button" disabled={busy || signingIn}
+              onClick={() => { setNotice(''); setSigningIn(true); }}>
+              Sign in with a Codex subscription
+            </button>
+          </div>
         </div>
 
         <p className="prov-note">
@@ -79,6 +93,16 @@ export default function SettingsHarnessCredentials() {
           must not stop reviews as well. A run picks the member rested longest, so several keys spread the
           load rather than burning one window.
         </p>
+
+        {signingIn && (
+          <SidePanel title="Sign in with a Codex subscription" busy={false} onClose={() => setSigningIn(false)}
+            actions={<button className="btn-ghost" type="button" onClick={() => setSigningIn(false)}>Close</button>}>
+            <HarnessSubscriptionSignIn harness={SUBSCRIPTION_HARNESS} done={label => {
+              setSigningIn(false);
+              reload(`Signed in as ${label}. Runs on this harness can now be paid by the subscription.`);
+            }} />
+          </SidePanel>
+        )}
 
         {notice && <p className="prov-note" role="status">{notice}</p>}
         {error && <p className="prov-error" role="alert">{error}</p>}

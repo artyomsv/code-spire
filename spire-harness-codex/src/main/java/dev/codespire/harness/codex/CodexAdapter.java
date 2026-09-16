@@ -351,6 +351,21 @@ public final class CodexAdapter implements HarnessAdapter {
      * reported as an unreconciled TOTAL, because increments and cumulative totals cannot both be
      * true and guessing between them silently corrupts every tokens-per-run figure downstream.
      */
+    /**
+     * The device-code sign-in, measured in the reference image on 2026-09-16
+     * ({@code @openai/codex@0.146.0}).
+     *
+     * <p>{@code --device-auth} prints a link and a one-time code and waits; it binds no port and opens
+     * no browser, which is what lets an operator approve it from any device instead of from a shell on
+     * the server. The file it writes afterwards is the credential, and it is copied out of the
+     * container rather than printed.
+     */
+    @Override
+    public java.util.Optional<SignInFlow> signIn() {
+        return java.util.Optional.of(new SignInFlow(
+                java.util.List.of("codex", "login", "--device-auth"), "/home/agent/.codex/auth.json"));
+    }
+
     @Override
     public UsageReport usage(RunEventSummary seen) {
         UsageReport latest = UsageReport.unknown();
