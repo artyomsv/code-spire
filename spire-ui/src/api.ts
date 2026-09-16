@@ -1666,3 +1666,47 @@ export async function rescanMemory(): Promise<number> {
   if (!res.ok) throw new Error(`Rescan failed: ${res.status}`);
   return (await res.json()).proposed as number;
 }
+
+// ---- Harness credential pool (the keys a factory run calls the model with, FR-F12) ----
+
+/** A pool member as the API returns it. There is no field for a key: a read can never carry one. */
+export interface HarnessCredentialView {
+  id: string;
+  label: string;
+  type: string;
+  baseUrl: string;
+  enabled: boolean;
+  /** When a rate limit lifts; null when none is in force. */
+  rateLimitedUntil: string | null;
+  /** When the vendor refused the key. Only an operator clears this. */
+  rejectedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }
+
+export async function fetchHarnessCredentials(): Promise<HarnessCredentialView[]> {
+  const res = await apiFetch('/api/harness-credentials');
+  if (!res.ok) return throwResponse(res, 'Failed to load the harness credential pool');
+  return res.json();
+}
+
+export async function addHarnessCredential(input: NewHarnessCredential): Promise<HarnessCredentialView> {
+  const res = await apiFetch('/api/harness-credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to add the harness credential');
+  return res.json();
+}
+
+async function credentialAction(id: string, path: string, method: string, failure: string): Promise<void> {
+  const res = await apiFetch(`/api/harness-credentials/${encodeURIComponent(id)}${path}`, { method });
+  if (!res.ok) return throwResponse(res, failure);
+}
+
+export const disableHarnessCredential = (id: string) => credentialAction(id, '', 'DELETE', 'Failed to switch the credential off');
+export const enableHarnessCredential = (id: string) => credentialAction(id, '/enable', 'POST', 'Failed to switch the credential on');
+export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
+export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');

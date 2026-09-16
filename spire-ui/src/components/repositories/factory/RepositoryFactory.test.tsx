@@ -245,6 +245,8 @@ describe('build setup', () => {
   it('offers an unpriced model as unselectable and says why', async () => {
     renderFactory();
     await open();
+    // A model is judged against a harness, so one has to be chosen before anything can be refused.
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
     const unpriced = await screen.findByRole('option', { name: /TEST unpriced/ });
     expect(unpriced).toBeDisabled();
     expect(unpriced).toHaveTextContent('no price for Cached input, Cache write, Output, Reasoning');
