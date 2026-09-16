@@ -45,7 +45,7 @@ public class WorkPreparationResource {
         var item=store.load(id);if(item==null)throw new NotFoundException();
         if(item.preparation()==null)throw refused(409,"preparation_missing");
         var source=sources.get(item.sourceId()).orElseThrow(NotFoundException::new);
-        var observed=artifacts.observe(source,item.preparation());
+        var observed=artifacts.observe(source,id,item.preparation());
         return new Evidence(observed.failure(),observed.detail(),observed.specification(),observed.instruction(),item.preparation().binding());
     }
 

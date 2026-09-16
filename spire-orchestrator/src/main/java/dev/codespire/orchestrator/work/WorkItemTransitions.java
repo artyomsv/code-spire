@@ -328,13 +328,13 @@ public class WorkItemTransitions {
     public Observation observe(WorkItemEvent item) {
         Observation observed=observe(item.sourceId(),item.issue());
         return new Observation(observed.source(),observed.policy(),observed.evidence(),
-                observed.evidence().failure()==null?artifacts.observe(observed.source(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
+                observed.evidence().failure()==null?artifacts.observe(observed.source(),item.workItemId(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
     }
 
     public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation) {
         WorkItemEvent item=require(id);
         Observation observed=observe(item.sourceId(),item.issue());
-        WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),preparation);
+        WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),id,preparation);
         if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),item);
         if(prepared.failure()!=null)return new Outcome("artifacts_unavailable".equals(prepared.failure())?503:409,prepared.failure(),prepared.detail(),item);
         runAssembly.validate(observed.source(),preparation,prepared);
