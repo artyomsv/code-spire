@@ -14,7 +14,7 @@ const RATE_PLACEHOLDER: Record<RateType, string> = {
   REASONING: '10.00',
 };
 
-/** Which types the operator has asserted the vendor does not bill. */
+/** Which types the operator has asserted the vendor does not bill. Any type may carry one. */
 export function initialNotBilled(initial: LlmModelView | null): Record<RateType, boolean> {
   const out = {} as Record<RateType, boolean>;
   for (const type of RATE_TYPES) out[type] = !!initial?.notBilled?.includes(type);

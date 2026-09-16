@@ -14,6 +14,7 @@ const REASONS = new Map(Object.entries({
   base_branch_blank: 'A base branch is required.',
   base_branch_invalid: 'That is not a valid branch name. A build would refuse it, so it cannot be saved.',
   model_name_invalid: 'That model name has characters a run cannot pass to the agent.',
+  catalogue_unavailable: 'The model catalogue could not be read, so whether that model may run is unknown. The build was not started.',
   model_disabled: 'That model is switched off in the catalogue, so a run cannot call it.',
   model_pricing_unavailable: 'That model has no price for input and output tokens, so a run with it would be refused.',
   harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',

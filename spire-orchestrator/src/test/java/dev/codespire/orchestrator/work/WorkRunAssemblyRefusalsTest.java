@@ -23,6 +23,7 @@ class WorkRunAssemblyRefusalsTest {
         assertEquals("factory_account_unavailable", reason("factory_account_unavailable"));
         assertEquals("harness_credential_unavailable", reason("harness_credential_unavailable"));
         assertEquals("model_disabled", reason("model_disabled"));
+        assertEquals("catalogue_unavailable", reason("catalogue_unavailable"));
     }
 
     @Test

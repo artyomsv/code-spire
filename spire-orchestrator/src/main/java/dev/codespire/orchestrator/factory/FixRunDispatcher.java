@@ -288,9 +288,14 @@ public class FixRunDispatcher {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");
         }
-        if (models.isDisabled(model)) {
-            return new Refused("the model '" + model + "' is switched off in the catalogue, so a fix run"
-                    + " cannot call it");
+        try {
+            if (models.isDisabled(model)) {
+                return new Refused("the model '" + model + "' is switched off in the catalogue, so a fix run"
+                        + " cannot call it");
+            }
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            return new Refused("the model catalogue could not be read, so whether '" + model + "' may run is"
+                    + " unknown; the fix was not dispatched");
         }
         var unpriced = pricer.unpricedTypes(model, harness);
         if (!unpriced.isEmpty()) {

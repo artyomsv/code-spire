@@ -225,9 +225,14 @@ public class RunResource {
      * refusal here costs nothing and leaves no row to explain.
      */
     private void refuseAnUnpriceableModel(String model, String harness) {
-        if (models.isDisabled(model)) {
-            throw conflict("Run not dispatched: model '" + model + "' is switched off in Settings -> LLM ->"
-                    + " Models. Enable it, or dispatch with a model this deployment offers.");
+        try {
+            if (models.isDisabled(model)) {
+                throw conflict("Run not dispatched: model '" + model + "' is switched off in Settings -> LLM ->"
+                        + " Models. Enable it, or dispatch with a model this deployment offers.");
+            }
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            throw conflict("Run not dispatched: the model catalogue could not be read, so whether '" + model
+                    + "' may run is unknown.");
         }
         var unpriced = pricer.unpricedTypes(model, harness);
         if (unpriced.isEmpty()) {

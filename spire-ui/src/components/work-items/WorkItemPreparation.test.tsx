@@ -128,6 +128,28 @@ it('offers the configured harnesses and the priced models instead of free text',
   expect(models[2]).toBeDisabled();
 });
 
+// A greyed option is not a guard. The value stays in the form when the harness changes under it, and
+// registering it would open a decision whose build the dispatch then refuses.
+it('will not register a model the chosen harness would refuse', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-rich-harness'],
+    reportedTypes: { 'TEST-harness': ['INPUT', 'OUTPUT'], 'TEST-rich-harness': ['INPUT', 'CACHED_INPUT', 'OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));
+  show();
+  await screen.findByRole('option', { name: 'TEST-harness' });
+  for (const [label, value] of [['Specification ticket', '71'], ['Plan ticket', '72'], ['Base branch', 'main'],
+    ['Base commit', 'a'.repeat(40)], ['Harness', 'TEST-harness'], ['Model', 'TEST-model']])
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  expect(screen.getByRole('button', { name: 'Check artifact references' })).toBeEnabled();
+
+  // The harness changes under the selection: the same model now leaves CACHED_INPUT unpriced.
+  fireEvent.change(screen.getByLabelText('Harness'), { target: { value: 'TEST-rich-harness' } });
+  expect(await screen.findByRole('alert')).toHaveTextContent('no price for Cached input');
+  expect(screen.getByRole('button', { name: 'Check artifact references' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Check artifact references' }));
+  expect(api.resolveArtifact).not.toHaveBeenCalled();
+});
+
 it('reads the base commit from the forge for the named branch', async () => {
   vi.spyOn(api, 'branchHead').mockResolvedValue({ branch: 'main', commit: 'c'.repeat(40) });
   vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));show();await fill();

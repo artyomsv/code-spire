@@ -47,7 +47,10 @@ public class WorkRunAssembly {
         // Every type the chosen harness can report must have a rate or a not-billed assertion. Asking
         // only about INPUT and OUTPUT is what let item 36 start, spend, report CACHED_INPUT and
         // REASONING, and stop with a cost nobody could account for.
-        if(models.isDisabled(in.model()))throw new IllegalStateException("model_disabled");
+        try { if(models.isDisabled(in.model()))throw new IllegalStateException("model_disabled"); }
+        catch(dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            throw new IllegalStateException("catalogue_unavailable");
+        }
         var unpriced=pricer.unpricedTypes(in.model(),in.harness());
         if(!unpriced.isEmpty())throw new IllegalStateException("model_pricing_incomplete:"
                 +unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));

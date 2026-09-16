@@ -86,6 +86,11 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
     finally { if (active.current) setBusy(null); }
   }
   if (!canAdminister(me) || ['active', 'retired', 'completed'].includes(item.workflowStatus)) return null;
+  // The chosen PAIR, not three filled fields: the dispatch refuses a model that cannot price what the
+  // harness reports, and that refusal must not arrive after an approval.
+  const chosen = choices.models.find(model => model.name === form.model);
+  const missing = form.model && chosen ? unpriced(chosen, form.harness, choices.reportedTypes) : [];
+  const incomplete = missing.length > 0;
   return <section aria-label="Prepare work item" className="work-policy-form">
     <h3>Register a prepared task</h3>
     <p>Reference a specification ticket and a single-step plan ticket in this work source. Their current versions will be checked again before approval and build.</p>
@@ -114,8 +119,13 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
       </select></label>
       <button className="btn" disabled={busy !== null || !form.specification.trim()} onClick={() => void inspect(true)}>
         {busy === 'checking' ? 'Reading…' : 'Read specification version'}</button>
-      <button className="btn" disabled={busy !== null || Object.values(form).some(value => !value.trim())} onClick={() => void inspect()}>
+      <button className="btn" disabled={busy !== null || incomplete || Object.values(form).some(value => !value.trim())} onClick={() => void inspect()}>
         {busy === 'checking' ? 'Checking…' : 'Check artifact references'}</button>
+      {/* A greyed option is not a guard: a model chosen before the harness stays in the form when the
+          harness changes under it, and registering it would open a decision the build then refuses. */}
+      {missing.length > 0 && <p role="alert">{chosen?.label ?? form.model} has no price for {missingLabel(missing)},
+        which {form.harness} reports. Enter each rate in Settings → LLM, or mark the type as one this vendor
+        does not bill, before registering this task.</p>}
       {busy && <p role="status">{busy === 'saving' ? 'Registering the checked versions. The form unlocks when the server answers.' : 'Reading the current ticket versions…'}</p>}
       {references && <div><p>Specification: {references.specification.title}</p><p>Specification SHA-256: <code>{references.specification.artifact.sha256}</code></p>
         <details><summary>Single-step plan format</summary><p>Put this JSON in the plan ticket's body and replace the step text with the prepared task.</p>
@@ -123,7 +133,7 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
         {/* Both digests are shown: a plan that names an older specification version, and a ticket
             edited after the check, are the two refusals an operator has to be able to see. */}
         {references.plan && <><p>Plan: {references.plan.title}</p><p>Plan SHA-256: <code>{references.plan.artifact.sha256}</code></p>
-          <button className="btn" onClick={() => void register()}>{busy === 'saving' ? 'Registering…' : 'Register these versions'}</button></>}
+          <button className="btn" disabled={busy !== null || incomplete} onClick={() => void register()}>{busy === 'saving' ? 'Registering…' : 'Register these versions'}</button></>}
       </div>}
     </fieldset>
     {error && <p role="alert">{error}{references ? '' : ' Check the artifact references again before registering.'}</p>}

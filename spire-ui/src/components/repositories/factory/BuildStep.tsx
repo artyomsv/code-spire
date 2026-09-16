@@ -80,7 +80,9 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   // can leave a selection the dispatch refuses; the option goes grey, and Save used to stay live.
   const chosen = choices.models.find(model => model.name === form.model);
   const missing = chosen ? unpriced(chosen, form.harness, choices.reportedTypes) : [];
-  const complete = !!form.baseBranch.trim() && !!form.harness && !!form.model && missing.length === 0;
+  // An unresolved model is UNKNOWN, not complete: before the catalogue answers, and for a saved name the
+  // catalogue no longer offers, there is nothing to judge — so Save waits rather than guessing.
+  const complete = !!form.baseBranch.trim() && !!form.harness && !!chosen && missing.length === 0;
   return <FactoryStep number={5} question="How it builds" term="build setup" state={editing ? 'editing' : defaults.revision > 0 ? 'done' : 'missing'}
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>

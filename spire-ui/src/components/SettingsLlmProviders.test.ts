@@ -110,9 +110,9 @@ describe('ratesSummary', () => {
   });
 
   it('does not flag a model whose every dimension is an explicit assertion', () => {
-    const summary = ratesSummary(model({ rates: {}, notBilled: ['INPUT', 'OUTPUT'] }));
+    const summary = ratesSummary(model({ rates: {}, notBilled: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }));
     expect(summary.warn).toBe(false);
-    expect(summary.text).toContain('not billed: Input, Output');
+    expect(summary.text).toContain('not billed: Input, Cached input, Cache write, Output, Reasoning');
   });
 });
 

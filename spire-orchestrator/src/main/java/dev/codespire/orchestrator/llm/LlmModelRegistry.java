@@ -169,10 +169,10 @@ public class LlmModelRegistry {
     }
 
     /**
-     * Whether an operator has switched this model off. Deliberately NOT part of pricing: a run that has
-     * already happened must still be charged at the rate it was quoted, even if the model was switched
-     * off in between — {@code priceCall} therefore keeps ignoring this, and only the guards that decide
-     * whether a run may START consult it.
+     * Whether an operator has switched this model off. Deliberately NOT part of pricing: a finished run
+     * must still be CHARGEABLE after its model is switched off, so {@code priceCall} keeps ignoring this
+     * and only the guards that decide whether a run may START consult it. (The charge uses the rates the
+     * catalogue holds when the charge is computed, not a quote frozen at dispatch.)
      */
     public boolean isDisabled(String model) {
         if (model == null || model.isBlank()) return false;
@@ -186,12 +186,17 @@ public class LlmModelRegistry {
                 return rs.next() && !rs.getBoolean("enabled");
             }
         } catch (SQLException failure) {
-            // A read fault is not an operator switching a model off. Refusing every run on a database
-            // hiccup is worse than the case this guard exists for.
-            LOG.warnf("Could not read whether model %s is enabled (%s); not treating it as switched off",
-                    model, failure.getClass().getSimpleName());
-            return false;
+            // NOT false. Answering "not switched off" on a failed read is failing open: pricing ignores
+            // the enabled column on purpose, so a fully priced model an operator had switched off would
+            // start a run on any database hiccup. The caller refuses with a reason that says what happened.
+            LOG.warnf(failure, "Could not read whether model %s is enabled", model);
+            throw new CatalogueUnavailable();
         }
+    }
+
+    /** The catalogue could not be read, so whether this model may run is unknown — never assumed. */
+    public static final class CatalogueUnavailable extends RuntimeException {
+        CatalogueUnavailable() { super("catalogue_unavailable"); }
     }
 
     /** @see LlmModelPricer#isPriceable(String) */

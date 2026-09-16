@@ -330,6 +330,16 @@ describe('build setup', () => {
     expect(build.saveBuildDefaults).not.toHaveBeenCalled();
   });
 
+  // Before the catalogue answers there is no model to judge, so Save waits rather than guessing.
+  it('waits for the catalogue before allowing a saved setup to be saved again', async () => {
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+    vi.mocked(api.fetchLlmModels).mockReturnValue(new Promise(() => {}));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    expect(await screen.findByLabelText('Base branch', field)).toHaveValue('main');
+    expect(screen.getByRole('button', { name: 'Save build setup' })).toBeDisabled();
+  });
+
   it('says when the branch head was read with the reviewer account', async () => {
   vi.mocked(build.repositoryBranchHead).mockResolvedValue({ branch: 'main', commit: 'c'.repeat(40), account: 'REVIEWER' });
   renderFactory();
