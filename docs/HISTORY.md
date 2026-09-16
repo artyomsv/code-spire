@@ -2091,3 +2091,21 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   mutations and clean Semgrep. Eight browser screenshots use intercepted TEST-only data.
   All seven accepted criteria and the separate production/live-proof limits remain unchanged.
   Evidence: .claude/reviews/global/factory-m3-round18.md.
+
+- **Factory operator experience, and M3 on master (2026-09-16).**
+  The operator's first live item test stopped item #36 at `verify / awaiting_input /
+  run_usage_unknown` and produced ten findings. The operator-experience specification records each
+  one, the operator's decisions (1B 2A 3A 4B 5A) and the chosen mockups (list A, detail B,
+  approvals C). Shipped: named refusal details for every artifact rule; harness and model selects;
+  a branch-head read with honest failures; progress words and locks on every factory action; the
+  Approvals icon; "Billed to" on run detail; label appliers shown by handle. Work items became one
+  triage list with filter counts, polling without overlap and a decision panel beside it. Approve
+  is offered only when the texts on screen were read against the binding the gate stores, and a
+  decision whose preparation is gone cannot be approved. The detail page became eight journey steps
+  with generation-scoped proof; `/approvals` redirects to the Needs-you filter. Six developer review
+  rounds ran; each verified finding got a test and a mutation that fails it. Measured after merging
+  master's dependency updates: 847 UI tests in 98 files, TypeScript and build; spire-orchestrator
+  1764 tests in 202 suites; testFast green. The other testServices modules and packaging were not
+  re-run. Still open and moved to M3.5: spec and plan tickets and the plan JSON (part C), incomplete
+  pricing (part D), Codex subscription sign-in (part F). By the operator's decision the branch was
+  pushed to master directly; PR #153 was not merged through GitHub.

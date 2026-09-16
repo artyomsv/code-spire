@@ -46,10 +46,12 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-09-14**. Delivery history is in docs/HISTORY.md; the consolidated
+Measured on **2026-09-16**. Delivery history is in docs/HISTORY.md; the consolidated
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps all seven verified criteria to their
-proving slices and reviews. **M3 implementation is complete; final operator review is pending.**
-PR #153 remains draft. No merge or promotion to ready is authorized by this handoff.
+proving slices and reviews. **M3 is on master**, pushed directly on 2026-09-16 by the operator's
+decision rather than merged through PR #153, together with the operator-experience fixes.
+**M3.5, "one ticket to a build", is next** (operator-experience specification §2.4), then M4 with
+verify as its first slice.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -87,7 +89,15 @@ PR #153 remains draft. No merge or promotion to ready is authorized by this hand
   without an M1 cancel claim cannot restore publication authority. In-flight PR recovery records
   the observed outcome once and keeps the item suspended. Resume requires a verified operator,
   expected revision, note and fresh evidence; retired items cannot resume.
-- **Measured final validation:** 4076 Java tests across 452 suites and 30 modules,
+- **The operator's first live item test shaped the work-item screens.** Item #36 stopped at
+  `verify / awaiting_input / run_usage_unknown`, and the ten findings, the operator's decisions and
+  the chosen mockups are in docs/superpowers/specs/2026-09-15-factory-operator-experience-design.md.
+  Work items is one triage list with filter counts; an open decision opens beside it, and Approve
+  waits until the texts on screen match the binding the gate stores. The detail page shows eight
+  journey steps with their proof, and `/approvals` redirects to the Needs-you filter. Refusals name
+  their rule, harness and model are selects, the branch head comes from the forge, and run detail
+  names the key that paid. Spec and plan tickets, the plan JSON and the pricing stop remain (M3.5).
+- **Measured final validation (2026-09-14):** 4076 Java tests across 452 suites and 30 modules,
   zero failures/errors and 1 existing Windows symlink privilege skip. Forced testFast,
   testServices and packaging passed sequentially. The full UI passed 742 tests across 93 files,
   TypeScript and production build. Slice 10 adds four verified production mutations (the real
@@ -96,6 +106,10 @@ PR #153 remains draft. No merge or promotion to ready is authorized by this hand
   globally deduplicated total. Pinned Semgrep reports zero findings across 5 changed code files.
   The final scan and rollout evidence are in
   .claude/reviews/global/factory-m3-slice10.md.
+- **Re-measured on 2026-09-16,** after the operator-experience work and master's dependency updates:
+  the full UI passed 847 tests across 98 files, TypeScript and production build; spire-orchestrator
+  passed 1764 tests in 202 suites; testFast passed. The other testServices modules and packaging
+  were not re-run.
 
 **Limits that remain:**
 
