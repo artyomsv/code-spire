@@ -27,6 +27,20 @@ public class WorkPreparationResource {
     /** The harness names this deployment can actually run: a key without an agent image refuses at dispatch. */
     public record Options(java.util.List<String> harnesses) {}
     public record Head(String branch,String commit) {}
+    /**
+     * What an approver is asked to approve, read from the tracker now: the specification text and the
+     * one plan step, or the rule that makes them unusable. Bodies are returned and never stored.
+     */
+    public record Evidence(String reason,String detail,String specification,String instruction) {}
+
+    @GET @Path("/evidence")
+    public Evidence evidence(@PathParam("id") String id) {
+        var item=store.load(id);if(item==null)throw new NotFoundException();
+        if(item.preparation()==null)throw refused(409,"preparation_missing");
+        var source=sources.get(item.sourceId()).orElseThrow(NotFoundException::new);
+        var observed=artifacts.observe(source,item.preparation());
+        return new Evidence(observed.failure(),observed.detail(),observed.specification(),observed.instruction());
+    }
 
     @GET @Path("/options")
     public Options options() {

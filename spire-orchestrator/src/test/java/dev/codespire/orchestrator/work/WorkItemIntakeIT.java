@@ -20,6 +20,17 @@ class WorkItemIntakeIT extends WorkSourceParityCases {
         assertEquals(itemId,resource.get(itemId).id());
         assertTrue(resource.list(0,100,null).items().stream().anyMatch(item->item.id().equals(itemId)));
     }
+    /** "Needs you" spans approval, input and suspension, so one filter names several statuses. */
+    @Test void aFilterMayNameSeveralStatuses() throws Exception {
+        intake.accept(signed("900123"));
+        String status=resource.get(itemId).workflowStatus();
+        var page=resource.list(0,100,"waiting_approval, "+status+" ,suspended");
+        assertTrue(page.items().stream().anyMatch(item->item.id().equals(itemId)));
+        assertTrue(page.items().stream().allMatch(item->java.util.Set.of("waiting_approval",status,"suspended").contains(item.workflowStatus())));
+        assertFalse(resource.list(0,100,"TEST-no-such-status").items().stream().anyMatch(item->item.id().equals(itemId)));
+        assertTrue(page.counts().getOrDefault(status,0L)>=1,"counts cover every page, not just this one");
+        assertThrows(jakarta.ws.rs.BadRequestException.class,()->resource.list(0,100," , "));
+    }
     @Test void aRescanUsesTheSamePolicyAndDoesNotDuplicateTheItem() throws Exception {
         intake.accept(signed("900123"));
         forge.stubFor(get(urlEqualTo("/repos/"+scope+"/issues?state=open&sort=created&direction=asc&per_page=100&page=1"))

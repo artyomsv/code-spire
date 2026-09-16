@@ -1,13 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../../api';
 import * as auth from '../../auth';
 import type { WorkItemDetail as Detail, WorkItemSummary } from '../../api';
+import * as approvalsApi from './approvalsApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
 
 afterEach(cleanup);
+beforeEach(() => { vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-no tracker in list tests')); });
 
 function item(index = 0): WorkItemSummary {
   return { id: `TEST-item-${index}`, sourceId: 'TEST-source', repositoryId: 'TEST-repository',
@@ -26,13 +28,13 @@ function showDetail() {
   </Routes></MemoryRouter>);
 }
 
-it('resets pagination when selecting an approval workflow filter', async () => {
+it('resets pagination when choosing a filter', async () => {
   vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0, limit = 50) => ({ items: [item(offset)], total: 100, offset, limit }));
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Next page' }));
-  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50));
-  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
-  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50, 'waiting_approval'));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50, []));
+  fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50, ['waiting_approval', 'awaiting_input', 'suspended']));
 });
 
 it('rechecks the displayed item revision before resuming', async () => {
@@ -98,7 +100,7 @@ it('ignores an older list response after refresh', async () => {
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
-  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Running/ }));
   await screen.findByText('TEST-1');
   await act(async () => old.resolve({ items: [item(0)], total: 1, offset: 0, limit: 50 }));
   expect(screen.getByText('TEST-1')).toBeInTheDocument();
@@ -110,7 +112,7 @@ it('ignores an older list error after refresh', async () => {
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
-  fireEvent.change(screen.getByLabelText('Workflow status'), { target: { value: 'waiting_approval' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Running/ }));
   await screen.findByText('TEST-1');
   await act(async () => old.reject(new Error('TEST-old failure')));
   expect(screen.queryByRole('alert')).toBeNull();
@@ -172,12 +174,12 @@ it('loads the second persisted page rather than filtering a fixed window', async
   expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByText('TEST-50');
-  expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50);
+  expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50, []);
   expect(screen.queryByText('TEST-0')).toBeNull();
   expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
   await screen.findByText('TEST-0');
-  expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50);
+  expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50, []);
 });
 
 it('renders an unknown workflow status as unknown and refused', async () => {
@@ -239,7 +241,9 @@ it('says it is refreshing while the list reloads', async () => {
   render(<MemoryRouter><WorkItems /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
   expect(await screen.findByRole('button', { name: 'Refreshing…' })).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent('Loading work items…');
+  // The rows stay while the list re-reads; blanking them would lose the place of the reader.
+  expect(screen.getByText('TEST-0')).toBeInTheDocument();
+  expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
   await act(async () => release({ items: [item()], total: 1, offset: 0, limit: 50 }));
   expect(await screen.findByRole('button', { name: 'Refresh work items' })).toBeEnabled();
 });
@@ -301,4 +305,72 @@ it('adds no notice when a recheck names no rule', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Recheck and resume' }));
   await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
   expect(screen.queryByText(/changed after it was checked/)).toBeNull();
+});
+
+// The band says how many items wait on a person across every page, and takes the reader to them.
+it('counts the items that need a person and shows them on request', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 4, offset: 0, limit: 50, counts: { waiting_approval: 1, awaiting_input: 2, active: 1 } });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  expect(await screen.findByRole('region', { name: 'Needs you' })).toHaveTextContent('3 items need you');
+  expect(screen.getByRole('button', { name: /^Needs you/ })).toHaveTextContent('3');
+  expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('4');
+  fireEvent.click(screen.getByRole('button', { name: 'Show them' }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(0, 50, ['waiting_approval', 'awaiting_input', 'suspended']));
+});
+it('shows no band when nobody is needed', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50, counts: { active: 1 } });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  await screen.findByText('TEST-0');
+  expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
+});
+// A decision opens beside the list, from the row that needs it; approving never needs a second page.
+it('opens an open decision from its row in a side panel', async () => {
+  const waiting = { ...item(), workflowStatus: 'waiting_approval', phase: 'plan', gate: { id: 'TEST-gate', version: 1, state: 'OPEN' as const, phase: 'plan', generation: 1,
+    itemRevision: 1, policyRevision: 1, artifact: null, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } };
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [waiting], total: 1, offset: 0, limit: 50 });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  expect(await screen.findByRole('link', { name: 'Review the plan decision' })).toHaveAttribute('href', '/work-items?filter=needs-you&decide=TEST-item-0');
+});
+it('renders the decision panel named by the address', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
+  render(<MemoryRouter initialEntries={['/work-items?filter=needs-you&decide=TEST-item-0']}><WorkItems /></MemoryRouter>);
+  expect(await screen.findByRole('dialog', { name: 'Decision' })).toHaveTextContent('This item has no open decision.');
+});
+// Work moves in minutes. The list re-reads by itself, keeps its rows while it does, and says when.
+it('re-reads the list on a timer without blanking the rows', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+    render(<MemoryRouter><WorkItems /></MemoryRouter>);
+    await screen.findByText('TEST-0');
+    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(15_000); });
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('TEST-0')).toBeInTheDocument();
+    expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+  } finally { vi.useRealTimers(); }
+});
+it('says the list is stale when a re-read fails, and keeps the rows', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 }).mockRejectedValueOnce(new Error('TEST-list outage'));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-list outage');
+  expect(screen.getByText('TEST-0')).toBeInTheDocument();
+  expect(screen.getByText(/^Not updated since /)).toBeInTheDocument();
+});
+it('heads a row with its ticket title once the tracker answers', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+  vi.mocked(api.getWorkItemTracker).mockResolvedValue({ title: 'TEST-row title', body: 'TEST-body', trackerStatus: 'open' });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  expect(await screen.findByRole('link', { name: 'TEST-row title' })).toHaveAttribute('href', '/work-items/TEST-item-0');
+  expect(screen.getByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
+});
+it('says a cost is unknown rather than showing the priced part as the total', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), progress: { costMillicents: 9521, usageUnknown: true } }], total: 1, offset: 0, limit: 50 });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  expect(await screen.findByText('unknown')).toBeInTheDocument();
+  expect(screen.queryByText('$0.095')).toBeNull();
 });

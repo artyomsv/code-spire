@@ -19,17 +19,20 @@ export interface WorkItemSummary {
 }
 
 export interface WorkItemPage {
-  items: WorkItemSummary[];
+  /** The list endpoint returns each row's detail view, so a row can draw its journey and next action. */
+  items: (WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate'>>)[];
   total: number;
   offset: number;
   limit: number;
+  /** Items per workflow status across every page. Absent from an older server. */
+  counts?: Record<string, number>;
 }
 
 export interface WorkItemDetail extends WorkItemSummary {
   control?: { operator: string | null; note: string | null; observedHead: string | null } | null;
   preparation?: Preparation | null;
   builds?: WorkBuild[];
-  progress?: { execution?: WorkExecution | null };
+  progress?: { execution?: WorkExecution | null; runs?: number; wallSeconds?: number; costMillicents?: number; calls?: number; usageUnknown?: boolean };
   effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
   admittedLimits?: import('./components/work-items/workPolicyApi').Limits;
   gate?: import('./components/work-items/approvalsApi').Gate | null;
@@ -62,8 +65,10 @@ export interface WorkItemTracker {
   trackerStatus: string;
 }
 
-export async function getWorkItems(offset = 0, limit = 50, status?: WorkWorkflowStatus): Promise<WorkItemPage> {
-  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`);
+/** `statuses` narrows the page to any of those workflow statuses; empty means every status. */
+export async function getWorkItems(offset = 0, limit = 50, statuses: readonly string[] = []): Promise<WorkItemPage> {
+  const filter = statuses.length ? `&status=${encodeURIComponent(statuses.join(','))}` : '';
+  const response = await apiFetch(`/api/work-items?offset=${offset}&limit=${limit}${filter}`);
   if (!response.ok) return throwResponse(response, 'Failed to load work items');
   return response.json();
 }

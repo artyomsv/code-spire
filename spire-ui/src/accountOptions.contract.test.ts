@@ -34,7 +34,8 @@ it('uses accountOptionLabel for account options on routed screens and their rend
     }
   }
   for (const [, route, component] of routes) {
-    if (component === 'RedirectKeepingQuery') continue;
+    // A redirect renders no screen of its own; the screen it points at is checked under its own route.
+    if (component === 'RedirectKeepingQuery' || component === 'Navigate') continue;
     const target = dependencies.get(component);
     expect(target, `Readable route ${route}`).toBeDefined(); visit(target!);
   }

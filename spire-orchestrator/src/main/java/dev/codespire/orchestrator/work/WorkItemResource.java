@@ -57,7 +57,11 @@ public class WorkItemResource {
                         * is right on the next read and no observed name is ever persisted here.
                         */
                        List<WorkSourceRegistry.Person> people) {}
-    public record Page(List<View> items, long total, int offset, int limit) {}
+    /**
+     * @param counts items per workflow status across every page, so a filter can say how many rows it
+     *     holds before it is chosen, and a band can say how many items need a person
+     */
+    public record Page(List<View> items, long total, int offset, int limit, Map<String,Long> counts) {}
 
     /**
      * Only the people whose ids are already on this item's labels. The source's allowlist is
@@ -74,17 +78,28 @@ public class WorkItemResource {
     public Page list(@QueryParam("offset") @DefaultValue("0") int offset, @QueryParam("limit") @DefaultValue("50") int limit,
                      @QueryParam("status") String status) {
         if (offset < 0 || limit < 1 || limit > 100) throw new BadRequestException("Use a nonnegative offset and limit 1–100");
+        // A screen groups several statuses under one filter ("needs you" is approval, input and
+        // suspension), so the filter accepts a comma-separated set rather than one status.
+        String[] statuses = status == null || status.isBlank() ? null
+                : Arrays.stream(status.split(",")).map(String::trim).filter(value -> !value.isEmpty()).distinct().toArray(String[]::new);
+        if (statuses != null && (statuses.length == 0 || statuses.length > 10)) throw new BadRequestException("Name between one and ten workflow statuses");
         try (Connection c = dataSource.getConnection()) {
             long total;
-            try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM work_item WHERE (?::text IS NULL OR workflow_status=?)")) {
-                ps.setString(1,status);ps.setString(2,status);try(ResultSet rs=ps.executeQuery()){rs.next();total=rs.getLong(1);}
+            try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM work_item WHERE (?::text[] IS NULL OR workflow_status = ANY(?::text[]))")) {
+                var array = statuses == null ? null : c.createArrayOf("text", statuses);
+                ps.setArray(1,array);ps.setArray(2,array);try(ResultSet rs=ps.executeQuery()){rs.next();total=rs.getLong(1);}
+            }
+            Map<String,Long> counts = new TreeMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT workflow_status,count(*) FROM work_item GROUP BY workflow_status");ResultSet rs=ps.executeQuery()) {
+                while (rs.next()) counts.put(rs.getString(1), rs.getLong(2));
             }
             List<View> items = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT id FROM work_item WHERE (?::text IS NULL OR workflow_status=?) ORDER BY updated_at DESC,id LIMIT ? OFFSET ?")) {
-                ps.setString(1,status);ps.setString(2,status);ps.setInt(3, limit); ps.setInt(4, offset);
+            try (PreparedStatement ps = c.prepareStatement("SELECT id FROM work_item WHERE (?::text[] IS NULL OR workflow_status = ANY(?::text[])) ORDER BY updated_at DESC,id LIMIT ? OFFSET ?")) {
+                var array = statuses == null ? null : c.createArrayOf("text", statuses);
+                ps.setArray(1,array);ps.setArray(2,array);ps.setInt(3, limit); ps.setInt(4, offset);
                 try (ResultSet rs = ps.executeQuery()) { while (rs.next()) items.add(get(rs.getString(1))); }
             }
-            return new Page(List.copyOf(items), total, offset, limit);
+            return new Page(List.copyOf(items), total, offset, limit, Map.copyOf(counts));
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
     }
 

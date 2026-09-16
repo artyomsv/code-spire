@@ -1,7 +1,6 @@
-import Approvals from './components/work-items/Approvals';
 import WorkPolicies from './components/work-items/WorkPolicies';
 import { useEffect, useState, type ReactElement } from 'react';
-import { Route, Routes, useLocation, useNavigate } from 'react-router';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { BarChart3, Bot, Brain, ClipboardCheck, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
@@ -53,7 +52,8 @@ function toggleTheme() {
 const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/work-items/', 'Work item detail'],
   ['/work-items', 'Work items'],
-  ['/approvals', 'Approvals'],
+  // The old address redirects to the needs-you view of Work items; its first render says where it goes.
+  ['/approvals', 'Work items'],
   ['/settings/profiles', 'Profiles'],
   ['/runs/', 'Run detail'],
   ['/runs', 'Runs'],
@@ -94,7 +94,11 @@ export default function App() {
   const onMyActivity = location.pathname === '/analytics/me';
   const onAnalytics = location.pathname.startsWith('/analytics') && !onMyActivity;
   const onRuns = location.pathname.startsWith('/runs');
-  const onWorkItems = location.pathname.startsWith('/work-items');
+  // Approvals is the "needs you" view of the work items list, not a page of its own, so the rail
+  // lights exactly one of the two entries for the same path.
+  const onApprovals = location.pathname.startsWith('/approvals')
+    || location.pathname === '/work-items' && new URLSearchParams(location.search).get('filter') === 'needs-you';
+  const onWorkItems = location.pathname.startsWith('/work-items') && !onApprovals;
   // Reviews owns the list and every review detail page -- a POSITIVE test. It used to be styled as
   // "not settings", which was right while the rail had two sections and silently wrong the moment
   // Analytics arrived: both entries lit up at once.
@@ -225,7 +229,7 @@ export default function App() {
           {/* Item, then decision, then execution: an approval belongs to the work item above it,
               and the run below it carries out what was approved. Every entry carries an icon — an
               entry without one reads as unfinished, which is how Approvals shipped. */}
-          <a className={location.pathname.startsWith('/approvals') ? 'active' : ''} href="#/approvals">
+          <a className={onApprovals ? 'active' : ''} href="#/work-items?filter=needs-you">
             <ClipboardCheck className="ic" size={16} />
             Approvals
           </a>
@@ -395,7 +399,7 @@ export default function App() {
           <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/*" element={<RunDetail />} />
-          <Route path="/approvals" element={<Approvals />} />
+          <Route path="/approvals" element={<Navigate to="/work-items?filter=needs-you" replace />} />
           <Route path="/settings/profiles" element={configure(<WorkPolicies />)} />
           <Route path="/settings/work-policy" element={<RedirectKeepingQuery to="/settings/profiles" />} />
           <Route path="/work-items" element={<WorkItems />} />

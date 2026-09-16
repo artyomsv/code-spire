@@ -126,6 +126,26 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
         assertThrows(jakarta.ws.rs.BadRequestException.class,()->resource.head(id," "));
         forge.verify(0,getRequestedFor(urlPathMatching("/repos/.*/branches/.*")));
     }
+    /** The approver reads what the gate binds: the specification text and the one step, fetched now. */
+    @Test void theApproverSeesTheBoundStepAndSpecification() throws Exception {
+        String id=waiting();
+        var evidence=resource.evidence(id);
+        assertNull(evidence.reason());
+        assertEquals(specification,evidence.specification());
+        assertEquals("TEST-implement this one existing task",evidence.instruction());
+    }
+    /** A ticket that moved after registration is named, and its unapproved text is not shown as the evidence. */
+    @Test void evidenceForAMovedTicketNamesItInsteadOfShowingIt() throws Exception {
+        String id=waiting();stubArtifact(71,57001,"TEST-revised specification");
+        var evidence=resource.evidence(id);
+        assertEquals("artifacts_changed",evidence.reason());assertEquals("specification_changed",evidence.detail());
+        assertNull(evidence.specification());assertNull(evidence.instruction());
+    }
+    @Test void anItemWithNoPreparationHasNoEvidence() throws Exception {
+        String id=admit("autonomous",57);
+        var refusal=assertThrows(jakarta.ws.rs.WebApplicationException.class,()->resource.evidence(id)).getResponse();
+        assertEquals(409,refusal.getStatus());assertEquals(java.util.Map.of("reason","preparation_missing"),refusal.getEntity());
+    }
     @Test void registrationRequiresTheCurrentItemRevision() throws Exception {
         String id=admit("autonomous",57);long revision=store.history(id).size();
         assertEquals(409,transitions.prepare(id,revision-1,preparation("TEST-human")).status());

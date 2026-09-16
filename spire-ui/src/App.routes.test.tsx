@@ -186,7 +186,8 @@ const ROUTES: ReadonlyArray<{ path: string; title: string; nav: string }> = [
   { path: '/settings/general', title: 'General', nav: 'General' },
   { path: '/settings/context', title: 'Context', nav: 'Context' },
   { path: '/settings/profiles', title: 'Profiles', nav: 'Profiles' },
-  { path: '/approvals', title: 'Approvals', nav: 'Approvals' },
+  // Approvals is the needs-you view of Work items; the old address redirects there and lights Approvals.
+  { path: '/approvals', title: 'Work items', nav: 'Approvals' },
   { path: '/settings/repositories', title: 'Repositories', nav: 'Repositories' },
   { path: '/settings/llm', title: 'LLM', nav: 'LLM' },
   { path: '/settings/prompts', title: 'Prompts', nav: 'Prompts' },
@@ -246,6 +247,8 @@ describe('App — routing shell', () => {
       expect(await screen.findByText('TEST-1 · TEST-WS/TEST-REPO')).toBeInTheDocument();
       expect(await screen.findByText('TEST-body')).toBeInTheDocument();
     }
+    // A moved address renders nothing itself; the screen it moved to mounts after the redirect.
+    if (path === '/approvals') await waitFor(() => expect(document.querySelector('main .content')).toBeInTheDocument());
     expect(document.querySelector('main .content')).toBeInTheDocument();
   });
 
@@ -351,7 +354,7 @@ describe('App — rail highlighting', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/approvals"]')).toBeTruthy());
+    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/work-items?filter=needs-you"]')).toBeTruthy());
     const missing = Array.from(document.querySelectorAll('nav.nav a'))
       .filter((entry) => !entry.querySelector('.ic'))
       .map((entry) => (entry.textContent ?? '').trim());
@@ -366,7 +369,7 @@ describe('App — rail highlighting', () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/approvals"]')).toBeTruthy());
+    await waitFor(() => expect(document.querySelector('nav.nav a[href="#/work-items?filter=needs-you"]')).toBeTruthy());
     const entries = Array.from(document.querySelectorAll('nav.nav a')).map((a) => (a.textContent ?? '').trim());
     expect(entries.filter((name) => ['Work items', 'Approvals', 'Runs'].includes(name))).toEqual(['Work items', 'Approvals', 'Runs']);
   });

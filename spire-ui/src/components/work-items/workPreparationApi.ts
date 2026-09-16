@@ -38,6 +38,9 @@ export interface PreparationOptions { harnesses: string[] }
 export interface BranchHead { branch: string; commit: string }
 
 export const resolveArtifact = (id: string, key: string) => read<ArtifactReference>(`/api/work-items/${encodeURIComponent(id)}/preparation/reference?key=${encodeURIComponent(key)}`);
+/** What an approver is asked to approve, read from the tracker now, or the rule that makes it unusable. */
+export interface PreparationEvidence { reason: string | null; detail: string | null; specification: string | null; instruction: string | null }
+export const preparationEvidence = (id: string) => read<PreparationEvidence>(`/api/work-items/${encodeURIComponent(id)}/preparation/evidence`);
 export const preparationOptions = (id: string) => read<PreparationOptions>(`/api/work-items/${encodeURIComponent(id)}/preparation/options`);
 export const branchHead = (id: string, branch: string) =>
   read<BranchHead>(`/api/work-items/${encodeURIComponent(id)}/preparation/head?branch=${encodeURIComponent(branch)}`);
