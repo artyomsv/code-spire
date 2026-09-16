@@ -6,6 +6,7 @@ import * as api from '../../api';
 import * as auth from '../../auth';
 import type { WorkItemDetail as Detail, WorkItemSummary } from '../../api';
 import * as approvalsApi from './approvalsApi';
+import * as preparationApi from './workPreparationApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
 
@@ -556,4 +557,21 @@ it('never commits one item under another item address', async () => {
   expect(document.querySelector('.work-head .prov-sub')?.textContent).toBe('TEST-0 · TEST-owner/TEST-repo');
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
   expect(committed.find(entry => entry.id === 'TEST-item-1')).toEqual({ id: 'TEST-item-1', subtitle: null });
+});
+
+// M3.5 part C: the specification is a SNAPSHOT of the ticket, so an edit after preparation does not
+// change what was approved. Composing again is therefore a deliberate act with its own button, and the
+// reason the factory could not compose has to be visible — it is not the workflow's own reason.
+it('composes the task again from the ticket, and says why the factory could not', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', reason: 'specification_required',
+    preparationHealth: { reason: 'ticket_body_empty', attempts: 3, lastAt: '2026-09-16T10:00:00Z', retryAfter: '2026-09-16T10:05:00Z' } });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  const compose = vi.spyOn(preparationApi, 'composePreparation').mockResolvedValue({ reason: 'approval_required' });
+  showDetail();
+
+  expect(await screen.findByText(/This ticket has no description/)).toBeInTheDocument();
+  expect(screen.getByText(/tried 3 times/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare again from the ticket' }));
+  await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id));
 });

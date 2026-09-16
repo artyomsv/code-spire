@@ -3,6 +3,7 @@ import { formatEventTime } from '../../format';
 import { formatCost } from '../../money';
 import CopyField from '../CopyField';
 import type { Approval } from './approvalsApi';
+import type { Artifact } from './workPreparationApi';
 import { workRefusal } from './workReasons';
 import type { PreparationEvidence } from './workPreparationApi';
 
@@ -33,6 +34,15 @@ function expiresIn(iso: string, now: number) {
  * a ticket that moved since registration is named instead of shown, so its unapproved text never
  * reads as the evidence.
  */
+/**
+ * Where an approved text lives. A STORED artifact is not another ticket: it is the snapshot this
+ * deployment composed from the ticket it links to, and an edit to that ticket does not change it.
+ */
+function ArtifactRef({ artifact }: { artifact: Artifact }) {
+  if (artifact.origin !== 'STORED') return <a href={artifact.location.link} target="_blank" rel="noreferrer">#{artifact.location.issueKey}</a>;
+  return <>composed from <a href={artifact.location.link} target="_blank" rel="noreferrer">#{artifact.location.issueKey}</a></>;
+}
+
 export default function DecisionEvidence({ item, approval, evidence, evidenceError }: Props) {
   const { gate } = approval;
   const preparation = item.preparation;
@@ -44,10 +54,10 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
       {evidenceError && <p className="prov-error" role="alert">The tickets could not be read: {evidenceError}</p>}
       {evidence?.reason && <p className="prov-error" role="alert">{workRefusal(evidence.reason, evidence.detail)}</p>}
       <dl className="panel-grid decision-facts">
-        <div><dt>Specification</dt><dd className="v"><a href={preparation.specification.location.link} target="_blank" rel="noreferrer">#{preparation.specification.location.issueKey}</a></dd></div>
+        <div><dt>Specification</dt><dd className="v"><ArtifactRef artifact={preparation.specification} /></dd></div>
         <div><dt>Starts from</dt><dd className="v mono">{preparation.baseBranch} @ {preparation.baseCommit.slice(0, 7)}</dd></div>
         <div><dt>Agent</dt><dd className="v">{preparation.harness} · {preparation.model}</dd></div>
-        <div><dt>Plan</dt><dd className="v"><a href={preparation.plan.location.link} target="_blank" rel="noreferrer">#{preparation.plan.location.issueKey}</a> · one step</dd></div>
+        <div><dt>Plan</dt><dd className="v"><ArtifactRef artifact={preparation.plan} /> · one step</dd></div>
       </dl>
       {evidence?.specification && <blockquote className="decision-quote" aria-label="Specification text">{evidence.specification}</blockquote>}
       {evidence?.instruction && <blockquote className="decision-quote step" aria-label="The step the build runs">{evidence.instruction}</blockquote>}

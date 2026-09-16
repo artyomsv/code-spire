@@ -98,28 +98,47 @@ public class WorkPreparationSweep {
         return ids;
     }
 
+    /**
+     * Compose this item again on purpose, whatever it already has.
+     *
+     * <p>The ticket is the source of the specification, so an edited ticket means the prepared task is
+     * out of date — but only a person can say whether that edit was meant for this task. Preparing
+     * again writes NEW stored rows and supersedes an open decision (the shared registration path does
+     * that), so nothing rewrites the text somebody already approved.
+     */
+    /** Whether the item is now prepared, and the reason to show either way. */
+    public record Result(boolean prepared, String reason) {}
+
+    public Result prepareAgain(String id) {
+        clear(id, store.load(id) == null ? 0 : store.load(id).generation());
+        return prepare(id, true);
+    }
+
     /** Compose, store and register one item. Every refusal is recorded as this item's health. */
-    void prepare(String id) {
+    Result prepare(String id) { return prepare(id, false); }
+
+    Result prepare(String id, boolean again) {
         WorkItemEvent item = store.load(id);
-        if (item == null || item.preparation() != null) return;
+        if (item == null) return new Result(false, "work_item_unknown");
+        if (item.preparation() != null && !again) return new Result(false, "already_prepared");
         BuildDefaults.Defaults setup = defaults.get(item.repositoryId());
-        if (!setup.set()) { record(id, "build_defaults_missing"); return; }
+        if (!setup.set()) { record(id, "build_defaults_missing"); return new Result(false, "build_defaults_missing"); }
 
         var observed = transitions.observe(item.sourceId(), item.issue());
-        if (observed.evidence().failure() != null) { record(id, observed.evidence().failure()); return; }
+        if (observed.evidence().failure() != null) { record(id, observed.evidence().failure()); return new Result(false, observed.evidence().failure()); }
         if (!(sources.client(observed.source()).fetch(item.issue()) instanceof WorkSource.Fetch.Found found)) {
-            record(id, "artifacts_unavailable"); return;
+            record(id, "artifacts_unavailable"); return new Result(false, "artifacts_unavailable");
         }
 
         String specification, plan;
         try {
             specification = composer.specification(found.ticket());
             plan = composer.plan(specification);
-        } catch (WorkPreparationComposer.NotComposable refused) { record(id, refused.reason()); return; }
+        } catch (WorkPreparationComposer.NotComposable refused) { record(id, refused.reason()); return new Result(false, refused.reason()); }
 
         String head;
         try { head = head(item, setup.baseBranch()); }
-        catch (RuntimeException unavailable) { record(id, "branch_head_unconfirmed"); return; }
+        catch (RuntimeException unavailable) { record(id, "branch_head_unconfirmed"); return new Result(false, "branch_head_unconfirmed"); }
 
         UUID specificationId, planId;
         try (Connection c = dataSource.getConnection()) {
@@ -140,9 +159,15 @@ public class WorkPreparationSweep {
                 "system:build-defaults@" + setup.revision(), WorkPreparation.STORED_BINDING);
 
         var outcome = transitions.prepare(id, store.history(id).size(), prepared);
-        if (outcome.status() != 200) { record(id, outcome.detail() == null ? outcome.reason() : outcome.detail()); return; }
+        if (outcome.status() != 200) {
+            String refusal = outcome.detail() == null ? outcome.reason() : outcome.detail();
+            record(id, refusal); return new Result(false, refusal);
+        }
         clear(id, item.generation());
         comment(id, item, setup, head);
+        // The reason is the workflow's own: a plan gate opens as approval_required, an autonomous item
+        // goes straight on. Both are prepared; only the sentence differs.
+        return new Result(true, outcome.reason());
     }
 
     /** The head of the default base branch, through the repository's own account (decision 2A). */

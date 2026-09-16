@@ -2,8 +2,12 @@ import { apiFetch } from '../../auth';
 import { workRefusal } from './workReasons';
 
 export interface Artifact {
+  /** Where the text came from. A composed artifact keeps the ticket it was composed from. */
   location: { ref: { type: string; origin: string; projectId: string; issueId: string }; issueKey: string; link: string };
   sha256: string;
+  /** TRACKER: the live ticket body. STORED: bytes this deployment composed and kept. */
+  origin?: 'TRACKER' | 'STORED';
+  storedId?: string | null;
 }
 export interface Preparation {
   specification: Artifact; plan: Artifact; baseBranch: string; baseCommit: string; harness: string; model: string; registeredBy: string;
@@ -48,5 +52,8 @@ export const preparationEvidence = (id: string) => read<PreparationEvidence>(`/a
 export const preparationOptions = (id: string) => read<PreparationOptions>(`/api/work-items/${encodeURIComponent(id)}/preparation/options`);
 export const branchHead = (id: string, branch: string) =>
   read<BranchHead>(`/api/work-items/${encodeURIComponent(id)}/preparation/head?branch=${encodeURIComponent(branch)}`);
+/** Composes this item's task again from its ticket, superseding an open decision. */
+export const composePreparation = (id: string) =>
+  read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation/compose`, { method: 'POST' });
 export const registerPreparation = (id: string, input: Omit<Preparation, 'registeredBy'> & { expectedRevision: number }) =>
   read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });

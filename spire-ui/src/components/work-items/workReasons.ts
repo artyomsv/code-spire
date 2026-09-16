@@ -8,6 +8,12 @@ import { TOKEN_TYPE_LABEL } from '../../llmPricing';
  * reason covers five plan rules, so "single_step_plan_required" alone cannot say what to change.
  */
 const REASONS = new Map(Object.entries({
+  ticket_body_empty: 'This ticket has no description, so there is nothing to build from. Write what the task must achieve, then prepare it again.',
+  ticket_body_too_large: 'This ticket is too long to use as a specification. Shorten it, or link the detail from a shorter description.',
+  build_defaults_missing: 'This repository has no build setup yet, so the factory does not know which branch, harness or model to use. Set it on the repository Factory tab, step 5.',
+  preparation_failed: 'The factory could not prepare this task. The log names what failed; it will try again shortly.',
+  already_prepared: 'This task is already prepared.',
+  work_item_unknown: 'That work item no longer exists.',
   specification_required: 'A specification is required before work can continue.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',

@@ -22,6 +22,7 @@ public class WorkPreparationResource {
     @Inject dev.codespire.orchestrator.factory.FactoryConfig factoryConfig;
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
+    @Inject WorkPreparationSweep sweep;
     public record Input(long expectedRevision,WorkPreparation.Artifact specification,WorkPreparation.Artifact plan,
                         String baseBranch,String baseCommit,String harness,String model) {}
     /**
@@ -101,6 +102,21 @@ public class WorkPreparationResource {
         try { return artifacts.resolve(sources.get(item.sourceId()).orElseThrow(NotFoundException::new),key); }
         catch(WorkArtifacts.ArtifactUnavailable unavailable) { throw new ServiceUnavailableException(unavailable.getMessage()); }
     }
+    /**
+     * Compose this item's task again from its ticket.
+     *
+     * <p>Offered because the specification is a SNAPSHOT of the ticket: an edit after preparation does
+     * not change what was approved, and only a person can say whether the edit was meant for this task.
+     * It supersedes an open decision, because the texts a new decision binds are new.
+     */
+    @POST @Path("/compose")
+    public Response compose(@PathParam("id") String id) {
+        var item=store.load(id);if(item==null)throw new NotFoundException();
+        if(OidcSubjects.of(identity).isBlank())throw new ForbiddenException("A verified operator identity is required");
+        var result=sweep.prepareAgain(id);
+        return Response.status(result.prepared()?200:409).entity(Map.of("reason",result.reason())).build();
+    }
+
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");

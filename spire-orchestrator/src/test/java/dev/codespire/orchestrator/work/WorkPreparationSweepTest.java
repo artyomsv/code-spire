@@ -154,13 +154,19 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         sweep.sweep();
         assertEquals(1, attempts(id));
         sweep.sweep();
+        assertEquals(1, tries(id), "a second sweep must not even look at an item that is backing off");
+
+        // ...and when the wait is over it IS tried again, which is the half a "never retry" bug passes.
+        execute("UPDATE work_item_preparation_attempt SET retry_after=now()-interval '1 minute' WHERE work_item_id=?", id);
+        sweep.sweep();
+        assertEquals(2, tries(id), "an item whose backoff expired must be retried");
+    }
+
+    private int tries(String id) throws Exception {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("SELECT attempts FROM work_item_preparation_attempt WHERE work_item_id=?")) {
             ps.setString(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                assertTrue(rs.next());
-                assertEquals(1, rs.getInt(1), "the second sweep must not even look at an item that is backing off");
-            }
+            try (ResultSet rs = ps.executeQuery()) { assertTrue(rs.next()); return rs.getInt(1); }
         }
     }
 
@@ -174,13 +180,47 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         assertEquals("branch_head_unconfirmed", reason(id));
     }
 
-    /** An item a person prepared by hand is left alone: the sweep only fills an empty preparation. */
+    /**
+     * Preparing again after a deliberate ticket edit: NEW stored rows, a new binding, and the old bytes
+     * still readable for whatever already bound them.
+     */
+    @Test
+    void preparingAgainComposesTheEditedTicketWithoutRewritingTheOldBytes() throws Exception {
+        String id = admit("assisted", 88);
+        sweep.sweep();
+        var first = store.load(id).preparation();
+
+        var edited = mapper.createObjectNode().put("id", 50088).put("number", 88)
+                .put("repository_url", forge.baseUrl() + "/repos/" + scope)
+                .put("html_url", forge.baseUrl() + "/" + scope + "/issues/88")
+                .put("title", "TEST-prepared-task").put("body", "TEST-the operator rewrote this on purpose").put("state", "open");
+        edited.putArray("labels").add("TEST-assisted");
+        forge.stubFor(get(urlEqualTo("/repos/" + scope + "/issues/88")).willReturn(okJson(edited.toString())));
+
+        assertTrue(sweep.prepareAgain(id).prepared());
+        var second = store.load(id).preparation();
+        assertNotEquals(first.specification().storedId(), second.specification().storedId());
+        assertNotEquals(first.binding(), second.binding());
+        assertTrue(stored.read(id, second.specification().storedId()).orElseThrow().contains("rewrote this on purpose"));
+        // The bytes the first preparation bound are still there: a gate or a held run may still name them.
+        assertTrue(stored.read(id, first.specification().storedId()).orElseThrow().contains("TEST-identical task"));
+    }
+
+    /**
+     * An item a person prepared by hand is left alone. The sweep's own query would not reach it — a
+     * prepared item is no longer waiting for a specification — so the guard is asked DIRECTLY here,
+     * which is the only way this refusal can be shown to exist.
+     */
     @Test
     void anItemPreparedByHandIsNotPreparedAgain() throws Exception {
         String id = admit("assisted", 87);
         register(id);
         var byHand = store.load(id).preparation();
         sweep.sweep();
+        assertEquals(byHand, store.load(id).preparation());
+        var refused = sweep.prepare(id);
+        assertFalse(refused.prepared());
+        assertEquals("already_prepared", refused.reason());
         assertEquals(byHand, store.load(id).preparation());
         assertEquals(WorkPreparation.Origin.TRACKER, store.load(id).preparation().specification().origin());
     }

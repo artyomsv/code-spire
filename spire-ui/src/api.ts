@@ -43,6 +43,11 @@ export interface WorkItemDetail extends WorkItemSummary {
   appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
   /** The source's allowed people, so a label's stored id can be shown as the handle the tracker knows. */
   people?: { providerUserId: string; handle: string | null; displayName: string | null }[];
+  /**
+   * Why the factory has not composed this item's task yet, when it has tried. Separate from the
+   * workflow reason: an automatic failure written into that would stop the sweep retrying for ever.
+   */
+  preparationHealth?: { reason: string; attempts: number; lastAt: string; retryAfter: string } | null;
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
   events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];

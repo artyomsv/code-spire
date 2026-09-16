@@ -53,8 +53,13 @@ function Intake({ item }: { item: Item }) {
 function Prepared({ item, part }: { item: Item; part: 'specification' | 'plan' }) {
   const artifact = item.preparation?.[part];
   if (!artifact) return null;
+  const name = part === 'plan' ? 'Plan' : 'Specification';
+  // A composed artifact is a snapshot this deployment keeps, not a second ticket somebody wrote: the
+  // link is where the text came from, and editing that ticket does not change what was approved.
   return <p className="factory-note">
-    <a href={artifact.location.link} target="_blank" rel="noreferrer">{part === 'plan' ? 'Plan' : 'Specification'} #{artifact.location.issueKey}</a>
+    {artifact.origin === 'STORED'
+      ? <>{name} composed from <a href={artifact.location.link} target="_blank" rel="noreferrer">#{artifact.location.issueKey}</a></>
+      : <a href={artifact.location.link} target="_blank" rel="noreferrer">{name} #{artifact.location.issueKey}</a>}
     {part === 'plan' ? ' · one step' : ''} · pinned <span className="mono">{artifact.sha256.slice(0, 12)}</span>
   </p>;
 }

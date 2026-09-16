@@ -60,7 +60,13 @@ public class WorkItemResource {
                         * Resolved at read time from the source's allowed people, so a renamed handle
                         * is right on the next read and no observed name is ever persisted here.
                         */
-                       List<WorkSourceRegistry.Person> people) {}
+                       List<WorkSourceRegistry.Person> people,
+                       /**
+                        * Why the system has not composed this item's task yet, when it has tried. It sits
+                        * beside the workflow reason rather than inside it: an automatic failure written
+                        * into the item's own reason would stop the sweep from ever picking it up again.
+                        */
+                       WorkPreparationSweep.Health preparationHealth) {}
     /**
      * @param counts items per workflow status across every page, so a filter can say how many rows it
      *     holds before it is chosen, and a band can say how many items need a person
@@ -128,8 +134,11 @@ public class WorkItemResource {
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()));
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
+                sweep.health(id,item.generation()).orElse(null));
     }
+
+    @Inject WorkPreparationSweep sweep;
 
     private List<Build> builds(String id) {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("SELECT attempt_id,state,run_id,reason,generation FROM work_run_effect WHERE work_item_id=? ORDER BY created_at,attempt_id")) {
