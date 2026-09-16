@@ -41,11 +41,14 @@ public interface SignInRuntime {
     Optional<Integer> awaitExit(Handle handle, Duration within);
 
     /**
-     * Reads the file the unit wrote at its result path, copied straight out of the stopped container.
+     * Reads the file the unit wrote, copied straight out of the stopped container.
+     *
+     * <p>The path is passed rather than remembered: the caller holds the spec that declared it, and an
+     * arm that kept its own copy would hold state a restart loses silently.
      *
      * @return the bytes, or empty if the unit wrote nothing there
      */
-    Optional<byte[]> result(Handle handle);
+    Optional<byte[]> result(Handle handle, String resultPath);
 
     /** Stops a unit nobody is going to answer. Safe to call on one that has already exited. */
     void cancel(Handle handle);
