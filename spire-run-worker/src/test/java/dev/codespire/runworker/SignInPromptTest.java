@@ -101,6 +101,28 @@ class SignInPromptTest {
         assertFalse(prompt.complete());
     }
 
+    /**
+     * ATTACK 4: the right host, another port.
+     *
+     * <p>Found by review after the first three were closed. The host matched exactly, so everything
+     * about the address read as correct — but a different port is a different service, and
+     * {@code SignInFlow} declares a host with no port precisely because only one is the device page.
+     */
+    @Test
+    void theRightHostOnAnotherPortIsNotTheDevicePage() {
+        SignInPrompt prompt = read(List.of("   https://auth.openai.com:8443/codex/device", "   ABCD-12345"));
+
+        assertNull(prompt.link());
+        assertFalse(prompt.complete());
+    }
+
+    /** And 443 written out is the same page, not a different one. */
+    @Test
+    void theDefaultPortSpelledOutIsStillTheDevicePage() {
+        assertEquals("https://auth.openai.com:443/codex/device",
+                read(List.of("   https://auth.openai.com:443/codex/device", "   ABCD-12345")).link());
+    }
+
     /** And the neighbouring trick: a longer host that merely starts with the right name. */
     @Test
     void aHostThatMerelyStartsWithTheRightNameIsRefused() {

@@ -120,6 +120,16 @@ public class HarnessSignInWorker {
                     "the sign-in was cancelled before it started"));
             return;
         }
+        // And the same question asked of the DAEMON, which is the state both instances share. The map
+        // above is this process's memory: a worker that started a unit and died before acknowledging
+        // its command leaves a replacement with an empty map, and the redelivery then built a second
+        // container for one sign-in — with the first still holding a credential and no longer tracked.
+        if (runtime.discover(Duration.ZERO).stream().anyMatch(unit -> unit.unitId().equals(command.signInId()))) {
+            LOG.infof("a unit for sign-in %s already exists on this daemon; ignoring a repeated start",
+                    command.signInId());
+            running.remove(command.signInId());
+            return;
+        }
         // How this arm signs in is the ADAPTER's knowledge. An arm with no such flow is refused here
         // rather than by starting a container that has nothing to run.
         var flow = harnesses.forName(command.harness()).signIn();
@@ -177,11 +187,16 @@ public class HarnessSignInWorker {
             if (!emit(collected) && collected instanceof HarnessSignInResult.Completed) {
                 // The credential reached nobody, and the container holding the only other copy is about
                 // to be destroyed below. Destroying it anyway is the deliberate choice: a lost sign-in
-                // costs the operator thirty seconds, while a credential left in a stopped container is
-                // readable by anything that can reach the daemon until somebody notices. What must not
-                // happen is silence, so the screen is told rather than left spinning.
-                LOG.errorf("sign-in %s completed but could not be delivered; the credential is discarded",
-                        command.signInId());
+                // costs the operator a fresh sign-in, while a credential left in a stopped container is
+                // readable by anything that can reach the daemon until somebody notices.
+                //
+                // A second send is attempted, and it is NOT claimed to arrive. It travels the same
+                // broker path that has just failed, so in the outage this exists for it fails too. What
+                // the operator actually sees is the sign-in still open, counting down, until they
+                // cancel it — recorded in docs/UNVERIFIED.md rather than papered over with a
+                // notification this cannot promise.
+                LOG.errorf("sign-in %s completed but could not be delivered; the credential is discarded"
+                        + " and the row stays open until the operator cancels it", command.signInId());
                 emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
                         "the sign-in finished but could not be delivered; start it again"));
             }

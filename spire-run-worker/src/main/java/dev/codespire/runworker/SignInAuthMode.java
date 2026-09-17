@@ -75,6 +75,10 @@ final class SignInAuthMode {
                 if (!MODE.matcher(declared).matches()) return null;
                 found = declared;
             }
+            // The document must END at the close of that object. Without this,
+            // {"auth_mode":"other"}{"auth_mode":"apikey"} answered "other" — a second root smuggled in
+            // behind the first, deciding a credential's kind from a value the real file never had.
+            if (parser.nextToken() != null) return null;
             return found;
         } catch (IOException | RuntimeException notReadable) {
             // Never include the body or the parser's message: both can quote the credential.

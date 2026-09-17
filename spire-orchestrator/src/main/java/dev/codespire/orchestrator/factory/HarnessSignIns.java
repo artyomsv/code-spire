@@ -179,7 +179,22 @@ public class HarnessSignIns {
                     fail(c, id, "harness_credential_label_taken");
                     return;
                 }
-                UUID credential = pool.addSubscription(c, pending.get().label(), pending.get().harness(), body);
+                UUID credential;
+                // The check above narrows the window; it cannot close it, because an ordinary key can
+                // be added between that read and this insert. A savepoint is what makes the collision
+                // answerable: in PostgreSQL a failed statement aborts the whole transaction, so without
+                // one there would be no way to mark the sign-in failed after catching it — which is
+                // exactly how the credential used to be lost with the row left open.
+                java.sql.Savepoint attempt = c.setSavepoint("subscription");
+                try {
+                    credential = pool.addSubscription(c, pending.get().label(), pending.get().harness(), body);
+                    c.releaseSavepoint(attempt);
+                } catch (SQLException collision) {
+                    if (!"23505".equals(collision.getSQLState())) throw collision;
+                    c.rollback(attempt);
+                    fail(c, id, "harness_credential_label_taken");
+                    return;
+                }
                 try (PreparedStatement ps = c.prepareStatement("""
                         UPDATE harness_sign_in SET state='COMPLETE', credential_id=?, updated_at=now() WHERE id=?
                         """)) {
@@ -227,6 +242,9 @@ public class HarnessSignIns {
                 if (!MODE.matcher(declared).matches()) return null;
                 found = declared;
             }
+            // The document must END here: a second root object behind the first would otherwise
+            // decide the kind from a value the real file never carried.
+            if (parser.nextToken() != null) return null;
             return found;
         } catch (java.io.IOException | RuntimeException notReadable) {
             // Never log the body or the parser's message: both can quote the credential.

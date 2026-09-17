@@ -399,6 +399,28 @@ like a repository with nothing to retrieve.
 
 **Tracked in** `techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md`.
 
+### A5. A finished sign-in can be lost silently in a broker outage (M3.5 part F, 2026-09-17)
+
+**The claim.** When an operator approves a subscription sign-in, either it becomes a credential or the
+screen says why it did not.
+
+**Why nothing catches it.** The worker publishes the completed sign-in and waits for the broker. If that
+wait fails, the credential is discarded on purpose — a lost sign-in costs another sign-in, while a
+credential left in a stopped container is readable by anything that can reach the daemon until somebody
+notices. A compensating failure IS then sent, and it travels the SAME broker path that has just failed,
+so in the outage this exists for it fails too.
+
+What the operator actually sees is the sign-in still open and counting down, and nothing after that. It
+does not resolve itself: they cancel it and start again. An earlier version of this design claimed the
+screen is told; it is not, reliably, and saying so is the point of this entry.
+
+**Evidence needed.** None — this is a deliberate trade, not a suspicion. Closing it means a durable
+terminal record the screen can read without the broker, which is the same transactional-outbox treatment
+A4 names and which M3.5 does not build.
+
+**Bounded by** the countdown: the row carries an expiry, so a sign-in nobody can finish is visibly stale
+rather than indefinitely pending. No credential is exposed in any of these paths.
+
 ### A4. The comment the factory writes on a prepared ticket can be lost (M3.5 part C, 2026-09-16)
 
 **The claim.** When the factory prepares a task from a ticket, it comments on that ticket saying what

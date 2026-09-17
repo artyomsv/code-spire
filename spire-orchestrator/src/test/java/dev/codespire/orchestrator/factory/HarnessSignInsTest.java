@@ -224,18 +224,40 @@ class HarnessSignInsTest {
         HarnessSignIns.View view = start("TEST-seat-race");
         var completion = completion(view.id(), SUBSCRIPTION_FILE);
 
-        try (var pool2 = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            var cancelling = pool2.submit(() -> signIns.cancel(view.id(), "the operator cancelled it"));
-            var completing = pool2.submit(() -> { signIns.completed(completion); return true; });
-            cancelling.get(30, java.util.concurrent.TimeUnit.SECONDS);
-            completing.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        // The ORDER is forced, not hoped for. A free-running race passes under the old bug too: the
+        // completion overwrote FAILED with COMPLETE and stored the member, so "a member exists exactly
+        // when the row says COMPLETE" stayed true while the operator's cancel was being ignored.
+        //
+        // So the row is locked here first, the completion is started and blocks on that same lock, the
+        // cancellation is written and committed, and only then is the completion let go. It must find
+        // the decision already made.
+        try (Connection held = dataSource.getConnection()) {
+            held.setAutoCommit(false);
+            try (var ps = held.prepareStatement("SELECT id FROM harness_sign_in WHERE id=? FOR UPDATE")) {
+                ps.setObject(1, view.id());
+                try (var rs = ps.executeQuery()) { assertTrue(rs.next()); }
+            }
+            try (var pool2 = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                var completing = pool2.submit(() -> { signIns.completed(completion); return true; });
+                Thread.sleep(500);
+                assertFalse(completing.isDone(), "the completion must be waiting on the locked row");
+
+                try (var ps = held.prepareStatement(
+                        "UPDATE harness_sign_in SET state='FAILED', reason=? WHERE id=?")) {
+                    ps.setString(1, HarnessSignInResult.Failed.CANCELLED); ps.setObject(2, view.id());
+                    assertEquals(1, ps.executeUpdate());
+                }
+                held.commit();
+
+                completing.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            }
         }
 
         HarnessSignIns.View after = signIns.get(view.id()).orElseThrow();
-        // Whichever ran first, the two must agree: a member exists only if the row says COMPLETE.
-        boolean stored = pool.list().stream().anyMatch(member -> member.label().equals("TEST-seat-race"));
-        assertEquals("COMPLETE".equals(after.state()), stored,
-                "a credential may exist only for a sign-in the row says completed, was " + after.state());
+        assertEquals("FAILED", after.state(), "the cancellation was already committed and must stand");
+        assertEquals(HarnessSignInResult.Failed.CANCELLED, after.reason(), "and with its own reason intact");
+        assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-race")),
+                "nothing the operator declined may be stored");
     }
 
     /**

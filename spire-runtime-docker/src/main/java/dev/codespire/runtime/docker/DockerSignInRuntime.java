@@ -170,13 +170,26 @@ public final class DockerSignInRuntime implements SignInRuntime {
         try (WaitContainerResultCallback wait = client.waitContainerCmd(handle.reference())
                 .exec(new WaitContainerResultCallback())) {
             return new Exit.Observed(wait.awaitStatusCode(within.toMillis(), TimeUnit.MILLISECONDS));
-        } catch (com.github.dockerjava.api.exception.DockerClientException elapsed) {
-            // What the client raises when the wait runs out: the unit is alive and nobody answered.
-            return new Exit.StillRunning();
+        } catch (com.github.dockerjava.api.exception.DockerClientException maybeElapsed) {
+            // NOT necessarily a wait that ran out. docker-java raises this same type for an interrupted
+            // wait and for a callback that ends with no status, so believing it means reporting a
+            // transport fault to the operator as "you were too slow". Ask the daemon instead: a
+            // container still running IS somebody who has not answered; anything else is a fault.
+            return stillRunning(handle) ? new Exit.StillRunning()
+                    : new Exit.Unobservable(maybeElapsed.getClass().getSimpleName());
         } catch (RuntimeException | IOException fault) {
             // A daemon that will not answer is NOT an operator who was too slow. Naming the class
             // rather than the message: a message can quote what the container printed.
             return new Exit.Unobservable(fault.getClass().getSimpleName());
+        }
+    }
+
+    /** Whether the daemon still reports this container as running. False for gone, stopped or unknown. */
+    private boolean stillRunning(Handle handle) {
+        try {
+            return Boolean.TRUE.equals(client.inspectContainerCmd(handle.reference()).exec().getState().getRunning());
+        } catch (RuntimeException cannotSay) {
+            return false;
         }
     }
 

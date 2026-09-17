@@ -110,6 +110,10 @@ public final class SignInPrompt {
             URI uri = new URI(candidate);
             return uri.getUserInfo() == null
                     && "https".equalsIgnoreCase(uri.getScheme())
+                    // The port too, not only the host. An exact host on another port is another
+                    // service: -1 is "none stated" and 443 is the same thing spelled out, and nothing
+                    // else is the page this arm declared.
+                    && (uri.getPort() == -1 || uri.getPort() == 443)
                     && uri.getHost() != null
                     && uri.getHost().toLowerCase(Locale.ROOT).equals(verificationHost);
         } catch (URISyntaxException notAnAddress) {
