@@ -121,6 +121,15 @@ public interface SignInRuntime {
      *     live unit can outlive the wait its command was given, so age is the one signal that is true
      *     across instances.
      */
+    /**
+     * The unit carrying this sign-in's identity, whatever its age or state.
+     *
+     * <p>Separate from {@link #discover} on purpose: that one is age-fenced for the orphan sweep, and
+     * using it to answer "who holds this sign-in" hid a container created in the current second — the
+     * very one whose name had just caused a conflict.
+     */
+    Optional<Handle> find(String unitId);
+
     List<Handle> discover(Duration olderThan);
 
     /** What an arm hands back so the caller can name the unit again. Opaque by design. */

@@ -147,7 +147,53 @@ class DockerSignInRuntimeIT {
         }
     }
 
-    /** A stopped one is an orphan: nobody will report it, and the caller is told so it can end it. */
+    /**
+     * The conflict finds the unit even when it was created a moment ago.
+     *
+     * <p>The lookup used to go through the age-fenced sweep query, whose whole-second comparison hides
+     * anything created in the current second — precisely the container whose name had just caused the
+     * conflict. The loser then rethrew, and a LIVE owner's sign-in was failed because of it.
+     */
+    @Test
+    void aConflictFindsAUnitCreatedInTheSameSecond() {
+        assumeTrue(imagePresent(), IMAGE + " is not built on this machine");
+        String unitId = "TEST-fresh-" + System.nanoTime();
+        SignInRuntime.Handle first = runtime.start(
+                spec(unitId, List.of("sh", "-c", "sleep 30"), "/tmp/absent.json"), line -> { });
+        try {
+            // Immediately: no sleep, no settling. This is the window that used to lose the unit.
+            var refused = assertThrows(SignInRuntime.AlreadyClaimed.class, () -> runtime.start(
+                    spec(unitId, List.of("sh", "-c", "sleep 30"), "/tmp/absent.json"), line -> { }));
+
+            assertEquals(first.reference(), refused.existing().reference(),
+                    "the conflict must name the very unit that caused it");
+        } finally {
+            runtime.destroy(first);
+        }
+        // And the age-fenced sweep still refuses to see it, which is why the two queries are separate.
+        assertTrue(runtime.discover(Duration.ofMinutes(30)).stream()
+                        .noneMatch(unit -> unit.unitId().equals(unitId)),
+                "a fresh unit is not an abandoned one");
+    }
+
+    /** find() answers by identity whatever the state, so a duplicate is never mistaken for an absence. */
+    @Test
+    void aUnitIsFoundByItsSignInIdWhateverItsState() throws Exception {
+        assumeTrue(imagePresent(), IMAGE + " is not built on this machine");
+        String unitId = "TEST-find-" + System.nanoTime();
+        SignInRuntime.Handle handle = runtime.start(
+                spec(unitId, List.of("sh", "-c", "echo done"), "/tmp/absent.json"), line -> { });
+        try {
+            assertEquals(new SignInRuntime.Exit.Observed(0), runtime.awaitExit(handle, Duration.ofSeconds(60)));
+            assertEquals(handle.reference(), runtime.find(unitId).orElseThrow().reference(),
+                    "a stopped unit is still the holder of its sign-in");
+        } finally {
+            runtime.destroy(handle);
+        }
+        assertTrue(runtime.find(unitId).isEmpty(), "and it is gone once destroyed");
+    }
+
+    /** A stopped one reports as not running. The CALLER no longer acts on that, but the arm still says. */
     @Test
     void aStoppedUnitForTheSameSignInIsReportedAsNotRunning() throws Exception {
         assumeTrue(imagePresent(), IMAGE + " is not built on this machine");

@@ -238,23 +238,21 @@ public class HarnessSignInWorker {
     }
 
     /**
-     * What to do when the daemon says somebody else owns this sign-in's unit.
+     * What to do when the daemon says somebody else holds this sign-in's unit: NOTHING.
      *
-     * <p>Two cases with opposite answers, which is why the runtime reports which one it is. A unit that
-     * is still RUNNING has an owner that will report it — and stopping it would take the code out from
-     * under an operator halfway through approving. A unit that has STOPPED is an orphan of a worker
-     * that died: nobody will ever report it, so leaving quietly would hold the operator's row open
-     * until they noticed. It is ended here instead, with a reason.
+     * <p>An earlier version acted on the container's state, and the state cannot carry that decision.
+     * RUNNING does not prove a live owner — a worker can die while its container keeps waiting. STOPPED
+     * does not prove a dead one — the owner has a normal window after the unit exits in which it copies
+     * the credential out, seals it and publishes it, and destroying the unit there destroys the result
+     * and races a failure against the operator's own success.
+     *
+     * <p>So a duplicate leaves the unit entirely alone. A genuine orphan is closed by the age-fenced
+     * sweep below, which is the only place that can tell the difference: nothing legitimate outlives
+     * its own wait by half an hour.
      */
     private void adopt(String signInId, SignInRuntime.AlreadyClaimed taken) {
-        if (taken.existingIsRunning()) {
-            LOG.infof("sign-in %s is already running on this daemon; leaving it to its owner", signInId);
-            return;
-        }
-        LOG.warnf("sign-in %s has a stopped unit nobody is reporting; ending it", signInId);
-        runtime.destroy(taken.existing());
-        emit(new HarnessSignInResult.Failed(signInId, HarnessSignInResult.Failed.UNIT_FAILED,
-                "an earlier attempt at this sign-in did not finish; start it again"));
+        LOG.infof("sign-in %s is already held on this daemon (running=%s); leaving it to its owner",
+                signInId, taken.existingIsRunning());
     }
 
     /**
@@ -335,6 +333,11 @@ public class HarnessSignInWorker {
             if (running.containsKey(handle.unitId())) continue;
             if (runtime.destroy(handle)) {
                 LOG.infof("destroyed an abandoned sign-in unit for %s", handle.unitId());
+                // The row is closed too. Deleting the container alone left the operator watching a
+                // sign-in that nothing would ever report on — and this sweep is the only thing that can
+                // safely call a unit abandoned, because nothing legitimate outlives its wait this far.
+                emit(new HarnessSignInResult.Failed(handle.unitId(), HarnessSignInResult.Failed.UNIT_FAILED,
+                        "this sign-in was abandoned and has been cleaned up; start it again"));
             }
         }
         // A cancel whose Start never arrived would otherwise be remembered for ever. Past the window a

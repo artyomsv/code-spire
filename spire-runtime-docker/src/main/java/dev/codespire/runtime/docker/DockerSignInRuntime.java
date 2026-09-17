@@ -108,10 +108,10 @@ public final class DockerSignInRuntime implements SignInRuntime {
                     .exec()
                     .getId();
         } catch (com.github.dockerjava.api.exception.ConflictException taken) {
-            Handle existing = discover(Duration.ZERO).stream()
-                    .filter(unit -> unit.unitId().equals(spec.unitId()))
-                    .findFirst()
-                    .orElseThrow(() -> taken);
+            // By IDENTITY, never through the age-fenced sweep query: that one hides anything created in
+            // the current second, which is precisely the container whose name just caused this
+            // conflict. Missing it made the loser rethrow and fail a live owner's sign-in.
+            Handle existing = find(spec.unitId()).orElseThrow(() -> taken);
             throw new SignInRuntime.AlreadyClaimed(existing, stillRunning(existing));
         }
         // Everything after creation is guarded. A failure here used to leave a container with no
@@ -198,7 +198,11 @@ public final class DockerSignInRuntime implements SignInRuntime {
             // as it was asked to — a live container proves the unit has not ended, never that the wait
             // stayed observable — and an interrupt is never an expiry, so it is re-raised on the thread
             // rather than swallowed into a story about the operator.
-            if (Thread.currentThread().isInterrupted()) {
+            if (interrupted(maybeElapsed)) {
+                // Restored, not swallowed: awaitStatusCode clears the flag before wrapping, so a caller
+                // further up would otherwise never learn that this thread was asked to stop. An
+                // interrupt is never an expiry, whenever it arrived.
+                Thread.currentThread().interrupt();
                 return new Exit.Unobservable("interrupted");
             }
             boolean elapsed = System.nanoTime() - started >= within.toNanos();
@@ -209,6 +213,14 @@ public final class DockerSignInRuntime implements SignInRuntime {
             // rather than the message: a message can quote what the container printed.
             return new Exit.Unobservable(fault.getClass().getSimpleName());
         }
+    }
+
+    /** Whether an InterruptedException is anywhere in this failure's causes. */
+    private static boolean interrupted(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof InterruptedException) return true;
+        }
+        return Thread.currentThread().isInterrupted();
     }
 
     /** Whether the daemon still reports this container as running. False for gone, stopped or unknown. */
@@ -255,6 +267,14 @@ public final class DockerSignInRuntime implements SignInRuntime {
             // reads identically to success while somebody's credential sits in a stopped container.
             return false;
         }
+    }
+
+    @Override
+    public Optional<Handle> find(String unitId) {
+        return client.listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(UNIT_ID_LABEL, unitId)).exec().stream()
+                .map(container -> new Handle(unitId, container.getId()))
+                .findFirst();
     }
 
     @Override
