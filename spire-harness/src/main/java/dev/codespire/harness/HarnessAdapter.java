@@ -60,14 +60,27 @@ public interface HarnessAdapter {
      * @param command argv for a trusted unit, never a shell string
      * @param resultPath where the arm writes the finished sign-in, read out of the stopped container
      *     rather than from its output — a credential on stdout is a credential in the daemon's log
+     * @param verificationHost the ONE host this arm's device page lives on, lower case and bare — no
+     *     scheme, no port, no path.
+     *     <p>Load-bearing, and the reason it exists: the sign-in is read out of prose the vendor prints
+     *     for a person, and an operator is then told to go to whatever came back and type their account
+     *     credentials there. Without a host to check against, a parser can only ask whether something
+     *     LOOKS like a link — and {@code https://auth.openai.com@attacker.example/device} looks like one
+     *     while actually addressing {@code attacker.example}. Only the arm knows the right answer, so
+     *     only the arm can state it.
      */
-    record SignInFlow(List<String> command, String resultPath) {
+    record SignInFlow(List<String> command, String resultPath, String verificationHost) {
         public SignInFlow {
             command = List.copyOf(command);
             if (command.isEmpty()) throw new IllegalArgumentException("a sign-in flow needs a command");
             if (resultPath == null || !resultPath.startsWith("/")) {
                 throw new IllegalArgumentException("the result path must be absolute inside the unit");
             }
+            if (verificationHost == null || verificationHost.isBlank()
+                    || verificationHost.contains("/") || verificationHost.contains(":")) {
+                throw new IllegalArgumentException("the verification host is a bare host name, was: " + verificationHost);
+            }
+            verificationHost = verificationHost.toLowerCase(java.util.Locale.ROOT);
         }
     }
 }

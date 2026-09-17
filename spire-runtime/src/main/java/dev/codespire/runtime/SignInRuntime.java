@@ -1,6 +1,7 @@
 package dev.codespire.runtime;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -59,8 +60,29 @@ public interface SignInRuntime {
      * <p>Always called, including after a failure, because what it destroys is a credential the operator
      * has just created. Leaving it in a stopped container means leaving it readable by anything that can
      * reach the daemon, for as long as nobody notices.
+     *
+     * @return true only when the unit is CONFIRMED gone — removed, or already absent. False means the
+     *     arm could not establish that, and the caller must say so loudly rather than move on: a
+     *     swallowed removal failure reads exactly like a successful one while the credential is still
+     *     sitting in a stopped container's filesystem.
      */
-    void destroy(Handle handle);
+    boolean destroy(Handle handle);
+
+    /**
+     * Every sign-in unit this deployment left behind, found by its label.
+     *
+     * <p>{@link #destroy} in a caller's {@code finally} covers an exception. It does not cover the
+     * process dying, which is the case that matters most here, because what survives is a container
+     * holding somebody's account credential. The run arm has the same problem and solves it the same
+     * way — discovery by label — but it looks for run units and will never see one of these.
+     *
+     * @param olderThan how long a unit must have existed before it counts as abandoned. Required, not
+     *     optional: a sweep that took every unit it found would destroy a SECOND instance's live
+     *     sign-in, pulling the code out from under an operator who is halfway through approving it. No
+     *     live unit can outlive the wait its command was given, so age is the one signal that is true
+     *     across instances.
+     */
+    List<Handle> discover(Duration olderThan);
 
     /** What an arm hands back so the caller can name the unit again. Opaque by design. */
     record Handle(String unitId, String reference) {

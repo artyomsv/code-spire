@@ -74,10 +74,16 @@ public class HarnessSignIns {
      */
     public Started start(String label, String harness, String actor) {
         UUID id = UUID.randomUUID();
-        return QuarkusTransaction.requiringNew().call(() -> {
+        String image = config.agentImage().get(harness);
+        if (image == null) return new Started(null, "harness_unconfigured");
+
+        // COMMIT FIRST, then publish. The earlier order inserted the row, awaited the broker and
+        // committed last, which meant a fast Prompted could arrive while the row was still invisible to
+        // every other transaction: the update matched nothing, the consumer acknowledged it, and the
+        // operator waited for a code that had already been printed and thrown away. It also held a
+        // database transaction open across a network round trip.
+        Started opened = QuarkusTransaction.requiringNew().call(() -> {
             try (Connection c = dataSource.getConnection()) {
-                String image = config.agentImage().get(harness);
-                if (image == null) return new Started(null, "harness_unconfigured");
                 if (inProgress(c, harness).isPresent()) return new Started(null, "sign_in_already_running");
                 if (pool.hasLabel(c, label)) return new Started(null, "harness_credential_label_taken");
                 try (PreparedStatement ps = c.prepareStatement("""
@@ -87,18 +93,32 @@ public class HarnessSignIns {
                     ps.setObject(1, id); ps.setString(2, label); ps.setString(3, harness); ps.setString(4, actor);
                     ps.executeUpdate();
                 }
-                // Sent inside the transaction, and the ack is awaited. If the broker never takes it
-                // the row rolls back, so a screen never waits on a unit nobody was asked to start. The
-                // opposite risk — a duplicate delivery — is the safe direction: the worker starts one
-                // unit per command and the row it reports against is already there.
-                KafkaSends.sendAndAwait(commands, id.toString(),
-                        new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds()),
-                        "harness sign-in start for " + id);
                 return new Started(read(c, id).orElseThrow(), null);
             } catch (SQLException failure) {
+                // 23505 is V78's unique partial index: another request opened a sign-in for this
+                // harness between the check above and this insert. The check gives the good refusal in
+                // the ordinary case; only the index can exclude a concurrent one, so its violation
+                // becomes the SAME refusal rather than a 500 the screen cannot explain.
+                if ("23505".equals(failure.getSQLState())) return new Started(null, "sign_in_already_running");
                 throw new IllegalStateException("The sign-in could not be started", failure);
             }
         });
+        if (opened.refusal() != null) return opened;
+
+        // The row is committed and visible, so whatever comes back has somewhere to land. What is NOT
+        // claimed: that a publish which fails leaves nothing behind. It leaves a PENDING row, which the
+        // screen shows and the operator cancels — visible, rather than a unit nobody knows about.
+        try {
+            KafkaSends.sendAndAwait(commands, id.toString(),
+                    new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds()),
+                    "harness sign-in start for " + id);
+        } catch (RuntimeException undelivered) {
+            LOG.errorf(undelivered, "sign-in %s could not be asked for", id);
+            failed(new dev.codespire.contract.event.HarnessSignInResult.Failed(id.toString(),
+                    HarnessSignInResult.Failed.UNIT_FAILED, "the sign-in could not be started"));
+            return new Started(null, "sign_in_unit_failed");
+        }
+        return opened;
     }
 
     /** What the operator must do. Written straight through: the screen is polling for exactly this. */
@@ -127,7 +147,10 @@ public class HarnessSignIns {
         UUID id = UUID.fromString(result.signInId());
         QuarkusTransaction.requiringNew().run(() -> {
             try (Connection c = dataSource.getConnection()) {
-                Optional<View> pending = read(c, id);
+                // FOR UPDATE: a cancel committing between this read and the write below used to be
+                // overwritten, so a completion could resurrect a sign-in somebody had already declined
+                // and store the credential anyway. Both terminal decisions now queue on this row.
+                Optional<View> pending = readForUpdate(c, id);
                 if (pending.isEmpty() || !OPEN.contains(pending.get().state())) {
                     // Two cases, one rule: a sign-in that already became a member, and one the operator
                     // cancelled or that already failed. Only a sign-in still waiting may become a
@@ -143,6 +166,13 @@ public class HarnessSignIns {
                     return;
                 }
                 String body = encryption.decryptString(result.sealedAuth(), HarnessSignInResult.sealedAad(result.signInId()));
+                if (pool.hasLabel(c, pending.get().label())) {
+                    // Taken by an ordinary key while this person was approving. Refusing by name beats
+                    // letting the unique constraint throw, because that throw used to be swallowed:
+                    // the credential was lost and the row stayed open with nothing said.
+                    fail(c, id, "harness_credential_label_taken");
+                    return;
+                }
                 UUID credential = pool.addSubscription(c, pending.get().label(), pending.get().harness(), body);
                 try (PreparedStatement ps = c.prepareStatement("""
                         UPDATE harness_sign_in SET state='COMPLETE', credential_id=?, updated_at=now() WHERE id=?
@@ -195,10 +225,20 @@ public class HarnessSignIns {
     public boolean cancel(UUID id, String reason) {
         KafkaSends.sendAndAwait(commands, id.toString(), new HarnessSignInCommand.Cancel(id.toString(), reason),
                 "harness sign-in cancel for " + id);
-        return update("""
-                UPDATE harness_sign_in SET state='FAILED', reason=?, updated_at=now()
-                 WHERE id=? AND state IN ('PENDING','PROMPTED')
-                """, ps -> { ps.setString(1, HarnessSignInResult.Failed.CANCELLED); ps.setObject(2, id); }) == 1;
+        // Guarded on the state AND on the same row a completion locks, so the two cannot both win.
+        return QuarkusTransaction.requiringNew().call(() -> {
+            try (Connection c = dataSource.getConnection()) {
+                if (readForUpdate(c, id).filter(open -> OPEN.contains(open.state())).isEmpty()) return false;
+                try (PreparedStatement ps = c.prepareStatement("""
+                        UPDATE harness_sign_in SET state='FAILED', reason=?, updated_at=now() WHERE id=?
+                        """)) {
+                    ps.setString(1, HarnessSignInResult.Failed.CANCELLED); ps.setObject(2, id);
+                    return ps.executeUpdate() == 1;
+                }
+            } catch (SQLException failure) {
+                throw new IllegalStateException("The sign-in could not be cancelled", failure);
+            }
+        });
     }
 
     private Optional<View> inProgress(Connection c, String harness) throws SQLException {
@@ -209,6 +249,17 @@ public class HarnessSignIns {
                  ORDER BY created_at DESC LIMIT 1
                 """)) {
             ps.setString(1, harness);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next() ? Optional.of(view(rs)) : Optional.empty(); }
+        }
+    }
+
+    /** The same read, holding the row until this transaction ends. Terminal decisions queue on it. */
+    private Optional<View> readForUpdate(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT id, label, harness, state, verification_uri, user_code, expires_at, reason, credential_id
+                  FROM harness_sign_in WHERE id=? FOR UPDATE
+                """)) {
+            ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) { return rs.next() ? Optional.of(view(rs)) : Optional.empty(); }
         }
     }

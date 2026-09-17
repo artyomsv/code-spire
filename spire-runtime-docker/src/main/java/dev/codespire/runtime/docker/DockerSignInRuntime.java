@@ -96,13 +96,20 @@ public final class DockerSignInRuntime implements SignInRuntime {
                 .withHostConfig(host)
                 .exec()
                 .getId();
-        client.startContainerCmd(id).exec();
-
-        // Follows the log until the container exits. The caller needs the link and the code while the
-        // unit is still waiting, so reading the log only at the end would show them nothing until it
-        // was too late to use.
-        client.logContainerCmd(id).withStdOut(true).withStdErr(true).withFollowStream(true)
-                .exec(new LineCallback(lines));
+        // Everything after creation is guarded. A failure here used to leave a container with no
+        // handle in anyone's hands — the one orphan that can hold a credential and that no finally
+        // block anywhere could reach.
+        try {
+            client.startContainerCmd(id).exec();
+            // Follows the log until the container exits. The caller needs the link and the code while
+            // the unit is still waiting, so reading the log only at the end would show them nothing
+            // until it was too late to use.
+            client.logContainerCmd(id).withStdOut(true).withStdErr(true).withFollowStream(true)
+                    .exec(new LineCallback(lines));
+        } catch (RuntimeException failed) {
+            destroy(new Handle(spec.unitId(), id));
+            throw failed;
+        }
         return new Handle(spec.unitId(), id);
     }
 
@@ -193,8 +200,28 @@ public final class DockerSignInRuntime implements SignInRuntime {
     }
 
     @Override
-    public void destroy(Handle handle) {
-        try { client.removeContainerCmd(handle.reference()).withForce(true).exec(); }
-        catch (RuntimeException alreadyGone) { /* the credential is gone, which is the point */ }
+    public boolean destroy(Handle handle) {
+        try {
+            client.removeContainerCmd(handle.reference()).withForce(true).exec();
+            return true;
+        } catch (com.github.dockerjava.api.exception.NotFoundException absent) {
+            // Already gone is the outcome asked for, and the only failure that proves it.
+            return true;
+        } catch (RuntimeException notConfirmed) {
+            // A daemon that will not answer is NOT a container that was removed. Answering true here
+            // reads identically to success while somebody's credential sits in a stopped container.
+            return false;
+        }
+    }
+
+    @Override
+    public java.util.List<Handle> discover(Duration olderThan) {
+        long before = java.time.Instant.now().minus(olderThan).getEpochSecond();
+        return client.listContainersCmd().withShowAll(true)
+                .withLabelFilter(java.util.List.of(UNIT_ID_LABEL)).exec().stream()
+                // Docker reports creation in whole seconds since the epoch.
+                .filter(container -> container.getCreated() != null && container.getCreated() < before)
+                .map(container -> new Handle(container.getLabels().get(UNIT_ID_LABEL), container.getId()))
+                .toList();
     }
 }

@@ -32,9 +32,11 @@ public class HarnessSignInResults {
                 case HarnessSignInResult.Failed failed -> signIns.failed(failed);
             }
         } catch (RuntimeException failure) {
-            // Never rethrow: a sign-in that cannot be recorded must not stall the topic, and the
-            // screen shows a stuck PENDING row, which is the truth.
+            // NACK, not ack. Acknowledging a result this could not store threw away the only copy of a
+            // credential the operator had just approved, left the row open for ever, and hid the fault
+            // from the dead-letter queue this channel declares. Nacking keeps it reachable.
             LOG.errorf(failure, "sign-in %s could not be recorded", result.signInId());
+            return message.nack(failure);
         }
         return message.ack();
     }

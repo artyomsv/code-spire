@@ -162,7 +162,15 @@ public class HarnessCredentialPool {
                    SET last_used_at = now(), updated_at = now()
                  WHERE id = (
                        SELECT id FROM harness_credential
+                        -- API keys only, and this is a CONTAINMENT boundary rather than a filter. A
+                        -- subscription row holds the whole sign-in file; the harness arm would feed it
+                        -- to --with-api-key, and the agent container -- which runs untrusted ticket
+                        -- text at full shell access -- could then read it, refresh credential and all.
+                        -- Until selection, injection and charging exist for a subscription, no run may
+                        -- reach one. The rule lives here rather than in a caller's discipline because
+                        -- three dispatch paths call this and each would have to remember.
                         WHERE enabled
+                          AND auth_mode = 'API_KEY'
                           AND rejected_at IS NULL
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST

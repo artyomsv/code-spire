@@ -46,12 +46,25 @@ public class HarnessSignInWorker {
 
     private static final long MEGABYTE = 1024L * 1024L;
 
+    /**
+     * How old a sign-in unit must be before the sweep treats it as abandoned.
+     *
+     * <p>Comfortably past the longest a sign-in may run — the orchestrator's ceiling is fourteen
+     * minutes and the vendor's code lasts fifteen — so a unit this old is one nobody is coming back to.
+     */
+    private static final Duration ABANDONED_AFTER = Duration.ofMinutes(30);
+
     @Inject SignInRuntime runtime;
     @Inject EncryptionService encryption;
     @Inject HarnessRegistry harnesses;
 
+    /** Keyed and AWAITABLE: a Record send answers a stage, which a bare Message send does not. */
     @Inject @Channel("harness-sign-in-results-out")
-    Emitter<org.eclipse.microprofile.reactive.messaging.Message<HarnessSignInResult>> results;
+    Emitter<io.smallrye.reactive.messaging.kafka.Record<String, HarnessSignInResult>> results;
+
+    /** How long to wait for the broker before calling a result undelivered. */
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name = "spire.run.result-ack-seconds")
+    long ackSeconds;
 
     /** Units this worker started, so a cancel can reach one that is still waiting on a person. */
     private final Map<String, SignInRuntime.Handle> running = new ConcurrentHashMap<>();
@@ -82,7 +95,7 @@ public class HarnessSignInWorker {
                     "this harness has no subscription sign-in"));
             return;
         }
-        SignInPrompt prompt = new SignInPrompt();
+        SignInPrompt prompt = new SignInPrompt(flow.get().verificationHost());
         SignInUnitSpec spec = new SignInUnitSpec(command.signInId(), command.image(), flow.get().command(),
                 flow.get().resultPath(), EnterpriseEnvironment.NONE, 512 * MEGABYTE, 1_000_000_000L,
                 64 * MEGABYTE, Duration.ofSeconds(command.maxWaitSeconds()));
@@ -91,10 +104,14 @@ public class HarnessSignInWorker {
         running.put(command.signInId(), handle);
         try {
             if (!awaitPrompt(prompt)) {
-                // The CLI said nothing this could read. Never invent a link or a code: an operator sent
-                // to a guessed address is worse than one told the sign-in did not start.
+                // The CLI said nothing this build can read, or said two different things. Never invent a
+                // link or a code, and never pick between two: an operator sent to a guessed address is
+                // worse than one told the sign-in did not start, because they will type their account
+                // credentials into whatever is there.
                 emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
-                        "the sign-in tool printed no link and code this build could read"));
+                        prompt.ambiguous()
+                                ? "the sign-in tool printed more than one address or code, so none was used"
+                                : "the sign-in tool printed no link and code this build could read"));
                 return;
             }
             Duration life = prompt.expiresIn().orElse(Duration.ofSeconds(command.maxWaitSeconds()));
@@ -108,13 +125,28 @@ public class HarnessSignInWorker {
                         "nobody approved the code before it expired"));
                 return;
             }
-            emit(collect(command.signInId(), handle, exit.get(), flow.get().resultPath()));
+            HarnessSignInResult collected = collect(command.signInId(), handle, exit.get(), flow.get().resultPath());
+            if (!emit(collected) && collected instanceof HarnessSignInResult.Completed) {
+                // The credential reached nobody, and the container holding the only other copy is about
+                // to be destroyed below. Destroying it anyway is the deliberate choice: a lost sign-in
+                // costs the operator thirty seconds, while a credential left in a stopped container is
+                // readable by anything that can reach the daemon until somebody notices. What must not
+                // happen is silence, so the screen is told rather than left spinning.
+                LOG.errorf("sign-in %s completed but could not be delivered; the credential is discarded",
+                        command.signInId());
+                emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
+                        "the sign-in finished but could not be delivered; start it again"));
+            }
         } finally {
             running.remove(command.signInId());
             // ALWAYS, including after a failure. What this removes is a credential the operator just
             // created; leaving it in a stopped container leaves it readable by anything that can reach
             // the daemon, for as long as nobody notices.
-            runtime.destroy(handle);
+            if (!runtime.destroy(handle)) {
+                // NOT the same as "it is gone". An unconfirmed removal means a credential may still be
+                // in a container, and the sweep below is what eventually clears it.
+                LOG.errorf("sign-in %s: its unit could not be confirmed destroyed", command.signInId());
+            }
         }
     }
 
@@ -157,6 +189,9 @@ public class HarnessSignInWorker {
     private boolean awaitPrompt(SignInPrompt prompt) {
         Instant deadline = Instant.now().plus(PROMPT_TIMEOUT);
         while (Instant.now().isBefore(deadline)) {
+            // Ambiguity does not improve by waiting, and waiting out the whole timeout for a decision
+            // already made just keeps a container and an operator hanging.
+            if (prompt.ambiguous()) return false;
             if (prompt.complete()) return true;
             try { Thread.sleep(100); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return false; }
@@ -164,9 +199,47 @@ public class HarnessSignInWorker {
         return prompt.complete();
     }
 
-    private void emit(HarnessSignInResult result) {
-        results.send(Message.of(result).addMetadata(
-                io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata.<String>builder()
-                        .withKey(result.signInId()).build()));
+    /**
+     * Publishes, and waits for the broker to say so.
+     *
+     * @return true when it was acknowledged. An answer rather than {@code void}, because the caller is
+     *     about to destroy the only other copy of what it just sent.
+     */
+    private boolean emit(HarnessSignInResult result) {
+        try {
+            results.send(io.smallrye.reactive.messaging.kafka.Record.of(result.signInId(), result))
+                    .toCompletableFuture()
+                    .get(ackSeconds, java.util.concurrent.TimeUnit.SECONDS);
+            return true;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (RuntimeException | java.util.concurrent.ExecutionException
+                 | java.util.concurrent.TimeoutException undelivered) {
+            LOG.errorf(undelivered, "sign-in %s: a result could not be published", result.signInId());
+            return false;
+        }
+    }
+
+    /**
+     * Destroys sign-in units nobody is coming back for.
+     *
+     * <p>A {@code finally} covers an exception; it does not cover the process dying, and what survives
+     * that is a container holding somebody's account credential. The run arm's watchdog looks for run
+     * units and will never see one of these, so this sweep is their only recovery.
+     *
+     * <p>Bounded by AGE, not by this process's own map. A second instance's live unit is not in this
+     * one's map either, and destroying it would take the code out from under an operator halfway
+     * through approving it. No live unit can outlive the wait its command was given.
+     */
+    @io.quarkus.scheduler.Scheduled(every = "${spire.harness-sign-in.sweep-interval:5m}",
+            concurrentExecution = io.quarkus.scheduler.Scheduled.ConcurrentExecution.SKIP)
+    void destroyAbandonedUnits() {
+        for (SignInRuntime.Handle handle : runtime.discover(ABANDONED_AFTER)) {
+            if (running.containsKey(handle.unitId())) continue;
+            if (runtime.destroy(handle)) {
+                LOG.infof("destroyed an abandoned sign-in unit for %s", handle.unitId());
+            }
+        }
     }
 }

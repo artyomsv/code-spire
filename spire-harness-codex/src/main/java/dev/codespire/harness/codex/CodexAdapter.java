@@ -363,7 +363,8 @@ public final class CodexAdapter implements HarnessAdapter {
     @Override
     public java.util.Optional<SignInFlow> signIn() {
         return java.util.Optional.of(new SignInFlow(
-                java.util.List.of("codex", "login", "--device-auth"), "/home/agent/.codex/auth.json"));
+                java.util.List.of("codex", "login", "--device-auth"), "/home/agent/.codex/auth.json",
+                "auth.openai.com"));
     }
 
     @Override

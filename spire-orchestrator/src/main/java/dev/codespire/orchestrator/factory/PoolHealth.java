@@ -41,6 +41,9 @@ public record PoolHealth(int members, int rejected, int resting, Instant returns
                    min(rate_limited_until) FILTER (WHERE enabled AND rejected_at IS NULL
                                       AND rate_limited_until > now())                AS returns_at
               FROM harness_credential
+             -- The same boundary the selector draws: this explains why a RUN found nothing, so it must
+             -- count exactly what a run could have been given.
+             WHERE auth_mode = 'API_KEY'
             """;
 
     public static PoolHealth read(Connection c) throws SQLException {
