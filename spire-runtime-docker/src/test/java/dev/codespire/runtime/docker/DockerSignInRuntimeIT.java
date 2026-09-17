@@ -122,6 +122,50 @@ class DockerSignInRuntimeIT {
         }
     }
 
+    /**
+     * Two workers, one redelivered command: the daemon elects one owner.
+     *
+     * <p>Looking before creating is two operations, so both would look, both would find nothing, and
+     * both would build a unit for one sign-in — leaving one of them holding a credential that nothing
+     * was tracking. A container name is unique per daemon, which makes CREATION the election.
+     */
+    @Test
+    void asecondUnitForTheSameSignInIsRefusedByTheDaemon() {
+        assumeTrue(imagePresent(), IMAGE + " is not built on this machine");
+        String unitId = "TEST-claim-" + System.nanoTime();
+        SignInRuntime.Handle first = runtime.start(
+                spec(unitId, List.of("sh", "-c", "sleep 30"), "/tmp/absent.json"), line -> { });
+        try {
+            var refused = assertThrows(SignInRuntime.AlreadyClaimed.class, () -> runtime.start(
+                    spec(unitId, List.of("sh", "-c", "sleep 30"), "/tmp/absent.json"), line -> { }));
+
+            assertEquals(unitId, refused.existing().unitId());
+            assertTrue(refused.existingIsRunning(),
+                    "a live unit has an owner that will report it, and must not be taken from under it");
+        } finally {
+            runtime.destroy(first);
+        }
+    }
+
+    /** A stopped one is an orphan: nobody will report it, and the caller is told so it can end it. */
+    @Test
+    void aStoppedUnitForTheSameSignInIsReportedAsNotRunning() throws Exception {
+        assumeTrue(imagePresent(), IMAGE + " is not built on this machine");
+        String unitId = "TEST-orphan-" + System.nanoTime();
+        SignInRuntime.Handle first = runtime.start(
+                spec(unitId, List.of("sh", "-c", "echo done"), "/tmp/absent.json"), line -> { });
+        try {
+            assertEquals(new SignInRuntime.Exit.Observed(0), runtime.awaitExit(first, Duration.ofSeconds(60)));
+
+            var refused = assertThrows(SignInRuntime.AlreadyClaimed.class, () -> runtime.start(
+                    spec(unitId, List.of("sh", "-c", "sleep 30"), "/tmp/absent.json"), line -> { }));
+
+            assertFalse(refused.existingIsRunning(), "nothing is watching a unit that has already ended");
+        } finally {
+            runtime.destroy(first);
+        }
+    }
+
     private String awaitLine(List<String> seen, Pattern pattern) throws InterruptedException {
         for (int attempt = 0; attempt < 300; attempt++) {
             for (String line : new ArrayList<>(seen)) {

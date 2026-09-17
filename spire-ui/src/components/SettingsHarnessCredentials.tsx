@@ -21,6 +21,10 @@ function state(member: HarnessCredentialView): { label: string; tone: string } {
   if (member.rejectedAt) return { label: 'Rejected', tone: 'chip danger' };
   if (member.rateLimitedUntil && new Date(member.rateLimitedUntil) > new Date()) return { label: 'Resting', tone: 'chip warn' };
   if (!member.enabled) return { label: 'Switched off', tone: 'chip' };
+  // Before "Available", because it is not. A subscription is stored and safe, and no run can use it
+  // until the factory can select, inject and bill one. Rendering it as ready told the operator the
+  // factory was finished and left them to discover otherwise at the first build.
+  if (member.authMode === 'SUBSCRIPTION') return { label: 'Not usable yet', tone: 'chip warn' };
   return { label: 'Available', tone: 'chip ok' };
 }
 
@@ -93,13 +97,21 @@ export default function SettingsHarnessCredentials() {
           must not stop reviews as well. A run picks the member rested longest, so several keys spread the
           load rather than burning one window.
         </p>
+        <p className="prov-note">
+          A Codex subscription can be signed in and is kept safely, but no run can use one yet: choosing
+          it, handing it to a run and recording its cost as zero are not built. Every run uses an API key.
+        </p>
 
         {signingIn && (
           <SidePanel title="Sign in with a Codex subscription" busy={false} onClose={() => setSigningIn(false)}
             actions={<button className="btn-ghost" type="button" onClick={() => setSigningIn(false)}>Close</button>}>
             <HarnessSubscriptionSignIn harness={SUBSCRIPTION_HARNESS} done={label => {
               setSigningIn(false);
-              reload(`Signed in as ${label}. Runs on this harness can now be paid by the subscription.`);
+              // Says what actually happened. "Runs can now be paid by the subscription" was false:
+              // nothing selects, injects or bills one yet, and the credential is deliberately
+              // unreachable by every run until all three exist.
+              reload(`Saved ${label}. It is kept safely, and no run can use it yet — paying with a`
+                + ' subscription is not built. Runs keep using an API key.');
             }} />
           </SidePanel>
         )}

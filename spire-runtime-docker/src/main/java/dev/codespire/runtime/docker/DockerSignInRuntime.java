@@ -39,6 +39,9 @@ public final class DockerSignInRuntime implements SignInRuntime {
     /** Shared with the run arm, so one label finds every unit this project left behind. */
     static final String UNIT_ID_LABEL = "dev.codespire.signInId";
 
+    /** The name a sign-in unit claims. Unique per daemon, which is what makes creation an election. */
+    private static final String NAME_PREFIX = "spire-signin-";
+
     /**
      * The same bound the run arm puts on an agent, for a different reason.
      *
@@ -84,18 +87,33 @@ public final class DockerSignInRuntime implements SignInRuntime {
                 // Teardown is destroy()'s job, and destroy() is what removes the credential.
                 .withAutoRemove(false);
 
-        String id = client.createContainerCmd(spec.image())
-                // The ENTRYPOINT, not the Cmd. The agent image's entrypoint is what turns it into a
-                // factory agent: it wants a prompt on stdin and a workspace to work in. A Cmd would
-                // arrive as arguments to that, and the sign-in would never run at all.
-                .withEntrypoint(spec.command())
-                .withCmd(java.util.List.of())
-                .withEnv(spec.enterprise().environment().entrySet().stream()
-                        .map(entry -> entry.getKey() + "=" + entry.getValue()).toList())
-                .withLabels(labels)
-                .withHostConfig(host)
-                .exec()
-                .getId();
+        String id;
+        try {
+            id = client.createContainerCmd(spec.image())
+                    // A DETERMINISTIC NAME, and it is the claim. A container name is unique per daemon,
+                    // so creating one elects exactly one owner. Looking first and then creating is two
+                    // operations: two workers handling the same redelivered command both looked, both
+                    // found nothing, and both built a unit for one sign-in — with one of them holding a
+                    // credential that nothing was tracking.
+                    .withName(NAME_PREFIX + spec.unitId())
+                    // The ENTRYPOINT, not the Cmd. The agent image's entrypoint is what turns it into a
+                    // factory agent: it wants a prompt on stdin and a workspace to work in. A Cmd would
+                    // arrive as arguments to that, and the sign-in would never run at all.
+                    .withEntrypoint(spec.command())
+                    .withCmd(java.util.List.of())
+                    .withEnv(spec.enterprise().environment().entrySet().stream()
+                            .map(entry -> entry.getKey() + "=" + entry.getValue()).toList())
+                    .withLabels(labels)
+                    .withHostConfig(host)
+                    .exec()
+                    .getId();
+        } catch (com.github.dockerjava.api.exception.ConflictException taken) {
+            Handle existing = discover(Duration.ZERO).stream()
+                    .filter(unit -> unit.unitId().equals(spec.unitId()))
+                    .findFirst()
+                    .orElseThrow(() -> taken);
+            throw new SignInRuntime.AlreadyClaimed(existing, stillRunning(existing));
+        }
         // Everything after creation is guarded. A failure here used to leave a container with no
         // handle in anyone's hands — the one orphan that can hold a credential and that no finally
         // block anywhere could reach.
@@ -167,15 +185,24 @@ public final class DockerSignInRuntime implements SignInRuntime {
 
     @Override
     public Exit awaitExit(Handle handle, Duration within) {
+        long started = System.nanoTime();
         try (WaitContainerResultCallback wait = client.waitContainerCmd(handle.reference())
                 .exec(new WaitContainerResultCallback())) {
             return new Exit.Observed(wait.awaitStatusCode(within.toMillis(), TimeUnit.MILLISECONDS));
         } catch (com.github.dockerjava.api.exception.DockerClientException maybeElapsed) {
             // NOT necessarily a wait that ran out. docker-java raises this same type for an interrupted
-            // wait and for a callback that ends with no status, so believing it means reporting a
-            // transport fault to the operator as "you were too slow". Ask the daemon instead: a
-            // container still running IS somebody who has not answered; anything else is a fault.
-            return stillRunning(handle) ? new Exit.StillRunning()
+            // wait and for a callback that ends with no status, so believing it means telling the
+            // operator they were too slow while a container runtime is broken.
+            //
+            // TWO things must hold before this is an expiry. The wait must actually have lasted as long
+            // as it was asked to — a live container proves the unit has not ended, never that the wait
+            // stayed observable — and an interrupt is never an expiry, so it is re-raised on the thread
+            // rather than swallowed into a story about the operator.
+            if (Thread.currentThread().isInterrupted()) {
+                return new Exit.Unobservable("interrupted");
+            }
+            boolean elapsed = System.nanoTime() - started >= within.toNanos();
+            return elapsed && stillRunning(handle) ? new Exit.StillRunning()
                     : new Exit.Unobservable(maybeElapsed.getClass().getSimpleName());
         } catch (RuntimeException | IOException fault) {
             // A daemon that will not answer is NOT an operator who was too slow. Naming the class

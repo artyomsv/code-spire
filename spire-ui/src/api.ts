@@ -1696,6 +1696,11 @@ export interface HarnessCredentialView {
   /** When the vendor refused the key. Only an operator clears this. */
   rejectedAt: string | null;
   lastUsedAt: string | null;
+  /**
+   * How this member pays. A SUBSCRIPTION is deliberately unreachable by any run until selection,
+   * injection and zero-cost charging exist, so the screen must not render it as ready to use.
+   */
+  authMode?: 'API_KEY' | 'SUBSCRIPTION';
 }
 
 export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }

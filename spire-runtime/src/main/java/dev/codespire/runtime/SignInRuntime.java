@@ -32,7 +32,35 @@ public interface SignInRuntime {
      * <p>The credential never travels this way. It is written to the spec's result path and read with
      * {@link #result}, because output reaches the daemon's logs and stays there.
      */
+    /**
+     * @throws AlreadyClaimed when a unit for this sign-in already exists. The claim is the DAEMON's, not
+     *     the caller's: looking first and then creating is two operations, and two workers handling the
+     *     same redelivered command both find nothing and both create one.
+     */
     Handle start(SignInUnitSpec spec, Consumer<String> lines);
+
+    /**
+     * Another unit already holds this sign-in's identity.
+     *
+     * <p>Carries whether that unit is still running, because the two cases need opposite answers. A
+     * live one has an owner that will report it, and stopping it would take the code out from under an
+     * operator mid-approval. A stopped one is an orphan of a worker that died: nobody will ever report
+     * it, so the caller must end the sign-in rather than leave a row open for ever.
+     */
+    final class AlreadyClaimed extends RuntimeException {
+        private final transient Handle existing;
+        private final boolean running;
+
+        public AlreadyClaimed(Handle existing, boolean running) {
+            super("a sign-in unit for " + existing.unitId() + " already exists");
+            this.existing = existing;
+            this.running = running;
+        }
+
+        public Handle existing() { return existing; }
+
+        public boolean existingIsRunning() { return running; }
+    }
 
     /**
      * Waits for the unit to exit.

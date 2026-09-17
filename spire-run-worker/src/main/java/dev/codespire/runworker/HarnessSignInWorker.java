@@ -120,16 +120,7 @@ public class HarnessSignInWorker {
                     "the sign-in was cancelled before it started"));
             return;
         }
-        // And the same question asked of the DAEMON, which is the state both instances share. The map
-        // above is this process's memory: a worker that started a unit and died before acknowledging
-        // its command leaves a replacement with an empty map, and the redelivery then built a second
-        // container for one sign-in — with the first still holding a credential and no longer tracked.
-        if (runtime.discover(Duration.ZERO).stream().anyMatch(unit -> unit.unitId().equals(command.signInId()))) {
-            LOG.infof("a unit for sign-in %s already exists on this daemon; ignoring a repeated start",
-                    command.signInId());
-            running.remove(command.signInId());
-            return;
-        }
+
         // How this arm signs in is the ADAPTER's knowledge. An arm with no such flow is refused here
         // rather than by starting a container that has nothing to run.
         var flow = harnesses.forName(command.harness()).signIn();
@@ -146,6 +137,11 @@ public class HarnessSignInWorker {
 
         SignInRuntime.Handle handle;
         try { handle = runtime.start(spec, prompt::accept); }
+        catch (SignInRuntime.AlreadyClaimed taken) {
+            running.remove(command.signInId());
+            adopt(command.signInId(), taken);
+            return;
+        }
         catch (RuntimeException failed) { running.remove(command.signInId()); throw failed; }
         running.put(command.signInId(), handle);
         if (cancelled.remove(command.signInId()) != null) {
@@ -191,10 +187,12 @@ public class HarnessSignInWorker {
                 // readable by anything that can reach the daemon until somebody notices.
                 //
                 // A second send is attempted, and it is NOT claimed to arrive. It travels the same
-                // broker path that has just failed, so in the outage this exists for it fails too. What
-                // the operator actually sees is the sign-in still open, counting down, until they
-                // cancel it — recorded in docs/UNVERIFIED.md rather than papered over with a
-                // notification this cannot promise.
+                // broker path that has just failed, so in the outage this exists for it fails too.
+                //
+                // What the operator sees depends on when the outage began: a row that reached PROMPTED
+                // counts down and expires visibly, while one that never did stays PENDING with no
+                // countdown, because the prompt is the only thing that writes an expiry. Both are
+                // cleared by cancelling, which also needs the broker back. UNVERIFIED.md A5.
                 LOG.errorf("sign-in %s completed but could not be delivered; the credential is discarded"
                         + " and the row stays open until the operator cancels it", command.signInId());
                 emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
@@ -237,6 +235,26 @@ public class HarnessSignInWorker {
         return new HarnessSignInResult.Completed(signInId,
                 encryption.encryptString(body, HarnessSignInResult.sealedAad(signInId)), mode,
                 SignInAuthMode.identity(body));
+    }
+
+    /**
+     * What to do when the daemon says somebody else owns this sign-in's unit.
+     *
+     * <p>Two cases with opposite answers, which is why the runtime reports which one it is. A unit that
+     * is still RUNNING has an owner that will report it — and stopping it would take the code out from
+     * under an operator halfway through approving. A unit that has STOPPED is an orphan of a worker
+     * that died: nobody will ever report it, so leaving quietly would hold the operator's row open
+     * until they noticed. It is ended here instead, with a reason.
+     */
+    private void adopt(String signInId, SignInRuntime.AlreadyClaimed taken) {
+        if (taken.existingIsRunning()) {
+            LOG.infof("sign-in %s is already running on this daemon; leaving it to its owner", signInId);
+            return;
+        }
+        LOG.warnf("sign-in %s has a stopped unit nobody is reporting; ending it", signInId);
+        runtime.destroy(taken.existing());
+        emit(new HarnessSignInResult.Failed(signInId, HarnessSignInResult.Failed.UNIT_FAILED,
+                "an earlier attempt at this sign-in did not finish; start it again"));
     }
 
     /**

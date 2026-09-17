@@ -410,16 +410,22 @@ credential left in a stopped container is readable by anything that can reach th
 notices. A compensating failure IS then sent, and it travels the SAME broker path that has just failed,
 so in the outage this exists for it fails too.
 
-What the operator actually sees is the sign-in still open and counting down, and nothing after that. It
-does not resolve itself: they cancel it and start again. An earlier version of this design claimed the
-screen is told; it is not, reliably, and saying so is the point of this entry.
+What the operator sees depends on WHEN the outage began, and the two are not the same:
+
+- **After the prompt was stored** — the row is PROMPTED and carries an expiry, so the screen counts down
+  and then shows a code that has plainly run out.
+- **Before it** — the prompt is the only thing that ever writes {@code expires_at}, and the worker does
+  not check whether that send arrived either. The row stays PENDING with **no countdown at all**: the
+  screen says "starting the sign-in", indefinitely.
+
+Neither resolves itself. Cancelling is the way out, and cancelling publishes before it changes the row,
+so it too needs the broker back; until then the screen shows only the cancel's own error.
 
 **Evidence needed.** None — this is a deliberate trade, not a suspicion. Closing it means a durable
 terminal record the screen can read without the broker, which is the same transactional-outbox treatment
 A4 names and which M3.5 does not build.
 
-**Bounded by** the countdown: the row carries an expiry, so a sign-in nobody can finish is visibly stale
-rather than indefinitely pending. No credential is exposed in any of these paths.
+**No credential is exposed in any of these paths.** What is lost is the sign-in and the operator's time.
 
 ### A4. The comment the factory writes on a prepared ticket can be lost (M3.5 part C, 2026-09-16)
 

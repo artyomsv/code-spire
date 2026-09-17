@@ -298,14 +298,22 @@ public class HarnessCredentialPool {
                 """, id) == 1;
     }
 
-    /** What the settings surface shows. Never carries the key. */
+    /**
+     * What the settings surface shows. Never carries the key.
+     *
+     * @param authMode {@code API_KEY} or {@code SUBSCRIPTION}. On the view because the screen must be
+     *     able to say that a subscription cannot pay for a run yet: it is deliberately unreachable by
+     *     the selector, and a row rendered as plain "Available" told the operator the opposite.
+     */
     public record MemberView(UUID id, String label, String type, String baseUrl, boolean enabled,
-                             Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt) {
+                             Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt,
+                             String authMode) {
     }
 
     public List<MemberView> list() {
         String sql = """
-                SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at
+                SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at,
+                       auth_mode
                   FROM harness_credential ORDER BY label
                 """;
         List<MemberView> members = new ArrayList<>();
@@ -315,7 +323,7 @@ public class HarnessCredentialPool {
                 members.add(new MemberView(rs.getObject("id", UUID.class), rs.getString("label"),
                         rs.getString("type"), rs.getString("base_url"), rs.getBoolean("enabled"),
                         instant(rs, "rate_limited_until"), instant(rs, "rejected_at"),
-                        instant(rs, "last_used_at")));
+                        instant(rs, "last_used_at"), rs.getString("auth_mode")));
             }
             return members;
         } catch (SQLException e) {
@@ -350,7 +358,7 @@ public class HarnessCredentialPool {
             ps.setString(4, baseUrl);
             ps.setString(5, encryption.encryptString(apiKey, aad(id)));
             ps.executeUpdate();
-            return new MemberView(id, label, type, baseUrl, true, null, null, null);
+            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY");
         } catch (SQLException e) {
             if ("23505".equals(e.getSQLState())) {
                 throw new DuplicateLabelException(label, e);
