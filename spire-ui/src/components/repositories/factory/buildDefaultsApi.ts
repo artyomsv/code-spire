@@ -1,0 +1,40 @@
+import { apiFetch } from '../../../auth';
+import { workRefusal } from '../../work-items/workReasons';
+
+/** What a prepared task copies when nobody types it. `revision` 0 means this repository has none yet. */
+export interface BuildDefaults {
+  revision: number;
+  baseBranch: string | null;
+  harness: string | null;
+  model: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+export interface BuildOptions {
+  harnesses: string[];
+  /** Per harness, the token types it can report. A model that cannot price one of them is refused. */
+  reportedTypes: Record<string, string[]>;
+}
+/** `account` is the role whose account answered: a REVIEWER-read head is not proof the factory can push. */
+export interface BranchHead { branch: string; commit: string; account: string }
+
+/** Refusals arrive as `{reason}`, the same shape the work-item screens already translate. */
+async function read<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(path, init);
+  if (!response.ok) {
+    const body = await response.text();
+    let refusal: { reason?: string; detail?: string } = {};
+    try { refusal = JSON.parse(body) as typeof refusal; } catch { /* not a refusal the API shaped */ }
+    throw new Error(refusal.reason ? workRefusal(refusal.reason, refusal.detail ?? null) : `${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+const base = (repository: string) => `/api/repositories/${encodeURIComponent(repository)}/factory`;
+
+export const buildDefaults = (repository: string) => read<BuildDefaults>(`${base(repository)}/build`);
+export const buildOptions = (repository: string) => read<BuildOptions>(`${base(repository)}/build/options`);
+export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string }) =>
+  read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+export const repositoryBranchHead = (repository: string, branch: string) =>
+  read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);

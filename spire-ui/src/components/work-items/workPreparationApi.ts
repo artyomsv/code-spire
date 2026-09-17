@@ -2,8 +2,12 @@ import { apiFetch } from '../../auth';
 import { workRefusal } from './workReasons';
 
 export interface Artifact {
+  /** Where the text came from. A composed artifact keeps the ticket it was composed from. */
   location: { ref: { type: string; origin: string; projectId: string; issueId: string }; issueKey: string; link: string };
   sha256: string;
+  /** TRACKER: the live ticket body. STORED: bytes this deployment composed and kept. */
+  origin?: 'TRACKER' | 'STORED';
+  storedId?: string | null;
 }
 export interface Preparation {
   specification: Artifact; plan: Artifact; baseBranch: string; baseCommit: string; harness: string; model: string; registeredBy: string;
@@ -34,7 +38,7 @@ async function read<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json();
 }
 /** The harness names this deployment has an agent image for; anything else is refused at dispatch. */
-export interface PreparationOptions { harnesses: string[] }
+export interface PreparationOptions { harnesses: string[]; reportedTypes: Record<string, string[]> }
 export interface BranchHead { branch: string; commit: string }
 
 export const resolveArtifact = (id: string, key: string) => read<ArtifactReference>(`/api/work-items/${encodeURIComponent(id)}/preparation/reference?key=${encodeURIComponent(key)}`);
@@ -48,5 +52,8 @@ export const preparationEvidence = (id: string) => read<PreparationEvidence>(`/a
 export const preparationOptions = (id: string) => read<PreparationOptions>(`/api/work-items/${encodeURIComponent(id)}/preparation/options`);
 export const branchHead = (id: string, branch: string) =>
   read<BranchHead>(`/api/work-items/${encodeURIComponent(id)}/preparation/head?branch=${encodeURIComponent(branch)}`);
+/** Composes this item's task again from its ticket, superseding an open decision. */
+export const composePreparation = (id: string, expectedRevision: number) =>
+  read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation/compose?expectedRevision=${expectedRevision}`, { method: 'POST' });
 export const registerPreparation = (id: string, input: Omit<Preparation, 'registeredBy'> & { expectedRevision: number }) =>
   read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });

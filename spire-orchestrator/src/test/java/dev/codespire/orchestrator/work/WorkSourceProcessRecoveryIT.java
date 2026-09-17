@@ -97,6 +97,8 @@ class WorkSourceProcessRecoveryIT extends WorkFixture {
         for(String id:extraItems) {
             execute("DELETE FROM work_tracker_outbox WHERE work_item_id=?",id);
             execute("DELETE FROM work_item_gate WHERE work_item_id=?",id);execute("DELETE FROM work_item_outbox WHERE work_item_id=?",id);
+            execute("DELETE FROM work_item_preparation_attempt WHERE work_item_id=?",id);
+            execute("DELETE FROM work_item_artifact WHERE work_item_id=?",id);
             execute("DELETE FROM work_item_delivery WHERE work_item_id=?",id);execute("DELETE FROM work_item WHERE id=?",id);execute("DELETE FROM event_log WHERE stream_id=?",id);
         }
     }

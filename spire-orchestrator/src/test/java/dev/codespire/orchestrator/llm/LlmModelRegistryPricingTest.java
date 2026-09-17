@@ -32,7 +32,7 @@ class LlmModelRegistryPricingTest {
 
     private LlmModelView metered(String name, Map<String, Long> rates) {
         return registry.create(new LlmModelInput("openai", name, "TEST " + name, "METERED", rates,
-                null, null, null, Map.of(), true));
+                null, null, null, Map.of(), true, java.util.List.of()));
     }
 
     @Test
@@ -114,7 +114,7 @@ class LlmModelRegistryPricingTest {
     @Test
     void anUnmeteredModelChargesAnExplicitZero() {
         registry.create(new LlmModelInput("openai", "TEST-UNMETERED", "TEST self-hosted", "UNMETERED",
-                Map.of(), null, null, null, Map.of(), true));
+                Map.of(), null, null, null, Map.of(), true, java.util.List.of()));
 
         List<ChargeLine> lines = registry.priceCall("TEST-UNMETERED",
                 ModelUsage.of("TEST-UNMETERED", 1_000_000, 500_000));
@@ -133,7 +133,7 @@ class LlmModelRegistryPricingTest {
     @Test
     void anUnmeteredModelsUnreconciledCallIsStillAnAssertedZero() {
         registry.create(new LlmModelInput("openai", "TEST-UNMETERED-UNRECONCILED", "TEST self-hosted",
-                "UNMETERED", Map.of(), null, null, null, Map.of(), true));
+                "UNMETERED", Map.of(), null, null, null, Map.of(), true, java.util.List.of()));
 
         List<ChargeLine> lines = registry.priceCall("TEST-UNMETERED-UNRECONCILED",
                 new ModelUsage("TEST-UNMETERED-UNRECONCILED",
@@ -192,21 +192,21 @@ class LlmModelRegistryPricingTest {
     void aMeteredModelWithoutInputOrOutputRatesIsRejectedOnSave() {
         assertThrows(IllegalArgumentException.class, () -> registry.create(new LlmModelInput(
                 "openai", "TEST-NO-RATES", "TEST no rates", "METERED", Map.of("INPUT", 200_000L),
-                null, null, null, Map.of(), true)));
+                null, null, null, Map.of(), true, java.util.List.of())));
     }
 
     @Test
     void aMeteredModelWithAZeroRateIsRejectedOnSave() {
         assertThrows(IllegalArgumentException.class, () -> registry.create(new LlmModelInput(
                 "openai", "TEST-ZERO-RATE", "TEST zero", "METERED",
-                Map.of("INPUT", 0L, "OUTPUT", 400_000L), null, null, null, Map.of(), true)));
+                Map.of("INPUT", 0L, "OUTPUT", 400_000L), null, null, null, Map.of(), true, java.util.List.of())));
     }
 
     @Test
     void isPriceableIsTrueForAMeteredModelWithBothMandatoryRatesAndForAnUnmeteredOne() {
         metered("TEST-PRICEABLE", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L));
         registry.create(new LlmModelInput("openai", "TEST-PRICEABLE-FREE", "TEST free", "UNMETERED",
-                Map.of(), null, null, null, Map.of(), true));
+                Map.of(), null, null, null, Map.of(), true, java.util.List.of()));
 
         assertTrue(registry.isPriceable("TEST-PRICEABLE"));
         assertTrue(registry.isPriceable("TEST-PRICEABLE-FREE"));

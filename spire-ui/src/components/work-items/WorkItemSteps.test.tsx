@@ -80,6 +80,17 @@ it('links the pinned specification and plan', () => {
   expect(step('Plan').getByRole('link', { name: 'Plan #72' })).toHaveAttribute('href', 'https://TEST.example/72');
 });
 
+// A composed text is a snapshot this deployment keeps, NOT a second ticket somebody wrote. Rendering
+// it as "Specification #71" would send an operator to edit a ticket that no longer decides anything.
+it('says a composed specification was composed, and still links where it came from', () => {
+  const composed = (key: string) => ({ sha256: 'c'.repeat(64), origin: 'STORED' as const, storedId: 'TEST-stored-' + key,
+    location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
+  show(item({ preparation: { specification: composed('36'), plan: composed('36'), baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'system:build-defaults@1' } }));
+  expect(step('Specification').getByText(/Specification composed from/)).toBeInTheDocument();
+  expect(step('Specification').getByRole('link', { name: '#36' })).toHaveAttribute('href', 'https://TEST.example/36');
+  expect(step('Plan').getByText(/Plan composed from/)).toBeInTheDocument();
+});
+
 // Review finding: decisions and runs from an earlier attempt read as proof for the current one.
 it('keeps an earlier attempt out of the current proof', () => {
   const execution = { runId: 'TEST-old-run', build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-old', preparationBinding: 'a'.repeat(64) },

@@ -328,13 +328,28 @@ public class WorkItemTransitions {
     public Observation observe(WorkItemEvent item) {
         Observation observed=observe(item.sourceId(),item.issue());
         return new Observation(observed.source(),observed.policy(),observed.evidence(),
-                observed.evidence().failure()==null?artifacts.observe(observed.source(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
+                observed.evidence().failure()==null?artifacts.observe(observed.source(),item.workItemId(),item.preparation()):WorkArtifacts.Evidence.absent(),item.preparation());
     }
 
+    /**
+     * One more condition to test under the item lock, beside revision, status, attempts and gate.
+     *
+     * <p>The automatic path needs it: its coordinates come from a repository's saved build setup, read
+     * before a forge call it then waits on. Comparing that setup's revision anywhere but inside this
+     * lock is a comparison of two things that were never true at the same moment.
+     *
+     * @return the refusal reason, or null to continue
+     */
+    public interface Precondition { String refuse(Connection c) throws SQLException; }
+
     public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation) {
+        return prepare(id,expectedRevision,preparation,c->null);
+    }
+
+    public Outcome prepare(String id,long expectedRevision,WorkPreparation preparation,Precondition precondition) {
         WorkItemEvent item=require(id);
         Observation observed=observe(item.sourceId(),item.issue());
-        WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),preparation);
+        WorkArtifacts.Evidence prepared=artifacts.observe(observed.source(),id,preparation);
         if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),item);
         if(prepared.failure()!=null)return new Outcome("artifacts_unavailable".equals(prepared.failure())?503:409,prepared.failure(),prepared.detail(),item);
         runAssembly.validate(observed.source(),preparation,prepared);
@@ -349,6 +364,8 @@ public class WorkItemTransitions {
                         rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);
                     }
                 }
+                String refused=precondition.refuse(c);
+                if(refused!=null)return new Outcome(409,refused,current);
                 if(current.gate()!=null && "OPEN".equals(current.gate().state())) {
                     current=state(current,"awaiting_input","artifacts_replaced","GATE_SUPERSEDED",current.gate().resolve("SUPERSEDED",preparation.registeredBy(),null,null),current.progress().reserve(false));
                     store.appendDecision(c,history,current,"preparation-replaced:"+UUID.randomUUID());history=store.history(id);
@@ -357,6 +374,13 @@ public class WorkItemTransitions {
                 store.appendDecision(c,history,next,"preparation:"+UUID.randomUUID());history=store.history(id);
                 next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
                 store.appendDecision(c,history,next,"prepared-transition:"+UUID.randomUUID());
+                // In THIS transaction, so a registration that rolls back does not leave the screen
+                // claiming the item is healthy. Every registration clears it, not only the sweep's:
+                // preparation health answers "why has nothing been prepared", and something now is.
+                try(PreparedStatement ps=c.prepareStatement(
+                        "DELETE FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=?")) {
+                    ps.setString(1,id);ps.setLong(2,next.generation());ps.executeUpdate();
+                }
                 return new Outcome(200,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode preparation",failure);}

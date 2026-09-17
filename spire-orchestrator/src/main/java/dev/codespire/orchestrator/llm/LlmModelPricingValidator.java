@@ -38,23 +38,44 @@ final class LlmModelPricingValidator {
     }
 
     /** What a save should persist once validation has passed. */
-    record Validated(PricingMode mode, Map<TokenType, Long> rates) {
+    record Validated(PricingMode mode, Map<TokenType, ModelRate> rates) {
     }
 
     /** @throws IllegalArgumentException if the mode or rates are not a saveable combination */
     static Validated validate(LlmModelInput in) {
         PricingMode mode = parseMode(in.pricingMode());
         Map<String, Long> rawRates = in.rates() == null ? Map.of() : in.rates();
+        List<String> notBilled = in.notBilled() == null ? List.of() : in.notBilled();
         if (mode == PricingMode.UNMETERED) {
-            if (!rawRates.isEmpty()) {
+            if (!rawRates.isEmpty() || !notBilled.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "An UNMETERED model asserts a zero cost, so it must carry no rates");
+                        "An UNMETERED model asserts a zero cost for the whole model, so it must carry"
+                        + " no rates and no per-type assertions");
             }
             return new Validated(mode, Map.of());
         }
-        requireEveryMandatoryRate(rawRates);
         rawRates.forEach(LlmModelPricingValidator::requireRateInRange);
-        return new Validated(mode, parseRates(rawRates));
+        Map<TokenType, ModelRate> parsed = parseRates(rawRates);
+        for (String raw : notBilled) {
+            TokenType type = parseRateType(raw);
+            if (parsed.containsKey(type)) {
+                throw new IllegalArgumentException(type.name() + " has both a rate and a"
+                        + " not-billed assertion. Keep the one that is true of this vendor.");
+            }
+            parsed.put(type, ModelRate.notBilled());
+        }
+        // INPUT and OUTPUT must be SAID, one way or the other. A vendor that bills nothing for one of
+        // them is a real schedule — the first draft of this rule refused it and pointed at UNMETERED,
+        // which asserts zero for the WHOLE model and would have erased the other dimension's real
+        // charges. What must not happen is silence: an unsaid mandatory type prices a call as unknown.
+        for (TokenType required : REQUIRED_RATES) {
+            if (!parsed.containsKey(required)) {
+                throw new IllegalArgumentException("A METERED model needs a rate above zero for "
+                        + required.name() + ", or an explicit statement that this vendor does not bill it."
+                        + " An unentered rate is not a zero: a call reporting it cannot be priced.");
+            }
+        }
+        return new Validated(mode, parsed);
     }
 
     /**
@@ -64,7 +85,13 @@ final class LlmModelPricingValidator {
      */
     private static void requireRateInRange(String type, Long rate) {
         if (rate == null || rate <= 0) {
-            throw new IllegalArgumentException("Rate for " + type + " must be above zero");
+            // A zero is never a price. It is either an assertion that this vendor does not bill the type —
+            // which is stored as such, not as a number — or, for a model that costs nothing at all,
+            // UNMETERED for the whole model. Coercing it into a rate is what made an unpriced call read
+            // as free.
+            throw new IllegalArgumentException("Rate for " + type + " must be above zero. If this vendor"
+                    + " does not bill " + type + ", mark it as not billed instead of entering a zero; if"
+                    + " the model costs nothing to call at all, set its pricing mode to UNMETERED.");
         }
         if (rate > MAX_RATE_MILLICENTS_PER_MILLION) {
             throw new IllegalArgumentException("Rate for " + type + " is implausibly large ("
@@ -73,18 +100,6 @@ final class LlmModelPricingValidator {
                     + " ($" + MAX_RATE_MILLICENTS_PER_MILLION / 100_000L + " per million tokens);"
                     + " above that a call's cost can no longer be computed. Check the unit: rates are"
                     + " millicents per MILLION tokens, so $2.50 per million is 250000.");
-        }
-    }
-
-    private static void requireEveryMandatoryRate(Map<String, Long> rawRates) {
-        for (TokenType required : REQUIRED_RATES) {
-            Long rate = rawRates.get(required.name());
-            if (rate == null || rate <= 0) {
-                throw new IllegalArgumentException("A METERED model needs a rate above zero for "
-                        + required.name() + ". If this model is self-hosted and costs nothing to call,"
-                        + " set its pricing mode to UNMETERED instead of entering a zero — a zero rate"
-                        + " and an unentered rate must stay distinguishable.");
-            }
         }
     }
 
@@ -101,9 +116,9 @@ final class LlmModelPricingValidator {
         return mode;
     }
 
-    private static Map<TokenType, Long> parseRates(Map<String, Long> rates) {
-        Map<TokenType, Long> parsed = new EnumMap<>(TokenType.class);
-        rates.forEach((key, rate) -> parsed.put(parseRateType(key), rate));
+    private static Map<TokenType, ModelRate> parseRates(Map<String, Long> rates) {
+        Map<TokenType, ModelRate> parsed = new EnumMap<>(TokenType.class);
+        rates.forEach((key, rate) -> parsed.put(parseRateType(key), ModelRate.rated(rate)));
         return parsed;
     }
 

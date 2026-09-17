@@ -40,7 +40,7 @@ class LlmProviderRegistryPricingGuardTest {
     @Test
     void updatingAProviderOntoAnUncataloguedModelIsRefused() {
         models.create(new LlmModelInput("openai", "TEST-GUARD-UPDATE-SOURCE", "TEST-GUARD-UPDATE-SOURCE",
-                "UNMETERED", Map.of(), null, null, null, null, true));
+                "UNMETERED", Map.of(), null, null, null, null, true, java.util.List.of()));
         LlmProviderView created = registry.create(providerNaming("TEST-GUARD-UPDATE-SOURCE"));
 
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,

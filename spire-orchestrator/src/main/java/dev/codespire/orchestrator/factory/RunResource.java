@@ -105,6 +105,9 @@ public class RunResource {
     LlmModelPricer pricer;
 
     @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry models;
+
+    @Inject
     RunCredentials runCredentials;
 
     /**
@@ -138,7 +141,7 @@ public class RunResource {
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(req, config);
         ScmProvider account = machineAccount(repository.id());
         refusePinnedProvider(req.llmProviderId());
-        refuseAnUnpriceableModel(in.model());
+        refuseAnUnpriceableModel(in.model(), in.harness());
         refuseOverTheSpendCap();
         // LAST of the checks, because selecting is a WRITE: it stamps last_used_at and so consumes a
         // rotation slot. Placed above these two it did that for every request they then refused, and
@@ -221,13 +224,25 @@ public class RunResource {
      * has happened yet: there is no diff already fetched and no context already assembled, so a
      * refusal here costs nothing and leaves no row to explain.
      */
-    private void refuseAnUnpriceableModel(String model) {
-        if (pricer.isPriceable(model)) {
+    private void refuseAnUnpriceableModel(String model, String harness) {
+        try {
+            if (models.isDisabled(model)) {
+                throw conflict("Run not dispatched: model '" + model + "' is switched off in Settings -> LLM ->"
+                        + " Models. Enable it, or dispatch with a model this deployment offers.");
+            }
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            throw conflict("Run not dispatched: the model catalogue could not be read, so whether '" + model
+                    + "' may run is unknown.");
+        }
+        var unpriced = pricer.unpricedTypes(model, harness);
+        if (unpriced.isEmpty()) {
             return;
         }
-        throw conflict("Run not dispatched: model '" + model + "' has no usable pricing. Set input"
-                + " and output rates in Settings -> LLM -> Models, or mark it UNMETERED if it is"
-                + " self-hosted. A run that cannot be priced cannot be counted against the spend cap.");
+        throw conflict("Run not dispatched: model '" + model + "' has no price for "
+                + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
+                + ", and the '" + harness + "' harness reports those. Enter each rate in"
+                + " Settings -> LLM -> Models, or mark the type as one this vendor does not bill."
+                + " A run that cannot be priced cannot be counted against the spend cap.");
     }
 
     /**

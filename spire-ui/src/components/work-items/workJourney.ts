@@ -11,7 +11,7 @@ export const JOURNEY = ['intake', 'spec', 'plan', 'build', 'verify', 'deliver', 
 export type JourneyPhase = typeof JOURNEY[number];
 
 /** What a list row carries: the summary, plus the parts of the detail view the list endpoint also returns. */
-export type WorkItemRow = WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate'>>;
+export type WorkItemRow = WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate' | 'preparationHealth'>>;
 
 /** How the current phase stands. `ignored` is an item its policy does not run at this phase; `done` is past `land`. */
 export type Standing = 'waiting' | 'blocked' | 'running' | 'stopped' | 'failed' | 'ignored' | 'done';

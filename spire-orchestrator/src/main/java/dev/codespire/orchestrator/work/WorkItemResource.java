@@ -60,7 +60,13 @@ public class WorkItemResource {
                         * Resolved at read time from the source's allowed people, so a renamed handle
                         * is right on the next read and no observed name is ever persisted here.
                         */
-                       List<WorkSourceRegistry.Person> people) {}
+                       List<WorkSourceRegistry.Person> people,
+                       /**
+                        * Why the system has not composed this item's task yet, when it has tried. It sits
+                        * beside the workflow reason rather than inside it: an automatic failure written
+                        * into the item's own reason would stop the sweep from ever picking it up again.
+                        */
+                       WorkPreparationSweep.Health preparationHealth) {}
     /**
      * @param counts items per workflow status across every page, so a filter can say how many rows it
      *     holds before it is chosen, and a band can say how many items need a person
@@ -76,7 +82,24 @@ public class WorkItemResource {
         Set<String> referenced=applied.stream().map(WorkPolicy.AppliedLabel::actorId).collect(java.util.stream.Collectors.toSet());
         return allowed.stream().filter(person->referenced.contains(person.providerUserId())).toList();
     }
-    public record Tracker(String title, String body, String trackerStatus) {}
+    /**
+     * @param composedSha256 the digest a specification composed from THIS ticket text would carry. The
+     *     screen compares it with the pinned one to say "the ticket changed after it was prepared"
+     *     without re-hashing anything in a browser, and without changing the bytes that were approved.
+     */
+    /**
+     * @param composedSha256 what a specification composed from THIS ticket text would hash to, or null
+     *     when the ticket could not be one at all
+     * @param composedRefusal why it could not, when {@code composedSha256} is null. Without this an
+     *     emptied or oversized ticket looked exactly like a ticket that still matches what was
+     *     prepared, and the drift notice quietly disappeared at the moment it was most needed.
+     */
+    public record Tracker(String title, String body, String trackerStatus, String composedSha256,
+                          String composedRefusal) {
+        public Tracker(String title, String body, String trackerStatus, String composedSha256) {
+            this(title, body, trackerStatus, composedSha256, null);
+        }
+    }
 
     @GET
     public Page list(@QueryParam("offset") @DefaultValue("0") int offset, @QueryParam("limit") @DefaultValue("50") int limit,
@@ -128,8 +151,11 @@ public class WorkItemResource {
                 }).toList(),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
-                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()));
+                item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
+                sweep.health(id,item.generation()).orElse(null));
     }
+
+    @Inject WorkPreparationSweep sweep;
 
     private List<Build> builds(String id) {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("SELECT attempt_id,state,run_id,reason,generation FROM work_run_effect WHERE work_item_id=? ORDER BY created_at,attempt_id")) {
@@ -137,6 +163,16 @@ public class WorkItemResource {
                 List<Build> rows=new ArrayList<>();while(rs.next())rows.add(new Build(rs.getObject(1,UUID.class),rs.getString(2),rs.getString(3),rs.getString(4),rs.getLong(5)));return List.copyOf(rows);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+    }
+
+    @Inject WorkPreparationComposer composer;
+
+    /** The digest, or the rule that stops this ticket being a specification — never neither. */
+    private record Composed(String sha256, String refusal) {}
+
+    private Composed composedDigest(dev.codespire.worksource.WorkTicket ticket) {
+        try { return new Composed(dev.codespire.contract.work.WorkPreparation.digest(composer.specification(ticket)), null); }
+        catch (WorkPreparationComposer.NotComposable notComposable) { return new Composed(null, notComposable.reason()); }
     }
 
     @GET @Path("/{id}/tracker")
@@ -148,8 +184,11 @@ public class WorkItemResource {
         Thread.ofVirtual().start(task);
         try {
             WorkSource.Fetch result = task.get(20, TimeUnit.SECONDS);
-            if (result instanceof WorkSource.Fetch.Found found)
-                return new Tracker(found.ticket().title(), found.ticket().body(), found.ticket().trackerStatus());
+            if (result instanceof WorkSource.Fetch.Found found) {
+                Composed composed = composedDigest(found.ticket());
+                return new Tracker(found.ticket().title(), found.ticket().body(), found.ticket().trackerStatus(),
+                        composed.sha256(), composed.refusal());
+            }
         } catch (Exception failure) {
             task.cancel(true);
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();

@@ -399,6 +399,62 @@ like a repository with nothing to retrieve.
 
 **Tracked in** `techdebt/global/3-3-code-context-resolves-nothing-in-the-e2e-stack.md`.
 
+### A5. A finished sign-in can be lost silently in a broker outage (M3.5 part F, 2026-09-17)
+
+**The claim.** When an operator approves a subscription sign-in, either it becomes a credential or the
+screen says why it did not.
+
+**Why nothing catches it.** The worker publishes the completed sign-in and waits for the broker. If that
+wait fails, the credential is discarded on purpose — a lost sign-in costs another sign-in, while a
+credential left in a stopped container is readable by anything that can reach the daemon until somebody
+notices. A compensating failure IS then sent, and it travels the SAME broker path that has just failed,
+so in the outage this exists for it fails too.
+
+What the operator sees depends on WHEN the outage began, and the two are not the same:
+
+- **After the prompt was stored** — the row is PROMPTED and carries an expiry, so the screen counts down
+  and then shows a code that has plainly run out.
+- **Before it** — the prompt is the only thing that ever writes {@code expires_at}, and the worker does
+  not check whether that send arrived either. The row stays PENDING with **no countdown at all**: the
+  screen says "starting the sign-in", indefinitely.
+
+Neither resolves itself. Cancelling is the way out, and cancelling publishes before it changes the row,
+so it too needs the broker back; until then the screen shows only the cancel's own error.
+
+**Evidence needed.** None — this is a deliberate trade, not a suspicion. Closing it means a durable
+terminal record the screen can read without the broker, which is the same transactional-outbox treatment
+A4 names and which M3.5 does not build.
+
+**No credential is exposed in any of these paths.** What is lost is the sign-in and the operator's time.
+
+### A4. The comment the factory writes on a prepared ticket can be lost (M3.5 part C, 2026-09-16)
+
+**The claim.** When the factory prepares a task from a ticket, it comments on that ticket saying what
+it prepared, so a person reading the ticket alone learns the task exists.
+
+**Why nothing catches it.** The comment is posted AFTER the transaction that registers the
+preparation, and is best-effort by construction. A process death, a tracker outage or a source without
+the COMMENT capability leaves the item correctly prepared with no comment on the ticket. Nothing
+retries the CREATION of that intent, and nothing records that it was skipped — a ticket with no comment
+and a ticket the factory never reached read the same on the tracker. Once an intent does exist it is
+handled durably: the outbox records refused and uncertain states and recovers uncertain writes. The
+missing durability is the creation, not the delivery.
+
+Two things bound the damage. The comment is a courtesy: the factory's own screens hold the authority,
+and the preparation, the gate and the stored texts are all durable. And the comment's text and the
+revision it is enqueued against come from ONE history read, so a replacement landing between them cannot
+put one preparation's words under another's authority.
+
+**A posted comment can still describe a composition that is no longer current**, and an earlier version
+of this entry said otherwise. The outbox permanently refuses an enqueued comment after any item-revision
+or phase change, so a quick approval suppresses a valid notice; and a preparation replaced after the
+comment was written leaves the older text already posted. The screens are the authority; the ticket
+comment is a note about a moment.
+
+**Evidence needed.** None — this is a deliberate omission, not a suspicion. Closing it means giving
+the tracker write the transactional-outbox treatment the other uncertain tracker writes already have
+(§"Work-source GitHub label audit and tracker writes"), which M3.5 does not do.
+
 ---
 
 ## B. Works in tests, never proven on a live deployment

@@ -1,7 +1,7 @@
 import WorkPolicies from './components/work-items/WorkPolicies';
 import { useEffect, useState, type ReactElement } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
-import { BarChart3, Bot, Brain, ClipboardCheck, FileText, GitPullRequest, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
+import { BarChart3, Bot, Brain, ClipboardCheck, FileText, GitPullRequest, KeyRound, ListTodo, SlidersHorizontal, UserRound, UsersRound } from 'lucide-react';
 import Tooltip from './components/Tooltip';
 import AttentionBell from './components/AttentionBell';
 import SessionMenu from './components/SessionMenu';
@@ -12,6 +12,7 @@ import ReviewModeToggle from './components/ReviewModeToggle';
 import SettingsGeneral from './components/SettingsGeneral';
 import SettingsProviders from './components/SettingsProviders';
 import SettingsLlmProviders from './components/SettingsLlmProviders';
+import SettingsHarnessCredentials from './components/SettingsHarnessCredentials';
 import SettingsContextProviders from './components/SettingsContextProviders';
 import SettingsWebhookRepos from './components/SettingsWebhookRepos';
 import RepositoryRegistryPage from './components/repositories/RepositoryRegistryPage';
@@ -64,6 +65,7 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ['/settings/memory', 'Memory'],
   ['/settings/general', 'General'],
   ['/settings/llm', 'LLM'],
+  ['/settings/harness-credentials', 'Harness credentials'],
   ['/settings/context', 'Context'],
   ['/settings/repositories', 'Repositories'],
   ['/settings/webhooks', 'Webhooks'],
@@ -84,6 +86,7 @@ export default function App() {
   const onGeneral = location.pathname.startsWith('/settings/general');
   const onAccounts = location.pathname.startsWith('/settings/accounts');
   const onLlm = location.pathname.startsWith('/settings/llm');
+  const onHarnessCredentials = location.pathname.startsWith('/settings/harness-credentials');
   const onContext = location.pathname.startsWith('/settings/context');
   const onRepositories = location.pathname.startsWith('/settings/repositories');
   const onDlq = location.pathname.startsWith('/settings/dlq');
@@ -309,6 +312,10 @@ export default function App() {
             </svg>
             LLM
           </a>
+          <a className={onHarnessCredentials ? 'active' : ''} href="#/settings/harness-credentials">
+            <KeyRound className="ic" size={16} />
+            Harness keys
+          </a>
           <a className={onPrompts ? 'active' : ''} href="#/settings/prompts">
             <FileText className="ic" />
             Prompts
@@ -421,6 +428,7 @@ export default function App() {
           <Route path="/settings/operators" element={<RedirectKeepingQuery to="/settings/accounts/people" />} />
           <Route path="/settings/webhooks" element={configure(<SettingsWebhookRepos />)} />
           <Route path="/settings/llm" element={configure(<SettingsLlmProviders />)} />
+          <Route path="/settings/harness-credentials" element={configure(<SettingsHarnessCredentials />)} />
           <Route path="/settings/work-sources" element={<RedirectKeepingQuery to="/settings/repositories" />} />
           <Route path="/settings/context" element={configure(<SettingsContextProviders />)} />
           <Route path="/settings/prompts" element={configure(<PromptsSettings />)} />

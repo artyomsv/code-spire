@@ -169,6 +169,62 @@ public class HarnessCredentialResource {
         return Response.noContent().build();
     }
 
+    @Inject HarnessSignIns signIns;
+
+    @Inject io.quarkus.security.identity.SecurityIdentity identity;
+
+    /** What the operator types before pressing start. No secret: there is nothing for them to paste. */
+    public record SignInRequest(String label, String harness) {}
+
+    /**
+     * Starts a subscription sign-in (M3.5 part F).
+     *
+     * <p>Answers the sign-in to watch, or the rule that stopped it. A refusal is a reason a screen maps
+     * to a sentence, never a vendor message: {@code harness_unconfigured} when this deployment has no
+     * image for that harness, {@code sign_in_already_running} when one is in flight, and
+     * {@code harness_credential_label_taken} when the name is in use.
+     */
+    @POST @Path("/sign-in") @Consumes(MediaType.APPLICATION_JSON)
+    public Response startSignIn(SignInRequest request) {
+        if (request == null || blank(request.label()) || blank(request.harness())) {
+            throw badRequest("a label and a harness are required");
+        }
+        String actor = dev.codespire.orchestrator.security.OidcSubjects.of(identity);
+        if (actor.isBlank()) throw new jakarta.ws.rs.ForbiddenException("A verified operator identity is required");
+        HarnessSignIns.Started started = signIns.start(request.label().trim(), request.harness().trim(), actor);
+        if (started.refusal() != null) {
+            return Response.status(Response.Status.CONFLICT)
+                    .entity(java.util.Map.of("reason", started.refusal())).build();
+        }
+        // No log line carries the code. It is short-lived and single-use, but a log is neither.
+        LOG.infof("started a %s sign-in", request.harness());
+        return Response.ok(started.view()).build();
+    }
+
+    /** What the operator must do now, polled by the screen while they walk to their phone. */
+    @GET @Path("/sign-in/{id}")
+    public HarnessSignIns.View signIn(@PathParam("id") String id) {
+        return signIns.get(uuid(id)).orElseThrow(() -> new NotFoundException("no sign-in: " + id));
+    }
+
+    /** The one in flight for a harness, so a reopened screen finds it again rather than starting a second. */
+    @GET @Path("/sign-in")
+    public Response signInProgress(@jakarta.ws.rs.QueryParam("harness") String harness) {
+        if (blank(harness)) throw badRequest("a harness is required");
+        return signIns.inProgress(harness.trim())
+                .map(view -> Response.ok(view).build())
+                .orElseGet(() -> Response.noContent().build());
+    }
+
+    /** The operator gave up. Stops the unit rather than leaving it waiting out its ceiling. */
+    @DELETE @Path("/sign-in/{id}")
+    public Response cancelSignIn(@PathParam("id") String id) {
+        if (!signIns.cancel(uuid(id), "the operator cancelled it")) {
+            throw new NotFoundException("no sign-in in progress: " + id);
+        }
+        return Response.noContent().build();
+    }
+
     private static boolean blank(String value) {
         return value == null || value.isBlank();
     }

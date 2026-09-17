@@ -77,7 +77,7 @@ final class DispatchRequestParser {
                     + " (spire.factory.agent-image.<harness>)");
         }
         String model = required(req.model(), "model");
-        if (!MODEL.matcher(model).matches()) {
+        if (!isModelName(model)) {
             throw badRequest("model is not a valid model name");
         }
         String baseBranch = req.baseBranch() == null || req.baseBranch().isBlank()
@@ -131,16 +131,34 @@ final class DispatchRequestParser {
     }
 
     private static String refName(String value, String field) {
-        if (value.length() > MAX_REF_CHARS || value.startsWith("/") || value.endsWith("/")
-                || value.contains(REF_DOTDOT) || value.endsWith(REF_LOCK_SUFFIX)) {
+        if (!isRefName(value)) {
             throw badRequest(field + " is not a valid branch name");
+        }
+        return value;
+    }
+
+    /**
+     * The branch rule itself, as a predicate, so the setup screen can refuse at save what this parser
+     * refuses at dispatch. Two copies of it would let a repository store a branch that every one of its
+     * builds then refuses — the refusal arriving after an approval, which is the shape this slice exists
+     * to remove. Package-private: the same package owns both callers.
+     */
+    static boolean isRefName(String value) {
+        if (value == null || value.isBlank() || value.length() > MAX_REF_CHARS || value.startsWith("/")
+                || value.endsWith("/") || value.contains(REF_DOTDOT) || value.endsWith(REF_LOCK_SUFFIX)) {
+            return false;
         }
         for (String part : value.split("/", -1)) {
             if (part.isEmpty() || part.startsWith(".") || part.startsWith("-") || !REF_SEGMENT.matcher(part).matches()) {
-                throw badRequest(field + " is not a valid branch name");
+                return false;
             }
         }
-        return value;
+        return true;
+    }
+
+    /** The model-name rule, shared for the same reason as {@link #isRefName}. */
+    static boolean isModelName(String value) {
+        return value != null && MODEL.matcher(value).matches();
     }
 
     private static String required(String value, String field) {

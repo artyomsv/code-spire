@@ -46,7 +46,7 @@ describe('SettingsLlmProviders — model form', () => {
     // Input rate left blank on purpose.
     submitModel(dialog);
 
-    expect(await screen.findByText(/rate is required/i)).toBeInTheDocument();
+    expect(await screen.findByText(/needs a rate, or the mark saying this vendor does not bill it/i)).toBeInTheDocument();
     expect(createLlmModel).not.toHaveBeenCalled();
   });
 
@@ -176,6 +176,7 @@ describe('SettingsLlmProviders — model form', () => {
         label: 'TEST self-hosted',
         pricingMode: 'UNMETERED',
         rates: {},
+        notBilled: [],
         outputTokenParam: 'MAX_TOKENS',
         supportsTemperature: true,
         reasoningEffort: null,

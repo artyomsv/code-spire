@@ -22,5 +22,7 @@ export const profile: Profile = { id: 'TEST-profile', name: 'TEST-assisted', ver
   modes: { ...off, INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto' },
   limits: { gateTtlSeconds: 3600, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] } };
 export const policy = (overrides: Partial<Policy> = {}): Policy => ({ revision: 7, ceiling: profile, mappings: { 'TEST-work': profile }, ...overrides });
+export const buildSetup = (overrides: Partial<import('./buildDefaultsApi').BuildDefaults> = {}): import('./buildDefaultsApi').BuildDefaults => ({
+  revision: 0, baseBranch: null, harness: null, model: null, updatedBy: null, updatedAt: null, ...overrides });
 export const issueHook: WebhookRepoView = { id: 'TEST-hook', repositoryId: repository.id, eventKind: 'ISSUE', sourceId: 'TEST-source', forgeOrigin: repository.forgeOrigin,
   providerType: 'github', scope: 'repo', target: 'TEST-owner/TEST-repo', webhookKey: 'TEST-key', hasSecret: true, enabled: true, createdAt: '2026-09-15T00:00:00Z' };

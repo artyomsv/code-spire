@@ -1,3 +1,5 @@
+import { TOKEN_TYPE_LABEL } from '../../llmPricing';
+
 /**
  * One place for the words the factory puts on screen for a machine reason.
  *
@@ -6,9 +8,26 @@
  * reason covers five plan rules, so "single_step_plan_required" alone cannot say what to change.
  */
 const REASONS = new Map(Object.entries({
+  ticket_body_empty: 'This ticket has no description, so there is nothing to build from. Write what the task must achieve, then prepare it again.',
+  ticket_body_too_large: 'This ticket is too long to use as a specification. Shorten it, or link the detail from a shorter description.',
+  build_defaults_missing: 'This repository has no build setup yet, so the factory does not know which branch, harness or model to use. Set it on the repository Factory tab, step 5.',
+  preparation_failed: 'The factory could not prepare this task. The log names what failed; it will try again shortly.',
+  already_prepared: 'This task is already prepared.',
+  work_item_unknown: 'That work item no longer exists.',
   specification_required: 'A specification is required before work can continue.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',
+  base_branch_blank: 'A base branch is required.',
+  base_branch_invalid: 'That is not a valid branch name. A build would refuse it, so it cannot be saved.',
+  model_name_invalid: 'That model name has characters a run cannot pass to the agent.',
+  catalogue_unavailable: 'The model catalogue could not be read, so whether that model may run is unknown. The build was not started.',
+  model_disabled: 'That model is switched off in the catalogue, so a run cannot call it.',
+  model_pricing_unavailable: 'That model has no price for input and output tokens, so a run with it would be refused.',
+  harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',
+  model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
+  build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
+  repository_unknown: 'That repository is not registered.',
+  operator_identity_required: 'Your sign-in did not carry a verified identity, so this change was not saved.',
   branch_head_unconfirmed: 'The forge did not confirm this branch. Check the branch name, and that the repository account can read it.',
   artifacts_registered: 'The prepared task references were registered.',
   specification_supplied: 'The registered specification was fetched and validated.',
@@ -76,7 +95,25 @@ const REASONS = new Map(Object.entries({
   spec_approval_unavailable: 'Specification needs approval, but this approval capability is not available yet.',
 }));
 
-export function workReason(reason: string) { return REASONS.get(reason) ?? reason; }
+/**
+ * A reason may carry its own payload after a colon: "model_pricing_incomplete:CACHED_INPUT,REASONING"
+ * names the token types nobody priced. The types ride with the reason because the screen that shows it
+ * has no second call to make, and "pricing" alone sent operators to re-enter rates they already had.
+ */
+function pricingSentence(types: string): string {
+  const named = types.split(',').filter(Boolean)
+    .map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL] ?? type).join(', ');
+  return named
+    ? `The build model has no price for ${named}, and this harness reports those. Enter each rate in`
+      + ' Settings → LLM, or mark the type as one this vendor does not bill.'
+    : 'The build model cannot price what this harness reports.';
+}
+
+export function workReason(reason: string) {
+  const [head, payload] = reason.split(/:(.*)/s);
+  if (head === 'model_pricing_incomplete') return pricingSentence(payload ?? '');
+  return REASONS.get(reason) ?? reason;
+}
 
 /** The rule that refused a registration. The backend sends these beside the coarse reason. */
 const DETAILS = new Map(Object.entries({
@@ -91,5 +128,5 @@ const DETAILS = new Map(Object.entries({
 
 /** What to tell the operator about a refusal: the rule when the backend named one, else the reason. */
 export function workRefusal(reason: string, detail: string | null): string {
-  return (detail ? DETAILS.get(detail) : undefined) ?? REASONS.get(reason) ?? reason;
+  return (detail ? DETAILS.get(detail) : undefined) ?? workReason(reason);
 }

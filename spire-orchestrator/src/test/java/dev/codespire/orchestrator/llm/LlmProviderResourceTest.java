@@ -68,7 +68,7 @@ class LlmProviderResourceTest {
     private void ensureCatalogued(String type, String name) {
         if (models.list().stream().noneMatch(m -> m.name().equals(name))) {
             models.create(new LlmModelInput(type, name, name, "UNMETERED", Map.of(),
-                    null, null, null, null, true));
+                    null, null, null, null, true, java.util.List.of()));
         }
     }
 

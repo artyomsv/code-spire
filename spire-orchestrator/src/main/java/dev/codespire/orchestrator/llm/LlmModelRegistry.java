@@ -76,7 +76,7 @@ public class LlmModelRegistry {
     public LlmModelView create(LlmModelInput in) {
         LlmModelPricingValidator.Validated validated = LlmModelPricingValidator.validate(in);
         PricingMode mode = validated.mode();
-        Map<TokenType, Long> rates = validated.rates();
+        Map<TokenType, ModelRate> rates = validated.rates();
         UUID id = UUID.randomUUID();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
@@ -106,7 +106,7 @@ public class LlmModelRegistry {
     public Optional<LlmModelView> update(UUID id, LlmModelInput in) {
         LlmModelPricingValidator.Validated validated = LlmModelPricingValidator.validate(in);
         PricingMode mode = validated.mode();
-        Map<TokenType, Long> rates = validated.rates();
+        Map<TokenType, ModelRate> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
             String existingName = nameOf(c, id);
             if (existingName == null) {
@@ -166,6 +166,37 @@ public class LlmModelRegistry {
     /** @see LlmModelPricer#priceCall(String, ModelUsage) */
     public List<ChargeLine> priceCall(String model, ModelUsage usage) {
         return pricer.priceCall(model, usage);
+    }
+
+    /**
+     * Whether an operator has switched this model off. Deliberately NOT part of pricing: a finished run
+     * must still be CHARGEABLE after its model is switched off, so {@code priceCall} keeps ignoring this
+     * and only the guards that decide whether a run may START consult it. (The charge uses the rates the
+     * catalogue holds when the charge is computed, not a quote frozen at dispatch.)
+     */
+    public boolean isDisabled(String model) {
+        if (model == null || model.isBlank()) return false;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT enabled FROM llm_model WHERE name = ?")) {
+            ps.setString(1, model);
+            try (ResultSet rs = ps.executeQuery()) {
+                // A model the catalogue does not have is NOT "disabled": it has no rates either, and the
+                // pricing guard already refuses it with the types it cannot price. Answering true here
+                // would replace that precise refusal with a switched-off message for a typo.
+                return rs.next() && !rs.getBoolean("enabled");
+            }
+        } catch (SQLException failure) {
+            // NOT false. Answering "not switched off" on a failed read is failing open: pricing ignores
+            // the enabled column on purpose, so a fully priced model an operator had switched off would
+            // start a run on any database hiccup. The caller refuses with a reason that says what happened.
+            LOG.warnf(failure, "Could not read whether model %s is enabled", model);
+            throw new CatalogueUnavailable();
+        }
+    }
+
+    /** The catalogue could not be read, so whether this model may run is unknown — never assumed. */
+    public static final class CatalogueUnavailable extends RuntimeException {
+        CatalogueUnavailable() { super("catalogue_unavailable"); }
     }
 
     /** @see LlmModelPricer#isPriceable(String) */
@@ -244,7 +275,10 @@ public class LlmModelRegistry {
     private LlmModelView toView(Connection c, ResultSet rs) throws SQLException {
         UUID id = rs.getObject("id", UUID.class);
         Map<String, Long> rates = new LinkedHashMap<>();
-        rateRepository.ratesFor(c, id).forEach((type, rate) -> rates.put(type.name(), rate));
+        List<String> notBilled = new java.util.ArrayList<>();
+        rateRepository.ratesFor(c, id).forEach((type, rate) -> {
+            if (rate.billed()) rates.put(type.name(), rate.millicentsPerMillion()); else notBilled.add(type.name());
+        });
         return new LlmModelView(
                 id.toString(),
                 rs.getString("type"), rs.getString("name"), rs.getString("label"),
@@ -253,7 +287,7 @@ public class LlmModelRegistry {
                 rs.getBoolean("supports_temperature"),
                 rs.getString("reasoning_effort"),
                 readExtra(rs.getString("extra_params")),
-                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant());
+                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled));
     }
 
     /** Normalize an operator-supplied token-param name to a valid enum name (default MAX_TOKENS). */

@@ -75,6 +75,9 @@ public class FixRunDispatcher {
     LlmModelPricer pricer;
 
     @Inject
+    dev.codespire.orchestrator.llm.LlmModelRegistry models;
+
+    @Inject
     SpendGate spendGate;
 
     @Inject
@@ -285,13 +288,26 @@ public class FixRunDispatcher {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");
         }
-        if (!pricer.isPriceable(model)) {
+        try {
+            if (models.isDisabled(model)) {
+                return new Refused("the model '" + model + "' is switched off in the catalogue, so a fix run"
+                        + " cannot call it");
+            }
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            return new Refused("the model catalogue could not be read, so whether '" + model + "' may run is"
+                    + " unknown; the fix was not dispatched");
+        }
+        var unpriced = pricer.unpricedTypes(model, harness);
+        if (!unpriced.isEmpty()) {
             // Pricing is post-hoc -- the charge lands when the run is over -- so this is the last
             // point at which an unpriceable run can be REFUSED rather than merely noticed. Every such
             // charge records as UNKNOWN, which SUM() skips, so the spend cap would be reading a total
-            // that omits precisely the runs it cannot price.
-            return new Refused("the model '" + model + "' has no usable pricing, so a fix "
-                    + "run could not be counted against the spend cap");
+            // that omits precisely the runs it cannot price. The types are named because "no usable
+            // pricing" sent operators to re-enter rates they had already entered.
+            return new Refused("the model '" + model + "' has no price for "
+                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
+                    + ", which the '" + harness + "' harness reports, so a fix run could not be counted"
+                    + " against the spend cap");
         }
         return null;
     }

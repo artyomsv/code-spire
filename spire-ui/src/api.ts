@@ -20,7 +20,7 @@ export interface WorkItemSummary {
 
 export interface WorkItemPage {
   /** The list endpoint returns each row's detail view, so a row can draw its journey and next action. */
-  items: (WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate'>>)[];
+  items: (WorkItemSummary & Partial<Pick<WorkItemDetail, 'effectiveModes' | 'progress' | 'gate' | 'preparationHealth'>>)[];
   total: number;
   offset: number;
   limit: number;
@@ -43,6 +43,11 @@ export interface WorkItemDetail extends WorkItemSummary {
   appliedLabels: { label: string; actorId: string; origin: string; eventId: string; profileId: string; profileVersion: number }[];
   /** The source's allowed people, so a label's stored id can be shown as the handle the tracker knows. */
   people?: { providerUserId: string; handle: string | null; displayName: string | null }[];
+  /**
+   * Why the factory has not composed this item's task yet, when it has tried. Separate from the
+   * workflow reason: an automatic failure written into that would stop the sweep retrying for ever.
+   */
+  preparationHealth?: { reason: string; attempts: number; lastAt: string; retryAfter: string } | null;
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
   events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];
@@ -60,6 +65,16 @@ export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, no
 
 /** Fetched for the current detail request; these fields are never workflow projection columns. */
 export interface WorkItemTracker {
+  /**
+   * The digest a specification composed from THIS ticket text would carry, so a screen can say the
+   * ticket changed after it was prepared. Null when the ticket could not be a specification at all.
+   */
+  composedSha256?: string | null;
+  /**
+   * Why it could not, when there is no digest. An emptied or oversized ticket has drifted further from
+   * what was prepared than an edited one, and without this it read as no drift at all.
+   */
+  composedRefusal?: string | null;
   title: string;
   body: string;
   trackerStatus: string;
@@ -934,6 +949,8 @@ export interface LlmModelView {
   label: string;
   pricingMode: Exclude<PricingMode, 'UNKNOWN'>; // UNKNOWN is a runtime outcome, never a catalog entry
   rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>; // millicents per 1M tokens; empty under UNMETERED
+  /** Types the operator asserts this vendor does not charge for. A type in neither list is UNPRICED. */
+  notBilled: Exclude<TokenType, 'TOTAL'>[];
   outputTokenParam: OutputTokenParam; // max_tokens (chat) vs max_completion_tokens (reasoning)
   supportsTemperature: boolean; // false = omit temperature (reasoning models)
   reasoningEffort: string | null; // low | medium | high, or null
@@ -948,6 +965,7 @@ export interface LlmModelInput {
   label: string;
   pricingMode: Exclude<PricingMode, 'UNKNOWN'>;
   rates: Partial<Record<Exclude<TokenType, 'TOTAL'>, number>>;
+  notBilled?: Exclude<TokenType, 'TOTAL'>[];
   outputTokenParam?: OutputTokenParam;
   supportsTemperature?: boolean;
   reasoningEffort?: string | null;
@@ -1662,4 +1680,106 @@ export async function rescanMemory(): Promise<number> {
   const res = await apiFetch('/api/memory/preferences/rescan', { method: 'POST' });
   if (!res.ok) throw new Error(`Rescan failed: ${res.status}`);
   return (await res.json()).proposed as number;
+}
+
+// ---- Harness credential pool (the keys a factory run calls the model with, FR-F12) ----
+
+/** A pool member as the API returns it. There is no field for a key: a read can never carry one. */
+export interface HarnessCredentialView {
+  id: string;
+  label: string;
+  type: string;
+  baseUrl: string;
+  enabled: boolean;
+  /** When a rate limit lifts; null when none is in force. */
+  rateLimitedUntil: string | null;
+  /** When the vendor refused the key. Only an operator clears this. */
+  rejectedAt: string | null;
+  lastUsedAt: string | null;
+  /**
+   * How this member pays. A SUBSCRIPTION is deliberately unreachable by any run until selection,
+   * injection and zero-cost charging exist, so the screen must not render it as ready to use.
+   */
+  authMode?: 'API_KEY' | 'SUBSCRIPTION';
+}
+
+export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }
+
+export async function fetchHarnessCredentials(): Promise<HarnessCredentialView[]> {
+  const res = await apiFetch('/api/harness-credentials');
+  if (!res.ok) return throwResponse(res, 'Failed to load the harness credential pool');
+  return res.json();
+}
+
+export async function addHarnessCredential(input: NewHarnessCredential): Promise<HarnessCredentialView> {
+  const res = await apiFetch('/api/harness-credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to add the harness credential');
+  return res.json();
+}
+
+async function credentialAction(id: string, path: string, method: string, failure: string): Promise<void> {
+  const res = await apiFetch(`/api/harness-credentials/${encodeURIComponent(id)}${path}`, { method });
+  if (!res.ok) return throwResponse(res, failure);
+}
+
+export const disableHarnessCredential = (id: string) => credentialAction(id, '', 'DELETE', 'Failed to switch the credential off');
+export const enableHarnessCredential = (id: string) => credentialAction(id, '/enable', 'POST', 'Failed to switch the credential on');
+export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
+export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');
+
+/**
+ * A subscription sign-in in progress (M3.5 part F).
+ *
+ * <p>None of these fields is a secret. The code authorises nothing on its own — only the account
+ * holder can approve it, and only the unit that started the flow can collect the result — which is
+ * why it can be shown on a screen at all.
+ */
+export interface HarnessSignInView {
+  id: string;
+  label: string;
+  harness: string;
+  state: 'PENDING' | 'PROMPTED' | 'COMPLETE' | 'FAILED';
+  verificationUri: string | null;
+  userCode: string | null;
+  expiresAt: string | null;
+  reason: string | null;
+  credentialId: string | null;
+}
+
+export async function startHarnessSignIn(label: string, harness: string): Promise<HarnessSignInView> {
+  const res = await apiFetch('/api/harness-credentials/sign-in', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label, harness }),
+  });
+  if (!res.ok) {
+    // A refusal is a rule with a name, so the screen can say which one rather than showing a status.
+    const body = await res.text();
+    try { throw new Error((JSON.parse(body) as { reason?: string }).reason ?? body); }
+    catch (parsed) { throw parsed instanceof Error ? parsed : new Error(body); }
+  }
+  return res.json();
+}
+
+export async function fetchHarnessSignIn(id: string): Promise<HarnessSignInView> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in/${encodeURIComponent(id)}`);
+  if (!res.ok) return throwResponse(res, 'Failed to read the sign-in');
+  return res.json();
+}
+
+/** The one in flight for this harness, or null. A reopened screen finds it instead of starting a second. */
+export async function fetchHarnessSignInProgress(harness: string): Promise<HarnessSignInView | null> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in?harness=${encodeURIComponent(harness)}`);
+  if (res.status === 204) return null;
+  if (!res.ok) return throwResponse(res, 'Failed to read the sign-in');
+  return res.json();
+}
+
+export async function cancelHarnessSignIn(id: string): Promise<void> {
+  const res = await apiFetch(`/api/harness-credentials/sign-in/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) return throwResponse(res, 'Failed to cancel the sign-in');
 }

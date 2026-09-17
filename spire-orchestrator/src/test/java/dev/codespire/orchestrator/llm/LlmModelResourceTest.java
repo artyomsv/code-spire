@@ -184,7 +184,7 @@ class LlmModelResourceTest {
     @Test
     void pricesAReviewFromTokenUsage() {
         registry.create(new LlmModelInput("openai", "gpt-4o", "GPT-4o", "METERED",
-                Map.of("INPUT", 250_000L, "OUTPUT", 1_000_000L), "MAX_TOKENS", true, null, Map.of(), true));
+                Map.of("INPUT", 250_000L, "OUTPUT", 1_000_000L), "MAX_TOKENS", true, null, Map.of(), true, java.util.List.of()));
 
         List<ChargeLine> lines = registry.priceCall("gpt-4o", ModelUsage.of("gpt-4o", 10_000, 2_000));
 
@@ -212,7 +212,7 @@ class LlmModelResourceTest {
     void roundTripsTheParameterProfileAndBrokersItByName() {
         registry.create(new LlmModelInput("openai", "o3", "OpenAI o3", "METERED",
                 Map.of("INPUT", 2_000_000L, "OUTPUT", 8_000_000L),
-                "MAX_COMPLETION_TOKENS", false, "medium", Map.of("service_tier", "flex"), true));
+                "MAX_COMPLETION_TOKENS", false, "medium", Map.of("service_tier", "flex"), true, java.util.List.of()));
 
         var view = registry.list().stream().filter(m -> m.name().equals("o3")).findFirst().orElseThrow();
         assertEquals("MAX_COMPLETION_TOKENS", view.outputTokenParam());
@@ -240,7 +240,7 @@ class LlmModelResourceTest {
     void cleanSucceedsEvenWhenAProviderStillReferencesACataloguedModel() {
         registry.create(new LlmModelInput("openai", "TEST-CLEAN-COLLISION", "TEST clean collision",
                 "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
-                null, null, null, Map.of(), true));
+                null, null, null, Map.of(), true, java.util.List.of()));
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
                 "sk-test", "TEST-CLEAN-COLLISION", 0.2, null, true, true));
 
@@ -256,7 +256,7 @@ class LlmModelResourceTest {
     void deletingAModelInUseByAProviderAnswersConflictNotServerError() {
         registry.create(new LlmModelInput("openai", "TEST-IN-USE", "TEST in use",
                 "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
-                null, null, null, Map.of(), true));
+                null, null, null, Map.of(), true, java.util.List.of()));
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-IN-USE")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST provider", "openai", "http://example.invalid",
@@ -278,7 +278,7 @@ class LlmModelResourceTest {
     void renamingAModelInUseByAProviderAnswersConflictNotServerError() {
         registry.create(new LlmModelInput("openai", "TEST-RENAME-CONFLICT", "TEST rename conflict",
                 "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
-                null, null, null, Map.of(), true));
+                null, null, null, Map.of(), true, java.util.List.of()));
         String modelId = registry.list().stream()
                 .filter(m -> m.name().equals("TEST-RENAME-CONFLICT")).findFirst().orElseThrow().id();
         providers.create(new LlmProviderInput("TEST-RENAME-CONFLICT-PROVIDER", "openai",

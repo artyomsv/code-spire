@@ -22,10 +22,14 @@ public class WorkPreparationResource {
     @Inject dev.codespire.orchestrator.factory.FactoryConfig factoryConfig;
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
+    @Inject WorkPreparationSweep sweep;
     public record Input(long expectedRevision,WorkPreparation.Artifact specification,WorkPreparation.Artifact plan,
                         String baseBranch,String baseCommit,String harness,String model) {}
-    /** The harness names this deployment can actually run: a key without an agent image refuses at dispatch. */
-    public record Options(java.util.List<String> harnesses) {}
+    /**
+     * The harnesses this deployment can run, each with the token types it can report: a key without an
+     * agent image refuses at dispatch, and so does a model with no price for a type the harness reports.
+     */
+    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes) {}
     public record Head(String branch,String commit) {}
     /**
      * What an approver is asked to approve, read from the tracker now: the specification text and the
@@ -42,13 +46,15 @@ public class WorkPreparationResource {
         var item=store.load(id);if(item==null)throw new NotFoundException();
         if(item.preparation()==null)throw refused(409,"preparation_missing");
         var source=sources.get(item.sourceId()).orElseThrow(NotFoundException::new);
-        var observed=artifacts.observe(source,item.preparation());
+        var observed=artifacts.observe(source,id,item.preparation());
         return new Evidence(observed.failure(),observed.detail(),observed.specification(),observed.instruction(),item.preparation().binding());
     }
 
     @GET @Path("/options")
     public Options options() {
-        return new Options(factoryConfig.agentImage().keySet().stream().sorted().toList());
+        java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
+        return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
+                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
     }
 
     /**
@@ -96,6 +102,28 @@ public class WorkPreparationResource {
         try { return artifacts.resolve(sources.get(item.sourceId()).orElseThrow(NotFoundException::new),key); }
         catch(WorkArtifacts.ArtifactUnavailable unavailable) { throw new ServiceUnavailableException(unavailable.getMessage()); }
     }
+    /**
+     * Compose this item's task again from its ticket.
+     *
+     * <p>Offered because the specification is a SNAPSHOT of the ticket: an edit after preparation does
+     * not change what was approved, and only a person can say whether the edit was meant for this task.
+     * It supersedes an open decision, because the texts a new decision binds are new.
+     */
+    @POST @Path("/compose")
+    public Response compose(@PathParam("id") String id,@QueryParam("expectedRevision") long expectedRevision) {
+        // The revision the operator was LOOKING at, and it is REQUIRED. An earlier version accepted its
+        // absence and checked it here, outside the transaction, which left the exact race the parameter
+        // exists to close: between this read and the registration's own, a competing preparation could
+        // open a newer gate that this stale call then superseded. It is now carried to the locked
+        // comparison, and a caller that omits it is refused rather than exempted.
+        if(expectedRevision<1)throw new BadRequestException("The current item revision is required");
+        var item=store.load(id);if(item==null)throw new NotFoundException();
+        String actor=OidcSubjects.of(identity);
+        if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        var result=sweep.prepareAgain(id,expectedRevision,actor);
+        return Response.status(result.prepared()?200:409).entity(Map.of("reason",result.reason())).build();
+    }
+
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");

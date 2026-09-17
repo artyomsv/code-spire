@@ -23,6 +23,7 @@ describe('byExpenseDesc', () => {
     label,
     pricingMode: 'METERED',
     rates: { INPUT: input, OUTPUT: output },
+    notBilled: [],
     outputTokenParam: 'MAX_TOKENS',
     supportsTemperature: true,
     reasoningEffort: null,
@@ -64,6 +65,7 @@ describe('ratesSummary', () => {
     label: 'x',
     pricingMode: 'METERED',
     rates: { INPUT: 250_000, OUTPUT: 1_000_000 },
+    notBilled: [],
     outputTokenParam: 'MAX_TOKENS',
     supportsTemperature: true,
     reasoningEffort: null,
@@ -95,6 +97,23 @@ describe('ratesSummary', () => {
     expect(summary.warn).toBe(true);
     expect(summary.text).toBe('Not priced');
   });
+
+  it('shows an explicit not-billed dimension, which used to read like an unpriced one', () => {
+    expect(ratesSummary(model({ rates: { INPUT: 250_000, OUTPUT: 1_000_000 }, notBilled: ['CACHED_INPUT', 'REASONING'] })).text)
+      .toContain('not billed: Cached input, Reasoning');
+  });
+
+  it('still flags a model where nobody has said anything at all', () => {
+    const summary = ratesSummary(model({ rates: {}, notBilled: [] }));
+    expect(summary.text).toBe('Not priced');
+    expect(summary.warn).toBe(true);
+  });
+
+  it('does not flag a model whose every dimension is an explicit assertion', () => {
+    const summary = ratesSummary(model({ rates: {}, notBilled: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }));
+    expect(summary.warn).toBe(false);
+    expect(summary.text).toContain('not billed: Input, Cached input, Cache write, Output, Reasoning');
+  });
 });
 
 describe('profileHint', () => {
@@ -105,6 +124,7 @@ describe('profileHint', () => {
     label: 'x',
     pricingMode: 'METERED',
     rates: {},
+    notBilled: [],
     outputTokenParam: 'MAX_TOKENS',
     supportsTemperature: true,
     reasoningEffort: null,

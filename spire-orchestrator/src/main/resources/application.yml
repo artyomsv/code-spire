@@ -139,6 +139,17 @@ mp:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      harness-sign-in-commands-out:
+        connector: smallrye-kafka
+        topic: cs.harness-sign-in-commands
+        # acks=all for the reason run-commands-out gives: a leader-only ack can be lost on failover,
+        # and here that leaves a row on a screen waiting for a unit nobody was ever asked to start.
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.HarnessSignInCommandSerializer
+        waitForWriteCompletion: true
       run-commands-out:
         connector: smallrye-kafka
         # acks=all, because FR-F10 rests on what an acknowledgement MEANS. SmallRye defaults to 1 --
@@ -242,6 +253,22 @@ mp:
           id: spire-orchestrator-results
         value:
           deserializer: dev.codespire.orchestrator.pipeline.IntegrationEventDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
+      # What the trusted sign-in unit reported (M3.5 part F). Its own channel, because a sign-in is
+      # not a run: no claim, no money, no transcript, and an operator waiting on a screen for it.
+      harness-sign-in-results-in:
+        connector: smallrye-kafka
+        topic: cs.harness-sign-in-results
+        group:
+          id: spire-orchestrator-harness-sign-in
+        value:
+          deserializer: dev.codespire.orchestrator.factory.HarnessSignInResultDeserializer
+        # Latest: a restart must not replay prompts whose codes expired days ago onto a screen.
         auto:
           offset:
             reset: latest

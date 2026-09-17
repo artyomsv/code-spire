@@ -26,6 +26,10 @@ dependencies {
 
     // HarnessAdapterContract: the rules every arm must obey, extended rather than restated.
     testImplementation(testFixtures(project(":spire-harness")))
+    // TEST ONLY, for the same reason spire-harness takes it that way: HarnessTokenReport declares what
+    // this arm can report so the orchestrator can refuse a model it cannot price, and the declaration
+    // is pinned here against the adapter that does the reporting. No production dependency is added.
+    testImplementation(project(":spire-contract"))
 }
 
 tasks.test {

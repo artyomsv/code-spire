@@ -20,6 +20,7 @@ public class WorkRunAssembly {
     @Inject HarnessCredentialPool pool;
     @Inject SpendGate spend;
     @Inject LlmModelPricer pricer;
+    @Inject dev.codespire.orchestrator.llm.LlmModelRegistry models;
     @Inject RunCredentials credentials;
     public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
@@ -43,7 +44,16 @@ public class WorkRunAssembly {
             ps.setObject(1,source.repositoryId());try(ResultSet rs=ps.executeQuery()) { if(!rs.next())throw new IllegalStateException("factory_account_unavailable"); }
         }
         var account=accounts.resolve(source.repositoryId()).orElseThrow(()->new IllegalStateException("factory_account_unavailable"));
-        if(!pricer.isPriceable(in.model()))throw new IllegalStateException("model_pricing_unavailable");
+        // Every type the chosen harness can report must have a rate or a not-billed assertion. Asking
+        // only about INPUT and OUTPUT is what let item 36 start, spend, report CACHED_INPUT and
+        // REASONING, and stop with a cost nobody could account for.
+        try { if(models.isDisabled(in.model()))throw new IllegalStateException("model_disabled"); }
+        catch(dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
+            throw new IllegalStateException("catalogue_unavailable");
+        }
+        var unpriced=pricer.unpricedTypes(in.model(),in.harness());
+        if(!unpriced.isEmpty())throw new IllegalStateException("model_pricing_incomplete:"
+                +unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
         if(spend.decide().refused())throw new IllegalStateException("deployment_spend_cap_reached");
         if(!(pool.select() instanceof HarnessCredentialPool.Selection.Chosen chosen))throw new IllegalStateException("harness_credential_unavailable");
         String id=RunIds.of(source.scm(),in.workspace(),in.slug(),subject,1),branch=DispatchRequestParser.RUN_BRANCH_PREFIX+subject;

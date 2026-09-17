@@ -47,7 +47,7 @@ class LlmModelPricerOverflowIT {
     void aRateThatOverflowsIsPricedAsUnknownNeverAsNegativeMoney() {
         LlmModelView model = registry.create(new LlmModelInput("openai", MODEL, "TEST overflow",
                 "METERED", Map.of("INPUT", 250_000L, "OUTPUT", 400_000L),
-                "MAX_TOKENS", true, null, Map.of(), true));
+                "MAX_TOKENS", true, null, Map.of(), true, java.util.List.of()));
         try {
             rewriteInputRate(model.id(), OVERFLOWING_RATE);
 

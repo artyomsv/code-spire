@@ -162,7 +162,15 @@ public class HarnessCredentialPool {
                    SET last_used_at = now(), updated_at = now()
                  WHERE id = (
                        SELECT id FROM harness_credential
+                        -- API keys only, and this is a CONTAINMENT boundary rather than a filter. A
+                        -- subscription row holds the whole sign-in file; the harness arm would feed it
+                        -- to --with-api-key, and the agent container -- which runs untrusted ticket
+                        -- text at full shell access -- could then read it, refresh credential and all.
+                        -- Until selection, injection and charging exist for a subscription, no run may
+                        -- reach one. The rule lives here rather than in a caller's discipline because
+                        -- three dispatch paths call this and each would have to remember.
                         WHERE enabled
+                          AND auth_mode = 'API_KEY'
                           AND rejected_at IS NULL
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
@@ -290,14 +298,22 @@ public class HarnessCredentialPool {
                 """, id) == 1;
     }
 
-    /** What the settings surface shows. Never carries the key. */
+    /**
+     * What the settings surface shows. Never carries the key.
+     *
+     * @param authMode {@code API_KEY} or {@code SUBSCRIPTION}. On the view because the screen must be
+     *     able to say that a subscription cannot pay for a run yet: it is deliberately unreachable by
+     *     the selector, and a row rendered as plain "Available" told the operator the opposite.
+     */
     public record MemberView(UUID id, String label, String type, String baseUrl, boolean enabled,
-                             Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt) {
+                             Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt,
+                             String authMode) {
     }
 
     public List<MemberView> list() {
         String sql = """
-                SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at
+                SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at,
+                       auth_mode
                   FROM harness_credential ORDER BY label
                 """;
         List<MemberView> members = new ArrayList<>();
@@ -307,7 +323,7 @@ public class HarnessCredentialPool {
                 members.add(new MemberView(rs.getObject("id", UUID.class), rs.getString("label"),
                         rs.getString("type"), rs.getString("base_url"), rs.getBoolean("enabled"),
                         instant(rs, "rate_limited_until"), instant(rs, "rejected_at"),
-                        instant(rs, "last_used_at")));
+                        instant(rs, "last_used_at"), rs.getString("auth_mode")));
             }
             return members;
         } catch (SQLException e) {
@@ -342,13 +358,54 @@ public class HarnessCredentialPool {
             ps.setString(4, baseUrl);
             ps.setString(5, encryption.encryptString(apiKey, aad(id)));
             ps.executeUpdate();
-            return new MemberView(id, label, type, baseUrl, true, null, null, null);
+            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY");
         } catch (SQLException e) {
             if ("23505".equals(e.getSQLState())) {
                 throw new DuplicateLabelException(label, e);
             }
             throw new IllegalStateException("The harness credential could not be added", e);
         }
+    }
+
+    /**
+     * Whether a label is already taken, on the caller's own connection.
+     *
+     * <p>Needed by the sign-in, which must refuse a duplicate BEFORE it starts a container and sends a
+     * person to their phone. Finding out afterwards means a completed sign-in with nowhere to go.
+     */
+    public boolean hasLabel(Connection c, String label) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM harness_credential WHERE label = ?")) {
+            ps.setString(1, label);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        }
+    }
+
+    /**
+     * Store a completed subscription sign-in as a pool member (M3.5 part F).
+     *
+     * <p>On the caller's connection, so the member and the sign-in row that produced it commit
+     * together: a member with no sign-in to explain it, or a sign-in claiming a member that does not
+     * exist, are both states nothing could repair afterwards.
+     *
+     * <p>{@code base_url} is empty. A subscription has no endpoint to override — the CLI knows where to
+     * go — and inventing one would put a value in a column that something later reads as configuration.
+     *
+     * @param body the whole sign-in file, opaque to this system and encrypted here like any secret
+     * @return the new member's id
+     */
+    public UUID addSubscription(Connection c, String label, String type, String body) throws SQLException {
+        UUID id = UUID.randomUUID();
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO harness_credential (id, label, type, base_url, api_key, auth_mode)
+                VALUES (?, ?, ?, '', ?, 'SUBSCRIPTION')
+                """)) {
+            ps.setObject(1, id);
+            ps.setString(2, label);
+            ps.setString(3, type);
+            ps.setString(4, encryption.encryptString(body, aad(id)));
+            ps.executeUpdate();
+        }
+        return id;
     }
 
     /**

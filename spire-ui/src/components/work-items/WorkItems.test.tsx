@@ -6,6 +6,7 @@ import * as api from '../../api';
 import * as auth from '../../auth';
 import type { WorkItemDetail as Detail, WorkItemSummary } from '../../api';
 import * as approvalsApi from './approvalsApi';
+import * as preparationApi from './workPreparationApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
 
@@ -556,4 +557,124 @@ it('never commits one item under another item address', async () => {
   expect(document.querySelector('.work-head .prov-sub')?.textContent).toBe('TEST-0 · TEST-owner/TEST-repo');
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next item' }));
   expect(committed.find(entry => entry.id === 'TEST-item-1')).toEqual({ id: 'TEST-item-1', subtitle: null });
+});
+
+// M3.5 part C: the specification is a SNAPSHOT of the ticket, so an edit after preparation does not
+// change what was approved. Composing again is therefore a deliberate act with its own button, and the
+// reason the factory could not compose has to be visible — it is not the workflow's own reason.
+it('composes the task again from the ticket, and says why the factory could not', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', reason: 'specification_required',
+    preparationHealth: { reason: 'ticket_body_empty', attempts: 3, lastAt: '2026-09-16T10:00:00Z', retryAfter: '2026-09-16T10:05:00Z' } });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  const compose = vi.spyOn(preparationApi, 'composePreparation').mockResolvedValue({ reason: 'approval_required' });
+  showDetail();
+
+  expect(await screen.findByText(/This ticket has no description/)).toBeInTheDocument();
+  expect(screen.getByText(/tried 3 times/)).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: 'Prepare again from the ticket' }));
+  await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
+});
+
+// A viewer cannot prepare anything, but the reason nothing was prepared is the first thing they ask
+// about. Hiding it behind the admin check made the page say nothing at all to everyone else.
+it('tells a viewer why the factory could not prepare, and offers them no button', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(),
+    preparationHealth: { reason: 'build_defaults_missing', attempts: 1, lastAt: '2026-09-16T10:00:00Z', retryAfter: '2026-09-16T10:05:00Z' } });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  expect(await screen.findByText(/This repository has no build setup yet/)).toBeInTheDocument();
+  // One attempt is not worth counting out loud; the sentence alone is the answer.
+  expect(screen.queryByText(/tried 1 times/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Prepare again from the ticket' })).not.toBeInTheDocument();
+});
+
+// The workflow's own reason is a phase sentence: "a specification is required" is equally true of an
+// empty ticket and of a repository with no build setup. The health reason names which one it is.
+it('says in the list why the factory could not prepare, not the phase sentence', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), reason: 'A specification is required.',
+    preparationHealth: { reason: 'build_defaults_missing', attempts: 2, lastAt: '2026-09-16T10:00:00Z', retryAfter: '2026-09-16T10:05:00Z' } }],
+    total: 1, offset: 0, limit: 50 });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+
+  expect(await screen.findByText(/This repository has no build setup yet/)).toBeInTheDocument();
+  expect(screen.queryByText('A specification is required.')).not.toBeInTheDocument();
+});
+
+// The specification is a snapshot. An edit does not change what is approved or built — which is the
+// point, and also the thing nobody guesses. The page has to say it, to every viewer.
+it('says the ticket changed after it was prepared, without claiming the build changed', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-edited body', trackerStatus: 'open',
+    composedSha256: 'e'.repeat(64) });
+  showDetail();
+
+  expect(await screen.findByText(/The ticket changed after it was prepared/)).toBeInTheDocument();
+});
+
+it('adds no drift notice while the ticket still composes to what was prepared', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open',
+    composedSha256: snapshot.specification.sha256 });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByText(/The ticket changed after it was prepared/)).not.toBeInTheDocument();
+});
+
+// An assisted item sits at its plan decision. That is exactly when an operator reads the ticket again
+// and edits it, so the button has to be reachable there rather than only before anything is prepared.
+// A ticket somebody emptied has drifted further from what was prepared than an edited one. It used to
+// arrive as an absent digest, which read exactly like "no drift", so the notice vanished when it mattered.
+it('says the ticket changed when it can no longer be prepared at all', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: '', trackerStatus: 'open',
+    composedSha256: null, composedRefusal: 'ticket_body_empty' });
+  showDetail();
+
+  expect(await screen.findByText(/The ticket changed after it was prepared/)).toBeInTheDocument();
+  expect(screen.getByText(/This ticket has no description/)).toBeInTheDocument();
+});
+
+// The server refuses a composition once this generation has attempted a phase. A button that can only
+// fail is worse than no button: it reads as "the system is broken" rather than "that is not allowed".
+it('stops offering to compose again once this generation has built something', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', preparation: prepared(),
+    builds: [{ attemptId: 'TEST-attempt', state: 'held', runId: 'TEST-run', reason: null, generation: detail().generation }] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Prepare again from the ticket' })).not.toBeInTheDocument();
+});
+
+// A build belonging to an OLDER generation must not hide it: that item was re-admitted and is starting over.
+it('still offers to compose again when the build belonged to an earlier generation', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', preparation: prepared(),
+    builds: [{ attemptId: 'TEST-attempt', state: 'held', runId: 'TEST-run', reason: null, generation: detail().generation - 1 }] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  expect(await screen.findByRole('button', { name: 'Prepare again from the ticket' })).toBeInTheDocument();
+});
+
+it('offers composing again while a plan decision is open', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: prepared() });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  const compose = vi.spyOn(preparationApi, 'composePreparation').mockResolvedValue({ reason: 'approval_required' });
+  showDetail();
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Prepare again from the ticket' }));
+  await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
 });

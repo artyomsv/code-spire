@@ -90,11 +90,25 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
     }
     @Test void missingFactoryBindingCannotFallBackToTheTrackerAccount() throws Exception {
         String id=ready();execute("DELETE FROM repository_account WHERE repository_id=? AND role='FACTORY'",repository);dispatcher.drain();
-        assertTrue(sources.get(source).orElseThrow().enabled());assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());assertEquals("build_configuration_unavailable",store.load(id).reason());
+        // The reason is the one the assembly gave. It used to be one word for every cause, which left an
+        // approved plan stopped with nothing an operator could act on.
+        assertTrue(sources.get(source).orElseThrow().enabled());assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());assertEquals("factory_account_unavailable",store.load(id).reason());
     }
     @Test void unpricedModelsCannotStartABuild() throws Exception {
         String id=ready();execute("UPDATE llm_model SET pricing_mode='METERED' WHERE id=?",modelId);dispatcher.drain();
-        assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());assertEquals("build_configuration_unavailable",store.load(id).reason());
+        // And it names every type the harness reports but this model cannot price, so the operator is
+        // told which rates to enter rather than being sent to look for them.
+        assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
+        assertEquals("model_pricing_incomplete:INPUT,CACHED_INPUT,CACHE_WRITE,OUTPUT,REASONING",store.load(id).reason());
+    }
+    /** A model switched off in the catalogue is not one a repository may keep calling. */
+    @Test void aDisabledModelCannotStartABuild() throws Exception {
+        String id=ready();execute("UPDATE llm_model SET enabled=FALSE WHERE id=?",modelId);
+        try {
+            dispatcher.drain();
+            assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
+            assertEquals("model_disabled",store.load(id).reason());
+        } finally { execute("UPDATE llm_model SET enabled=TRUE WHERE id=?",modelId); }
     }
     @Test void aRemovedHarnessImageProducesADurableRefusal() throws Exception {
         String id=ready();

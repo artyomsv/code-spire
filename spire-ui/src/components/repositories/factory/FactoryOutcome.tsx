@@ -21,7 +21,7 @@ const joined = (words: string[]) => words.length < 2 ? words.join('') : `${words
  * What this setup does, in one sentence, above the parts that make it. Operators could configure every
  * part and still not see how the four combine; the consequence is the thing they came to check.
  */
-export default function FactoryOutcome({ ready, sources, policy }: { ready: Readiness; sources: WorkSource[]; policy: Policy | null }) {
+export default function FactoryOutcome({ ready, sources, policy, build }: { ready: Readiness; sources: WorkSource[]; policy: Policy | null; build?: { revision: number } }) {
   if (!ready.ready || !policy) {
     return <div className="factory-outcome blocked" role="status">
       <span className="mark"><AlertTriangle size={14} aria-hidden="true" /></span>
@@ -37,6 +37,9 @@ export default function FactoryOutcome({ ready, sources, policy }: { ready: Read
       <div className="t">Ready — tickets can start work</div>
       <p>When <b>{joined(people.map(actorLabel))}</b> adds one of these labels to an open ticket in <b>{joined(places)}</b>, the factory
         picks it up and runs the profile the label names — never more than the ceiling <b>{policy.ceiling!.name} v{policy.ceiling!.version}</b>.</p>
+      {/* Admission does not need the build setup, so a missing one is a sentence here rather than a
+          blocked banner: every ticket still starts, and a person still types its build coordinates. */}
+      {build && build.revision === 0 && <p>Each ticket still needs its branch, harness and model typed by hand. Set them once in step 5.</p>}
       <ul className="factory-runs">{Object.entries(policy.mappings).map(([label, profile]) => <li key={label}>
         <span className="chip mono">{label}</span><span className="factory-arrow" aria-hidden="true">→</span>
         <span>{profile.name} v{profile.version}</span><PhaseStrip modes={effectiveModes(profile, policy.ceiling)} />

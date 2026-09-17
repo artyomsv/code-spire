@@ -68,7 +68,7 @@ class LlmModelRegistryRenameGuardTest {
         LlmModelView updated = models.update(UUID.fromString(created.id()),
                 new LlmModelInput("openai", "TEST-RENAME-GUARD-EDITABLE", "TEST relabeled", "METERED",
                         Map.of("INPUT", 300_000L, "OUTPUT", 600_000L),
-                        "MAX_COMPLETION_TOKENS", null, null, Map.of(), true)).orElseThrow();
+                        "MAX_COMPLETION_TOKENS", null, null, Map.of(), true, java.util.List.of())).orElseThrow();
 
         assertEquals("TEST relabeled", updated.label());
         assertEquals(300_000L, updated.rates().get("INPUT"));
@@ -77,6 +77,6 @@ class LlmModelRegistryRenameGuardTest {
 
     private static LlmModelInput meteredModel(String name) {
         return new LlmModelInput("openai", name, name, "METERED",
-                Map.of("INPUT", 200_000L, "OUTPUT", 400_000L), null, null, null, null, true);
+                Map.of("INPUT", 200_000L, "OUTPUT", 400_000L), null, null, null, null, true, java.util.List.of());
     }
 }

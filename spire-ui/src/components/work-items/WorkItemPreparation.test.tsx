@@ -4,6 +4,7 @@ import type { LlmModelView, WorkItemDetail } from '../../api';
 import * as gateway from '../../api';
 import * as auth from '../../auth';
 import * as api from './workPreparationApi';
+import * as defaultsApi from '../repositories/factory/buildDefaultsApi';
 import WorkItemPreparation from './WorkItemPreparation';
 
 afterEach(cleanup);
@@ -11,11 +12,11 @@ const item = { id: 'TEST-prepared-item', revision: 7, workflowStatus: 'awaiting_
 const reference = (key: string): api.ArtifactReference => ({ title: `TEST-artifact-${key}`, artifact: { sha256: key.repeat(64).slice(0, 64),
   location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: `TEST-${key}` }, issueKey: key, link: `https://TEST.example/issues/${key}` } } });
 const model = (name: string, rates: LlmModelView['rates'] = { INPUT: 100, OUTPUT: 200 }): LlmModelView => ({ id: `TEST-model-${name}`, type: 'openai', name, label: name,
-  pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z' });
+  pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z', notBilled: [] });
 function show(changed = vi.fn(), roles = ['spire-admin'], value = item) {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-operator', roles });
   // A test that cares about the offered choices mocks them first; this is only the default pair.
-  if (!vi.isMockFunction(api.preparationOptions)) vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'] });
+  if (!vi.isMockFunction(api.preparationOptions)) vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'] } });
   if (!vi.isMockFunction(gateway.fetchLlmModels)) vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
   return { changed, ...render(<WorkItemPreparation item={value} changed={changed} />) };
 }
@@ -113,14 +114,40 @@ it('says which answer is in flight while the registration is recorded', async ()
 // A harness with no agent image and a model with no price are both refused at dispatch, after the
 // operator has typed them and waited. The form offers only what this deployment can run.
 it('offers the configured harnesses and the priced models instead of free text', async () => {
-  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-other-harness'] });
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-other-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'], 'TEST-other-harness': ['INPUT','OUTPUT'] } });
   vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model'), model('TEST-unpriced', { INPUT: 100 }), { ...model('TEST-disabled'), enabled: false }]);
   show();
   const harness = await screen.findByLabelText('Harness');
   expect(within(harness).getAllByRole('option').map(option => option.textContent)).toEqual(['Select a harness', 'TEST-harness', 'TEST-other-harness']);
+  // Before a harness is chosen there is nothing to judge a model against, so nothing is marked.
+  expect(within(await screen.findByLabelText('Model')).getAllByRole('option').map(option => option.textContent))
+    .toEqual(['Select a model', 'TEST-model', 'TEST-unpriced']);
+  fireEvent.change(harness, { target: { value: 'TEST-harness' } });
   const models = within(await screen.findByLabelText('Model')).getAllByRole('option');
-  expect(models.map(option => option.textContent)).toEqual(['Select a model', 'TEST-model', 'TEST-unpriced — no price for input or output tokens']);
+  expect(models.map(option => option.textContent)).toEqual(['Select a model', 'TEST-model', 'TEST-unpriced — no price for Output']);
   expect(models[2]).toBeDisabled();
+});
+
+// A greyed option is not a guard. The value stays in the form when the harness changes under it, and
+// registering it would open a decision whose build the dispatch then refuses.
+it('will not register a model the chosen harness would refuse', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-rich-harness'],
+    reportedTypes: { 'TEST-harness': ['INPUT', 'OUTPUT'], 'TEST-rich-harness': ['INPUT', 'CACHED_INPUT', 'OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  vi.spyOn(api, 'resolveArtifact').mockImplementation(async (_id, key) => reference(key));
+  show();
+  await screen.findByRole('option', { name: 'TEST-harness' });
+  for (const [label, value] of [['Specification ticket', '71'], ['Plan ticket', '72'], ['Base branch', 'main'],
+    ['Base commit', 'a'.repeat(40)], ['Harness', 'TEST-harness'], ['Model', 'TEST-model']])
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  expect(screen.getByRole('button', { name: 'Check artifact references' })).toBeEnabled();
+
+  // The harness changes under the selection: the same model now leaves CACHED_INPUT unpriced.
+  fireEvent.change(screen.getByLabelText('Harness'), { target: { value: 'TEST-rich-harness' } });
+  expect(await screen.findByRole('alert')).toHaveTextContent('no price for Cached input');
+  expect(screen.getByRole('button', { name: 'Check artifact references' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Check artifact references' }));
+  expect(api.resolveArtifact).not.toHaveBeenCalled();
 });
 
 it('reads the base commit from the forge for the named branch', async () => {
@@ -138,4 +165,63 @@ it('keeps the typed commit when the forge cannot answer', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Use current head' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-branch head unavailable');
   expect(screen.getByLabelText('Base commit')).toHaveValue('a'.repeat(40));
+});
+// M3.5 part B: the repository's saved build setup fills the coordinates nobody should retype.
+it('fills the branch, harness and model from the repository build setup', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  vi.spyOn(defaultsApi, 'buildDefaults').mockResolvedValue({ revision: 3, baseBranch: 'main', harness: 'TEST-harness',
+    model: 'TEST-model', updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' });
+  show(vi.fn(), ['spire-admin'], { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail);
+  expect(await screen.findByLabelText('Base branch')).toHaveValue('main');
+  expect(screen.getByLabelText('Harness')).toHaveValue('TEST-harness');
+  expect(screen.getByLabelText('Model')).toHaveValue('TEST-model');
+  expect(defaultsApi.buildDefaults).toHaveBeenCalledWith('TEST-repository');
+});
+// What is already registered is what the gate binds, so a saved setup must not quietly replace it.
+// Every coordinate differs from the saved setup, or the assertion could pass on a value that was replaced.
+it('keeps a registered preparation rather than replacing it with the repository setup', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'TEST-other-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'], 'TEST-other-harness': ['INPUT','OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model'), model('TEST-other-model')]);
+  const answer = deferred<defaultsApi.BuildDefaults>();
+  vi.spyOn(defaultsApi, 'buildDefaults').mockReturnValue(answer.promise);
+  const registered = { ...item, repositoryId: 'TEST-repository', preparation: { specification: reference('71').artifact, plan: reference('72').artifact,
+    baseBranch: 'release-1', baseCommit: 'c'.repeat(40), harness: 'TEST-other-harness', model: 'TEST-other-model', registeredBy: 'TEST-operator' } } as WorkItemDetail;
+  show(vi.fn(), ['spire-admin'], registered);
+  await act(async () => { answer.resolve({ revision: 3, baseBranch: 'main', harness: 'TEST-harness', model: 'TEST-model',
+    updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' }); });
+  expect(await screen.findByLabelText('Base branch')).toHaveValue('release-1');
+  expect(screen.getByLabelText('Harness')).toHaveValue('TEST-other-harness');
+  expect(screen.getByLabelText('Model')).toHaveValue('TEST-other-model');
+  // And the setup is not even asked for: there is nothing it could be allowed to change.
+  expect(defaultsApi.buildDefaults).not.toHaveBeenCalled();
+});
+
+// The saved setup is optional; a slow answer for it must not hold back what this deployment can run.
+it('offers the harness and model choices before the repository setup answers', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  const answer = deferred<defaultsApi.BuildDefaults>();
+  vi.spyOn(defaultsApi, 'buildDefaults').mockReturnValue(answer.promise);
+  show(vi.fn(), ['spire-admin'], { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail);
+  expect(await screen.findByRole('option', { name: 'TEST-harness' })).toBeInTheDocument();
+  expect(await screen.findByRole('option', { name: 'TEST-model' })).toBeInTheDocument();
+  await act(async () => { answer.resolve({ revision: 1, baseBranch: 'main', harness: 'TEST-harness', model: 'TEST-model',
+    updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' }); });
+});
+
+// A field the operator emptied on purpose is still a field they touched.
+it('does not refill a coordinate the operator deliberately cleared', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'] } });
+  vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
+  const answer = deferred<defaultsApi.BuildDefaults>();
+  vi.spyOn(defaultsApi, 'buildDefaults').mockReturnValue(answer.promise);
+  show(vi.fn(), ['spire-admin'], { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail);
+  fireEvent.change(await screen.findByLabelText('Base branch'), { target: { value: 'release-9' } });
+  fireEvent.change(screen.getByLabelText('Base branch'), { target: { value: '' } });
+  await act(async () => { answer.resolve({ revision: 1, baseBranch: 'main', harness: 'TEST-harness', model: 'TEST-model',
+    updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' }); });
+  expect(screen.getByLabelText('Base branch')).toHaveValue('');
+  // The untouched ones still take the saved setup.
+  expect(screen.getByLabelText('Harness')).toHaveValue('TEST-harness');
 });

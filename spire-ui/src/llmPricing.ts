@@ -24,6 +24,28 @@ export const TOKEN_TYPE_LABEL: Record<TokenType, string> = {
   TOTAL: 'Total (unreconciled)',
 };
 
+/**
+ * The token types a harness can report that this model cannot price — the same question the dispatch
+ * asks before a run starts. A type with a rate is priced; a type the operator asserted the vendor does
+ * not bill is priced at an asserted zero; anything else is nobody having said, and a run reporting it
+ * stops the item with an unknown cost.
+ *
+ * <p>The reported types come from the server with the harness list. Keeping a second copy of them here
+ * would let the screen and the dispatch disagree, which is the whole defect this closes.
+ */
+export function unpricedTypesFor(
+  model: { pricingMode: string; rates: Partial<Record<RateType, number>>; notBilled?: RateType[] },
+  reportedTypes: string[] | undefined,
+): RateType[] {
+  if (model.pricingMode !== 'METERED') return [];
+  // No answer from the server means "assume it reports everything", exactly as the server's own
+  // unknown-harness fallback does (HarnessTokenReport). Falling back to INPUT and OUTPUT would put
+  // back the weaker question that let a run start, spend, and stop on a type nobody priced.
+  const reported = (reportedTypes ?? RATE_TYPES) as RateType[];
+  return RATE_TYPES.filter(type => reported.includes(type)
+    && model.rates[type] == null && !(model.notBilled ?? []).includes(type));
+}
+
 /** Sum of a model's per-type rates — used to sort the catalog most-expensive-first. An UNMETERED
  *  model's empty `rates` sums to 0, correctly sorting it last: it is the cheapest thing in the list. */
 export function sumRates(rates: Partial<Record<RateType, number>>): number {

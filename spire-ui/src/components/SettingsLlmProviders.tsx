@@ -67,8 +67,13 @@ export interface RatesSummary {
 export function ratesSummary(m: LlmModelView): RatesSummary {
   if (m.pricingMode === 'UNMETERED') return { text: 'Self-hosted', warn: false };
   const priced = RATE_TYPES.filter((t) => m.rates[t] != null);
-  if (priced.length === 0) return { text: 'Not priced', warn: true };
-  return { text: priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`).join(' · '), warn: false };
+  const asserted = RATE_TYPES.filter((t) => (m.notBilled ?? []).includes(t));
+  if (priced.length === 0 && asserted.length === 0) return { text: 'Not priced', warn: true };
+  // Three states, not two. A model with every remaining dimension marked "not billed" used to read
+  // exactly like one where nobody had said, and the difference is whether a run stops mid-flight.
+  const parts = priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`);
+  if (asserted.length > 0) parts.push(`not billed: ${asserted.map((t) => TOKEN_TYPE_LABEL[t]).join(', ')}`);
+  return { text: parts.join(' · '), warn: false };
 }
 
 // Per-provider connectivity status, keyed by provider id.

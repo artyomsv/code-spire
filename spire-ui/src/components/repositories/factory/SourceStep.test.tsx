@@ -4,7 +4,8 @@ import * as gateway from '../../../api';
 import * as sources from '../../work-items/workSourcesApi';
 import * as policies from '../../work-items/workPolicyApi';
 import RepositoryFactory from './RepositoryFactory';
-import { account, issueHook, policy, profile, repository, source } from './factoryFixtures';
+import * as build from './buildDefaultsApi';
+import { account, buildSetup, issueHook, policy, profile, repository, source } from './factoryFixtures';
 
 const field = { selector: 'input,select,textarea' };
 let changedHooks = vi.fn();
@@ -22,6 +23,8 @@ beforeEach(() => {
   vi.spyOn(policies, 'profiles').mockResolvedValue([profile]);
   vi.spyOn(policies, 'policy').mockResolvedValue(policy());
   vi.spyOn(gateway, 'fetchWebhookRepos').mockResolvedValue([]);
+  // Step 5 loads with the tab; without this the whole tab renders its load error instead of the steps.
+  vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
 });
 async function addSource(options?: Parameters<typeof renderFactory>[0]) {
   vi.mocked(sources.fetchWorkSources).mockResolvedValue([]);

@@ -4,7 +4,9 @@ import type { RateType } from '../llmPricing';
 import Select from './Select';
 import SettingsLlmModelDialectFields, { type ApiDialect } from './SettingsLlmModelDialectFields';
 import ModelRateFields, {
+  initialNotBilled,
   initialRates,
+  notBilledPayload,
   ratesPayload,
   validateRates,
   type EditablePricingMode,
@@ -38,6 +40,16 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
   });
   const [pricingMode, setPricingMode] = useState<EditablePricingMode>(initial?.pricingMode ?? 'METERED');
   const [rates, setRates] = useState<Record<RateType, string>>(() => initialRates(initial));
+  const [notBilled, setNotBilled] = useState<Record<RateType, boolean>>(() => initialNotBilled(initial));
+  /**
+   * Ticking the box CLEARS that type's rate. The input goes blank and disabled either way, so leaving
+   * the number in state made the save refuse a value nobody could see or edit — the operator had to
+   * untick, clear it by hand and tick again.
+   */
+  function assert(type: RateType, value: boolean) {
+    setNotBilled(current => ({ ...current, [type]: value }));
+    if (value) setRate(type, '');
+  }
   const [dialect, setDialect] = useState<ApiDialect>({
     outputTokenParam: initial?.outputTokenParam ?? 'MAX_TOKENS',
     supportsTemperature: initial?.supportsTemperature ?? true,
@@ -81,7 +93,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const rateError = validateRates(pricingMode, rates);
+    const rateError = validateRates(pricingMode, rates, notBilled);
     if (rateError) {
       setError(rateError);
       return;
@@ -96,6 +108,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
       label: identity.label.trim() || identity.name.trim(),
       pricingMode,
       rates: ratesPayload(pricingMode, rates),
+      notBilled: notBilledPayload(pricingMode, notBilled),
       outputTokenParam: dialect.outputTokenParam,
       supportsTemperature: dialect.supportsTemperature,
       reasoningEffort: dialect.reasoningEffort.trim() || null,
@@ -158,7 +171,8 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
             <span>Self-hosted — no per-token cost (UNMETERED)</span>
           </label>
 
-          {pricingMode === 'METERED' && <ModelRateFields rates={rates} onChange={setRate} />}
+          {pricingMode === 'METERED' && <ModelRateFields rates={rates} onChange={setRate}
+            notBilled={notBilled} onNotBilled={assert} />}
 
           <SettingsLlmModelDialectFields
             type={identity.type}

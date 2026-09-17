@@ -21,7 +21,7 @@ class LlmModelRateBoundsTest {
 
     private static LlmModelInput metered(Map<String, Long> rates) {
         return new LlmModelInput("openai", "TEST-RATE-BOUNDS", "TEST rate bounds", "METERED", rates,
-                "MAX_TOKENS", true, null, Map.of(), true);
+                "MAX_TOKENS", true, null, Map.of(), true, java.util.List.of());
     }
 
     @Test

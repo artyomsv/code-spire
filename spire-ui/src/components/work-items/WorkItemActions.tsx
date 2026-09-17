@@ -3,7 +3,8 @@ import { resumeWorkItem, type WorkItemDetail } from '../../api';
 import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import SettingField from '../SettingField';
-import { workRefusal } from './workReasons';
+import { composePreparation } from './workPreparationApi';
+import { workReason, workRefusal } from './workReasons';
 
 interface Props {
   item: WorkItemDetail;
@@ -21,7 +22,7 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const { me } = useMe();
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  const [busy, setBusy] = useState<'resume' | 'readmit' | null>(null), [error, setError] = useState('');
+  const [busy, setBusy] = useState<'resume' | 'readmit' | 'compose' | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState('');
   async function resume(readmit: boolean) {
     const number = started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
@@ -31,6 +32,20 @@ export default function WorkItemActions({ item, started, changed }: Props) {
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(null); }
   }
+  /**
+   * The specification is a SNAPSHOT of the ticket. An edit after preparation does not change what was
+   * approved — that is the point — so composing again is a deliberate act, and it supersedes an open
+   * decision because the texts a new decision binds are new.
+   */
+  async function compose() {
+    const number = started(); setBusy('compose'); setError('');
+    try {
+      const outcome = await composePreparation(item.id, item.revision);
+      if (active.current) changed(workReason(outcome.reason), number);
+    }
+    catch (failure) { if (active.current) setError(String(failure instanceof Error ? failure.message : failure)); }
+    finally { if (active.current) setBusy(null); }
+  }
   if (!canAdminister(me)) return null;
   // A suspended item is resumed by re-observing a branch: the pull request's, or the prepared base.
   // Without either the server can only refuse, so no button is offered for it.
@@ -39,7 +54,19 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const canReadmit = ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
   if (item.workflowStatus === 'suspended' && !coordinates)
     return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;
-  if (!canResume && !canReadmit) return null;
+  // Composing is offered wherever a person could want the ticket read again: before anything is
+  // prepared, and after an edit they made on purpose.
+  // waiting_approval included on purpose: an assisted item sits at its plan gate, which is exactly when
+  // an operator reads the ticket again and edits it. The server refuses anything a build has started.
+  // The server refuses a composition once this generation has attempted a phase, because replacing the
+  // task under a build that already ran needs an explicit re-admission. Offering the button there means
+  // offering one that can only fail. The builds this generation already has are the visible half of that
+  // rule — an approximation of work_phase_attempt, and deliberately the conservative one: it hides a
+  // button the server might have allowed rather than offering one it must refuse.
+  const attempted = (item.builds ?? []).some(build => build.generation === item.generation);
+  const canCompose = !attempted
+    && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
+  if (!canResume && !canReadmit && !canCompose) return null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">
       <textarea aria-label="Resume note" disabled={busy !== null} value={note} onChange={event => setNote(event.target.value)} /></SettingField>}
@@ -48,6 +75,8 @@ export default function WorkItemActions({ item, started, changed }: Props) {
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}
       {canReadmit && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void resume(true)}>
         {busy === 'readmit' ? 'Re-admitting…' : 'Re-admit under current policy'}</button>}
+      {canCompose && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void compose()}>
+        {busy === 'compose' ? 'Preparing…' : 'Prepare again from the ticket'}</button>}
     </div>
     {busy && <p className="factory-note" role="status">Working. The buttons unlock when the server answers.</p>}
     {error && <p className="prov-error" role="alert">{error}</p>}

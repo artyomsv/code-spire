@@ -38,7 +38,7 @@ class LlmModelResourceInfraFaultTest {
 
         LlmModelInput anyValidInput = new LlmModelInput("openai", "TEST-INFRA-FAULT",
                 "TEST infra fault", "METERED", Map.of("INPUT", 200_000L, "OUTPUT", 400_000L),
-                null, null, null, Map.of(), true);
+                null, null, null, Map.of(), true, java.util.List.of());
 
         // assertThrows itself proves no 409 was produced: the resource's only path to a 409 is
         // throwing ClientErrorException, which is not an IllegalStateException, so if the resource
