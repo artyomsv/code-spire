@@ -37,9 +37,20 @@ public interface SignInRuntime {
     /**
      * Waits for the unit to exit.
      *
-     * @return the exit code, or empty if it was still running when the wait elapsed
+     * <p>Three outcomes, not two. An earlier version had "a code or nothing", which reported a
+     * disconnected daemon as a person who did not answer in time — and those send different people to
+     * different places: one waits for the operator, the other is an outage nobody would go looking for.
      */
-    Optional<Integer> awaitExit(Handle handle, Duration within);
+    sealed interface Exit {
+        /** The unit ended and the runtime read its status. */
+        record Observed(int code) implements Exit {}
+        /** It was still running when the wait elapsed. Nobody approved. */
+        record StillRunning() implements Exit {}
+        /** The runtime could not observe it at all. A fault, not a timeout. */
+        record Unobservable(String detail) implements Exit {}
+    }
+
+    Exit awaitExit(Handle handle, Duration within);
 
     /**
      * Reads the file the unit wrote, copied straight out of the stopped container.

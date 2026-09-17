@@ -191,7 +191,7 @@ public class WorkPreparationSweep {
         try { return attempt(id, again, actor, history, expectedRevision, item, generation); }
         catch (RuntimeException failure) {
             LOG.warnf(failure, "work item %s could not be prepared automatically", id);
-            return refuse(id, generation, "preparation_failed");
+            return refuse(id, generation, expectedRevision, "preparation_failed");
         }
     }
 
@@ -199,32 +199,32 @@ public class WorkPreparationSweep {
                            List<dev.codespire.contract.event.EventEnvelope> history, long expectedRevision,
                            WorkItemEvent item, long generation) {
         BuildDefaults.Defaults setup = defaults.get(item.repositoryId());
-        if (!setup.set()) return refuse(id, generation, "build_defaults_missing");
+        if (!setup.set()) return refuse(id, generation, expectedRevision, "build_defaults_missing");
         // What the dispatch will ask, asked before an approval is opened on it. Without this, disabling
         // a model after the setup was saved still produced a decision whose build was already refused.
         try {
-            if (models.isDisabled(setup.model())) return refuse(id, generation, "model_disabled");
+            if (models.isDisabled(setup.model())) return refuse(id, generation, expectedRevision, "model_disabled");
             var unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
-            if (!unpriced.isEmpty()) return refuse(id, generation, "model_pricing_incomplete:"
+            if (!unpriced.isEmpty()) return refuse(id, generation, expectedRevision, "model_pricing_incomplete:"
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
         } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unavailable) {
-            return refuse(id, generation, "catalogue_unavailable");
+            return refuse(id, generation, expectedRevision, "catalogue_unavailable");
         }
 
         var observed = transitions.observe(item.sourceId(), item.issue());
-        if (observed.evidence().failure() != null) return refuse(id, generation, observed.evidence().failure());
+        if (observed.evidence().failure() != null) return refuse(id, generation, expectedRevision, observed.evidence().failure());
         if (!(sources.client(observed.source()).fetch(item.issue()) instanceof WorkSource.Fetch.Found found))
-            return refuse(id, generation, "artifacts_unavailable");
+            return refuse(id, generation, expectedRevision, "artifacts_unavailable");
 
         String specification, plan;
         try {
             specification = composer.specification(found.ticket());
             plan = composer.plan(specification);
-        } catch (WorkPreparationComposer.NotComposable refused) { return refuse(id, generation, refused.reason()); }
+        } catch (WorkPreparationComposer.NotComposable refused) { return refuse(id, generation, expectedRevision, refused.reason()); }
 
         String head;
         try { head = head(item, setup.baseBranch()); }
-        catch (RuntimeException unavailable) { return refuse(id, generation, "branch_head_unconfirmed"); }
+        catch (RuntimeException unavailable) { return refuse(id, generation, expectedRevision, "branch_head_unconfirmed"); }
 
         UUID specificationId, planId;
         try (Connection c = dataSource.getConnection()) {
@@ -252,7 +252,7 @@ public class WorkPreparationSweep {
                 defaults.get(c, item.repositoryId(), false).revision() == setup.revision() ? null : "build_defaults_changed");
         if (outcome.status() != 200) {
             String refusal = outcome.detail() == null ? outcome.reason() : outcome.detail();
-            return refuse(id, generation, refusal);
+            return refuse(id, generation, expectedRevision, refusal);
         }
         clear(id, generation);
         comment(id, item);
@@ -310,8 +310,8 @@ public class WorkPreparationSweep {
      * "the factory could not prepare this task" beside the open plan gate that had just been created
      * for it.
      */
-    private Result refuse(String id, long generation, String reason) {
-        if (!"work_item_changed".equals(reason)) record(id, generation, reason);
+    private Result refuse(String id, long generation, long expectedRevision, String reason) {
+        if (!"work_item_changed".equals(reason)) record(id, generation, expectedRevision, reason);
         return new Result(false, reason);
     }
 
@@ -321,10 +321,20 @@ public class WorkPreparationSweep {
      * <p>The generation is the one the attempt BEGAN in. Re-reading it here would let a slow attempt
      * impose its obsolete reason and backoff on a generation that was re-admitted while it ran.
      */
-    private void record(String id, long generation, String reason) {
+    private void record(String id, long generation, long expectedRevision, String reason) {
+        // The WHERE is the whole point, and it guards BOTH branches: when the item has moved on, the
+        // SELECT yields no row, no insert is attempted, and no conflict update runs either.
+        //
+        // Without it a slow attempt could write its failure onto an item somebody had meanwhile
+        // prepared by hand. That item no longer matches the sweep's trigger, so nothing would ever
+        // revisit and clear the sentence — and the list shows preparation health in preference to the
+        // workflow's own reason, so the screen would say the factory could not prepare a task whose
+        // plan gate was open in front of the operator. Excluding one reason string closed the race
+        // that was easy to see; this closes the shape.
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO work_item_preparation_attempt(work_item_id,generation,reason,retry_after)
-                VALUES (?,?,?,now()+?::interval)
+                SELECT ?,?,?,now()+?::interval
+                 WHERE (SELECT count(*) FROM event_log WHERE stream_id=?) = ?
                 ON CONFLICT (work_item_id,generation) DO UPDATE
                    SET reason=excluded.reason, attempts=work_item_preparation_attempt.attempts+1,
                        last_at=now(), retry_after=now()+(LEAST(?::bigint,
@@ -334,8 +344,9 @@ public class WorkPreparationSweep {
             long cap = settledLocally(reason) ? LOCAL_BACKOFF.toSeconds() : MAX_BACKOFF.toSeconds();
             ps.setString(1, id); ps.setLong(2, generation); ps.setString(3, reason);
             ps.setString(4, first + " seconds");
-            ps.setLong(5, cap);
-            ps.setLong(6, first);
+            ps.setString(5, id); ps.setLong(6, expectedRevision);
+            ps.setLong(7, cap);
+            ps.setLong(8, first);
             ps.executeUpdate();
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
     }

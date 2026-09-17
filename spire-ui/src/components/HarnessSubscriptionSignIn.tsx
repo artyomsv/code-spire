@@ -50,7 +50,16 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
   const active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  /**
+   * Which sign-in the screen is on. Every start, cancel and unmount moves it on, and a poll that
+   * answers under an older number is dropped.
+   *
+   * <p>Clearing the interval stops future ticks; it does nothing about a request already in flight. So
+   * a GET issued before a cancel could answer after it and put the cancelled code back on screen,
+   * polling again — or replace a sign-in the operator had just started with the one they abandoned.
+   */
+  const generation = useRef(0);
+  useEffect(() => { active.current = true; return () => { active.current = false; generation.current += 1; }; }, []);
 
   // A reopened screen finds the sign-in already in flight rather than starting a second one for the
   // same seat, which would put two codes in front of one person.
@@ -64,14 +73,21 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
 
   useEffect(() => {
     if (!watching || !signIn) return;
+    const mine = generation.current;
+    let outstanding = false;
     const timer = setInterval(() => {
+      // One request at a time. Overlapping polls can answer out of order, and the older answer wins
+      // simply by arriving last.
+      if (outstanding) return;
+      outstanding = true;
       fetchHarnessSignIn(signIn.id)
         .then(next => {
-          if (!active.current) return;
+          if (!active.current || generation.current !== mine) return;
           setSignIn(next);
           if (next.state === 'COMPLETE') done(next.label);
         })
-        .catch(() => { /* one failed poll is not a failed sign-in; the next one answers */ });
+        .catch(() => { /* one failed poll is not a failed sign-in; the next one answers */ })
+        .finally(() => { outstanding = false; });
       setTick(value => value + 1);
     }, POLL_MS);
     return () => clearInterval(timer);
@@ -79,6 +95,7 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
 
   async function start() {
     setBusy(true); setError('');
+    generation.current += 1;
     try { setSignIn(await startHarnessSignIn(label.trim(), harness)); }
     catch (failure) { setError(sentence(failure instanceof Error ? failure.message : null)); }
     finally { if (active.current) setBusy(false); }
@@ -86,7 +103,8 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
 
   async function stop() {
     if (!signIn) return;
-    setBusy(true);
+    setBusy(true); setError('');
+    generation.current += 1;
     try { await cancelHarnessSignIn(signIn.id); setSignIn(null); }
     catch (failure) { setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (active.current) setBusy(false); }
@@ -110,6 +128,7 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
         <p className="mono" aria-label="One-time code">{signIn.userCode}</p>
         <p className="prov-sub" role="status" data-tick={tick}>{remaining(signIn.expiresAt)}</p>
       </>}
+      {error && <p className="prov-error" role="alert">{error}</p>}
       <div className="prov-actions">
         <button className="btn-ghost sm" type="button" disabled={busy} onClick={() => void stop()}>Cancel sign-in</button>
       </div>

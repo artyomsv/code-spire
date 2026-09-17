@@ -166,14 +166,17 @@ public final class DockerSignInRuntime implements SignInRuntime {
     }
 
     @Override
-    public Optional<Integer> awaitExit(Handle handle, Duration within) {
+    public Exit awaitExit(Handle handle, Duration within) {
         try (WaitContainerResultCallback wait = client.waitContainerCmd(handle.reference())
                 .exec(new WaitContainerResultCallback())) {
-            return Optional.of(wait.awaitStatusCode(within.toMillis(), TimeUnit.MILLISECONDS));
-        } catch (RuntimeException | IOException stillRunning) {
-            // A wait that elapses and a daemon that hung up are both "no status yet" to the caller,
-            // which then cancels. Distinguishing them would change nothing it does.
-            return Optional.empty();
+            return new Exit.Observed(wait.awaitStatusCode(within.toMillis(), TimeUnit.MILLISECONDS));
+        } catch (com.github.dockerjava.api.exception.DockerClientException elapsed) {
+            // What the client raises when the wait runs out: the unit is alive and nobody answered.
+            return new Exit.StillRunning();
+        } catch (RuntimeException | IOException fault) {
+            // A daemon that will not answer is NOT an operator who was too slow. Naming the class
+            // rather than the message: a message can quote what the container printed.
+            return new Exit.Unobservable(fault.getClass().getSimpleName());
         }
     }
 

@@ -66,8 +66,28 @@ public class HarnessSignInWorker {
     @org.eclipse.microprofile.config.inject.ConfigProperty(name = "spire.run.result-ack-seconds")
     long ackSeconds;
 
-    /** Units this worker started, so a cancel can reach one that is still waiting on a person. */
+    /**
+     * Units this worker started, keyed by sign-in id and CLAIMED before the container exists.
+     *
+     * <p>The claim is what makes a duplicate Start harmless. Commands are handled unordered, and a
+     * redelivery used to create a second container and overwrite this entry — after which the exit of
+     * one unit removed the other's only handle, leaving a live container holding a credential that
+     * nothing was tracking.
+     */
     private final Map<String, SignInRuntime.Handle> running = new ConcurrentHashMap<>();
+
+    /** A claim with no container yet, so a duplicate loses the race even before anything is created. */
+    private static final SignInRuntime.Handle CLAIMED = new SignInRuntime.Handle("claimed", "claimed");
+
+    /**
+     * Cancels that arrived before the Start they cancel.
+     *
+     * <p>Unordered handling means a Cancel can be processed while its Start is still inside the
+     * runtime, or even before it. Without this the cancel found nothing, said so, and the Start then
+     * cheerfully created the unit anyway — so the operator's cancel did nothing and a container sat
+     * waiting on a code nobody was going to type.
+     */
+    private final Map<String, java.time.Instant> cancelled = new ConcurrentHashMap<>();
 
     @Incoming("harness-sign-in-commands-in")
     @Blocking(ordered = false)
@@ -87,10 +107,24 @@ public class HarnessSignInWorker {
     }
 
     private void start(HarnessSignInCommand.Start command) {
+        // One unit per sign-in id, claimed before anything is created. A redelivered Start loses here.
+        if (running.putIfAbsent(command.signInId(), CLAIMED) != null) {
+            LOG.infof("sign-in %s is already running here; ignoring a repeated start", command.signInId());
+            return;
+        }
+        if (cancelled.remove(command.signInId()) != null) {
+            // The cancel got here first. Creating the unit now would mean the operator's cancel did
+            // nothing and a container waited out its ceiling on a code nobody would type.
+            running.remove(command.signInId());
+            emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.CANCELLED,
+                    "the sign-in was cancelled before it started"));
+            return;
+        }
         // How this arm signs in is the ADAPTER's knowledge. An arm with no such flow is refused here
         // rather than by starting a container that has nothing to run.
         var flow = harnesses.forName(command.harness()).signIn();
         if (flow.isEmpty()) {
+            running.remove(command.signInId());
             emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
                     "this harness has no subscription sign-in"));
             return;
@@ -100,8 +134,15 @@ public class HarnessSignInWorker {
                 flow.get().resultPath(), EnterpriseEnvironment.NONE, 512 * MEGABYTE, 1_000_000_000L,
                 64 * MEGABYTE, Duration.ofSeconds(command.maxWaitSeconds()));
 
-        SignInRuntime.Handle handle = runtime.start(spec, prompt::accept);
+        SignInRuntime.Handle handle;
+        try { handle = runtime.start(spec, prompt::accept); }
+        catch (RuntimeException failed) { running.remove(command.signInId()); throw failed; }
         running.put(command.signInId(), handle);
+        if (cancelled.remove(command.signInId()) != null) {
+            // It arrived while the container was being created — the window the claim alone cannot
+            // cover, because there was no handle to stop until now.
+            runtime.cancel(handle);
+        }
         try {
             if (!awaitPrompt(prompt)) {
                 // The CLI said nothing this build can read, or said two different things. Never invent a
@@ -114,18 +155,25 @@ public class HarnessSignInWorker {
                                 : "the sign-in tool printed no link and code this build could read"));
                 return;
             }
-            Duration life = prompt.expiresIn().orElse(Duration.ofSeconds(command.maxWaitSeconds()));
+            // The EFFECTIVE deadline: the sooner of what the vendor promised and what this worker was
+            // given. The screen counted down the vendor's figure while the worker waited on its own, so
+            // it could show a minute remaining on a unit that had already been destroyed.
+            Duration budget = Duration.ofSeconds(command.maxWaitSeconds());
+            Duration life = prompt.expiresIn().filter(vendor -> vendor.compareTo(budget) < 0).orElse(budget);
             emit(new HarnessSignInResult.Prompted(command.signInId(), prompt.link(), prompt.code(),
                     Instant.now().plus(life)));
 
-            Optional<Integer> exit = runtime.awaitExit(handle, Duration.ofSeconds(command.maxWaitSeconds()));
-            if (exit.isEmpty()) {
+            SignInRuntime.Exit exit = runtime.awaitExit(handle, Duration.ofSeconds(command.maxWaitSeconds()));
+            if (!(exit instanceof SignInRuntime.Exit.Observed observed)) {
                 runtime.cancel(handle);
-                emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.EXPIRED,
-                        "nobody approved the code before it expired"));
+                boolean fault = exit instanceof SignInRuntime.Exit.Unobservable;
+                emit(new HarnessSignInResult.Failed(command.signInId(),
+                        fault ? HarnessSignInResult.Failed.UNIT_FAILED : HarnessSignInResult.Failed.EXPIRED,
+                        fault ? "the sign-in could not be watched to the end"
+                              : "nobody approved the code before it expired"));
                 return;
             }
-            HarnessSignInResult collected = collect(command.signInId(), handle, exit.get(), flow.get().resultPath());
+            HarnessSignInResult collected = collect(command.signInId(), handle, observed.code(), flow.get().resultPath());
             if (!emit(collected) && collected instanceof HarnessSignInResult.Completed) {
                 // The credential reached nobody, and the container holding the only other copy is about
                 // to be destroyed below. Destroying it anyway is the deliberate choice: a lost sign-in
@@ -160,7 +208,9 @@ public class HarnessSignInWorker {
     private HarnessSignInResult collect(String signInId, SignInRuntime.Handle handle, int exit, String resultPath) {
         Optional<byte[]> written = runtime.result(handle, resultPath);
         if (exit != 0 || written.isEmpty()) {
-            return new HarnessSignInResult.Failed(signInId, HarnessSignInResult.Failed.EXPIRED,
+            // The unit ENDED and wrote nothing usable. That is a failure of the sign-in, not a person
+            // who ran out of time, and calling it an expiry sent the operator to try again faster.
+            return new HarnessSignInResult.Failed(signInId, HarnessSignInResult.Failed.UNIT_FAILED,
                     "the sign-in ended without a credential (exit " + exit + ")");
         }
         String body = new String(written.get(), StandardCharsets.UTF_8);
@@ -174,15 +224,28 @@ public class HarnessSignInWorker {
                 SignInAuthMode.identity(body));
     }
 
+    /**
+     * Stops a sign-in, wherever its unit is.
+     *
+     * <p>Three cases, and the first version handled only one. A unit this worker started is in its map.
+     * A unit ANOTHER instance started is not — but it is on the same daemon, so it is discoverable by
+     * the label it carries. And a cancel that arrives before its own Start has no unit at all yet, so
+     * the intent is remembered and the Start refuses to create one.
+     */
     private void cancel(HarnessSignInCommand.Cancel command) {
         SignInRuntime.Handle handle = running.get(command.signInId());
-        if (handle == null) {
-            // A cancel for a unit this worker does not hold is not a fault: another instance may hold
-            // it, or it may already have ended. Saying so beats inventing a failure for the screen.
-            LOG.infof("no local sign-in unit for %s to cancel", command.signInId());
-            return;
+        if (handle == null || handle == CLAIMED) {
+            handle = runtime.discover(Duration.ZERO).stream()
+                    .filter(found -> found.unitId().equals(command.signInId()))
+                    .findFirst().orElse(null);
         }
-        runtime.cancel(handle);
+        if (handle == null) {
+            // Remembered rather than dismissed: the Start may still be on its way, and a cancel that
+            // said "nothing to do" let it create the unit the operator had just cancelled.
+            cancelled.put(command.signInId(), java.time.Instant.now());
+        } else {
+            runtime.cancel(handle);
+        }
         emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.CANCELLED, command.reason()));
     }
 
@@ -241,5 +304,8 @@ public class HarnessSignInWorker {
                 LOG.infof("destroyed an abandoned sign-in unit for %s", handle.unitId());
             }
         }
+        // A cancel whose Start never arrived would otherwise be remembered for ever. Past the window a
+        // Start could still be delivered in, it is nothing but a leak.
+        cancelled.values().removeIf(at -> at.isBefore(java.time.Instant.now().minus(ABANDONED_AFTER)));
     }
 }

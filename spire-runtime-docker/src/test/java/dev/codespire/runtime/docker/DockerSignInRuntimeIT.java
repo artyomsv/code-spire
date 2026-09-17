@@ -79,7 +79,7 @@ class DockerSignInRuntimeIT {
             assertEquals(Optional.empty(), runtime.result(handle, "/home/agent/.codex/auth.json"),
                     "an unapproved sign-in writes no credential");
         } finally {
-            runtime.destroy(handle);
+            assertTrue(runtime.destroy(handle), "removal must be CONFIRMED, not assumed");
         }
         assertTrue(gone(handle), "the unit and whatever it wrote must not outlive the attempt");
     }
@@ -96,7 +96,7 @@ class DockerSignInRuntimeIT {
                         "/tmp/result.json"),
                 seen::add);
         try {
-            assertEquals(Optional.of(0), runtime.awaitExit(handle, Duration.ofSeconds(60)));
+            assertEquals(new SignInRuntime.Exit.Observed(0), runtime.awaitExit(handle, Duration.ofSeconds(60)));
             assertEquals(marker, new String(runtime.result(handle, "/tmp/result.json").orElseThrow(), StandardCharsets.UTF_8));
             // The bytes came out of the file, and the log never carried them.
             assertTrue(seen.stream().noneMatch(line -> line.contains(marker)),
@@ -115,7 +115,7 @@ class DockerSignInRuntimeIT {
                 spec("TEST-empty-" + System.nanoTime(), List.of("sh", "-c", "echo nothing written"), "/tmp/absent.json"),
                 line -> { });
         try {
-            assertEquals(Optional.of(0), runtime.awaitExit(handle, Duration.ofSeconds(60)));
+            assertEquals(new SignInRuntime.Exit.Observed(0), runtime.awaitExit(handle, Duration.ofSeconds(60)));
             assertEquals(Optional.empty(), runtime.result(handle, "/tmp/absent.json"));
         } finally {
             runtime.destroy(handle);

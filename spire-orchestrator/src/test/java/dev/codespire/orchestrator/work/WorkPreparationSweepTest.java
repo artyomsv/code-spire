@@ -289,14 +289,17 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
     }
 
     /**
-     * A refusal belongs to the generation that was ATTEMPTED, not to one that started later.
+     * An attempt that finishes after the item moved on records NOTHING.
      *
-     * <p>The item is re-admitted while the sweep waits on the forge, so the two differ. Recording
-     * against the new generation would hold back the attempt that has not run yet, with a backoff and a
-     * reason earned by work nobody asked for any more.
+     * <p>Stronger than the rule it replaces. Pinning the generation kept a stale reason off a NEWER
+     * generation; this keeps it off the item altogether, which also covers a revision that moves
+     * without the generation moving — a person registering a preparation by hand, for instance. That
+     * item stops matching the sweep's trigger, so nothing would ever revisit and clear the sentence,
+     * and the list shows preparation health in preference to the workflow's own reason: the screen
+     * would say the factory could not prepare a task whose plan gate was open in front of the operator.
      */
     @Test
-    void healthIsRecordedAgainstTheGenerationThatWasAttempted() throws Exception {
+    void anAttemptThatFinishesAfterTheItemMovedOnRecordsNothing() throws Exception {
         String id = admit("assisted", 93);
         slowFailingHead(800);
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -305,10 +308,20 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
             assertEquals(200, transitions.resume(id, store.history(id).size(), true).status());
             assertEquals("branch_head_unconfirmed", running.get(30, TimeUnit.SECONDS).reason());
         }
-        assertEquals(2, store.load(id).generation(), "the re-admission is what makes the two generations differ");
-        assertEquals(1, count("SELECT count(*) FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=1", id));
-        assertEquals(0, count("SELECT count(*) FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=2", id),
-                "the generation that has not been attempted must start clean");
+        assertEquals(2, store.load(id).generation(), "the re-admission is what moved the item on");
+        assertEquals(0, attempts(id), "a refusal earned for a state that is gone belongs to nobody");
+    }
+
+    /** And the other side: an attempt the item did NOT move under is recorded, or nothing ever is. */
+    @Test
+    void anAttemptOnAnUnchangedItemIsStillRecorded() throws Exception {
+        execute("DELETE FROM repository_build_defaults WHERE repository_id=?", repository);
+        String id = admit("assisted", 108);
+
+        sweep.sweep();
+
+        assertEquals(1, attempts(id));
+        assertEquals("build_defaults_missing", reason(id));
     }
 
     /**

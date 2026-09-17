@@ -1,24 +1,50 @@
 package dev.codespire.runworker;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+
+import java.io.IOException;
 
 /**
- * The two things this build reads out of a sign-in file, and nothing else (M3.5 part F).
+ * The one thing this build reads out of a sign-in file, and nothing else (M3.5 part F).
  *
  * <p>Everything inside that file is the vendor's. Only {@code auth_mode} has been measured
  * ({@code @openai/codex@0.146.0}, 2026-09-16), so only {@code auth_mode} is read. The rest is sealed
  * and passed on untouched, because a worker that picked out fields nobody has seen would be building
  * on a guess — and the file holds a credential, which is the worst place for one.
  *
- * <p>Read with a regular expression rather than a JSON parser on purpose: this runs in the worker,
- * where the value must not be turned into an object graph that a logger, a debugger or an error
- * message could print. The one field needed is a short string at the top level.
+ * <p><b>Parsed, not matched.</b> The first version used a regular expression over the whole text, and
+ * its own javadoc claimed to read a top-level field. It did not:
+ * {@code {"metadata":{"auth_mode":"other"},"auth_mode":"apikey"}} was read as {@code other}, so a
+ * nested value decided how a credential was classified — and "is this an API key" is the question that
+ * keeps a per-token key out of the subscription pool. Anything that is not valid JSON with
+ * {@code auth_mode} at the top level now answers null, and the caller refuses.
+ *
+ * <p>Streaming rather than a tree, deliberately: the document is a credential, and a tree puts every
+ * value into an object graph that a logger, a debugger or an exception message can print. This reads
+ * one string and skips the rest without ever holding them.
+ *
+ * <p><b>Duplicate keys.</b> JSON allows the same key twice and readers disagree about which wins. Here
+ * a repeated top-level {@code auth_mode} is treated as no answer at all rather than resolved by a rule
+ * the vendor never promised.
  */
 final class SignInAuthMode {
 
-    /** {@code "auth_mode":"apikey"} — the whole of what has been measured. */
-    private static final Pattern AUTH_MODE = Pattern.compile("\"auth_mode\"\\s*:\\s*\"([a-zA-Z0-9_-]{1,32})\"");
+    private static final JsonFactory JSON = new JsonFactory();
+
+    private static final String FIELD = "auth_mode";
+
+    /**
+     * What a mode may look like: a short token, and nothing else.
+     *
+     * <p>This is a SECURITY bound, not tidiness. The mode is what the screen shows as the sign-in's
+     * identity, and the obvious thing a vendor might put in a field like this is an account's e-mail
+     * address — the one value this project never persists or logs. No {@code @} and no dot can pass,
+     * so an address cannot become a label. The previous regular-expression reader provided this by
+     * accident; parsing the JSON properly removed it, so it is stated here instead.
+     */
+    private static final java.util.regex.Pattern MODE = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,32}");
 
     /** The mode an API-key sign-in reports. A subscription reports something else. */
     static final String API_KEY_MODE = "apikey";
@@ -26,10 +52,34 @@ final class SignInAuthMode {
     private SignInAuthMode() {
     }
 
-    /** @return the declared mode, or null when the file does not say */
+    /**
+     * @return the mode declared at the TOP level, or null when the file is not valid JSON, has no such
+     *     field, declares it more than once, or declares it as something other than a string
+     */
     static String of(String body) {
-        Matcher match = AUTH_MODE.matcher(body);
-        return match.find() ? match.group(1) : null;
+        try (JsonParser parser = JSON.createParser(body)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) return null;
+            String found = null;
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                String field = parser.currentName();
+                JsonToken value = parser.nextToken();
+                if (!FIELD.equals(field)) {
+                    // An object or array under another key is skipped WHOLE, so nothing nested inside
+                    // it is ever mistaken for the top-level field.
+                    parser.skipChildren();
+                    continue;
+                }
+                if (value != JsonToken.VALUE_STRING) return null;
+                if (found != null) return null;
+                String declared = parser.getText();
+                if (!MODE.matcher(declared).matches()) return null;
+                found = declared;
+            }
+            return found;
+        } catch (IOException | RuntimeException notReadable) {
+            // Never include the body or the parser's message: both can quote the credential.
+            return null;
+        }
     }
 
     /**
@@ -37,12 +87,8 @@ final class SignInAuthMode {
      *
      * <p>Deliberately NOT read out of the file. Whatever identity the vendor stores has not been
      * measured, and the obvious candidate — an account's e-mail address — is the one value this project
-     * never persists or logs.
-     *
-     * <p>So the label is the MODE, and {@link #AUTH_MODE} is what makes that safe rather than merely
-     * intended: it admits letters, digits, underscore and hyphen, and nothing else. An address needs an
-     * {@code @} and a dot, so a file whose mode is address-shaped yields no mode at all and this
-     * answers {@code unknown}. Tightening that pattern is therefore a security change, not a tidy-up.
+     * never persists or logs. So the label is the mode, and {@link #of} is what makes that safe: a mode
+     * is a top-level JSON string this build read itself, not a substring found somewhere in a document.
      */
     static String identity(String body) {
         String mode = of(body);

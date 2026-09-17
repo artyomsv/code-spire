@@ -161,11 +161,17 @@ public class HarnessSignIns {
                             pending.map(View::state).orElse("gone"));
                     return;
                 }
-                if (isApiKeyMode(result.authMode())) {
+                String body = encryption.decryptString(result.sealedAuth(), HarnessSignInResult.sealedAad(result.signInId()));
+                // Judged on the SEALED BYTES, not on what the result claimed. The claim is a
+                // convenience for the wire; deciding a credential's kind from it means deciding from a
+                // field beside the thing it describes, and the two can disagree. What must never happen
+                // is a per-token key stored as a subscription: it would be billed as an asserted zero
+                // while the vendor charged for every token, and both look like a pool member afterwards.
+                String mode = topLevelAuthMode(body);
+                if (mode == null || isApiKeyMode(mode)) {
                     fail(c, id, HarnessSignInResult.Failed.WRONG_MODE);
                     return;
                 }
-                String body = encryption.decryptString(result.sealedAuth(), HarnessSignInResult.sealedAad(result.signInId()));
                 if (pool.hasLabel(c, pending.get().label())) {
                     // Taken by an ordinary key while this person was approving. Refusing by name beats
                     // letting the unique constraint throw, because that throw used to be swallowed:
@@ -188,10 +194,51 @@ public class HarnessSignIns {
     /** The states a sign-in may still be completed from. Anything else has already been decided. */
     private static final java.util.Set<String> OPEN = java.util.Set.of("PENDING", "PROMPTED");
 
-    /** The vendor CLI's own word for an API-key sign-in. Anything else is a subscription. */
+    /** The vendor CLI's own word for an API-key sign-in. */
     private static boolean isApiKeyMode(String authMode) {
         return "apikey".equalsIgnoreCase(authMode);
     }
+
+    /**
+     * Reads {@code auth_mode} from the TOP level of the sign-in file, or null.
+     *
+     * <p>Streaming rather than a tree: the document is a credential, and a tree puts every value into
+     * an object graph that a logger or an exception message can print. This reads one string and skips
+     * everything else without holding it.
+     *
+     * <p>Null for anything unreadable, for a nested-only value, and for a field declared twice — JSON
+     * permits duplicates and readers disagree about which wins, so a repeat is treated as no answer
+     * rather than resolved by a rule the vendor never promised. Null refuses the sign-in, which is the
+     * safe direction: nothing is stored.
+     */
+    private static String topLevelAuthMode(String body) {
+        try (com.fasterxml.jackson.core.JsonParser parser = JSON.createParser(body)) {
+            if (parser.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
+            String found = null;
+            while (parser.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                String field = parser.currentName();
+                var value = parser.nextToken();
+                if (!"auth_mode".equals(field)) { parser.skipChildren(); continue; }
+                if (value != com.fasterxml.jackson.core.JsonToken.VALUE_STRING) return null;
+                if (found != null) return null;
+                String declared = parser.getText();
+                // A mode is a short token. The bound is a security one: this value is what a screen
+                // shows as the identity, and an e-mail address must never become one.
+                if (!MODE.matcher(declared).matches()) return null;
+                found = declared;
+            }
+            return found;
+        } catch (java.io.IOException | RuntimeException notReadable) {
+            // Never log the body or the parser's message: both can quote the credential.
+            return null;
+        }
+    }
+
+    private static final com.fasterxml.jackson.core.JsonFactory JSON =
+            new com.fasterxml.jackson.core.JsonFactory();
+
+    /** Letters, digits, underscore and hyphen. No address can pass, and nor can a sentence. */
+    private static final java.util.regex.Pattern MODE = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,32}");
 
     public void failed(HarnessSignInResult.Failed result) {
         UUID id = UUID.fromString(result.signInId());

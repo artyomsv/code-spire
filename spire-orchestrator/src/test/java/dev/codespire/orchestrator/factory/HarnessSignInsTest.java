@@ -274,6 +274,40 @@ class HarnessSignInsTest {
         assertEquals("harness_credential_label_taken", after.reason());
     }
 
+    /**
+     * The KIND is judged on the sealed bytes, never on what the result claimed beside them.
+     *
+     * <p>A result asserting a subscription while carrying an API-key file used to be believed. Stored,
+     * that member is billed as an asserted zero while the vendor charges per token — and nothing
+     * downstream could tell, because both look like a pool row.
+     */
+    @Test
+    void aResultThatMisdescribesItsOwnBytesIsRefused() {
+        HarnessSignIns.View view = start("TEST-seat-liar");
+
+        signIns.completed(new HarnessSignInResult.Completed(view.id().toString(),
+                encryption.encryptString(API_KEY_FILE, HarnessSignInResult.sealedAad(view.id().toString())),
+                "TEST-claims-a-subscription", "TEST-claims-a-subscription"));
+
+        HarnessSignIns.View after = signIns.get(view.id()).orElseThrow();
+        assertEquals("FAILED", after.state());
+        assertEquals(HarnessSignInResult.Failed.WRONG_MODE, after.reason());
+        assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-liar")));
+    }
+
+    /** And bytes that are not a readable sign-in file at all are refused rather than stored blind. */
+    @Test
+    void bytesThatAreNotAReadableSignInFileAreRefused() {
+        HarnessSignIns.View view = start("TEST-seat-garbage");
+
+        signIns.completed(new HarnessSignInResult.Completed(view.id().toString(),
+                encryption.encryptString("TEST-not-json-at-all", HarnessSignInResult.sealedAad(view.id().toString())),
+                "TEST-chatgpt", "TEST-chatgpt"));
+
+        assertEquals("FAILED", signIns.get(view.id()).orElseThrow().state());
+        assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-garbage")));
+    }
+
     /** One sign-in, one member. A redelivered completion must not create a second holder of one seat. */
     @Test
     void aRepeatedCompletionDoesNotCreateASecondMember() {
