@@ -73,6 +73,13 @@ class FixRunDispatcherTest {
 
     private FixRunDispatcher dispatcher() {
         FixRunDispatcher dispatcher = new FixRunDispatcher();
+        dispatcher.catalogues = new HarnessCatalogues() {
+            // The real one reads the database; this plain unit test answers what the worker last read.
+            @Override
+            public String imageFor(String harness) {
+                return pinned != null ? pinned : "spire-agent-codex:1";
+            }
+        };
         dispatcher.plans = new FixDispatch() {
             @Override
             public Plan plan(String reviewId, String threadRef, RepoRef repo) {
@@ -296,6 +303,18 @@ class FixRunDispatcherTest {
      * <p>FR-F27's premise is that the finding is a complete task specification; a command carrying a
      * location and no description would be a paid run on a line number.
      */
+    /** What the run worker last read for the harness; null means nothing was, so the tag is used. */
+    private String pinned;
+
+    /** A fix run uses the exact image the worker read, so every worker runs the same one (review of PR #167). */
+    @Test
+    void aFixRunUsesTheExactImageTheWorkerRead() {
+        pinned = "TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        dispatch();
+
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", launched.getFirst().agentImage());
+    }
+
     @Test
     void theRunIsToldTheFindingAndTheDeploymentsHarness() {
         dispatch();

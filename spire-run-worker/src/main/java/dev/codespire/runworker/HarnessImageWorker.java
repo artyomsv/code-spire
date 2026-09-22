@@ -57,9 +57,9 @@ public class HarnessImageWorker {
     }
 
     HarnessImageResult.Described describe(HarnessImageCommand.Describe command) {
-        Map<String, String> labels;
+        dev.codespire.runtime.ImageDescription image;
         try {
-            labels = runtime.imageLabels(command.image());
+            image = runtime.describeImage(command.image());
         } catch (RuntimeException unreachable) {
             // Named, not rethrown: an image that cannot be pulled is an answer the screen has to give
             // ("this image is not available"), and a thrown exception here would only dead-letter it.
@@ -68,9 +68,9 @@ public class HarnessImageWorker {
             return new HarnessImageResult.Described(command.requestId(), command.harness(), command.image(),
                     HarnessImageResult.Status.IMAGE_UNAVAILABLE, List.of());
         }
-        ModelCatalogueLabel.Read read = ModelCatalogueLabel.of(labels, mapper);
+        ModelCatalogueLabel.Read read = ModelCatalogueLabel.of(image.labels(), mapper);
         return new HarnessImageResult.Described(command.requestId(), command.harness(), command.image(),
-                read.status(), read.models());
+                read.status(), read.models(), image.pinned());
     }
 
     private static String keyOf(HarnessImageResult result) {

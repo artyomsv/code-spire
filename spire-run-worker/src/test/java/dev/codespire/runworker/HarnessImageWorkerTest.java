@@ -32,7 +32,8 @@ class HarnessImageWorkerTest {
         HarnessImageWorker worker = new HarnessImageWorker();
         // Only the label read is reached; any other runtime call returns null and would fail loudly.
         worker.runtime = (RunRuntime) Proxy.newProxyInstance(RunRuntime.class.getClassLoader(), new Class<?>[] { RunRuntime.class },
-                (proxy, method, args) -> method.getName().equals("imageLabels") ? Map.of() : null);
+                (proxy, method, args) -> method.getName().equals("describeImage")
+                        ? new dev.codespire.runtime.ImageDescription("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", Map.of()) : null);
         worker.mapper = new ObjectMapper();
         worker.ackSeconds = 5;
         worker.results = new Capturing(sent);
@@ -41,6 +42,9 @@ class HarnessImageWorkerTest {
 
         assertEquals(1, sent.size());
         assertEquals("codex", sent.getFirst().key());
+        // The exact image read travels with the answer, so a run can use it instead of the tag.
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                ((HarnessImageResult.Described) sent.getFirst().value()).pinnedImage());
     }
 
     /** One partition keeps order only if the worker does not answer two of its messages at once. */

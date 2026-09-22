@@ -33,7 +33,11 @@ class DockerImageLabelsIT {
         assumeTrue(imagePresent(), IMAGE + " is not built on this machine");
         int before = runtime.client().listContainersCmd().withShowAll(true).exec().size();
 
-        Map<String, String> labels = runtime.imageLabels(IMAGE);
+        var described = runtime.describeImage(IMAGE);
+        Map<String, String> labels = described.labels();
+        // A locally built image has no registry digest, so it is pinned by the daemon's own id.
+        var inspected = runtime.client().inspectImageCmd(IMAGE).exec();
+        assertTrue(described.pinned().equals(inspected.getId()) || described.pinned().contains("@sha256:"), described.pinned());
 
         assertEquals("codex", labels.get("dev.codespire.agent.harness"));
         String catalogue = labels.get(MODELS_LABEL);
@@ -52,6 +56,6 @@ class DockerImageLabelsIT {
     @Test
     void anImageThatCannotBeReachedIsAFailureNotAnEmptyAnswer() {
         assertThrows(RuntimeException.class,
-                () -> runtime.imageLabels("spire-test-no-such-image-" + System.nanoTime() + ":never"));
+                () -> runtime.describeImage("spire-test-no-such-image-" + System.nanoTime() + ":never"));
     }
 }

@@ -43,6 +43,8 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
         dispatcher.drain();
         assertEquals("high",heldCommands.getLast().execution().reasoningEffort());
         assertEquals(atLevel.binding(),heldCommands.getLast().work().preparationBinding());
+        // The exact image the checked list was read from, not the tag (review of PR #167).
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000",heldCommands.getLast().execution().agentImage());
     }
     /** Approved while codex ran this model; by dispatch its image no longer does (review of PR #167). */
     @Test void aModelTheHarnessNoLongerRunsCannotStartABuild() throws Exception {
@@ -56,7 +58,8 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
     private void codexRuns(String slug,String... levels) {
         catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request","codex",
                 factoryConfig.agentImage().get("codex"),dev.codespire.contract.event.HarnessImageResult.Status.OK,
-                List.of(new dev.codespire.contract.event.HarnessImageResult.Model(slug,slug,"medium",List.of(levels),true,1))));
+                List.of(new dev.codespire.contract.event.HarnessImageResult.Model(slug,slug,"medium",List.of(levels),true,1)),
+                "TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000"));
     }
     @org.junit.jupiter.api.AfterEach void forgetTheCatalogue() throws Exception {executeWith("DELETE FROM harness_catalogue");}
     @Inject RunResultSaga saga;

@@ -64,10 +64,25 @@ public sealed interface HarnessImageResult {
 
     /**
      * @param models empty unless {@code status} is {@link Status#OK}
+     * @param pinnedImage the exact image that was read — a digest reference or an image id — or null
+     *                    when it could not be reached. A run of this harness uses it rather than the tag,
+     *                    so it runs the image these models were read from (review of PR #167). Null in an
+     *                    answer sent before pins existed.
      */
-    record Described(String requestId, String harness, String image, Status status, List<Model> models)
+    record Described(String requestId, String harness, String image, Status status, List<Model> models,
+                     String pinnedImage)
             implements HarnessImageResult {
+
+        public Described(String requestId, String harness, String image, Status status, List<Model> models) {
+            this(requestId, harness, image, status, models, null);
+        }
+
         public Described {
+            pinnedImage = pinnedImage == null || pinnedImage.isBlank() ? null : pinnedImage;
+            // It becomes the image a container is created from; a reference has no space or control in it.
+            if (pinnedImage != null && (pinnedImage.length() > 512 || !pinnedImage.matches("\\S+")
+                    || pinnedImage.chars().anyMatch(Character::isISOControl)))
+                throw new IllegalArgumentException("A pinned image is one reference, was: " + pinnedImage);
             if (requestId == null || requestId.isBlank()) throw new IllegalArgumentException("A request id is required");
             Objects.requireNonNull(harness, "harness");
             Objects.requireNonNull(image, "image");

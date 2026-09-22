@@ -40,6 +40,24 @@ class HarnessCataloguesTest {
         return config.agentImage().get(HARNESS);
     }
 
+    /**
+     * A run uses the exact image the list was read from; with nothing read, the tag, as before part M.
+     * And an answer about an image the harness has since left pins nothing (review of PR #167).
+     */
+    @Test
+    void aRunUsesTheImageTheListWasReadFromAndTheTagWhenNothingWasRead() {
+        assertEquals(image(), catalogues.imageFor(HARNESS), "nothing read yet: the tag");
+
+        catalogues.record(new HarnessImageResult.Described("TEST-request", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-model", true, 1)), "TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000"));
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", catalogues.imageFor(HARNESS));
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", catalogues.admit(HARNESS, "TEST-model", null).image());
+
+        catalogues.record(new HarnessImageResult.Described("TEST-request-2", HARNESS, "TEST-another-image:1",
+                HarnessImageResult.Status.OK, List.of(model("TEST-model", true, 1)), "TEST-another@sha256:" + "1".repeat(64)));
+        assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", catalogues.imageFor(HARNESS), "an answer about another image changes nothing");
+    }
+
     private static HarnessImageResult.Model model(String slug, boolean visible, int priority) {
         return new HarnessImageResult.Model(slug, slug, "medium", List.of("low", "medium", "high"), visible, priority);
     }

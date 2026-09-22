@@ -595,6 +595,36 @@ class RunResourceTest {
                 .body(containsString("no longer accepted"));
     }
 
+    @Inject HarnessCatalogues catalogues;
+    @Inject FactoryConfig factoryConfig;
+
+    /** A dispatched run uses the exact image the worker last read, not the tag (review of PR #167). */
+    @Test
+    @TestSecurity(user = "op", roles = "spire-admin")
+    void aDispatchedRunUsesTheExactImageTheWorkerRead() {
+        String workspace = workspaceWithFactoryAccount();
+        List<RunCommand> sent = new java.util.ArrayList<>();
+        QuarkusMock.installMockForType(new RunCommandEmitter() {
+            @Override
+            public void dispatch(RunCommand command) {
+                sent.add(command);
+            }
+        }, RunCommandEmitter.class);
+        try {
+            catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request", "codex",
+                    factoryConfig.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.NO_CATALOGUE,
+                    List.of(), "TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000"));
+
+            given().contentType("application/json").body(body(workspace))
+                    .when().post("/api/runs")
+                    .then().statusCode(201);
+
+            org.junit.jupiter.api.Assertions.assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", ((RunCommand.ExecuteRun) sent.getFirst()).agentImage());
+        } finally {
+            sql("DELETE FROM harness_catalogue");
+        }
+    }
+
     @Test
     @TestSecurity(user = "op", roles = "spire-admin")
     void dispatchingReturnsADerivedRunId() {

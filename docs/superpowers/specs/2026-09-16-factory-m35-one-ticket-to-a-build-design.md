@@ -592,6 +592,25 @@ The vendor's CLI does not check the level (measured on 2026-09-22: a nonsense va
 every hop accepts only a short lower-case word. That keeps the value from closing a quote or naming a
 second config key, and it is why the save already refuses a level the model does not declare.
 
+### 6A.4c A run uses the image its list was read from
+
+A tag can move, and two run workers can hold different images under one tag. The deployment default is
+`spire-agent-codex:latest`, and a worker runs its own copy without pulling a newer one. So the list could be
+read from one worker's image while the build ran on another's (review of PR #167, operator's option B).
+
+The run worker now reads the labels **and** the exact image in one inspect, and answers with both: the
+registry digest (`repo@sha256:…`) when the image has one, else the daemon's image id. The orchestrator
+stores the pin with the list (V81). Every run it sends — an item build, a REST dispatch, a /fix — uses the
+pin instead of the tag. An item build takes the check and the pin from one read of the cache, so it cannot
+be checked against one answer and run in another's image.
+
+- **Nothing read yet:** the tag, as before part M.
+- **A registry image:** every worker pulls the same digest.
+- **A local-only image (dev):** the id runs on the daemon that built it. Elsewhere the pull fails and the
+  run fails. That is the honest answer: that worker does not hold the image the list describes.
+- **Rebuilt under the same tag:** runs keep the old pin until the next refresh (`spire.harness-catalogue-interval`,
+  10 minutes), and the old list goes with it, so the two still agree.
+
 ### 6A.5 The cost, stated
 
 The image contract gains a clause, so an operator building their own agent image must produce that label

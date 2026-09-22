@@ -50,7 +50,7 @@ public class HarnessCatalogues {
 
     /** What a screen shows for one harness. */
     public record Catalogue(String harness, String image, HarnessImageResult.Status status,
-                            List<HarnessImageResult.Model> models, Instant observedAt) {
+                            List<HarnessImageResult.Model> models, Instant observedAt, String pinnedImage) {
 
         /** The models to OFFER: the ones the vendor wants shown, in the vendor's own order. */
         public List<HarnessImageResult.Model> offered() {
@@ -110,15 +110,17 @@ public class HarnessCatalogues {
             return;
         }
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO harness_catalogue (harness, image, status, models, observed_at)
-                VALUES (?, ?, ?, ?::jsonb, now())
+                INSERT INTO harness_catalogue (harness, image, status, models, observed_at, pinned_image)
+                VALUES (?, ?, ?, ?::jsonb, now(), ?)
                 ON CONFLICT (harness) DO UPDATE
-                   SET image=excluded.image, status=excluded.status, models=excluded.models, observed_at=now()
+                   SET image=excluded.image, status=excluded.status, models=excluded.models, observed_at=now(),
+                       pinned_image=excluded.pinned_image
                 """)) {
             ps.setString(1, answer.harness());
             ps.setString(2, answer.image());
             ps.setString(3, answer.status().name());
             ps.setString(4, mapper.writeValueAsString(answer.models()));
+            ps.setString(5, answer.pinnedImage());
             ps.executeUpdate();
         } catch (SQLException | JsonProcessingException failure) {
             throw new IllegalStateException("The model catalogue for " + answer.harness() + " could not be stored", failure);
@@ -134,12 +136,44 @@ public class HarnessCatalogues {
      * an approval, and start a build, against another that does not run it.
      */
     public Optional<String> refusal(String harness, String model, String effort) {
-        var catalogue = get(harness).filter(known -> known.status() == HarnessImageResult.Status.OK);
-        if (catalogue.isEmpty()) return effort == null ? Optional.empty() : Optional.of("effort_unverifiable");
+        return Optional.ofNullable(admit(harness, model, effort).refusal());
+    }
+
+    /**
+     * What a build of this harness may run: a refusal, or the image to run it in.
+     *
+     * @param refusal why it may not run, or null
+     * @param image   the image the checked list was read from, or the configured tag when nothing pinned one
+     */
+    public record Admission(String refusal, String image) { }
+
+    /**
+     * The check and the image from ONE read of the cache, so the list a build was checked against and
+     * the image it runs in cannot come from two different answers.
+     */
+    public Admission admit(String harness, String model, String effort) {
+        Optional<Catalogue> known = get(harness);
+        String image = imageOf(harness, known);
+        var catalogue = known.filter(read -> read.status() == HarnessImageResult.Status.OK);
+        if (catalogue.isEmpty()) return new Admission(effort == null ? null : "effort_unverifiable", image);
         var runs = catalogue.get().find(model);
-        if (runs.isEmpty()) return Optional.of("model_not_run_by_harness");
-        if (effort != null && !runs.get().efforts().contains(effort)) return Optional.of("effort_not_offered");
-        return Optional.empty();
+        if (runs.isEmpty()) return new Admission("model_not_run_by_harness", image);
+        if (effort != null && !runs.get().efforts().contains(effort)) return new Admission("effort_not_offered", image);
+        return new Admission(null, image);
+    }
+
+    /**
+     * The image a run of this harness uses: the exact one the run worker last read, else the tag.
+     *
+     * <p>A tag can move, and two workers can hold different images under it; the pin cannot. Where
+     * nothing has been read yet the tag is all there is, as before part M.
+     */
+    public String imageFor(String harness) {
+        return imageOf(harness, get(harness));
+    }
+
+    private String imageOf(String harness, Optional<Catalogue> known) {
+        return known.map(Catalogue::pinnedImage).orElseGet(() -> config.agentImage().get(harness));
     }
 
     /**
@@ -150,7 +184,7 @@ public class HarnessCatalogues {
      */
     public Optional<Catalogue> get(String harness) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
-                "SELECT harness, image, status, models::text, observed_at FROM harness_catalogue WHERE harness=?")) {
+                "SELECT harness, image, status, models::text, observed_at, pinned_image FROM harness_catalogue WHERE harness=?")) {
             ps.setString(1, harness);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Optional.empty();
@@ -159,7 +193,7 @@ public class HarnessCatalogues {
                 return Optional.of(new Catalogue(rs.getString("harness"), rs.getString("image"),
                         HarnessImageResult.Status.valueOf(rs.getString("status")),
                         mapper.readValue(rs.getString("models"), new TypeReference<List<HarnessImageResult.Model>>() { }),
-                        rs.getTimestamp("observed_at").toInstant()));
+                        rs.getTimestamp("observed_at").toInstant(), rs.getString("pinned_image")));
             }
         } catch (SQLException | JsonProcessingException failure) {
             throw new IllegalStateException("The model catalogue for " + harness + " could not be read", failure);

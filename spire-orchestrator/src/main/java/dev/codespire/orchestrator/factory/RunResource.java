@@ -74,6 +74,9 @@ public class RunResource {
     MachineAccounts machineAccounts;
 
     @Inject
+    HarnessCatalogues catalogues;
+
+    @Inject
     dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
 
     @Inject
@@ -161,7 +164,8 @@ public class RunResource {
         // the review path already keeps); a dead-lettered command lands in dlq_entry.payload as sent.
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(runId, repo,
                 FactoryCloneUrls.cloneUrl(in.scmType(), account.baseUrl(), repo),
-                in.baseBranch(), in.baseCommit(), branch, in.prompt(), in.harness(), in.model(), in.agentImage(),
+                // The exact image the run worker last read for this harness, so every worker runs the same one.
+                in.baseBranch(), in.baseCommit(), branch, in.prompt(), in.harness(), in.model(), catalogues.imageFor(in.harness()),
                 List.of(), config.wallClockSeconds(),
                 runCredentials.packScm(runId, account.botUsername(), account.secret()),
                 runCredentials.packHarness(runId, credential.apiKey()));

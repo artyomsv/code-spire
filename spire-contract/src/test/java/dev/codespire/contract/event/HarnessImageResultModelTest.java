@@ -21,6 +21,15 @@ class HarnessImageResultModelTest {
                 List.of("medium"), true, 1));
     }
 
+    /** The pin becomes the image a container is created from, so it is one reference and nothing more. */
+    @Test
+    void aPinnedImageIsOneReference() {
+        assertThrows(IllegalArgumentException.class, () -> new HarnessImageResult.Described("TEST-request", "codex",
+                "TEST-image", HarnessImageResult.Status.OK, List.of(), "TEST-image --privileged"));
+        assertEquals(null, new HarnessImageResult.Described("TEST-request", "codex", "TEST-image",
+                HarnessImageResult.Status.OK, List.of()).pinnedImage(), "an answer from before pins has none");
+    }
+
     @Test
     void noDeclaredDefaultIsKeptAsNoneRatherThanRefused() {
         assertEquals("", new HarnessImageResult.Model("TEST-model", "TEST", "", List.of("medium"), true, 1).defaultEffort());

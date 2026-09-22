@@ -325,12 +325,33 @@ public final class DockerRunRuntime implements PublicationRuntime {
     }
 
     @Override
-    public java.util.Map<String, String> imageLabels(String image) {
+    public dev.codespire.runtime.ImageDescription describeImage(String image) {
         // The SAME authenticated pull a run uses, so a private registry needs nothing new: an image a
         // run could start is an image whose labels can be read, and the reverse.
         ensureImage(image);
-        var config = client.inspectImageCmd(image).exec().getConfig();
-        return config == null || config.getLabels() == null ? java.util.Map.of() : java.util.Map.copyOf(config.getLabels());
+        var inspected = client.inspectImageCmd(image).exec();
+        var config = inspected.getConfig();
+        return new dev.codespire.runtime.ImageDescription(pinned(image, inspected.getRepoDigests(), inspected.getId()),
+                config == null || config.getLabels() == null ? java.util.Map.of() : config.getLabels());
+    }
+
+    /**
+     * The exact image behind a reference: the reference itself when it is already a digest, else the
+     * registry digest of the same repository, else the daemon's image id.
+     *
+     * <p>The image id is the honest last resort, not a fallback that pretends: a locally built image has
+     * no registry digest, and its id runs on this daemon and fails to pull anywhere else — which is the
+     * right answer on a worker that does not hold the image the models were read from.
+     */
+    static String pinned(String image, java.util.List<String> repoDigests, String imageId) {
+        if (image.contains("@sha256:")) return image;
+        int slash = image.lastIndexOf('/'), colon = image.lastIndexOf(':');
+        // A colon before the last slash is a registry port ("localhost:5000/agent"), not a tag.
+        String repository = colon > slash ? image.substring(0, colon) : image;
+        for (String digest : repoDigests == null ? java.util.List.<String>of() : repoDigests) {
+            if (digest.startsWith(repository + "@sha256:")) return digest;
+        }
+        return imageId;
     }
 
     /**

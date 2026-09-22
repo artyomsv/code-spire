@@ -210,6 +210,10 @@ class RepositoryResolverCutoverTest extends RepositoryFixture {
             // The dispatcher asks this one now; the real method would reach a database from a unit test.
             @Override public java.util.List<dev.codespire.contract.review.TokenType> unpricedTypes(String model, String harness) { return java.util.List.of(); }
         });
+        // Answers what the worker last read; the real one would reach a database from a unit test.
+        set(fix, "catalogues", new dev.codespire.orchestrator.factory.HarnessCatalogues() {
+            @Override public String imageFor(String harness) { return "TEST-image"; }
+        });
         set(fix, "models", new dev.codespire.orchestrator.llm.LlmModelRegistry() {
             @Override public boolean isDisabled(String model) { return false; }
         });

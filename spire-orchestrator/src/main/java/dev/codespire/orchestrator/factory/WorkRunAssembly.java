@@ -53,8 +53,8 @@ public class WorkRunAssembly {
             throw new IllegalStateException("catalogue_unavailable");
         }
         // Approved against the image the harness ran then; it may run another by now (§6A.4b).
-        var cannotRun=catalogues.refusal(in.harness(),in.model(),item.preparation().effort());
-        if(cannotRun.isPresent())throw new IllegalStateException(cannotRun.get());
+        var admission=catalogues.admit(in.harness(),in.model(),item.preparation().effort());
+        if(admission.refusal()!=null)throw new IllegalStateException(admission.refusal());
         var unpriced=pricer.unpricedTypes(in.model(),in.harness());
         if(!unpriced.isEmpty())throw new IllegalStateException("model_pricing_incomplete:"
                 +unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
@@ -63,7 +63,8 @@ public class WorkRunAssembly {
         String id=RunIds.of(source.scm(),in.workspace(),in.slug(),subject,1),branch=DispatchRequestParser.RUN_BRANCH_PREFIX+subject;
         long wall=Math.min(config.wallClockSeconds(),Math.subtractExact(item.policy().limits().maxWallClockSeconds(),item.progress().wallSeconds()));
         var command=new RunCommand.ExecuteRun(id,source.repository(),FactoryCloneUrls.cloneUrl(source.scm(),account.baseUrl(),source.repository()),
-                in.baseBranch(),in.baseCommit(),branch,in.prompt(),in.harness(),in.model(),in.agentImage(),
+                // The image the checked list was read from, not the tag, which may name another by now.
+                in.baseBranch(),in.baseCommit(),branch,in.prompt(),in.harness(),in.model(),admission.image(),
                 item.policy().limits().protectedPaths().stream().sorted().toList(),wall,
                 credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,chosen.member().apiKey()))
                 // The level the approved binding hashed, so the build runs at what was approved (M3.5 part M).
