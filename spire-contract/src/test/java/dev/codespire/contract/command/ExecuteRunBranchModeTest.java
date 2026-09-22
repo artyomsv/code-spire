@@ -36,6 +36,17 @@ class ExecuteRunBranchModeTest {
      * every run dispatched before ADR-040 pushes into the factory's own namespace, and a default of
      * {@code existing} would lift that floor for all of them at once.
      */
+    /** A wither that forgot one component would drop it at every rebuild site, and still compile. */
+    @Test
+    void theThinkingLevelSurvivesEveryRebuildAndTheOthersSurviveIt() {
+        RunCommand.ExecuteRun run = run().atEffort("high").onExistingBranch("develop");
+
+        assertEquals("high", run.reasoningEffort());
+        assertEquals("develop", run.protectedBranch());
+        assertEquals(null, run().reasoningEffort(), "a run nobody chose a level for uses the model's default");
+        assertThrows(IllegalArgumentException.class, () -> run().atEffort("high'; rm"));
+    }
+
     @Test
     void aCommandThatSaysNothingUsesTheNamespaceMode() {
         assertFalse(run().pushesToAnExistingBranch());

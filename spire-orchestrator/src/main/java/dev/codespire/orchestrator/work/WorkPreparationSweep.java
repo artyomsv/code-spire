@@ -243,7 +243,7 @@ public class WorkPreparationSweep {
                         WorkPreparation.Origin.STORED, planId),
                 setup.baseBranch(), head, setup.harness(), setup.model(),
                 actor == null ? "system:build-defaults@" + setup.revision() : actor,
-                WorkPreparation.STORED_BINDING);
+                WorkPreparation.EFFORT_BINDING, setup.effort());
 
         // The saved setup is compared again INSIDE the registration's own transaction: it was read
         // before a forge call this waited on, and a repository whose branch, harness or model changed

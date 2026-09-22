@@ -182,13 +182,22 @@ class RunUnitBuilderTest {
                 original.repo(), original.remoteUri(), original.baseBranch(), original.baseCommit(),
                 original.branch(), original.prompt(), original.harness(), original.model(),
                 original.agentImage(), original.protectedPaths(), original.maxWallClockSeconds(),
-                original.scmCredential(), original.harnessCredential(), false, "develop");
+                original.scmCredential(), original.harnessCredential(), false, "develop",
+                original.reasoningEffort());
 
         Map<String, String> env = builder.build(withFloorOnly, new CodexAdapter())
                 .publisher().environment();
 
         assertEquals("develop", env.get("SPIRE_PROTECTED_BRANCH"));
         assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.keySet().toString());
+    }
+
+    /** The level on the command is the level in the agent's command line, not lost on the way. */
+    @Test
+    void theThinkingLevelReachesTheAgentsCommand() {
+        List<String> argv = builder.build(command().atEffort("xhigh"), new CodexAdapter()).agent().argv();
+
+        assertTrue(String.join(" ", argv).contains("model_reasoning_effort=\"xhigh\""), argv.toString());
     }
 
     /** A fix run carries both, because the publisher refuses the mode without the destination. */

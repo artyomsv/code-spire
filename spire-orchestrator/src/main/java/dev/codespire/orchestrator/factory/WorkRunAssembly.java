@@ -61,7 +61,9 @@ public class WorkRunAssembly {
         var command=new RunCommand.ExecuteRun(id,source.repository(),FactoryCloneUrls.cloneUrl(source.scm(),account.baseUrl(),source.repository()),
                 in.baseBranch(),in.baseCommit(),branch,in.prompt(),in.harness(),in.model(),in.agentImage(),
                 item.policy().limits().protectedPaths().stream().sorted().toList(),wall,
-                credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,chosen.member().apiKey()));
+                credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,chosen.member().apiKey()))
+                // The level the approved binding hashed, so the build runs at what was approved (M3.5 part M).
+                .atEffort(item.preparation().effort());
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
         return new Prepared(held,new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),chosen.member().id()));

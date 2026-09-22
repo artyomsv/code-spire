@@ -19,6 +19,13 @@ class HarnessInvocationTest {
     }
 
     @Test
+    void aThinkingLevelThatIsNotAPlainWordIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> new HarnessInvocation("run-1", "p", "/workspace",
+                "gpt-5-codex", Map.of(), Duration.ofMinutes(1), "high\" -c x=\"y"));
+        assertEquals(null, invocation(Map.of()).reasoningEffort());
+    }
+
+    @Test
     void toStringNeverPrintsACredential() {
         // A record's generated toString() prints every component, so `log.info("{}", invocation)`
         // would put the machine-account token in a log line. The name of a credential is useful

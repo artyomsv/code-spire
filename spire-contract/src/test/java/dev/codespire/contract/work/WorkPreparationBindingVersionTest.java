@@ -97,6 +97,46 @@ class WorkPreparationBindingVersionTest {
                 "main", COMMIT, "codex", "TEST-model", "system", WorkPreparation.TRACKER_BINDING));
     }
 
+    private static WorkPreparation atLevel(String level) {
+        UUID specId = UUID.fromString("00000000-0000-4000-8000-000000000071");
+        UUID planId = UUID.fromString("00000000-0000-4000-8000-000000000072");
+        return new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, specId),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, planId),
+                "main", COMMIT, "codex", "TEST-model", "system", WorkPreparation.EFFORT_BINDING, level);
+    }
+
+    /**
+     * The level is part of what an operator approves, so two levels are two approvals. And version 3
+     * with no level is still not version 2: a gate opened under 2 must not be answered by a recomputed 3.
+     */
+    @Test
+    void theThinkingLevelIsPartOfWhatIsApproved() {
+        assertNotEquals(atLevel("high").binding(), atLevel("xhigh").binding());
+        assertNotEquals(atLevel("high").binding(), atLevel(null).binding());
+        UUID specId = UUID.fromString("00000000-0000-4000-8000-000000000071");
+        UUID planId = UUID.fromString("00000000-0000-4000-8000-000000000072");
+        assertNotEquals(stored(specId, planId).binding(), atLevel(null).binding());
+    }
+
+    /** Versions 1 and 2 do not hash a level, so they may not carry one to the build. */
+    @Test
+    void aLevelUnderAVersionThatDoesNotHashItIsRefused() {
+        UUID specId = UUID.randomUUID(), planId = UUID.randomUUID();
+        assertThrows(IllegalArgumentException.class, () -> new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, specId),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, planId),
+                "main", COMMIT, "codex", "TEST-model", "system", WorkPreparation.STORED_BINDING, "high"));
+    }
+
+    /** The level ends up inside the harness's own config syntax; only a plain word may get there. */
+    @Test
+    void aLevelThatIsNotAPlainWordIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> atLevel("high\" x=\"y"));
+        assertThrows(IllegalArgumentException.class, () -> atLevel("HIGH"));
+        assertEquals(null, atLevel("  ").effort(), "blank is the model's own default, not a level called blank");
+    }
+
     @Test
     void anUnknownVersionIsRefusedRatherThanHashedSomeOtherWay() {
         assertThrows(IllegalArgumentException.class, () -> new WorkPreparation(

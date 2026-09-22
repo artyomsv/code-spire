@@ -33,6 +33,16 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
         execute("UPDATE scm_provider SET bot_account_id='900003',bot_username='TEST-renamed-again' WHERE id=?",account);
         assertEquals("900002",store.load(id).control().factoryActor());
     }
+    /** The level the approved binding hashed is the level the build is sent with (M3.5 part M). */
+    @Test void theApprovedThinkingLevelIsTheOneTheBuildRunsAt() throws Exception {
+        String id=admit("autonomous",57);var plain=preparation("TEST-prepared-admin");
+        var atLevel=new WorkPreparation(plain.specification(),plain.plan(),plain.baseBranch(),plain.baseCommit(),plain.harness(),
+                plain.model(),plain.registeredBy(),WorkPreparation.EFFORT_BINDING,"high");
+        var outcome=transitions.prepare(id,store.history(id).size(),atLevel);assertEquals(200,outcome.status(),outcome.reason());
+        dispatcher.drain();
+        assertEquals("high",heldCommands.getLast().execution().reasoningEffort());
+        assertEquals(atLevel.binding(),heldCommands.getLast().work().preparationBinding());
+    }
     @Inject RunResultSaga saga;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly assembly;
     String ready() throws Exception {String id=admit("autonomous",56);register(id);return id;}

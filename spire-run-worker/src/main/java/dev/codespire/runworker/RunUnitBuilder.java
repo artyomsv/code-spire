@@ -141,7 +141,7 @@ public class RunUnitBuilder {
         HarnessInvocation invocation = new HarnessInvocation(command.runId(),
                 withCommitInstruction(command.prompt()),
                 "/workspace", command.model(), harnessEnv,
-                Duration.ofSeconds(command.maxWallClockSeconds()));
+                Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort());
 
         Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
         agentEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());

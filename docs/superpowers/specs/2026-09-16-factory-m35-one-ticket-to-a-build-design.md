@@ -575,6 +575,23 @@ level the model does not offer would reach the vendor as it stands. With no leve
 default applies, which is a real choice the vendor publishes per model — so it is stored as NULL rather
 than as a guessed name.
 
+### 6A.4b The level reaches the run, or it is not approved
+
+A level saved and then ignored would be the quiet lie this milestone keeps removing. So the level is
+carried the whole way, and each hop has a test that fails if it drops it:
+
+1. The sweep copies the saved level into the preparation, which binds under a new **version 3**
+   (`WorkPreparation.EFFORT_BINDING`). Versions 1 and 2 keep their exact hashes, per 6.3, and may not
+   carry a level at all — a level they do not hash would reach the build without being approved.
+2. The build command carries it (`ExecuteRun.reasoningEffort`, nullable, so a command already on the
+   bus decodes as "model default"), set from the preparation the gate approved.
+3. The run worker puts it on the harness invocation, and the Codex arm adds
+   `-c 'model_reasoning_effort="<level>"'` — nothing at all when no level was chosen.
+
+The vendor's CLI does not check the level (measured on 2026-09-22: a nonsense value is echoed back), so
+every hop accepts only a short lower-case word. That keeps the value from closing a quote or naming a
+second config key, and it is why the save already refuses a level the model does not declare.
+
 ### 6A.5 The cost, stated
 
 The image contract gains a clause, so an operator building their own agent image must produce that label

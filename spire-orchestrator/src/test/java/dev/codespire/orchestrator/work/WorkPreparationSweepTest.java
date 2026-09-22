@@ -36,6 +36,8 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
     @Inject WorkPreparationSweep sweep;
     @Inject BuildDefaults defaults;
     @Inject WorkItemArtifacts stored;
+    @Inject dev.codespire.orchestrator.factory.HarnessCatalogues catalogues;
+    @Inject dev.codespire.orchestrator.factory.FactoryConfig config;
 
     @BeforeEach
     void buildSetup() {
@@ -76,6 +78,29 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         throw new AssertionError("the sweep never asked the forge for the branch head");
     }
 
+    /** The level saved with the build setup is the level the prepared task binds (M3.5 part M). */
+    @Test
+    void theSavedThinkingLevelIsCopiedIntoThePreparedTask() throws Exception {
+        try {
+            catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request", "codex",
+                    config.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.OK,
+                    java.util.List.of(new dev.codespire.contract.event.HarnessImageResult.Model(model, model, "medium",
+                            java.util.List.of("medium", "high"), true, 1))));
+            defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model, "high"),
+                    "TEST-prepared-admin");
+            String id = admit("assisted", 81);
+
+            sweep.sweep();
+
+            var prepared = store.load(id).preparation();
+            assertNotNull(prepared);
+            assertEquals("high", prepared.effort());
+            assertEquals(WorkPreparation.EFFORT_BINDING, prepared.bindingVersion());
+        } finally {
+            executeWith("DELETE FROM harness_catalogue");
+        }
+    }
+
     @Test
     void oneTicketBecomesAPreparedTaskWithNoTypingAtAll() throws Exception {
         String id = admit("assisted", 80);
@@ -85,7 +110,8 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
 
         var prepared = store.load(id).preparation();
         assertNotNull(prepared, "the ticket alone must be enough");
-        assertEquals(WorkPreparation.STORED_BINDING, prepared.bindingVersion());
+        assertEquals(WorkPreparation.EFFORT_BINDING, prepared.bindingVersion());
+        assertNull(prepared.effort(), "no level was saved, so the model's own default applies");
         assertEquals(WorkPreparation.Origin.STORED, prepared.specification().origin());
         assertEquals(WorkPreparation.Origin.STORED, prepared.plan().origin());
         // The build coordinates come from the repository's saved setup, and the commit from the forge.

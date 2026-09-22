@@ -10,7 +10,8 @@ import java.util.UUID;
 
 /** Pinned references and execution coordinates only; tracker artifact text never enters aggregate history. */
 public record WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
-                              String harness, String model, String registeredBy, int bindingVersion) {
+                              String harness, String model, String registeredBy, int bindingVersion,
+                              String effort) {
 
     /** Where an artifact's approved bytes live. Absent in stored history means {@link Origin#TRACKER}. */
     public enum Origin {
@@ -55,9 +56,27 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
     /** Adds the artifact origin and the stored identity, for preparations this deployment composes. */
     public static final int STORED_BINDING = 2;
 
+    /**
+     * Adds the thinking level (M3.5 part M).
+     *
+     * <p>A version of its own, for the reason the others exist: a gate stores the binding and answering
+     * it compares against a RECOMPUTED one, so folding the level into version 2 would change the hash of
+     * every composed preparation already waiting on a decision. It belongs in the binding at all because
+     * it changes what a build costs and how hard the model works — the same reason the model does — and
+     * because the vendor's CLI does not check it: measured 2026-09-22, a nonsense level is accepted and
+     * echoed back. So the level an operator approved is the one the build runs, or nothing is.
+     */
+    public static final int EFFORT_BINDING = 3;
+
     public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                            String harness, String model, String registeredBy) {
-        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, TRACKER_BINDING);
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, TRACKER_BINDING, null);
+    }
+
+    /** Every preparation written before thinking levels existed carries the model's own default. */
+    public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
+                           String harness, String model, String registeredBy, int bindingVersion) {
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, bindingVersion, null);
     }
 
     public WorkPreparation {
@@ -71,8 +90,15 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         baseCommit = baseCommit.toLowerCase(java.util.Locale.ROOT);
         // Absent in older stored JSON, where every artifact was a tracker ticket.
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
-        if (bindingVersion != TRACKER_BINDING && bindingVersion != STORED_BINDING)
+        if (bindingVersion != TRACKER_BINDING && bindingVersion != STORED_BINDING && bindingVersion != EFFORT_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
+        effort = effort == null || effort.isBlank() ? null : effort.strip();
+        // A level under a version that does not hash it would be carried to the build without being part
+        // of what was approved -- exactly what the version exists to prevent.
+        if (effort != null && bindingVersion < EFFORT_BINDING)
+            throw new IllegalArgumentException("A thinking level needs binding version " + EFFORT_BINDING);
+        if (effort != null && !effort.matches("[a-z]{1,16}"))
+            throw new IllegalArgumentException("A thinking level is a short lower-case word, was: " + effort);
         if (bindingVersion == TRACKER_BINDING
                 && (specification.origin() != Origin.TRACKER || plan.origin() != Origin.TRACKER))
             throw new IllegalArgumentException("A version 1 binding describes tracker artifacts only");
@@ -94,6 +120,11 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
             }
         }
         for (String part : java.util.List.of(baseBranch, baseCommit, harness, model)) value.append(part.length()).append(':').append(part);
+        // Versions 1 and 2 must keep producing exactly the hashes their open gates hold.
+        if (bindingVersion >= EFFORT_BINDING) {
+            String level = effort == null ? "" : effort;
+            value.append(level.length()).append(':').append(level);
+        }
         return digest(value.toString());
     }
 
