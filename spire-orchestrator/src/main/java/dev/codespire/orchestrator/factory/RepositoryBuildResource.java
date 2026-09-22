@@ -41,7 +41,21 @@ public class RepositoryBuildResource {
      * without an agent image refuses at dispatch; a model that cannot price one of those types refuses
      * there too, so the screen is told both rather than guessing at either.
      */
-    public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes) {}
+    public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes,
+                          Map<String, HarnessModels> models) {}
+
+    /**
+     * The models a harness can run, as its image declares them, and why there are none when there are none.
+     *
+     * @param status {@code UNKNOWN} when nothing has been heard from the run worker yet, otherwise the
+     *     image's own answer. An empty list means four different things, and a screen that cannot tell them
+     *     apart can only show an empty dropdown.
+     * @param offered the models to show, in the vendor's order. The vendor's hidden ones are left out:
+     *     they still run if named, but an operator choosing from a list should see what the vendor offers.
+     */
+    public record HarnessModels(String status, List<dev.codespire.contract.event.HarnessImageResult.Model> offered) {}
+
+    @Inject HarnessCatalogues catalogues;
     /** @param account the role whose account answered, so a reviewer-confirmed head is not read as factory push access */
     public record Head(String branch, String commit, String account) {}
 
@@ -54,9 +68,16 @@ public class RepositoryBuildResource {
     @GET @Path("/build/options")
     public Options options() {
         List<String> harnesses = config.agentImage().keySet().stream().sorted().toList();
-        return new Options(harnesses, harnesses.stream().collect(java.util.stream.Collectors.toMap(
-                harness -> harness,
-                harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
+        return new Options(harnesses,
+                harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
+                        harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
+                harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)));
+    }
+
+    private HarnessModels modelsOf(String harness) {
+        return catalogues.get(harness)
+                .map(catalogue -> new HarnessModels(catalogue.status().name(), catalogue.offered()))
+                .orElse(new HarnessModels("UNKNOWN", List.of()));
     }
 
     @PUT @Path("/build")

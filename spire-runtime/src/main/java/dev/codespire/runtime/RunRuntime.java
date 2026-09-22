@@ -68,4 +68,22 @@ public interface RunRuntime {
      * the Docker arm's went 30s to 300s once and a guard that did not read it kept passing.
      */
     Duration drainWindow();
+
+    /**
+     * The labels an image carries, fetching it first if this arm does not hold it (M3.5 part M).
+     *
+     * <p>On this port rather than a new one because the registry credential lives here and nowhere
+     * else: it authenticates a pull and must reach nothing but a pull. Reading an image's labels is the
+     * one thing every arm must already be able to do, since it cannot start a unit otherwise — on Docker
+     * by inspecting the image, on Kubernetes by reading the registry manifest.
+     *
+     * <p>A default that THROWS rather than answering empty. An empty map would read as "this image
+     * declares nothing", which is a real answer with a real screen; an arm that cannot look at all is a
+     * different fact and must not be mistaken for it.
+     *
+     * @throws UnsupportedOperationException when this arm cannot read image metadata
+     */
+    default java.util.Map<String, String> imageLabels(String image) {
+        throw new UnsupportedOperationException(type() + " cannot read image labels");
+    }
 }

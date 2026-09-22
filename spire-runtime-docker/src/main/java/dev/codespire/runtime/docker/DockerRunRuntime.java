@@ -324,6 +324,15 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
     }
 
+    @Override
+    public java.util.Map<String, String> imageLabels(String image) {
+        // The SAME authenticated pull a run uses, so a private registry needs nothing new: an image a
+        // run could start is an image whose labels can be read, and the reverse.
+        ensureImage(image);
+        var config = client.inspectImageCmd(image).exec().getConfig();
+        return config == null || config.getLabels() == null ? java.util.Map.of() : java.util.Map.copyOf(config.getLabels());
+    }
+
     /**
      * Pulls the image when the daemon does not hold it. An operator's agent image lives in a
      * registry and a digest-pinned reference (FR-F13) is the normal case, not a local tag — the
