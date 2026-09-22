@@ -51,6 +51,29 @@ public final class Clauses {
     /** The label a {@link #HARNESS} declaration is read from. */
     public static final String HARNESS_LABEL = "dev.codespire.agent.harness";
 
+    /**
+     * Which models this image's harness can run, and the thinking levels each one allows.
+     *
+     * <p>Unverifiable here for the same reason {@link #HARNESS} is: proving it means calling the
+     * vendor, which costs money and a credential. What a checker CAN do is read it back and show it,
+     * which is what turns "the factory has no models for this image" into an answerable question.
+     *
+     * <p>The factory reads this from image METADATA rather than by running the image. That is not an
+     * optimisation: on Kubernetes, running it means scheduling a pod to fill in a dropdown, which is a
+     * capability no arm has yet. Reading an image's labels is the one thing every arm must already be
+     * able to do, since it cannot pull otherwise.
+     */
+    public static final String MODELS = "models";
+
+    /**
+     * The label a {@link #MODELS} declaration is read from, base64 of a trimmed model catalogue.
+     *
+     * <p>Base64 because the value is JSON and has to survive a Dockerfile, a shell, {@code docker
+     * inspect} output and a Kubernetes manifest without a quote being eaten anywhere. This checker
+     * decodes it before printing, so an operator reads JSON rather than base64.
+     */
+    public static final String MODELS_LABEL = "dev.codespire.agent.models";
+
     /** Every clause this checker proves, in report order. */
     public static final List<String> VERIFIED = List.of(
             ENTRYPOINT, NON_ROOT, MOUNT_POINTS, GIT, CA_CERTIFICATES,
@@ -63,7 +86,7 @@ public final class Clauses {
      * edit to both this file and the contract — which is exactly the change that should not happen
      * quietly.
      */
-    public static final List<String> DECLARED = List.of(TOOLCHAIN, HARNESS);
+    public static final List<String> DECLARED = List.of(TOOLCHAIN, HARNESS, MODELS);
 
     private Clauses() {
     }

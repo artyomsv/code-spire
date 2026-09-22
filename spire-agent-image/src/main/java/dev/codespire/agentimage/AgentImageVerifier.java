@@ -345,7 +345,27 @@ public final class AgentImageVerifier {
                 new ConformanceReport.Declaration(Clauses.HARNESS,
                         bounded(labels.get(Clauses.HARNESS_LABEL)),
                         "verifying this needs a model credential and a paid call, so a "
-                                + "conformance check would cost money to run"));
+                                + "conformance check would cost money to run"),
+                new ConformanceReport.Declaration(Clauses.MODELS,
+                        bounded(decoded(labels.get(Clauses.MODELS_LABEL))),
+                        "verifying this needs the vendor to confirm each model, which costs a "
+                                + "credential and a paid call for every one of them"));
+    }
+
+    /**
+     * Base64 in, JSON out — or the value untouched when it is not base64.
+     *
+     * <p>An operator reading a conformance report wants to see which models the image claims, not a
+     * kilobyte of base64. A value that does not decode is shown AS IT IS rather than hidden: an image
+     * whose label was set by hand is exactly the case this line exists to make visible.
+     */
+    private static String decoded(String value) {
+        if (value == null || value.isBlank()) return value;
+        try {
+            return new String(java.util.Base64.getDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException notBase64) {
+            return value;
+        }
     }
 
     /**

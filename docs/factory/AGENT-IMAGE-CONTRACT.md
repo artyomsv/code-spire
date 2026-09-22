@@ -146,6 +146,45 @@ Which harness the image provides, matching a `HarnessAdapter` name (`codex`).
 behaves as that harness without a model credential and a paid call. Running one to find out would
 make a conformance check cost money.
 
+### `models` — `dev.codespire.agent.models`
+
+Which models this image's harness can run, and which thinking levels each one allows. **Base64 of a
+JSON array**, one object per model:
+
+| Key | Meaning |
+|---|---|
+| `s` | slug — what the harness is given as its model name |
+| `n` | display name — what an operator reads |
+| `d` | that model's own default thinking level |
+| `e` | the thinking levels this model allows |
+| `v` | `list` or `hide` — the vendor's own "show this one" flag |
+| `p` | the vendor's own ordering |
+
+*Why base64:* the value is JSON, and it has to survive a Dockerfile, a shell, `docker inspect` output
+and a Kubernetes manifest without a quote being eaten anywhere. `spire-agent-image verify` decodes it
+before printing, so a report shows JSON rather than base64.
+
+*Why the factory needs it:* without it, a build setup can only offer every model somebody typed into
+the LLM catalogue — and those are different lists. Measured on 2026-09-18, the reference image's Codex
+and this deployment's catalogue had **two models in common**, so the screen offered models that could
+not run and hid every one that could.
+
+*Why a label and not a question:* asking the image means running it, and on Kubernetes that means
+scheduling a pod to fill in a dropdown. Reading an image's labels is the one thing every runtime must
+already do, because it cannot pull otherwise.
+
+*Why it cannot drift:* the value is generated FROM the binary in the image, during the build that
+installs it, and sealed into the same artifact. A new CLI version produces a new image and a new
+label; they ship or fail together.
+
+*Why it cannot be verified:* proving a model runs means calling the vendor once per model, with a
+credential, for money.
+
+**An image without it still conforms.** The factory then has no model list for that image and says so,
+rather than guessing. `deploy/agent/build-codex.sh` is what produces it for the reference image — a
+plain `docker build` of the same Dockerfile leaves it empty, because a `LABEL` cannot read a `RUN`'s
+output and the value must exist before the build that carries it.
+
 ---
 
 ## What conformance does not promise

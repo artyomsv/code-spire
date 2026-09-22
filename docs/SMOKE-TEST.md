@@ -1740,7 +1740,7 @@ against a forge, authenticated as a machine account.
 1. **Images.** Neither image is published yet; build both locally:
 
    ```bash
-   docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+   ./deploy/agent/build-codex.sh
    ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
    ```
 

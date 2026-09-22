@@ -140,7 +140,7 @@ The run worker — the service that executes agent runs — is behind a compose 
 
 ```bash
 # Build it locally first; the two factory images are not on GHCR yet (see CLAUDE.md, Mode Q).
-docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
 
 docker compose -f deploy/compose.yml --env-file deploy/.env --profile factory up -d

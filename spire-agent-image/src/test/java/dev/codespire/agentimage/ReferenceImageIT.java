@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -233,12 +234,31 @@ class ReferenceImageIT {
     void declaredClausesAreReportedSeparatelyFromVerifiedOnes() throws IOException {
         ConformanceReport report = verify(buildConforming());
 
-        assertEquals(List.of(Clauses.TOOLCHAIN, Clauses.HARNESS),
+        assertEquals(List.of(Clauses.TOOLCHAIN, Clauses.HARNESS, Clauses.MODELS),
                 report.declared().stream().map(ConformanceReport.Declaration::id).toList());
         assertEquals("conformance-probe", report.declared().stream()
                 .filter(declaration -> declaration.id().equals(Clauses.HARNESS))
                 .findFirst().orElseThrow().claimed());
         assertTrue(report.conforms(),
                 "a harness that does not exist is a claim, and no verified clause checked it");
+    }
+
+    /**
+     * An image with no model catalogue still CONFORMS, and says the clause is empty.
+     *
+     * <p>The clause is declared, not required: an operator's own image is a conforming agent whether
+     * or not it can tell the factory which models it runs. What must not happen is silence — a missing
+     * catalogue has to be visible here, because the only other place it shows up is a build-setup
+     * screen with an empty dropdown and no explanation.
+     */
+    @Test
+    void anImageWithNoModelCatalogueSaysSoAndStillConforms() throws IOException {
+        ConformanceReport report = verify(buildConforming());
+
+        assertNull(report.declared().stream()
+                        .filter(declaration -> declaration.id().equals(Clauses.MODELS))
+                        .findFirst().orElseThrow().claimed(),
+                "the conformance probe declares no models, and an absent claim reads as absent");
+        assertTrue(report.conforms(), "a model catalogue is declared, never required");
     }
 }

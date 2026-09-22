@@ -36,6 +36,27 @@ COPY --chmod=755 spire-agent-entrypoint.sh /usr/local/bin/spire-agent-entrypoint
 LABEL dev.codespire.agent.toolchain=node
 LABEL dev.codespire.agent.harness=codex
 
+# The models THIS image's harness can run, and the thinking levels each one allows, as base64 of a
+# trimmed `codex debug models`. The build script deploy/agent/build-codex.sh produces it; building
+# this Dockerfile by hand leaves it empty, and the factory then has no model list for the image.
+#
+# WHY A LABEL. The alternative is running the image to ask it, which on Kubernetes means scheduling a
+# pod to fill in a dropdown -- a capability that does not exist yet and would be written twice. Image
+# metadata is the one thing every runtime must already be able to read, since it cannot pull otherwise.
+#
+# WHY IT CANNOT DRIFT. The value is generated FROM the binary in this image, during this build, and
+# sealed into the same artifact. A new CLI version yields a new image and a new label; they ship or
+# fail together.
+#
+# WHY BASE64. The trimmed value is JSON, and a raw JSON string would have to survive a Dockerfile, a
+# shell, `docker inspect` output and a Kubernetes manifest without a quote being eaten anywhere.
+# Base64 is [A-Za-z0-9+/=] and survives all four. `spire-agent-image verify` prints it decoded.
+#
+# An ARG, because a LABEL cannot read a RUN's output: the value must exist before the build that
+# carries it. Declared here, after the heavy layers, so the second pass reuses the whole cache.
+ARG AGENT_MODELS=""
+LABEL dev.codespire.agent.models=$AGENT_MODELS
+
 USER 1001:1001
 ENV HOME=/home/agent \
     SPIRE_WORKSPACE=/workspace \
