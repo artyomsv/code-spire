@@ -35,6 +35,7 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
     }
     /** The level the approved binding hashed is the level the build is sent with (M3.5 part M). */
     @Test void theApprovedThinkingLevelIsTheOneTheBuildRunsAt() throws Exception {
+        codexRuns(model,"medium","high");
         String id=admit("autonomous",57);var plain=preparation("TEST-prepared-admin");
         var atLevel=new WorkPreparation(plain.specification(),plain.plan(),plain.baseBranch(),plain.baseCommit(),plain.harness(),
                 plain.model(),plain.registeredBy(),WorkPreparation.EFFORT_BINDING,"high");
@@ -43,6 +44,21 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
         assertEquals("high",heldCommands.getLast().execution().reasoningEffort());
         assertEquals(atLevel.binding(),heldCommands.getLast().work().preparationBinding());
     }
+    /** Approved while codex ran this model; by dispatch its image no longer does (review of PR #167). */
+    @Test void aModelTheHarnessNoLongerRunsCannotStartABuild() throws Exception {
+        String id=ready();codexRuns("TEST-some-other-model","medium");
+        dispatcher.drain();
+        assertEquals(0,runCount(id));assertTrue(dispatched.isEmpty());
+        assertEquals("model_not_run_by_harness",store.load(id).reason());
+    }
+    @Inject dev.codespire.orchestrator.factory.HarnessCatalogues catalogues;
+    @Inject dev.codespire.orchestrator.factory.FactoryConfig factoryConfig;
+    private void codexRuns(String slug,String... levels) {
+        catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request","codex",
+                factoryConfig.agentImage().get("codex"),dev.codespire.contract.event.HarnessImageResult.Status.OK,
+                List.of(new dev.codespire.contract.event.HarnessImageResult.Model(slug,slug,"medium",List.of(levels),true,1))));
+    }
+    @org.junit.jupiter.api.AfterEach void forgetTheCatalogue() throws Exception {executeWith("DELETE FROM harness_catalogue");}
     @Inject RunResultSaga saga;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly assembly;
     String ready() throws Exception {String id=admit("autonomous",56);register(id);return id;}

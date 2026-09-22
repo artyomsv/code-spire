@@ -22,6 +22,7 @@ public class WorkRunAssembly {
     @Inject LlmModelPricer pricer;
     @Inject dev.codespire.orchestrator.llm.LlmModelRegistry models;
     @Inject RunCredentials credentials;
+    @Inject HarnessCatalogues catalogues;
     public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
     public void validate(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,WorkArtifacts.Evidence evidence) {
@@ -51,6 +52,9 @@ public class WorkRunAssembly {
         catch(dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unreadable) {
             throw new IllegalStateException("catalogue_unavailable");
         }
+        // Approved against the image the harness ran then; it may run another by now (§6A.4b).
+        var cannotRun=catalogues.refusal(in.harness(),in.model(),item.preparation().effort());
+        if(cannotRun.isPresent())throw new IllegalStateException(cannotRun.get());
         var unpriced=pricer.unpricedTypes(in.model(),in.harness());
         if(!unpriced.isEmpty())throw new IllegalStateException("model_pricing_incomplete:"
                 +unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));

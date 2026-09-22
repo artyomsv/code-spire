@@ -29,6 +29,13 @@ class ModelCatalogueLabelTest {
         return ModelCatalogueLabel.of(Map.of(ModelCatalogueLabel.LABEL, label(json)), MAPPER);
     }
 
+    /** A level no later hop would accept makes the list unreadable, not a list that fails a day later. */
+    @Test
+    void aLevelOfTheWrongShapeMakesTheWholeLabelUnreadable() {
+        assertEquals(HarnessImageResult.Status.UNREADABLE,
+                read("[{\"s\":\"TEST-fast\",\"d\":\"low\",\"e\":[\"low\",\"x-high\"]}]").status());
+    }
+
     @Test
     void aWellFormedCatalogueYieldsEveryModelWithItsOwnLevels() {
         var read = read("""

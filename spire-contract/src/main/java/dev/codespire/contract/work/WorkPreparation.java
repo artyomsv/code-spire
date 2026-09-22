@@ -92,13 +92,11 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
         if (bindingVersion != TRACKER_BINDING && bindingVersion != STORED_BINDING && bindingVersion != EFFORT_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
-        effort = effort == null || effort.isBlank() ? null : effort.strip();
+        effort = ThinkingLevel.normalise(effort);
         // A level under a version that does not hash it would be carried to the build without being part
         // of what was approved -- exactly what the version exists to prevent.
         if (effort != null && bindingVersion < EFFORT_BINDING)
             throw new IllegalArgumentException("A thinking level needs binding version " + EFFORT_BINDING);
-        if (effort != null && !effort.matches("[a-z]{1,16}"))
-            throw new IllegalArgumentException("A thinking level is a short lower-case word, was: " + effort);
         if (bindingVersion == TRACKER_BINDING
                 && (specification.origin() != Origin.TRACKER || plan.origin() != Origin.TRACKER))
             throw new IllegalArgumentException("A version 1 binding describes tracker artifacts only");

@@ -3,6 +3,8 @@ package dev.codespire.contract.event;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
+import dev.codespire.contract.work.ThinkingLevel;
+
 import java.util.List;
 import java.util.Objects;
 
@@ -31,7 +33,17 @@ public sealed interface HarnessImageResult {
                  boolean visible, int priority) {
         public Model {
             if (slug == null || slug.isBlank()) throw new IllegalArgumentException("A model slug is required");
-            efforts = efforts == null ? List.of() : List.copyOf(efforts);
+            // The same rule every later hop applies. A level only this record accepted could be offered
+            // and saved, then refused when the task is prepared -- after the operator walked away.
+            String ownDefault = ThinkingLevel.normalise(defaultEffort);
+            defaultEffort = ownDefault == null ? "" : ownDefault;
+            List<String> levels = new java.util.ArrayList<>();
+            for (String level : efforts == null ? List.<String>of() : efforts) {
+                String checked = ThinkingLevel.normalise(level);
+                if (checked == null) throw new IllegalArgumentException("A declared thinking level is blank");
+                levels.add(checked);
+            }
+            efforts = List.copyOf(levels);
         }
     }
 

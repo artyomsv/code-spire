@@ -154,14 +154,7 @@ public class BuildDefaults {
      * against, and a level the model does not offer would be passed to the vendor as it stands.
      */
     private void checkAgainstTheHarness(String harness, String model, String effort) {
-        var catalogue = catalogues.get(harness)
-                .filter(known -> known.status() == dev.codespire.contract.event.HarnessImageResult.Status.OK);
-        if (catalogue.isEmpty()) {
-            if (effort != null) throw new Refused("effort_unverifiable");
-            return;
-        }
-        var runs = catalogue.get().find(model).orElseThrow(() -> new Refused("model_not_run_by_harness"));
-        if (effort != null && !runs.efforts().contains(effort)) throw new Refused("effort_not_offered");
+        catalogues.refusal(harness, model, effort).ifPresent(reason -> { throw new Refused(reason); });
     }
 
     private static IllegalStateException database(SQLException failure) {

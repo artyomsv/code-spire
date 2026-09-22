@@ -78,14 +78,38 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         throw new AssertionError("the sweep never asked the forge for the branch head");
     }
 
+    /** What the codex image says it runs: one model, with the levels given. */
+    private void codexRuns(String slug, String... levels) {
+        catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request", "codex",
+                config.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.OK,
+                java.util.List.of(new dev.codespire.contract.event.HarnessImageResult.Model(slug, slug, "medium",
+                        java.util.List.of(levels), true, 1))));
+    }
+
+    /**
+     * The setup was saved when nothing said what codex runs; the image now says it does not run that
+     * model. The review of PR #167 found this still opened an approval for a build that cannot run.
+     */
+    @Test
+    void aSetupTheHarnessNoLongerRunsIsNotPrepared() throws Exception {
+        try {
+            codexRuns("TEST-some-other-model", "medium");
+            String id = admit("assisted", 82);
+
+            sweep.sweep();
+
+            assertNull(store.load(id).preparation());
+            assertEquals("model_not_run_by_harness", reason(id));
+        } finally {
+            executeWith("DELETE FROM harness_catalogue");
+        }
+    }
+
     /** The level saved with the build setup is the level the prepared task binds (M3.5 part M). */
     @Test
     void theSavedThinkingLevelIsCopiedIntoThePreparedTask() throws Exception {
         try {
-            catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request", "codex",
-                    config.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.OK,
-                    java.util.List.of(new dev.codespire.contract.event.HarnessImageResult.Model(model, model, "medium",
-                            java.util.List.of("medium", "high"), true, 1))));
+            codexRuns(model, "medium", "high");
             defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model, "high"),
                     "TEST-prepared-admin");
             String id = admit("assisted", 81);

@@ -74,7 +74,11 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   const picked = offered.find(choice => choice.value === form.model);
   // An unresolved model is UNKNOWN, not complete: before the catalogue answers, and for a saved name the
   // catalogue no longer offers, there is nothing to judge — so Save waits rather than guessing.
-  const complete = !!form.baseBranch.trim() && !!form.harness && !!picked && picked.blocked === null;
+  // A level is sent only when the chosen model visibly offers it. A saved level whose list is no longer
+  // known has no control on screen, so it is named below with a way to drop it, and Save waits.
+  const levels = known?.status === 'OK' ? known.offered.find(model => model.slug === form.model)?.efforts ?? [] : [];
+  const levelUnusable = !!form.effort && !levels.includes(form.effort);
+  const complete = !!form.baseBranch.trim() && !!form.harness && !!picked && picked.blocked === null && !levelUnusable;
   return <FactoryStep number={5} question="How it builds" term="build setup" state={editing ? 'editing' : defaults.revision > 0 ? 'done' : 'missing'}
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
@@ -92,7 +96,8 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
         {head && <span className="prov-sub">head <span className="mono">{head.commit.slice(0, 7)}</span>{head.account === 'REVIEWER' ? ' · read with the reviewer account; no usable factory account was available' : ''}</span>}
       </div>
       <SettingField label="Harness" scope="build setup" hint="Required. The agent image this deployment runs. A name without an image is refused before a run starts.">
-        <select aria-label="Harness" value={form.harness} onChange={event => setForm(previous => ({ ...previous, harness: event.target.value }))}>
+        {/* The level belongs to the harness's model list, so it does not survive a change of harness. */}
+        <select aria-label="Harness" value={form.harness} onChange={event => setForm(previous => ({ ...previous, harness: event.target.value, effort: '' }))}>
           <option value="">{choices.harnesses.length ? 'Select a harness' : 'No harness is configured'}</option>
           {choices.harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
           {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{form.harness} (not configured here)</option>}
@@ -103,6 +108,9 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       {picked?.blocked && <p className="prov-error" role="alert">
         {form.model} has {picked.blocked}. {form.harness} reports those token types, and an API-key run needs a rate
         for each — or a mark in Settings → LLM that the vendor does not bill it.</p>}
+      {levelUnusable && picked && <p className="prov-error" role="alert">
+        The thinking level {form.effort} cannot be checked or is not offered for {form.model} here.{' '}
+        <button className="btn-ghost sm" type="button" onClick={() => setForm(previous => ({ ...previous, effort: '' }))}>Use the model default</button></p>}
       {error && <p className="prov-error" role="alert">{error}</p>}
       {/* A stale revision cannot be retried from this form: every attempt resends the number it loaded. */}
       {error.includes('Reload it') && <div className="prov-actions">

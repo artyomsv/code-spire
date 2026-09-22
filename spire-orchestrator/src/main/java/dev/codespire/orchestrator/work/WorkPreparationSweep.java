@@ -53,6 +53,7 @@ public class WorkPreparationSweep {
     @Inject WorkSourceEffects effects;
     @Inject dev.codespire.orchestrator.llm.LlmModelRegistry models;
     @Inject dev.codespire.orchestrator.llm.LlmModelPricer pricer;
+    @Inject dev.codespire.orchestrator.factory.HarnessCatalogues catalogues;
 
     /** Read-then-write, so a slow forge cannot hold an item lock; the write re-checks under the lock. */
     private static final int MAX_ITEMS_PER_SWEEP = 5;
@@ -207,6 +208,9 @@ public class WorkPreparationSweep {
             var unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
             if (!unpriced.isEmpty()) return refuse(id, generation, expectedRevision, "model_pricing_incomplete:"
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
+            // The setup was checked against the image it was saved for; the harness may run another now.
+            var cannotRun = catalogues.refusal(setup.harness(), setup.model(), setup.effort());
+            if (cannotRun.isPresent()) return refuse(id, generation, expectedRevision, cannotRun.get());
         } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unavailable) {
             return refuse(id, generation, expectedRevision, "catalogue_unavailable");
         }

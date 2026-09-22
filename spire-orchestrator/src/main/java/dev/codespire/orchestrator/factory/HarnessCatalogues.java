@@ -126,6 +126,23 @@ public class HarnessCatalogues {
     }
 
     /**
+     * Why this harness cannot run the model at this level, or empty when it can — or when nobody can
+     * know, which lets a model through and refuses a level (design §6A.4a).
+     *
+     * <p>Asked at save, at preparation and at dispatch, because the image can change under a saved
+     * setup between any two of them. Checking only the save let a setup saved against one image open
+     * an approval, and start a build, against another that does not run it.
+     */
+    public Optional<String> refusal(String harness, String model, String effort) {
+        var catalogue = get(harness).filter(known -> known.status() == HarnessImageResult.Status.OK);
+        if (catalogue.isEmpty()) return effort == null ? Optional.empty() : Optional.of("effort_unverifiable");
+        var runs = catalogue.get().find(model);
+        if (runs.isEmpty()) return Optional.of("model_not_run_by_harness");
+        if (effort != null && !runs.get().efforts().contains(effort)) return Optional.of("effort_not_offered");
+        return Optional.empty();
+    }
+
+    /**
      * The catalogue for a harness, or empty when nothing has been heard yet.
      *
      * <p>Empty is kept distinct from a catalogue whose status says why it has no models: "we have not

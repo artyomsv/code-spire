@@ -41,8 +41,14 @@ public class HarnessImageWorker {
     @ConfigProperty(name = "spire.run.result-ack-seconds")
     long ackSeconds;
 
+    /*
+     * In order, and keyed by harness on the way out: the orchestrator keeps the LAST answer for a
+     * harness, so two answers for one harness must arrive in the order they were given. Unordered
+     * processing, or a random key spreading answers over partitions, let an older answer land after a
+     * newer one and replace it (review of PR #167). The questions are few, so order costs nothing.
+     */
     @Incoming("harness-image-commands-in")
-    @Blocking(ordered = false)
+    @Blocking
     public CompletionStage<Void> onCommand(Message<HarnessImageCommand> message) {
         if (message.getPayload() instanceof HarnessImageCommand.Describe describe) {
             publish(describe(describe));
@@ -67,9 +73,15 @@ public class HarnessImageWorker {
                 read.status(), read.models());
     }
 
+    private static String keyOf(HarnessImageResult result) {
+        return switch (result) {
+            case HarnessImageResult.Described described -> described.harness();
+        };
+    }
+
     private void publish(HarnessImageResult result) {
         try {
-            results.send(Record.of(result.requestId(), result)).toCompletableFuture().get(ackSeconds, TimeUnit.SECONDS);
+            results.send(Record.of(keyOf(result), result)).toCompletableFuture().get(ackSeconds, TimeUnit.SECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException | java.util.concurrent.ExecutionException

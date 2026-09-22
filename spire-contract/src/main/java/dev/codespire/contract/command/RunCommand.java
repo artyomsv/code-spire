@@ -115,9 +115,7 @@ public sealed interface RunCommand {
             // The vendor CLI does not check this (measured 2026-09-22: a nonsense level is echoed back and
             // sent on), and it reaches a shell line in the agent container. So its shape is fixed here,
             // once, before anything downstream can quote it wrongly.
-            reasoningEffort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort;
-            if (reasoningEffort != null && !reasoningEffort.matches("[a-z]{1,16}"))
-                throw new IllegalArgumentException("a thinking level is a short lower-case word, was: " + reasoningEffort);
+            reasoningEffort = dev.codespire.contract.work.ThinkingLevel.normalise(reasoningEffort);
             Objects.requireNonNull(runId, "runId");
             Objects.requireNonNull(repo, "repo");
             // The clone URL cannot be derived from RepoRef: that is (workspace, slug) with no host,

@@ -20,7 +20,8 @@ final class WorkRunAssemblyRefusals {
     /** Reasons the dashboard has a sentence for, and which carry no payload at all. */
     private static final Set<String> NAMED = Set.of(
             "factory_account_unavailable", "harness_credential_unavailable", "deployment_spend_cap_reached",
-            "model_pricing_unavailable", "model_disabled", "catalogue_unavailable");
+            "model_pricing_unavailable", "model_disabled", "catalogue_unavailable",
+            "model_not_run_by_harness", "effort_not_offered", "effort_unverifiable");
 
     /** The one reason that carries a payload: "model_pricing_incomplete:CACHED_INPUT,REASONING". */
     private static final String PRICING = "model_pricing_incomplete";
