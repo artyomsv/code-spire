@@ -237,7 +237,8 @@ describe('build setup', () => {
     fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+      // No level chosen is the model's own default, sent as null rather than as a level called ''.
+      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null }));
     expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
   });
 

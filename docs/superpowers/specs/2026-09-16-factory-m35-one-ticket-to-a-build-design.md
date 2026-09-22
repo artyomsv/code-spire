@@ -557,6 +557,24 @@ Factory tab, step 5 becomes: base branch, harness, **pay with**, model, **thinki
 comes from the harness; the levels are the ones THAT model declares, defaulting to its own default. An
 API-key choice additionally requires a priced model and says so by name.
 
+### 6A.4a When the list is not known
+
+A save is refused for a model the harness cannot run **only when the harness's list is known.** When it
+is not — the run worker has not answered, the image was built without its catalogue, the label could not
+be read, or the image could not be reached — the save goes ahead, the screen says which of those four it
+is, and the model select falls back to the price list, which is what it offered before.
+
+That is a decision, not a gap. The check exists to stop an avoidable wrong choice; when nothing can know
+which choice is wrong, refusing every save would lock the operator out of the build setup over a
+background answer that has not arrived. A development stack with no run worker would never hear the
+answer at all, and could never save a build setup. The case this lets through is the one that existed
+before part M: a model the harness cannot run is refused when the run starts.
+
+A **thinking level** is refused when the list is unknown. There is nothing to check it against, and a
+level the model does not offer would reach the vendor as it stands. With no level chosen, the model's own
+default applies, which is a real choice the vendor publishes per model — so it is stored as NULL rather
+than as a guessed name.
+
 ### 6A.5 The cost, stated
 
 The image contract gains a clause, so an operator building their own agent image must produce that label
