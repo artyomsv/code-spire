@@ -120,10 +120,13 @@ public class HarnessCatalogues {
                        pinned_image=excluded.pinned_image, asked_at=excluded.asked_at
                  -- The answer to the NEWEST question wins, not the last one to arrive: the channel
                  -- replays from its oldest record, and an older answer must not roll the list and its
-                 -- pin back (review of PR #168). A row about an image no longer configured is stale
-                 -- whatever its time, so any current answer replaces it.
-                 WHERE harness_catalogue.image <> excluded.image
-                    OR COALESCE(excluded.asked_at, '-infinity') >= COALESCE(harness_catalogue.asked_at, '-infinity')
+                 -- pin back (review of PR #168). An answer with no time predates times, so it can only
+                 -- be a replay and replaces nothing. A row about an image no longer configured is stale
+                 -- whatever its time, so any timed current answer replaces it.
+                 WHERE excluded.asked_at IS NOT NULL
+                   AND (harness_catalogue.image <> excluded.image
+                        OR harness_catalogue.asked_at IS NULL
+                        OR excluded.asked_at >= harness_catalogue.asked_at)
                 """)) {
             ps.setString(1, answer.harness());
             ps.setString(2, answer.image());

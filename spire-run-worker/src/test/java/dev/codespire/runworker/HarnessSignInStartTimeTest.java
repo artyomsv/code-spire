@@ -17,7 +17,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
  * A start is replayed after a restart and re-sent when nobody picked it up, so its wait is counted from
@@ -42,13 +41,23 @@ class HarnessSignInStartTimeTest {
         return new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, at);
     }
 
+    /**
+     * Opens no unit, and says nothing: with two workers, a late copy reporting "expired" would end a
+     * sign-in the other worker is running (review of PR #168). The orchestrator ends unclaimed rows.
+     */
     @Test
-    void aStartWhoseWaitHasRunOutOpensNoUnitAndSaysItExpired() {
+    void aStartWhoseWaitHasRunOutOpensNoUnitAndReportsNothing() {
         worker().onCommand(Message.of(pressed(Instant.now().minusSeconds(900))));
 
-        assertEquals(1, sent.size());
-        HarnessSignInResult.Failed failed = assertInstanceOf(HarnessSignInResult.Failed.class, sent.getFirst());
-        assertEquals(HarnessSignInResult.Failed.EXPIRED, failed.cause());
+        assertEquals(0, sent.size());
+    }
+
+    /** A start with no press time predates this change, so it can only be a replay. */
+    @Test
+    void aStartWithNoPressTimeOpensNoUnit() {
+        worker().onCommand(Message.of(new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840)));
+
+        assertEquals(0, sent.size());
     }
 
     /** A replay of the start for a unit still running here must not fail that unit. */

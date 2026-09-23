@@ -72,9 +72,12 @@ public class HarnessImageWorker {
      */
     static final java.time.Duration STALE_AFTER = java.time.Duration.ofMinutes(15);
 
-    /** A question from before this existed carries no time, and is answered as before. */
+    /**
+     * A question with no time was sent before times existed, so it can only be a replay: skipped, like
+     * any other old one. The orchestrator asks again, with a time, at start-up and on its schedule.
+     */
     static boolean isStale(HarnessImageCommand.Describe question, java.time.Instant now) {
-        return question.askedAt() != null && question.askedAt().plus(STALE_AFTER).isBefore(now);
+        return question.askedAt() == null || question.askedAt().plus(STALE_AFTER).isBefore(now);
     }
 
     HarnessImageResult.Described describe(HarnessImageCommand.Describe command) {

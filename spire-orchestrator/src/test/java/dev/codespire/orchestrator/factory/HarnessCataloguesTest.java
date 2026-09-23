@@ -62,6 +62,18 @@ class HarnessCataloguesTest {
         assertTrue(kept.find("TEST-current").isPresent());
     }
 
+    /** An answer with no time predates times: it may fill an empty cache, never replace a row. */
+    @Test
+    void anAnswerWithNoTimeReplacesNothing() {
+        catalogues.record(new HarnessImageResult.Described("TEST-first", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-first", true, 1)), "TEST-pin-first"));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-second", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-second", true, 1)), "TEST-pin-second"));
+
+        assertEquals("TEST-pin-first", catalogues.get(HARNESS).orElseThrow().pinnedImage());
+    }
+
     @Test
     void aNewerAnswerReplacesAnOlderOne() {
         java.time.Instant earlier = java.time.Instant.parse("2026-09-23T07:00:00Z");
@@ -99,7 +111,9 @@ class HarnessCataloguesTest {
 
     private HarnessImageResult.Described answer(String image, HarnessImageResult.Status status,
                                                 List<HarnessImageResult.Model> models) {
-        return new HarnessImageResult.Described("TEST-request", HARNESS, image, status, models);
+        // Timed, as every answer is now: an untimed one predates times and replaces nothing.
+        return new HarnessImageResult.Described("TEST-request", HARNESS, image, status, models, null,
+                java.time.Instant.now());
     }
 
     /** "Not asked yet" and "the image declares nothing" send an operator to different places. */

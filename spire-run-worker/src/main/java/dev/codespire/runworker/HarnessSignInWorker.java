@@ -112,16 +112,18 @@ public class HarnessSignInWorker {
             LOG.infof("sign-in %s is already running here; ignoring a repeated start", command.signInId());
             return;
         }
-        // After the claim, so a replayed start for a unit still running is ignored rather than failing it.
         // Counted from the operator's press, not from delivery: a start can be replayed or re-sent. One
-        // whose wait has run out opens nothing — its code could never be typed, and a unit started for
-        // it would hold a container open for a screen nobody is watching (review of PR #168).
-        Duration wait = command.remainingWait(Instant.now());
+        // whose wait has run out, or that carries no press time at all (sent before times existed, so
+        // only a replay), opens nothing: its code could never be typed (review of PR #168).
+        //
+        // And it SAYS nothing. "Too late to start another unit" is not "this sign-in expired": with two
+        // workers, a late copy reaching one of them would otherwise fail a sign-in the other is running
+        // and the operator can still approve. Ending a sign-in nobody runs is the orchestrator's job, and
+        // it does it from the row's own clock (HarnessSignIns.resendUnclaimed).
+        Duration wait = command.requestedAt() == null ? Duration.ZERO : command.remainingWait(Instant.now());
         if (wait.compareTo(PROMPT_TIMEOUT) <= 0) {
-            LOG.infof("sign-in %s was requested at %s and its wait has run out; not starting it",
+            LOG.infof("not starting sign-in %s: requested at %s, and too little of its wait is left",
                     command.signInId(), command.requestedAt());
-            emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.EXPIRED,
-                    "the sign-in request arrived after its time had run out"));
             running.remove(command.signInId());
             return;
         }

@@ -38,7 +38,8 @@ class HarnessImageWorkerTest {
         worker.ackSeconds = 5;
         worker.results = new Capturing(sent);
 
-        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-1", "codex", "TEST-image")));
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-1", "codex", "TEST-image",
+                java.time.Instant.now())));
 
         assertEquals(1, sent.size());
         assertEquals("codex", sent.getFirst().key());
@@ -60,6 +61,22 @@ class HarnessImageWorkerTest {
         java.time.Instant longAgo = java.time.Instant.now().minus(HarnessImageWorker.STALE_AFTER).minusSeconds(60);
 
         worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-old", "codex", "TEST-image", longAgo)));
+
+        assertEquals(0, sent.size());
+    }
+
+    /** A question with no time predates times, so it can only be a replay (review of PR #168). */
+    @Test
+    void aQuestionWithNoTimeIsSkippedWithoutReadingTheImage() {
+        List<Record<String, HarnessImageResult>> sent = new ArrayList<>();
+        HarnessImageWorker worker = new HarnessImageWorker();
+        worker.runtime = (RunRuntime) Proxy.newProxyInstance(RunRuntime.class.getClassLoader(), new Class<?>[] { RunRuntime.class },
+                (proxy, method, args) -> { throw new AssertionError("an undated question must not reach the image"); });
+        worker.mapper = new ObjectMapper();
+        worker.ackSeconds = 5;
+        worker.results = new Capturing(sent);
+
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-undated", "codex", "TEST-image")));
 
         assertEquals(0, sent.size());
     }

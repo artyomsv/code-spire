@@ -157,9 +157,7 @@ public class HarnessSignIns {
         for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
             String image = config.agentImage().get(row.harness());
             if (row.requestedAt().plus(MAX_WAIT).isBefore(Instant.now()) || image == null) {
-                failed(new HarnessSignInResult.Failed(row.id().toString(),
-                        image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED,
-                        "no worker picked the sign-in up"));
+                failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
                 continue;
             }
             try {
@@ -177,6 +175,21 @@ public class HarnessSignIns {
     static final Duration EXPIRY_GRACE = Duration.ofMinutes(2);
 
     private record Unclaimed(UUID id, String harness, Instant requestedAt) {}
+
+    /**
+     * Fails a row only if it is STILL waiting for a worker when the write runs.
+     *
+     * <p>The list of unclaimed rows was read a moment earlier; a prompt that landed since then has
+     * given the row an expiry and its own two-minute grace, and ordinary {@link #fail} accepts a
+     * PROMPTED row too — so it would have ended a sign-in the operator was about to approve
+     * (review of PR #168).
+     */
+    private void failUnclaimed(UUID id, String reason) {
+        update("""
+                UPDATE harness_sign_in SET state='FAILED', reason=?, updated_at=now()
+                 WHERE id=? AND state='PENDING'
+                """, ps -> { ps.setString(1, reason); ps.setObject(2, id); });
+    }
 
     private java.util.List<Unclaimed> unclaimed(Instant before) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
