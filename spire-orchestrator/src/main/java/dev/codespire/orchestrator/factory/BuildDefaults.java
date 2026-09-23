@@ -23,17 +23,28 @@ public class BuildDefaults {
     @Inject FactoryConfig config;
     @Inject LlmModelRegistry models;
     @Inject dev.codespire.orchestrator.llm.LlmModelPricer pricer;
+    @Inject HarnessCatalogues catalogues;
 
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
      *     the setup screen has to render, and a zero-revision row is the same answer a save rejects
      */
-    public record Defaults(long revision, String baseBranch, String harness, String model,
+    /**
+     * @param effort the thinking level, or null for the model's own default — a real choice, not a gap
+     */
+    public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
                            String updatedBy, Instant updatedAt) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null); }
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, null); }
         public boolean set() { return revision > 0; }
     }
-    public record Input(long expectedRevision, String baseBranch, String harness, String model) {}
+
+    /** @param effort null for the model's own default */
+    public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort) {
+        /** Every caller written before thinking levels existed keeps the model's own default. */
+        public Input(long expectedRevision, String baseBranch, String harness, String model) {
+            this(expectedRevision, baseBranch, harness, model, null);
+        }
+    }
 
     /** A refusal that names its rule, so the screen can say what to change rather than "400". */
     public static final class Refused extends RuntimeException {
@@ -52,14 +63,14 @@ public class BuildDefaults {
      * against the saved one INSIDE the transaction that registers the result (M3.5 part C).
      */
     public Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
-        String sql = "SELECT revision,base_branch,harness,model,updated_by,updated_at"
+        String sql = "SELECT revision,base_branch,harness,model,effort,updated_by,updated_at"
                 + " FROM repository_build_defaults WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, repository);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Defaults.none();
                 return new Defaults(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                        rs.getString(5), rs.getTimestamp(6).toInstant());
+                        rs.getString(5), rs.getString(6), rs.getTimestamp(7).toInstant());
             }
         }
     }
@@ -75,6 +86,7 @@ public class BuildDefaults {
         if (input == null) throw new Refused("build_defaults_required");
         if (actor == null || actor.isBlank()) throw new Refused("operator_identity_required");
         String branch = strip(input.baseBranch()), harness = strip(input.harness()), model = strip(input.model());
+        String effort = strip(input.effort());
         if (branch == null) throw new Refused("base_branch_blank");
         // The branch, the harness and the model are checked against the rules the DISPATCH applies, not
         // against a second opinion written here. A value that passes here and fails there would put the
@@ -84,6 +96,7 @@ public class BuildDefaults {
         if (harness == null || !config.agentImage().containsKey(harness))
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
+        checkAgainstTheHarness(harness, model, effort);
         // Exactly what the dispatch refuses, asked here: the model must be offered, and it must price
         // every token type this harness can report. A model disabled AFTER this save is refused at
         // dispatch too (WorkRunAssembly), so the two no longer disagree in either direction.
@@ -102,14 +115,14 @@ public class BuildDefaults {
             if (get(c, repository, true).revision() != input.expectedRevision())
                 throw new Refused("build_defaults_changed");
             try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,updated_by)
-                    VALUES (?,?,?,?,?)
+                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by)
+                    VALUES (?,?,?,?,?,?)
                     ON CONFLICT (repository_id) DO UPDATE SET base_branch=excluded.base_branch,harness=excluded.harness,
-                        model=excluded.model,updated_by=excluded.updated_by,updated_at=now(),
+                        model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=now(),
                         revision=repository_build_defaults.revision+1
                     """)) {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
-                ps.setString(4, model); ps.setString(5, actor);
+                ps.setString(4, model); ps.setString(5, effort); ps.setString(6, actor);
                 ps.executeUpdate();
             }
             // Saving a setup is the repair for "this repository has no build setup", so the items that
@@ -123,6 +136,25 @@ public class BuildDefaults {
             }
             return get(c, repository, false);
         } catch (SQLException failure) { throw database(failure); }
+    }
+
+    /**
+     * Whether the chosen harness can run this model, at this thinking level (M3.5 part M).
+     *
+     * <p><b>Only when the harness's own list is known.</b> When it is not — no answer from the run worker
+     * yet, an image built without its catalogue, one that could not be read or reached — this does NOT
+     * refuse, and that is a decision rather than an oversight. The check exists to stop an avoidable
+     * wrong choice; when nothing can know which choice is wrong, refusing every save would lock the
+     * operator out of the build setup altogether over a background answer that has not arrived, and a
+     * development stack with no run worker would never be able to save one at all. The failure it lets
+     * through is the one that existed before this check — a model the harness cannot run is refused when
+     * the run starts — and the screen says the list could not be read, so the gap is visible.
+     *
+     * <p>A thinking level, though, IS refused when the list is unknown. There is nothing to check it
+     * against, and a level the model does not offer would be passed to the vendor as it stands.
+     */
+    private void checkAgainstTheHarness(String harness, String model, String effort) {
+        catalogues.refusal(harness, model, effort).ifPresent(reason -> { throw new Refused(reason); });
     }
 
     private static IllegalStateException database(SQLException failure) {

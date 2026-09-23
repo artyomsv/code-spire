@@ -142,7 +142,7 @@ cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 **The factory's two images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q):
 
 ```bash
-docker build -f deploy/agent/codex/Dockerfile -t spire-agent-codex:latest deploy/agent
+./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
 ```
 

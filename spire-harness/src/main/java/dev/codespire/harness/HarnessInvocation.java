@@ -15,7 +15,13 @@ import java.util.Objects;
  */
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
-                                Duration wallClock) {
+                                Duration wallClock, String reasoningEffort) {
+
+    /** A run at the model's own thinking level: every caller written before levels existed (M3.5 part M). */
+    public HarnessInvocation(String runId, String prompt, String workspacePath,
+                             String model, Map<String, String> credentials, Duration wallClock) {
+        this(runId, prompt, workspacePath, model, credentials, wallClock, null);
+    }
 
     /**
      * The key under which the worker supplies the model credential in {@link #credentials()}. The
@@ -46,6 +52,13 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         //                 be; "/" would hand it everything mounted.
         requireArgumentSafe(model, "model");
         requireArgumentSafe(workspacePath, "workspacePath");
+        // An arm places the level inside its own configuration syntax, so the shape is fixed here: a
+        // short lower-case word can close no quote and name no second key. The vendor does not check
+        // it (measured 2026-09-22), so a wrong word would run rather than fail.
+        reasoningEffort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
+        if (reasoningEffort != null && !reasoningEffort.matches("[a-z]{1,16}")) {
+            throw new IllegalArgumentException("reasoningEffort must be a short lower-case word, was: " + reasoningEffort);
+        }
         if (!workspacePath.startsWith("/")) {
             throw new IllegalArgumentException("workspacePath must be absolute, was: " + workspacePath);
         }
@@ -67,6 +80,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
     public String toString() {
         return "HarnessInvocation[runId=" + runId
                 + ", model=" + model
+                + ", reasoningEffort=" + reasoningEffort
                 + ", workspacePath=" + workspacePath
                 + ", wallClock=" + wallClock
                 + ", credentials=" + credentials.keySet() + " (values redacted)"

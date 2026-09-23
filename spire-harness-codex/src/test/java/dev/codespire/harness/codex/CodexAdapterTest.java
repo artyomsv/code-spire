@@ -41,6 +41,20 @@ class CodexAdapterTest {
 
     // ---- invocation -------------------------------------------------------------------------
 
+    /**
+     * The chosen level reaches the CLI as a config override, measured against codex-cli 0.146.0; with
+     * no level there is no override at all, so the model's own default applies.
+     */
+    @Test
+    void theChosenThinkingLevelReachesCodexAndNoLevelMeansNoOverride() {
+        HarnessInvocation high = new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
+                Map.of(HarnessInvocation.CREDENTIAL, "sk-secret"), Duration.ofMinutes(30), "high");
+
+        assertTrue(script(adapter.command(high)).contains(" -c 'model_reasoning_effort=\"high\"' "),
+                script(adapter.command(high)));
+        assertFalse(script(adapter.command(invocation())).contains("model_reasoning_effort"));
+    }
+
     @Test
     void theTypeIsCodex() {
         assertEquals(HarnessType.CODEX, adapter.type());

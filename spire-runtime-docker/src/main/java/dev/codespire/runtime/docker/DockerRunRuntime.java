@@ -324,6 +324,55 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
     }
 
+    @Override
+    public dev.codespire.runtime.ImageDescription describeImage(String image) {
+        // The SAME authenticated pull a run uses, so a private registry needs nothing new: an image a
+        // run could start is an image whose labels can be read, and the reverse.
+        ensureImage(image);
+        var inspected = client.inspectImageCmd(image).exec();
+        var config = inspected.getConfig();
+        return new dev.codespire.runtime.ImageDescription(pinned(image, inspected.getRepoDigests(), inspected.getId()),
+                config == null || config.getLabels() == null ? java.util.Map.of() : config.getLabels());
+    }
+
+    /**
+     * The exact image behind a reference: the reference itself when it is already a digest, else the
+     * registry digest of the same repository, else the daemon's image id.
+     *
+     * <p>The image id is the honest last resort, not a fallback that pretends: a locally built image has
+     * no registry digest, and its id runs on this daemon and fails to pull anywhere else — which is the
+     * right answer on a worker that does not hold the image the models were read from.
+     */
+    static String pinned(String image, java.util.List<String> repoDigests, String imageId) {
+        if (image.contains("@sha256:")) return image;
+        int slash = image.lastIndexOf('/'), colon = image.lastIndexOf(':');
+        // A colon before the last slash is a registry port ("localhost:5000/agent"), not a tag.
+        String repository = canonical(colon > slash ? image.substring(0, colon) : image);
+        for (String digest : repoDigests == null ? java.util.List.<String>of() : repoDigests) {
+            int at = digest.indexOf("@sha256:");
+            // Compared in Docker's canonical spelling: "docker.io/library/alpine" is reported as
+            // "alpine@sha256:…", and missing that pinned a pullable image by an id nothing else holds.
+            if (at > 0 && canonical(digest.substring(0, at)).equals(repository)) return digest;
+        }
+        return imageId;
+    }
+
+    /**
+     * Docker's own normalisation of a repository name: a first part with no dot, no colon and not
+     * "localhost" is not a registry, so the name is on Docker Hub; a Docker Hub name with no namespace is
+     * in "library"; "index.docker.io" is "docker.io".
+     */
+    static String canonical(String repository) {
+        int slash = repository.indexOf('/');
+        String first = slash < 0 ? "" : repository.substring(0, slash);
+        boolean registry = slash > 0 && (first.contains(".") || first.contains(":") || first.equals("localhost"));
+        String host = registry ? first : "docker.io";
+        String path = registry ? repository.substring(slash + 1) : repository;
+        if (host.equals("index.docker.io")) host = "docker.io";
+        if (host.equals("docker.io") && !path.contains("/")) path = "library/" + path;
+        return host + "/" + path;
+    }
+
     /**
      * Pulls the image when the daemon does not hold it. An operator's agent image lives in a
      * registry and a digest-pinned reference (FR-F13) is the normal case, not a local tag — the

@@ -51,6 +51,9 @@ public class FixRunDispatcher {
     FixDispatch plans;
 
     @Inject
+    HarnessCatalogues catalogues;
+
+    @Inject
     FactoryRunProjection runs;
 
     @Inject
@@ -204,7 +207,8 @@ public class FixRunDispatcher {
         RunCommand.ExecuteRun command = new RunCommand.ExecuteRun(planned.runId(), repo,
                 FactoryCloneUrls.cloneUrl(planned.scmType(), account.get().baseUrl(), repo),
                 planned.baseBranch(), planned.baseCommit(), planned.branch(),
-                FixPrompt.of(spec.get()), harness, model, config.agentImage().get(harness),
+                // The exact image the run worker last read for this harness, so every worker runs the same one.
+                FixPrompt.of(spec.get()), harness, model, catalogues.imageFor(harness),
                 NO_EXTRA_PROTECTED_PATHS, config.wallClockSeconds(),
                 credentials.packScm(planned.runId(), account.get().botUsername(), account.get().secret()),
                 credentials.packHarness(planned.runId(), credential.apiKey()))

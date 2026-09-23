@@ -126,9 +126,21 @@ public final class CodexAdapter implements HarnessAdapter {
                 + " || exit " + LOGIN_FAILED + "; "
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
+                + effort(invocation.reasoningEffort())
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
                 + " -";
         return List.of("sh", "-c", script);
+    }
+
+    /**
+     * The thinking level as a config override, or nothing, so the model's own default applies.
+     *
+     * <p>Measured against codex-cli 0.146.0 on 2026-09-22: {@code -c model_reasoning_effort="high"} is
+     * echoed back as "reasoning effort: high". The value is TOML, hence the double quotes inside the
+     * single ones. {@link HarnessInvocation} has already held it to a lower-case word.
+     */
+    private static String effort(String level) {
+        return level == null ? "" : " -c " + quoted("model_reasoning_effort=\"" + level + "\"", "thinking level");
     }
 
     /**

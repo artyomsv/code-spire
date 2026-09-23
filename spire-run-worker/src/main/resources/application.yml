@@ -233,7 +233,30 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+      # What an agent image declares about itself (M3.5 part M). Its own channel: the answer is
+      # small, fast and idempotent, and must not queue behind a sign-in that is waiting on a person.
+      harness-image-commands-in:
+        connector: smallrye-kafka
+        topic: cs.harness-image-commands
+        group:
+          id: spire-run-worker-harness-image
+        value:
+          deserializer: dev.codespire.runworker.HarnessImageCommandDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
     outgoing:
+      harness-image-results-out:
+        connector: smallrye-kafka
+        topic: cs.harness-image-results
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.HarnessImageResultSerializer
+        waitForWriteCompletion: true
       harness-sign-in-results-out:
         connector: smallrye-kafka
         topic: cs.harness-sign-in-results

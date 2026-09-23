@@ -139,6 +139,15 @@ mp:
           serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      harness-image-commands-out:
+        connector: smallrye-kafka
+        topic: cs.harness-image-commands
+        acks: all
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.HarnessImageCommandSerializer
+        waitForWriteCompletion: true
       harness-sign-in-commands-out:
         connector: smallrye-kafka
         topic: cs.harness-sign-in-commands
@@ -261,6 +270,20 @@ mp:
           topic: cs.dlq
       # What the trusted sign-in unit reported (M3.5 part F). Its own channel, because a sign-in is
       # not a run: no claim, no money, no transcript, and an operator waiting on a screen for it.
+      # What each agent image declares about itself (M3.5 part M).
+      harness-image-results-in:
+        connector: smallrye-kafka
+        topic: cs.harness-image-results
+        group:
+          id: spire-orchestrator-harness-image
+        value:
+          deserializer: dev.codespire.orchestrator.factory.HarnessImageResultDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
       harness-sign-in-results-in:
         connector: smallrye-kafka
         topic: cs.harness-sign-in-results
@@ -451,6 +474,8 @@ spire:
 "%test":
   spire:
     work-gate-expiry-interval: "off"
+    work-preparation-interval: "off"
+    harness-catalogue-interval: "off"
     work-run-interval: "off"
     work-delivery-interval: "off"
     work-activity-interval: "off"

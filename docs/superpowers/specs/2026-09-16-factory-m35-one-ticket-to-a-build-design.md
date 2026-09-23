@@ -481,6 +481,146 @@ create a second paid attempt.
 The stored form stays what the gate binds. The detail page says "The ticket changed after it was
 prepared" and offers "Prepare again", which supersedes an open gate and writes new artifact rows.
 
+## 6A. Part M — the models a harness can actually run
+
+**Found by the operator on 2026-09-18, testing part B.** The model list offered for a build setup is every
+enabled model in the LLM catalogue, filtered by nothing. Codex was offered Claude and Gemini models. The
+backend agrees with the screen and is equally wrong: `BuildDefaults.save` checks that a model is enabled
+and fully priced, and never asks whether the chosen harness can run it. So `codex` with `claude-opus-5`
+saves, and dies when the run starts — after an approval, mid-item, which is the exact failure this
+milestone exists to remove.
+
+Measured the same day, in the pinned image (`@openai/codex@0.146.0`):
+
+| Asked | Answer |
+|---|---|
+| What models does this deployment's Codex know? | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.2`, `codex-auto-review` |
+| What does the LLM catalogue offer for OpenAI? | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro`, `gpt-5.5`, `gpt-5.5-pro` |
+| Overlap | **two**. Three catalogue models Codex cannot run, and every `gpt-5.6` missing |
+
+So the catalogue is not a weaker version of the harness's list — it is a different list. Filtering it by
+vendor does not fix this; it leaves a menu that is still mostly wrong and still missing what works.
+
+### 6A.1 Who knows the answer
+
+`codex debug models` renders the raw model catalogue as JSON, **works signed out**, and carries per model:
+the slug, the display name, `default_reasoning_level`, `supported_reasoning_levels`, `visibility`,
+`priority` and `supported_in_api`. It answers both open questions at once — which models, and which
+thinking levels — from the vendor rather than from us.
+
+That settles the split:
+
+| Question | Answered by |
+|---|---|
+| Which models can this harness run, at which thinking levels? | the harness itself |
+| What does a token cost? | the LLM catalogue, and only when we pay per token |
+
+The catalogue stops being a menu and becomes what it is good at. An API-key run still needs a priced
+entry, so the refusal becomes "you chose `gpt-5.6-sol` and it has no rate yet". A subscription run needs
+none: its cost is an asserted zero (5.7).
+
+### 6A.2 Where it is read, and why not by running the image
+
+The obvious implementation — run `codex debug models` when the screen needs it — was rejected for one
+reason: **Kubernetes**. `RuntimeType` declares `DOCKER` and `KUBERNETES` and only Docker is built, so
+running a container to fill in a dropdown would make a settings page depend on a capability that does not
+exist yet, and would have to be written twice.
+
+**The image carries its own answer instead.** At build time the catalogue is read from the binary,
+trimmed to what a screen needs, and baked in as `dev.codespire.agent.models` beside the two labels the
+image contract already declares. Trimmed it is **864 bytes**; the raw JSON is 314 KB, which is why it is
+trimmed rather than copied.
+
+The usual objection to a second copy — drift — does not apply. The copy is generated FROM the binary, in
+the same build, and sealed into the same artifact. They cannot disagree, because they ship together and a
+new CLI version produces a new image and a new label.
+
+**A Dockerfile cannot set a `LABEL` from a `RUN`'s output**, so this needs a build wrapper: build, ask
+the binary, then build again passing the answer as a build argument. The second pass is cached except for
+the label layer.
+
+### 6A.3 Reading it without a daemon in the orchestrator
+
+The run worker reads the label and reports it; the orchestrator stores it and serves every screen from
+its own database. Two consequences, both wanted:
+
+- **No screen ever waits on a daemon or a cluster.** The dropdown is a database read.
+- **A deployment whose arm is unfinished degrades to the last list it was told**, rather than to no
+  models at all.
+
+Reading an image's metadata is the one thing every arm must be able to do — it cannot pull an image
+otherwise — so this asks for no capability the factory does not already require.
+
+### 6A.4 What the operator chooses
+
+Factory tab, step 5 becomes: base branch, harness, **pay with**, model, **thinking level**. The model list
+comes from the harness; the levels are the ones THAT model declares, defaulting to its own default. An
+API-key choice additionally requires a priced model and says so by name.
+
+### 6A.4a When the list is not known
+
+A save is refused for a model the harness cannot run **only when the harness's list is known.** When it
+is not — the run worker has not answered, the image was built without its catalogue, the label could not
+be read, or the image could not be reached — the save goes ahead, the screen says which of those four it
+is, and the model select falls back to the price list, which is what it offered before.
+
+That is a decision, not a gap. The check exists to stop an avoidable wrong choice; when nothing can know
+which choice is wrong, refusing every save would lock the operator out of the build setup over a
+background answer that has not arrived. A development stack with no run worker would never hear the
+answer at all, and could never save a build setup. The case this lets through is the one that existed
+before part M: a model the harness cannot run is refused when the run starts.
+
+A **thinking level** is refused when the list is unknown. There is nothing to check it against, and a
+level the model does not offer would reach the vendor as it stands. With no level chosen, the model's own
+default applies, which is a real choice the vendor publishes per model — so it is stored as NULL rather
+than as a guessed name.
+
+### 6A.4b The level reaches the run, or it is not approved
+
+A level saved and then ignored would be the quiet lie this milestone keeps removing. So the level is
+carried the whole way, and each hop has a test that fails if it drops it:
+
+1. The sweep copies the saved level into the preparation, which binds under a new **version 3**
+   (`WorkPreparation.EFFORT_BINDING`). Versions 1 and 2 keep their exact hashes, per 6.3, and may not
+   carry a level at all — a level they do not hash would reach the build without being approved.
+2. The build command carries it (`ExecuteRun.reasoningEffort`, nullable, so a command already on the
+   bus decodes as "model default"), set from the preparation the gate approved.
+3. The run worker puts it on the harness invocation, and the Codex arm adds
+   `-c 'model_reasoning_effort="<level>"'` — nothing at all when no level was chosen.
+
+The vendor's CLI does not check the level (measured on 2026-09-22: a nonsense value is echoed back), so
+every hop accepts only a short lower-case word. That keeps the value from closing a quote or naming a
+second config key, and it is why the save already refuses a level the model does not declare.
+
+### 6A.4c A run uses the image its list was read from
+
+A tag can move, and two run workers can hold different images under one tag. The deployment default is
+`spire-agent-codex:latest`, and a worker runs its own copy without pulling a newer one. So the list could be
+read from one worker's image while the build ran on another's (review of PR #167, operator's option B).
+
+The run worker now reads the labels **and** the exact image in one inspect, and answers with both: the
+registry digest (`repo@sha256:…`) when the image has one, else the daemon's image id. The orchestrator
+stores the pin with the list (V81). Every run it sends — an item build, a REST dispatch, a /fix — uses the
+pin instead of the tag. An item build takes the check and the pin from one read of the cache, so it cannot
+be checked against one answer and run in another's image.
+
+- **Nothing read yet:** the tag, as before part M.
+- **A registry image:** every worker pulls the same digest.
+- **A local-only image (dev):** the id runs on the daemon that built it. Elsewhere the pull fails and the
+  run fails. That is the honest answer: that worker does not hold the image the list describes.
+- **Rebuilt under the same tag:** runs keep the old pin until the next refresh (`spire.harness-catalogue-interval`,
+  10 minutes), and the old list goes with it, so the two still agree.
+
+### 6A.5 The cost, stated
+
+The image contract gains a clause, so an operator building their own agent image must produce that label
+or the factory has no model list for it. `spire-agent-image verify` reports it, under the same heading
+that already says which clauses are declared rather than proved.
+
+`codex debug models` lives under `debug`, so the vendor may change or remove it. If it does, the build
+fails at image build time — not at run time, and not silently — which is the whole reason it is read
+during a build rather than when somebody opens a page.
+
 ## 7. Part P — live proof on `spire-test`
 
 1. Write two TEST tickets with acceptance criteria. Build defaults: harness `codex`, a priced model.

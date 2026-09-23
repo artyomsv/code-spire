@@ -73,6 +73,89 @@ class BuildDefaultsTest {
         return new BuildDefaults.Input(revision, branch, harness, model);
     }
 
+    @Inject HarnessCatalogues catalogues;
+    @Inject FactoryConfig config;
+
+    /**
+     * Tells the cache what the codex image declares, as the run worker would.
+     *
+     * <p>Two placeholder levels per model and different ones for each, because the rule under test is
+     * that a level is checked against THAT model's own list, not against a list shared by all.
+     */
+    private void codexDeclares(String... slugs) {
+        List<dev.codespire.contract.event.HarnessImageResult.Model> declared = new java.util.ArrayList<>();
+        for (String slug : slugs) {
+            declared.add(new dev.codespire.contract.event.HarnessImageResult.Model(slug, slug, "medium",
+                    List.of("medium", slug.equals(model) ? "high" : "low"), true, 1));
+        }
+        catalogues.record(new dev.codespire.contract.event.HarnessImageResult.Described("TEST-request", "codex",
+                config.agentImage().get("codex"), dev.codespire.contract.event.HarnessImageResult.Status.OK, declared));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void forgetTheCatalogue() throws java.sql.SQLException {
+        try (var c = dataSource.getConnection(); var s = c.createStatement()) {
+            s.executeUpdate("DELETE FROM harness_catalogue");
+        }
+    }
+
+    /**
+     * The defect the operator found: codex was offered Claude and Gemini models, and a save accepted one.
+     * Once the image says what it runs, a model outside that list is refused HERE — not when the run
+     * starts, after somebody approved it.
+     */
+    @Test
+    void aModelTheHarnessCannotRunIsRefusedOnceItsListIsKnown() {
+        codexDeclares("TEST-some-other-model");
+
+        assertEquals("model_not_run_by_harness", refusal(input("main", "codex", model, 0)));
+    }
+
+    @Test
+    void aModelTheHarnessCanRunIsAccepted() {
+        codexDeclares(model);
+
+        assertEquals(model, defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").model());
+    }
+
+    /**
+     * When the list is NOT known, the save is not blocked.
+     *
+     * <p>Deliberate. A development stack with no run worker never hears the answer, and refusing every
+     * save would lock the operator out of the build setup over a background reply that has not come. The
+     * wrong-model case this lets through is the one that existed before, and the screen says so.
+     */
+    @Test
+    void anUnknownListDoesNotLockTheBuildSetup() {
+        assertEquals(model, defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").model());
+    }
+
+    /** A thinking level is the model's OWN list — this model allows "high", the other only "low". */
+    @Test
+    void aThinkingLevelIsCheckedAgainstThatModelsOwnList() {
+        codexDeclares(model, "TEST-other");
+
+        var saved = defaults.save(repository, new BuildDefaults.Input(0, "main", "codex", model, "high"), "TEST-operator");
+        assertEquals("high", saved.effort());
+        assertEquals("effort_not_offered",
+                refusal(new BuildDefaults.Input(1, "main", "codex", model, "low")),
+                "another model's level is not this model's");
+    }
+
+    /** With nothing to check it against, a level would reach the vendor unverified, so it is refused. */
+    @Test
+    void aThinkingLevelIsRefusedWhenTheListIsUnknown() {
+        assertEquals("effort_unverifiable", refusal(new BuildDefaults.Input(0, "main", "codex", model, "high")));
+    }
+
+    /** No level chosen means the model's own default — a real choice, stored as such. */
+    @Test
+    void noThinkingLevelMeansTheModelsOwnDefault() {
+        codexDeclares(model);
+
+        assertNull(defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").effort());
+    }
+
     private String refusal(BuildDefaults.Input input) {
         return assertThrows(BuildDefaults.Refused.class, () -> defaults.save(repository, input, "TEST-operator")).reason();
     }

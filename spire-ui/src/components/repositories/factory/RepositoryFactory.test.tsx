@@ -237,7 +237,8 @@ describe('build setup', () => {
     fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+      // No level chosen is the model's own default, sent as null rather than as a level called ''.
+      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null }));
     expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
   });
 
@@ -328,6 +329,39 @@ describe('build setup', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('no price for Cached input, Cache write, Reasoning');
     expect(screen.getByRole('button', { name: 'Save build setup' })).toBeDisabled();
     expect(build.saveBuildDefaults).not.toHaveBeenCalled();
+  });
+
+  // A saved level whose list is no longer known has no control on screen. Sending it anyway got a refusal
+  // naming a value the operator could not see (review of PR #167), so it is named, and can be dropped.
+  it('names a saved thinking level it cannot check, and offers the model default instead', async () => {
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: 'high' }));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The thinking level high cannot be checked');
+    expect(screen.getByRole('button', { name: 'Save build setup' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the model default' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
+      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null }));
+  });
+
+  // A level belongs to one harness's list: switching away and back must not bring it back unseen.
+  it('drops the thinking level when the harness changes', async () => {
+    const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
+    const runs = { status: 'OK' as const, offered: [{ slug: 'TEST-model', displayName: 'TEST model', defaultEffort: 'medium',
+      efforts: ['medium', 'high'], visible: true, priority: 1 }] };
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-other'], reportedTypes: { codex: types, 'TEST-other': types },
+      models: { codex: runs, 'TEST-other': runs } });
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: 'high' }));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    expect(await screen.findByRole('combobox', { name: 'Thinking level' })).toHaveValue('high');
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Harness' }), { target: { value: 'TEST-other' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Harness' }), { target: { value: 'codex' } });
+
+    expect(screen.getByRole('combobox', { name: 'Thinking level' })).toHaveValue('');
   });
 
   // Before the catalogue answers there is no model to judge, so Save waits rather than guessing.

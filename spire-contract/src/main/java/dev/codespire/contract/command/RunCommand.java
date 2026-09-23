@@ -80,7 +80,8 @@ public sealed interface RunCommand {
                       String prompt, String harness, String model, String agentImage,
                       List<String> protectedPaths, long maxWallClockSeconds,
                       String scmCredential, String harnessCredential,
-                      boolean existingBranch, String protectedBranch) implements RunCommand {
+                      boolean existingBranch, String protectedBranch,
+                      String reasoningEffort) implements RunCommand {
 
         // Every call site that predates ADR-040 keeps working and keeps the M0 rule — the
         // additive treatment the other wire records take. A run already on the bus reads as
@@ -92,10 +93,29 @@ public sealed interface RunCommand {
                           String scmCredential, String harnessCredential) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, false, "");
+                    harnessCredential, false, "", null);
+        }
+
+        /**
+         * Every caller written before thinking levels existed runs at the model's own default (M3.5 part M).
+         * A run already on the bus decodes with a null level, which is what every such run was.
+         */
+        public ExecuteRun(String runId, RepoRef repo, String remoteUri,
+                          String baseBranch, String baseCommit, String branch,
+                          String prompt, String harness, String model, String agentImage,
+                          List<String> protectedPaths, long maxWallClockSeconds,
+                          String scmCredential, String harnessCredential,
+                          boolean existingBranch, String protectedBranch) {
+            this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, existingBranch, protectedBranch, null);
         }
 
         public ExecuteRun {
+            // The vendor CLI does not check this (measured 2026-09-22: a nonsense level is echoed back and
+            // sent on), and it reaches a shell line in the agent container. So its shape is fixed here,
+            // once, before anything downstream can quote it wrongly.
+            reasoningEffort = dev.codespire.contract.work.ThinkingLevel.normalise(reasoningEffort);
             Objects.requireNonNull(runId, "runId");
             Objects.requireNonNull(repo, "repo");
             // The clone URL cannot be derived from RepoRef: that is (workspace, slug) with no host,
@@ -150,7 +170,18 @@ public sealed interface RunCommand {
         public ExecuteRun onExistingBranch(String destination) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, true, destination);
+                    harnessCredential, true, destination, reasoningEffort);
+        }
+
+        /**
+         * The same run at a chosen thinking level. A wither, and the full component list spelled once
+         * here, for the reason {@link #onExistingBranch} gives: a shorter constructor would still
+         * compile at a rebuild site while quietly dropping the level.
+         */
+        public ExecuteRun atEffort(String level) {
+            return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
+                    harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, existingBranch, protectedBranch, level);
         }
 
         @Override
@@ -168,6 +199,7 @@ public sealed interface RunCommand {
                     + ", maxWallClockSeconds=" + maxWallClockSeconds
                     + ", existingBranch=" + existingBranch
                     + ", protectedBranch=" + protectedBranch
+                    + ", reasoningEffort=" + reasoningEffort
                     + ", promptChars=" + prompt.length()
                     + ", scmCredential=" + (scmCredential == null ? "absent" : "***")
                     + ", harnessCredential=" + (harnessCredential == null ? "absent" : "***") + "]";
