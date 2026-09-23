@@ -60,6 +60,25 @@ class HarnessSignInStartTimeTest {
         assertEquals(0, sent.size());
     }
 
+    /**
+     * A failure before this worker owns a unit — a timeout, a refused create — says nothing about the
+     * sign-in: another worker may be running it. So it reports nothing (review of PR #168).
+     */
+    @Test
+    void aFailureBeforeOwnershipReportsNothing() {
+        HarnessSignInWorker worker = worker();
+        worker.harnesses = new HarnessRegistry();
+        worker.runtime = (SignInRuntime) Proxy.newProxyInstance(SignInRuntime.class.getClassLoader(),
+                new Class<?>[] { SignInRuntime.class }, (proxy, method, args) -> {
+                    if (method.getName().equals("start")) throw new IllegalStateException("TEST connection reset");
+                    throw new AssertionError("nothing else may be reached: " + method.getName());
+                });
+
+        worker.onCommand(Message.of(pressed(Instant.now())));
+
+        assertEquals(0, sent.size());
+    }
+
     /** A replay of the start for a unit still running here must not fail that unit. */
     @Test
     void aReplayedStartForAUnitStillRunningIsIgnored() throws Exception {

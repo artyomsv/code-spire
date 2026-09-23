@@ -157,7 +157,16 @@ public class HarnessSignInWorker {
             adopt(command.signInId(), taken);
             return;
         }
-        catch (RuntimeException failed) { running.remove(command.signInId()); throw failed; }
+        catch (RuntimeException failed) {
+            // Before this worker owns a unit, a failure says nothing about the sign-in: another worker may
+            // hold it, and a timeout here cannot tell. Reporting it ended a sign-in the other worker was
+            // running (review of PR #168). So it is logged and dropped; the orchestrator re-sends the start
+            // and, if no worker ever shows a code, ends the row itself as not started.
+            running.remove(command.signInId());
+            LOG.warnf("sign-in %s: no unit could be started here (%s); leaving it to a retry",
+                    command.signInId(), failed.getClass().getSimpleName());
+            return;
+        }
         running.put(command.signInId(), handle);
         if (cancelled.remove(command.signInId()) != null) {
             // It arrived while the container was being created — the window the claim alone cannot

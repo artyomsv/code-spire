@@ -135,6 +135,16 @@ public class HarnessSignIns {
     static final Duration RESEND_AFTER = Duration.ofSeconds(45);
 
     /**
+     * How long a sign-in may go without showing a code before it is ended as not started.
+     *
+     * <p>Much shorter than {@link #MAX_WAIT}, which is how long a PERSON may take. A worker shows the
+     * code within a minute of starting; the rest is headroom for a first pull of the agent image. It has
+     * to be short because a worker that cannot start a unit now says nothing — another worker may hold
+     * it — so this deadline is the only way a broken worker's operator hears anything.
+     */
+    static final Duration UNCLAIMED_DEADLINE = Duration.ofMinutes(5);
+
+    /**
      * Re-sends every start nobody has picked up, and fails the ones whose wait has run out.
      *
      * <p>Safe to repeat: the start carries the original request time, so the worker gives it only the
@@ -156,7 +166,7 @@ public class HarnessSignIns {
         });
         for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
             String image = config.agentImage().get(row.harness());
-            if (row.requestedAt().plus(MAX_WAIT).isBefore(Instant.now()) || image == null) {
+            if (row.requestedAt().plus(UNCLAIMED_DEADLINE).isBefore(Instant.now()) || image == null) {
                 failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
                 continue;
             }

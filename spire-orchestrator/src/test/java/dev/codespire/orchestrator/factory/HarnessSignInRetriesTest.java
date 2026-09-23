@@ -114,7 +114,7 @@ class HarnessSignInRetriesTest {
     @Test
     void aStartStillUnansweredWhenItsWaitRanOutFailsAndSaysWhy() throws Exception {
         UUID id = start("TEST-retry-expired");
-        pressedAgo(id, HarnessSignIns.MAX_WAIT.plusMinutes(1));
+        pressedAgo(id, HarnessSignIns.UNCLAIMED_DEADLINE.plusSeconds(30));
 
         signIns.resendUnclaimed();
 
