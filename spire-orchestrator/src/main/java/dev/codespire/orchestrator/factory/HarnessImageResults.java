@@ -18,8 +18,11 @@ public class HarnessImageResults {
 
     @Inject HarnessCatalogues catalogues;
 
+    // In order: the cache keeps the LAST answer per harness, and the worker keys answers by harness so
+    // one harness's answers share a partition. Handled unordered, an older answer queued in an outage
+    // could still finish last and overwrite the newer list and pin (second review of PR #167).
     @Incoming("harness-image-results-in")
-    @Blocking(ordered = false)
+    @Blocking
     public CompletionStage<Void> onResult(Message<HarnessImageResult> message) {
         if (message.getPayload() instanceof HarnessImageResult.Described described) {
             try {

@@ -347,11 +347,30 @@ public final class DockerRunRuntime implements PublicationRuntime {
         if (image.contains("@sha256:")) return image;
         int slash = image.lastIndexOf('/'), colon = image.lastIndexOf(':');
         // A colon before the last slash is a registry port ("localhost:5000/agent"), not a tag.
-        String repository = colon > slash ? image.substring(0, colon) : image;
+        String repository = canonical(colon > slash ? image.substring(0, colon) : image);
         for (String digest : repoDigests == null ? java.util.List.<String>of() : repoDigests) {
-            if (digest.startsWith(repository + "@sha256:")) return digest;
+            int at = digest.indexOf("@sha256:");
+            // Compared in Docker's canonical spelling: "docker.io/library/alpine" is reported as
+            // "alpine@sha256:…", and missing that pinned a pullable image by an id nothing else holds.
+            if (at > 0 && canonical(digest.substring(0, at)).equals(repository)) return digest;
         }
         return imageId;
+    }
+
+    /**
+     * Docker's own normalisation of a repository name: a first part with no dot, no colon and not
+     * "localhost" is not a registry, so the name is on Docker Hub; a Docker Hub name with no namespace is
+     * in "library"; "index.docker.io" is "docker.io".
+     */
+    static String canonical(String repository) {
+        int slash = repository.indexOf('/');
+        String first = slash < 0 ? "" : repository.substring(0, slash);
+        boolean registry = slash > 0 && (first.contains(".") || first.contains(":") || first.equals("localhost"));
+        String host = registry ? first : "docker.io";
+        String path = registry ? repository.substring(slash + 1) : repository;
+        if (host.equals("index.docker.io")) host = "docker.io";
+        if (host.equals("docker.io") && !path.contains("/")) path = "library/" + path;
+        return host + "/" + path;
     }
 
     /**

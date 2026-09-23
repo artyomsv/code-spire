@@ -29,6 +29,27 @@ class DockerImagePinTest {
                 DockerRunRuntime.pinned("localhost:5000/agent", List.of("localhost:5000/agent@" + DIGEST), ID));
     }
 
+    /**
+     * Docker reports a Docker Hub image under its short name whatever spelling pulled it. Measured
+     * read-only on 2026-09-23: "docker.io/library/alpine:3.20" reported "alpine@sha256:…" (second review
+     * of PR #167). Missing the match pinned a pullable image by an id no other worker holds.
+     */
+    @Test
+    void anyDockerHubSpellingFindsItsDigest() {
+        List<String> reported = List.of("alpine@" + DIGEST);
+        assertEquals("alpine@" + DIGEST, DockerRunRuntime.pinned("docker.io/library/alpine:3.20", reported, ID));
+        assertEquals("alpine@" + DIGEST, DockerRunRuntime.pinned("index.docker.io/library/alpine:3.20", reported, ID));
+        assertEquals("alpine@" + DIGEST, DockerRunRuntime.pinned("library/alpine", reported, ID));
+        assertEquals("TEST-org/agent@" + DIGEST,
+                DockerRunRuntime.pinned("docker.io/TEST-org/agent:1", List.of("TEST-org/agent@" + DIGEST), ID));
+    }
+
+    /** A registry that merely shares a path is a different repository. */
+    @Test
+    void theSamePathOnAnotherRegistryIsNotTheSameRepository() {
+        assertEquals(ID, DockerRunRuntime.pinned("ghcr.io/library/alpine:3.20", List.of("alpine@" + DIGEST), ID));
+    }
+
     @Test
     void aReferenceThatIsAlreadyADigestIsKept() {
         assertEquals("ghcr.io/TEST-org/agent@" + DIGEST,
