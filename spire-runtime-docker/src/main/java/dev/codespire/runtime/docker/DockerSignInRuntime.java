@@ -111,8 +111,7 @@ public final class DockerSignInRuntime implements SignInRuntime {
             // By IDENTITY, never through the age-fenced sweep query: that one hides anything created in
             // the current second, which is precisely the container whose name just caused this
             // conflict. Missing it made the loser rethrow and fail a live owner's sign-in.
-            Handle existing = find(spec.unitId()).orElseThrow(() -> taken);
-            throw new SignInRuntime.AlreadyClaimed(existing, stillRunning(existing));
+            throw claimedBy(spec.unitId(), () -> find(spec.unitId()), this::stillRunning);
         }
         // Everything after creation is guarded. A failure here used to leave a container with no
         // handle in anyone's hands — the one orphan that can hold a credential and that no finally
@@ -224,6 +223,27 @@ public final class DockerSignInRuntime implements SignInRuntime {
     }
 
     /** Whether the daemon still reports this container as running. False for gone, stopped or unknown. */
+    /**
+     * What a name conflict means: the unit is HELD, whatever else can be learned about it.
+     *
+     * <p>The conflict itself is the proof; the lookup only adds detail. When the lookup fails, or finds
+     * nothing because the owner has just removed its container, the answer is still "held by someone
+     * else" — never an error. An error became UNIT_FAILED, and with two workers that ended a sign-in
+     * the other one was running and the operator could still approve (review of PR #168). A holder
+     * that no longer exists is resolved by the orchestrator's own deadlines, not here.
+     */
+    static SignInRuntime.AlreadyClaimed claimedBy(String unitId, java.util.function.Supplier<Optional<Handle>> lookup,
+                                                  java.util.function.Predicate<Handle> running) {
+        Handle existing;
+        try {
+            existing = lookup.get().orElse(null);
+        } catch (RuntimeException unreadable) {
+            existing = null;
+        }
+        if (existing == null) return new SignInRuntime.AlreadyClaimed(new Handle(unitId, "unknown"), false);
+        return new SignInRuntime.AlreadyClaimed(existing, running.test(existing));
+    }
+
     private boolean stillRunning(Handle handle) {
         try {
             return Boolean.TRUE.equals(client.inspectContainerCmd(handle.reference()).exec().getState().getRunning());
