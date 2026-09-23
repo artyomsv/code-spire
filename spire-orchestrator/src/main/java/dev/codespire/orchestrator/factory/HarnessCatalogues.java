@@ -89,7 +89,8 @@ public class HarnessCatalogues {
         for (Map.Entry<String, String> harness : config.agentImage().entrySet()) {
             try {
                 KafkaSends.sendAndAwait(commands, harness.getKey(),
-                        new HarnessImageCommand.Describe(UUID.randomUUID().toString(), harness.getKey(), harness.getValue()),
+                        new HarnessImageCommand.Describe(UUID.randomUUID().toString(), harness.getKey(), harness.getValue(),
+                                Instant.now()),
                         "describe the image for " + harness.getKey());
             } catch (RuntimeException undelivered) {
                 // The next interval asks again; one lost question is not worth failing startup over.
@@ -112,17 +113,24 @@ public class HarnessCatalogues {
             return;
         }
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO harness_catalogue (harness, image, status, models, observed_at, pinned_image)
-                VALUES (?, ?, ?, ?::jsonb, now(), ?)
+                INSERT INTO harness_catalogue (harness, image, status, models, observed_at, pinned_image, asked_at)
+                VALUES (?, ?, ?, ?::jsonb, now(), ?, ?)
                 ON CONFLICT (harness) DO UPDATE
                    SET image=excluded.image, status=excluded.status, models=excluded.models, observed_at=now(),
-                       pinned_image=excluded.pinned_image
+                       pinned_image=excluded.pinned_image, asked_at=excluded.asked_at
+                 -- The answer to the NEWEST question wins, not the last one to arrive: the channel
+                 -- replays from its oldest record, and an older answer must not roll the list and its
+                 -- pin back (review of PR #168). A row about an image no longer configured is stale
+                 -- whatever its time, so any current answer replaces it.
+                 WHERE harness_catalogue.image <> excluded.image
+                    OR COALESCE(excluded.asked_at, '-infinity') >= COALESCE(harness_catalogue.asked_at, '-infinity')
                 """)) {
             ps.setString(1, answer.harness());
             ps.setString(2, answer.image());
             ps.setString(3, answer.status().name());
             ps.setString(4, mapper.writeValueAsString(answer.models()));
             ps.setString(5, answer.pinnedImage());
+            ps.setTimestamp(6, answer.askedAt() == null ? null : java.sql.Timestamp.from(answer.askedAt()));
             ps.executeUpdate();
         } catch (SQLException | JsonProcessingException failure) {
             throw new IllegalStateException("The model catalogue for " + answer.harness() + " could not be stored", failure);

@@ -225,11 +225,14 @@ mp:
           id: spire-run-worker-sign-in
         value:
           deserializer: dev.codespire.runworker.HarnessSignInCommandDeserializer
-        # Latest: a restart must not re-open sign-ins whose codes expired days ago and whose
-        # operator has long gone. An abandoned one is re-started from the screen, by a person.
+        # Earliest (was latest). Under latest a start sent while this group was being assigned its
+        # partition was never read, and the sign-in sat PENDING for ever (review of PR #168). What
+        # latest protected against is now held by the start itself: it carries the operator's press
+        # time, and one whose wait has run out opens no unit. The orchestrator also re-sends a start
+        # nobody picked up, which the worker ignores while that unit is already running.
         auto:
           offset:
-            reset: latest
+            reset: earliest
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq

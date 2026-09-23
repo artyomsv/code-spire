@@ -41,6 +41,41 @@ class HarnessCataloguesTest {
     }
 
     /**
+     * The channel replays from its oldest record, so an answer can arrive after a newer one. The answer to
+     * the NEWEST question is kept, whatever order they arrive in (review of PR #168).
+     */
+    @Test
+    void anOlderAnswerArrivingLateDoesNotRollTheListBack() {
+        java.time.Instant earlier = java.time.Instant.parse("2026-09-23T07:00:00Z");
+        java.time.Instant later = earlier.plusSeconds(600);
+        catalogues.record(new HarnessImageResult.Described("TEST-new", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-current", true, 1)), "TEST-pin-new", later));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-old", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-previous", true, 1)), "TEST-pin-old", earlier));
+        // An answer from before times were sent is the oldest of all.
+        catalogues.record(new HarnessImageResult.Described("TEST-untimed", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-untimed", true, 1)), "TEST-pin-untimed"));
+
+        var kept = catalogues.get(HARNESS).orElseThrow();
+        assertEquals("TEST-pin-new", kept.pinnedImage());
+        assertTrue(kept.find("TEST-current").isPresent());
+    }
+
+    @Test
+    void aNewerAnswerReplacesAnOlderOne() {
+        java.time.Instant earlier = java.time.Instant.parse("2026-09-23T07:00:00Z");
+        catalogues.record(new HarnessImageResult.Described("TEST-old", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-previous", true, 1)), "TEST-pin-old", earlier));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-new", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-current", true, 1)), "TEST-pin-new",
+                earlier.plusSeconds(600)));
+
+        assertEquals("TEST-pin-new", catalogues.get(HARNESS).orElseThrow().pinnedImage());
+    }
+
+    /**
      * A run uses the exact image the list was read from; with nothing read, the tag, as before part M.
      * And an answer about an image the harness has since left pins nothing (review of PR #167).
      */

@@ -11,6 +11,17 @@ class DlqTopicsTest {
         assertEquals("cs.repository-integration", DlqTopics.forType("RepositoryDelivery"));
     }
 
+    /** Before these were mapped, each fell through to cs.commands, where nothing reads it (review of PR #168). */
+    @Test void harnessRecordsReplayOntoTheirOwnTopics() {
+        assertEquals("cs.harness-image-commands", DlqTopics.forType("Describe"));
+        assertEquals("cs.harness-image-results", DlqTopics.forType("Described"));
+        assertEquals("cs.harness-sign-in-commands", DlqTopics.forType("Start"));
+        assertEquals("cs.harness-sign-in-commands", DlqTopics.forType("Cancel"));
+        assertEquals("cs.harness-sign-in-results", DlqTopics.forType("Prompted"));
+        assertEquals("cs.harness-sign-in-results", DlqTopics.forType("Completed"));
+        assertEquals("cs.harness-sign-in-results", DlqTopics.forType("Failed"));
+    }
+
     @Test void registrationReplaysOntoItsRegistryTopic() {
         assertEquals("cs.registry-integration", DlqTopics.forType("RepositoryRegistration"));
     }

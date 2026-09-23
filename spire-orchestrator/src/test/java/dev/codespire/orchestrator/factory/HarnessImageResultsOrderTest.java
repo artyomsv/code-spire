@@ -19,15 +19,26 @@ class HarnessImageResultsOrderTest {
      */
     @Test
     void anAnswerSentBeforeTheOrchestratorJoinedIsStillRecorded() throws java.io.IOException {
+        assertTrue(channel("harness-image-results-in").contains("reset: earliest"));
+    }
+
+    /** A sign-in result lost the same way left the screen waiting for a code already printed. */
+    @Test
+    void aSignInResultSentBeforeTheOrchestratorJoinedIsStillRecorded() throws java.io.IOException {
+        assertTrue(channel("harness-sign-in-results-in").contains("reset: earliest"));
+    }
+
+    /** One channel's settings, up to its failure strategy. */
+    private static String channel(String name) throws java.io.IOException {
         String yaml;
         try (var in = HarnessImageResults.class.getResourceAsStream("/application.yml")) {
             yaml = new String(java.util.Objects.requireNonNull(in, "application.yml").readAllBytes(),
                     java.nio.charset.StandardCharsets.UTF_8);
         }
-        int start = yaml.indexOf("      harness-image-results-in:");
+        int start = yaml.indexOf("      " + name + ":");
         int end = yaml.indexOf("failure-strategy", start);
-        assertTrue(start >= 0 && end > start, "harness-image-results-in is not declared");
-        assertTrue(yaml.substring(start, end).contains("reset: earliest"));
+        assertTrue(start >= 0 && end > start, name + " is not declared");
+        return yaml.substring(start, end);
     }
 
     /** The first tick waits: at startup it ran before the Kafka emitter was connected. */

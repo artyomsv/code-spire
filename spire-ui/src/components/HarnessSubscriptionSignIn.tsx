@@ -14,6 +14,7 @@ const REASONS: Record<string, string> = {
   sign_in_cancelled: 'The sign-in was cancelled.',
   sign_in_unit_failed: 'The sign-in tool did not start, or printed something this version cannot read. Nothing was stored.',
   sign_in_wrong_mode: 'That signed in as an API key, not a subscription. Add it as an API key instead.',
+  sign_in_not_started: 'No run worker picked this sign-in up in time. Check that the run worker is running, then start again.',
 };
 
 const sentence = (reason: string | null) =>

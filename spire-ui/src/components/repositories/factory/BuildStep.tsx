@@ -105,6 +105,10 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}
         setEffort={effort => setForm(previous => ({ ...previous, effort }))} />
+      {/* A select whose every option is disabled ignores clicks and keys alike, and looked broken (operator,
+          2026-09-23). Say why nothing can be chosen, and where to fix it. */}
+      {form.harness && offered.length > 0 && offered.every(choice => choice.blocked !== null) && <p className="prov-error">
+        No model can be picked yet: each one is missing a price. Add the rates for one in Settings → LLM.</p>}
       {picked?.blocked && <p className="prov-error" role="alert">
         {form.model} has {picked.blocked}. {form.harness} reports those token types, and an API-key run needs a rate
         for each — or a mark in Settings → LLM that the vendor does not bill it.</p>}

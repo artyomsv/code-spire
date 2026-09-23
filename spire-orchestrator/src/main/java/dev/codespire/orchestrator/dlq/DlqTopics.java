@@ -49,6 +49,19 @@ final class DlqTopics {
 
     private static final Set<String> RUN_RESULT_TYPES = Set.of("RunStarted", "RunFinished", "RunFailed");
 
+    /**
+     * The harness side channels (M3.5 parts F and M). Without these a dead-lettered model-list or
+     * sign-in record was replayed onto {@code cs.commands}, where nothing reads it (review of PR #168).
+     */
+    static final String HARNESS_IMAGE_COMMANDS = "cs.harness-image-commands";
+    static final String HARNESS_IMAGE_RESULTS = "cs.harness-image-results";
+    static final String HARNESS_SIGN_IN_COMMANDS = "cs.harness-sign-in-commands";
+    static final String HARNESS_SIGN_IN_RESULTS = "cs.harness-sign-in-results";
+
+    private static final Set<String> HARNESS_SIGN_IN_COMMAND_TYPES = Set.of("Start", "Cancel");
+
+    private static final Set<String> HARNESS_SIGN_IN_RESULT_TYPES = Set.of("Prompted", "Completed", "Failed");
+
     private DlqTopics() {
     }
 
@@ -74,6 +87,10 @@ final class DlqTopics {
         if (RUN_RESULT_TYPES.contains(type)) {
             return RUN_RESULTS;
         }
+        if ("Describe".equals(type)) return HARNESS_IMAGE_COMMANDS;
+        if ("Described".equals(type)) return HARNESS_IMAGE_RESULTS;
+        if (HARNESS_SIGN_IN_COMMAND_TYPES.contains(type)) return HARNESS_SIGN_IN_COMMANDS;
+        if (HARNESS_SIGN_IN_RESULT_TYPES.contains(type)) return HARNESS_SIGN_IN_RESULTS;
         return COMMANDS;
     }
 }

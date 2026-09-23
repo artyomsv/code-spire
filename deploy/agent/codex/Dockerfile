@@ -17,8 +17,11 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
         ca-certificates git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned to the version the adapter's event parser was measured against (RUN-TOPOLOGY §10).
-RUN npm i -g @openai/codex@0.146.0 && npm cache clean --force
+# Pinned. The event parser was first measured on 0.146.0 (RUN-TOPOLOGY §10); raised to 0.156.1 on
+# 2026-09-23 because the model list is read from this CLI, and 0.146.0 predates the gpt-6 models. Every
+# flag the adapter uses was re-checked on 0.156.1; the --json event shape is re-proved by the next paid
+# run (UNVERIFIED section B).
+RUN npm i -g @openai/codex@0.156.1 && npm cache clean --force
 
 # The mount points exist, owned by the agent user, so a fresh named volume mounted there inherits
 # that ownership; without this the volume is root's and the agent cannot write its own workspace.

@@ -243,6 +243,19 @@ describe('build setup', () => {
   });
 
   /** A model with no output price is refused at dispatch, so it cannot be chosen here either. */
+  // Every option disabled: the select ignores clicks and keys, which the operator read as broken.
+  it('says why no model can be picked when every one lacks a price', async () => {
+    const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: types },
+      models: { codex: { status: 'OK', offered: [{ slug: 'TEST-unpriced-only', displayName: 'TEST unpriced only',
+        defaultEffort: 'medium', efforts: ['medium'], visible: true, priority: 1 }] } } });
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+
+    expect(await screen.findByText(/No model can be picked yet/)).toBeInTheDocument();
+  });
+
   it('offers an unpriced model as unselectable and says why', async () => {
     renderFactory();
     await open();

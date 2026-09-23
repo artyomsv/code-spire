@@ -26,8 +26,18 @@ public sealed interface HarnessImageCommand {
      * @param harness the name the orchestrator dispatches under, echoed back so the answer files itself
      * @param image the exact reference the orchestrator will run — the answer describes THIS image, and a
      *     different tag of the same repository may carry a different CLI and a different list
+     * @param askedAt when the orchestrator asked. The channels replay from their oldest record, so a
+     *     question can arrive long after it was asked: the worker skips one too old to matter, and the
+     *     answer carries this back so an older answer cannot replace a newer one (review of PR #168).
+     *     Null in a question sent before this existed.
      */
-    record Describe(String requestId, String harness, String image) implements HarnessImageCommand {
+    record Describe(String requestId, String harness, String image, java.time.Instant askedAt)
+            implements HarnessImageCommand {
+
+        public Describe(String requestId, String harness, String image) {
+            this(requestId, harness, image, null);
+        }
+
         public Describe {
             if (requestId == null || requestId.isBlank()) throw new IllegalArgumentException("A request id is required");
             if (harness == null || harness.isBlank()) throw new IllegalArgumentException("A harness is required");

@@ -41,9 +41,25 @@ public sealed interface HarnessSignInCommand {
      * @param maxWaitSeconds how long the unit may wait for the operator. The vendor states a 15-minute
      *     code lifetime; this is the deployment's own ceiling, so a unit cannot outlive the code it is
      *     waiting on and sit holding a container for ever.
+     * @param requestedAt when the operator pressed start. The wait is counted from HERE, not from delivery:
+     *     the channel replays from its oldest record and the orchestrator re-sends a start nobody picked
+     *     up, so a start can arrive late or twice. One whose wait has already run out opens no unit, and
+     *     a late one gets only the time left (review of PR #168). Null in a start sent before this existed.
      */
-    record Start(String signInId, String harness, String image, long maxWaitSeconds)
+    record Start(String signInId, String harness, String image, long maxWaitSeconds, java.time.Instant requestedAt)
             implements HarnessSignInCommand {
+
+        public Start(String signInId, String harness, String image, long maxWaitSeconds) {
+            this(signInId, harness, image, maxWaitSeconds, null);
+        }
+
+        /** How long the unit may still wait, counted from the request; the full wait when that is unknown. */
+        public java.time.Duration remainingWait(java.time.Instant now) {
+            java.time.Duration full = java.time.Duration.ofSeconds(maxWaitSeconds);
+            if (requestedAt == null) return full;
+            java.time.Duration left = java.time.Duration.between(now, requestedAt.plus(full));
+            return left.isNegative() ? java.time.Duration.ZERO : (left.compareTo(full) > 0 ? full : left);
+        }
 
         public Start {
             if (signInId == null || signInId.isBlank()) throw new IllegalArgumentException("A sign-in id is required");

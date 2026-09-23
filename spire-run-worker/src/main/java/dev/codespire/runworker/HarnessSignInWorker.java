@@ -112,6 +112,19 @@ public class HarnessSignInWorker {
             LOG.infof("sign-in %s is already running here; ignoring a repeated start", command.signInId());
             return;
         }
+        // After the claim, so a replayed start for a unit still running is ignored rather than failing it.
+        // Counted from the operator's press, not from delivery: a start can be replayed or re-sent. One
+        // whose wait has run out opens nothing — its code could never be typed, and a unit started for
+        // it would hold a container open for a screen nobody is watching (review of PR #168).
+        Duration wait = command.remainingWait(Instant.now());
+        if (wait.compareTo(PROMPT_TIMEOUT) <= 0) {
+            LOG.infof("sign-in %s was requested at %s and its wait has run out; not starting it",
+                    command.signInId(), command.requestedAt());
+            emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.EXPIRED,
+                    "the sign-in request arrived after its time had run out"));
+            running.remove(command.signInId());
+            return;
+        }
         if (cancelled.remove(command.signInId()) != null) {
             // The cancel got here first. Creating the unit now would mean the operator's cancel did
             // nothing and a container waited out its ceiling on a code nobody would type.
@@ -133,7 +146,7 @@ public class HarnessSignInWorker {
         SignInPrompt prompt = new SignInPrompt(flow.get().verificationHost());
         SignInUnitSpec spec = new SignInUnitSpec(command.signInId(), command.image(), flow.get().command(),
                 flow.get().resultPath(), EnterpriseEnvironment.NONE, 512 * MEGABYTE, 1_000_000_000L,
-                64 * MEGABYTE, Duration.ofSeconds(command.maxWaitSeconds()));
+                64 * MEGABYTE, wait);
 
         SignInRuntime.Handle handle;
         try { handle = runtime.start(spec, prompt::accept); }
@@ -164,12 +177,12 @@ public class HarnessSignInWorker {
             // The EFFECTIVE deadline: the sooner of what the vendor promised and what this worker was
             // given. The screen counted down the vendor's figure while the worker waited on its own, so
             // it could show a minute remaining on a unit that had already been destroyed.
-            Duration budget = Duration.ofSeconds(command.maxWaitSeconds());
+            Duration budget = wait;
             Duration life = prompt.expiresIn().filter(vendor -> vendor.compareTo(budget) < 0).orElse(budget);
             emit(new HarnessSignInResult.Prompted(command.signInId(), prompt.link(), prompt.code(),
                     Instant.now().plus(life)));
 
-            SignInRuntime.Exit exit = runtime.awaitExit(handle, Duration.ofSeconds(command.maxWaitSeconds()));
+            SignInRuntime.Exit exit = runtime.awaitExit(handle, wait);
             if (!(exit instanceof SignInRuntime.Exit.Observed observed)) {
                 runtime.cancel(handle);
                 boolean fault = exit instanceof SignInRuntime.Exit.Unobservable;

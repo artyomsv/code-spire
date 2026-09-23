@@ -413,13 +413,15 @@ so in the outage this exists for it fails too.
 What the operator sees depends on WHEN the outage began, and the two are not the same:
 
 - **After the prompt was stored** — the row is PROMPTED and carries an expiry, so the screen counts down
-  and then shows a code that has plainly run out.
-- **Before it** — the prompt is the only thing that ever writes {@code expires_at}, and the worker does
-  not check whether that send arrived either. The row stays PENDING with **no countdown at all**: the
-  screen says "starting the sign-in", indefinitely.
+  and then shows a code that has plainly run out. Two minutes past that expiry the orchestrator closes the
+  row itself as expired (`HarnessSignIns.resendUnclaimed`, 2026-09-23).
+- **Before it** — the row stays PENDING. Since 2026-09-23 (review of PR #168) the orchestrator re-sends
+  an unanswered start every 30 seconds while its 14-minute wait lasts, then closes the row as
+  `sign_in_not_started`. So the screen no longer says "starting the sign-in" for ever; it ends within
+  the wait.
 
-Neither resolves itself. Cancelling is the way out, and cancelling publishes before it changes the row,
-so it too needs the broker back; until then the screen shows only the cancel's own error.
+Both now end on their own, without the broker. What is still lost is the credential itself: a finished
+sign-in whose result cannot be delivered is discarded, and the operator signs in again.
 
 **Evidence needed.** None — this is a deliberate trade, not a suspicion. Closing it means a durable
 terminal record the screen can read without the broker, which is the same transactional-outbox treatment
@@ -468,6 +470,7 @@ Each has a runbook mode. None has been run by an operator.
 | The whole M1 lifecycle against a real forge | **Mode Q** | Cancel, steer, the watchdog, the push gate and the charge ledger have only ever met a WireMock LLM and a local origin |
 | Corporate-only bundle → the failure it produces | Mode R §5 | The documented trap (internal forge works, model API fails) is asserted nowhere; it is the mistake an operator will actually make |
 | A private-registry pull | Mode S §4 | Nothing pulls from a private registry in any test. `authFor` and the attachment are unit-tested; the *pull* is not |
+| **Codex CLI 0.156.1 in the agent image** (2026-09-23) | none yet | Raised from 0.146.0 so the model list includes the gpt-6 models. Re-checked on 0.156.1: every flag the adapter passes, the API-key login, and the shape of the file it writes (`auth_mode=apikey`). NOT re-checked: the `--json` event stream the usage parser reads, and the device sign-in output. Both need a paid run or a real sign-in, and the first of each proves or breaks them |
 | **Runs pinned to the image their model list came from** (M3.5 part M, 2026-09-23) | none yet | Choosing the pin is unit-tested against given daemon answers, and one real-daemon test pins a LOCAL build by its image id. No test pulls a registry image and pins it by its registry digest, and none runs two workers. So "two workers holding different images under one tag run the same one" is argued from the code, not watched. A local-only image is pinned by an id that exists on one daemon only: on a second worker such a run fails to pull — by design, but unobserved |
 | **OIDC sessions actually renew instead of re-authenticating** | **Mode J check 11** (2026-09-10) | The bug it fixes needs a real browser, a real Keycloak and **fifteen elapsed minutes**. No suite here has any of the three: there are zero WebSocket client tests, and nothing observes a token reaching its `exp`. `OidcSessionsAreRenewedTest` asserts the four `application.yml` files *say* renewal is on — it cannot assert Quarkus *does* it |
 

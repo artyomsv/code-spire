@@ -51,9 +51,30 @@ public class HarnessImageWorker {
     @Blocking
     public CompletionStage<Void> onCommand(Message<HarnessImageCommand> message) {
         if (message.getPayload() instanceof HarnessImageCommand.Describe describe) {
+            if (isStale(describe, java.time.Instant.now())) {
+                // Replayed from before a restart. The orchestrator asks again on its own schedule, and a
+                // pull for an image nobody runs any more could hold up the current question for minutes.
+                LOG.infof("skipping a question about %s asked at %s; a newer one follows", describe.harness(),
+                        describe.askedAt());
+                return message.ack();
+            }
             publish(describe(describe));
         }
         return message.ack();
+    }
+
+    /**
+     * How old a question may be and still be answered.
+     *
+     * <p>Longer than the orchestrator's refresh interval (ten minutes by default), so an ordinary
+     * question is never skipped; short enough that a backlog replayed after an outage is dropped instead
+     * of pulled one image at a time ahead of the question that matters (review of PR #168).
+     */
+    static final java.time.Duration STALE_AFTER = java.time.Duration.ofMinutes(15);
+
+    /** A question from before this existed carries no time, and is answered as before. */
+    static boolean isStale(HarnessImageCommand.Describe question, java.time.Instant now) {
+        return question.askedAt() != null && question.askedAt().plus(STALE_AFTER).isBefore(now);
     }
 
     HarnessImageResult.Described describe(HarnessImageCommand.Describe command) {
@@ -66,11 +87,11 @@ public class HarnessImageWorker {
             LOG.warnf("the image for harness %s could not be read (%s)", command.harness(),
                     unreachable.getClass().getSimpleName());
             return new HarnessImageResult.Described(command.requestId(), command.harness(), command.image(),
-                    HarnessImageResult.Status.IMAGE_UNAVAILABLE, List.of());
+                    HarnessImageResult.Status.IMAGE_UNAVAILABLE, List.of(), null, command.askedAt());
         }
         ModelCatalogueLabel.Read read = ModelCatalogueLabel.of(image.labels(), mapper);
         return new HarnessImageResult.Described(command.requestId(), command.harness(), command.image(),
-                read.status(), read.models(), image.pinned());
+                read.status(), read.models(), image.pinned(), command.askedAt());
     }
 
     private static String keyOf(HarnessImageResult result) {
