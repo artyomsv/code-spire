@@ -13,6 +13,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class HarnessImageResultsOrderTest {
 
+    /**
+     * An answer sent while the orchestrator's group was still being assigned, after a restart, must
+     * not be skipped (measured on the dev stack, 2026-09-23).
+     */
+    @Test
+    void anAnswerSentBeforeTheOrchestratorJoinedIsStillRecorded() throws java.io.IOException {
+        String yaml;
+        try (var in = HarnessImageResults.class.getResourceAsStream("/application.yml")) {
+            yaml = new String(java.util.Objects.requireNonNull(in, "application.yml").readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+        }
+        int start = yaml.indexOf("      harness-image-results-in:");
+        int end = yaml.indexOf("failure-strategy", start);
+        assertTrue(start >= 0 && end > start, "harness-image-results-in is not declared");
+        assertTrue(yaml.substring(start, end).contains("reset: earliest"));
+    }
+
+    /** The first tick waits: at startup it ran before the Kafka emitter was connected. */
+    @Test
+    void theRefreshTimerDoesNotFireDuringStartup() throws NoSuchMethodException {
+        var scheduled = HarnessCatalogues.class.getDeclaredMethod("refresh")
+                .getAnnotation(io.quarkus.scheduler.Scheduled.class);
+        assertTrue(!scheduled.delayed().isBlank(), "the first refresh must be delayed");
+    }
+
     @Test
     void theAnswersAreRecordedOneAtATime() throws NoSuchMethodException {
         Blocking blocking = HarnessImageResults.class.getMethod("onResult", Message.class).getAnnotation(Blocking.class);

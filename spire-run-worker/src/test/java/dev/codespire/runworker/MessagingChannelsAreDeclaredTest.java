@@ -103,6 +103,12 @@ class MessagingChannelsAreDeclaredTest {
         assertEquals(WORK_CHANNEL, incoming.value());
     }
 
+    /** A question sent while the worker's group was still being assigned must not be skipped. */
+    @Test
+    void anImageQuestionSentBeforeTheWorkerJoinedIsStillAnswered() {
+        assertTrue(channelBlock(applicationYaml(), "harness-image-commands-in").contains("reset: earliest"));
+    }
+
     private static Method onControl() {
         return method(RunControlListener.class, "onControl", dev.codespire.contract.command.RunCommand.class);
     }

@@ -81,7 +81,9 @@ public class HarnessCatalogues {
      * because a worker that was down at startup would otherwise leave the cache empty until the next
      * orchestrator restart. The answer is cheap: a label read, and a pull only the first time.
      */
-    @Scheduled(every = "${spire.harness-catalogue-interval:10m}",
+    // Delayed: the startup ask already covers boot, and a first tick at startup ran before the Kafka
+    // emitter was connected, logging an injection ERROR on every start (dev stack, 2026-09-23).
+    @Scheduled(every = "${spire.harness-catalogue-interval:10m}", delayed = "1m",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void refresh() {
         for (Map.Entry<String, String> harness : config.agentImage().entrySet()) {

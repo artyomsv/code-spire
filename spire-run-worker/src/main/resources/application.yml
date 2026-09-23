@@ -242,9 +242,14 @@ mp:
           id: spire-run-worker-harness-image
         value:
           deserializer: dev.codespire.runworker.HarnessImageCommandDeserializer
+        # Earliest, not latest. A new group, or one rejoining while a dead member's session runs
+        # out after a restart, is only assigned its partition after a delay; with latest, a message
+        # sent in that window is skipped, and the model list stayed unknown until the next refresh.
+        # Measured on the dev stack on 2026-09-23. Replaying is harmless: answers are idempotent,
+        # handled in order, and an answer about an image no longer configured is dropped.
         auto:
           offset:
-            reset: latest
+            reset: earliest
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
