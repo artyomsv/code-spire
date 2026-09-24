@@ -74,6 +74,9 @@ public class HarnessSignIns {
      */
     public Started start(String label, String harness, String actor) {
         UUID id = UUID.randomUUID();
+        // Stored as the row's own start time and sent with every start, so the wait is counted from the
+        // operator's press however late, or however often, the start is delivered.
+        Instant requested = Instant.now();
         String image = config.agentImage().get(harness);
         if (image == null) return new Started(null, "harness_unconfigured");
 
@@ -87,10 +90,11 @@ public class HarnessSignIns {
                 if (inProgress(c, harness).isPresent()) return new Started(null, "sign_in_already_running");
                 if (pool.hasLabel(c, label)) return new Started(null, "harness_credential_label_taken");
                 try (PreparedStatement ps = c.prepareStatement("""
-                        INSERT INTO harness_sign_in (id, label, harness, state, started_by)
-                        VALUES (?, ?, ?, 'PENDING', ?)
+                        INSERT INTO harness_sign_in (id, label, harness, state, started_by, created_at)
+                        VALUES (?, ?, ?, 'PENDING', ?, ?)
                         """)) {
                     ps.setObject(1, id); ps.setString(2, label); ps.setString(3, harness); ps.setString(4, actor);
+                    ps.setTimestamp(5, Timestamp.from(requested));
                     ps.executeUpdate();
                 }
                 return new Started(read(c, id).orElseThrow(), null);
@@ -110,7 +114,8 @@ public class HarnessSignIns {
         // screen shows and the operator cancels — visible, rather than a unit nobody knows about.
         try {
             KafkaSends.sendAndAwait(commands, id.toString(),
-                    new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds()),
+                    new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds(), requested,
+                            START_WITHIN.toSeconds()),
                     "harness sign-in start for " + id);
         } catch (RuntimeException undelivered) {
             LOG.errorf(undelivered, "sign-in %s could not be asked for", id);
@@ -119,6 +124,108 @@ public class HarnessSignIns {
             return new Started(null, "sign_in_unit_failed");
         }
         return opened;
+    }
+
+    /**
+     * How long a start may go unanswered before it is sent again.
+     *
+     * <p>Longer than a consumer group takes to hand a partition to a restarted worker, which is where
+     * a start used to vanish: the worker read only new records, and one sent while it was rejoining was
+     * never read, leaving the sign-in PENDING for ever (review of PR #168).
+     */
+    static final Duration RESEND_AFTER = Duration.ofSeconds(45);
+
+    /**
+     * How long after the press a worker may still OPEN a unit. Sent with every start, so the worker and
+     * this class use one number (review of PR #168).
+     *
+     * <p>Much shorter than {@link #MAX_WAIT}, which is how long a PERSON may take. It has to be short
+     * because a worker that cannot start a unit says nothing — another worker may hold it — so the
+     * deadline below is the only way the operator of a broken worker hears anything.
+     */
+    static final Duration START_WITHIN = Duration.ofMinutes(4);
+
+    /**
+     * When a sign-in that still shows no code is ended as not started: the start window, plus room for
+     * the code to cross the bus. A worker opens a unit only if it can print the code inside the window.
+     */
+    static final Duration UNCLAIMED_DEADLINE = START_WITHIN.plusMinutes(2);
+
+    /**
+     * Re-sends every start nobody has picked up, and fails the ones whose wait has run out.
+     *
+     * <p>Safe to repeat: the start carries the original request time, so the worker gives it only the
+     * time left and opens nothing once that is gone; and a worker already running the unit ignores the
+     * repeat. The two exits here are the only ways a PENDING row ends without a worker — which is the
+     * point: before this, nothing ended one.
+     */
+    @io.quarkus.scheduler.Scheduled(every = "${spire.harness-sign-in-retry-interval:30s}", delayed = "30s",
+            concurrentExecution = io.quarkus.scheduler.Scheduled.ConcurrentExecution.SKIP)
+    void resendUnclaimed() {
+        // A prompt whose code has run out, and whose worker's own "expired" never arrived, would stay on
+        // screen for ever. The grace covers the worker reporting it the ordinary way first.
+        update("""
+                UPDATE harness_sign_in SET state='FAILED', reason=?, updated_at=now()
+                 WHERE state='PROMPTED' AND expires_at < ?
+                """, ps -> {
+            ps.setString(1, HarnessSignInResult.Failed.EXPIRED);
+            ps.setTimestamp(2, Timestamp.from(Instant.now().minus(EXPIRY_GRACE)));
+        });
+        for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
+            String image = config.agentImage().get(row.harness());
+            boolean windowClosed = !row.requestedAt().plus(START_WITHIN).isAfter(Instant.now());
+            if (row.requestedAt().plus(UNCLAIMED_DEADLINE).isBefore(Instant.now()) || image == null) {
+                failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
+                continue;
+            }
+            // Past the start window a worker drops the start unopened, so sending it is only noise. The row
+            // stays PENDING until the deadline above, which leaves room for a code already on its way.
+            if (windowClosed) continue;
+            try {
+                KafkaSends.sendAndAwait(commands, row.id().toString(), new HarnessSignInCommand.Start(
+                        row.id().toString(), row.harness(), image, MAX_WAIT.toSeconds(), row.requestedAt(),
+                        START_WITHIN.toSeconds()),
+                        "harness sign-in re-send for " + row.id());
+            } catch (RuntimeException undelivered) {
+                // The next pass tries again; the row keeps its own deadline either way.
+                LOG.warnf("sign-in %s could not be re-sent (%s)", row.id(), undelivered.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /** How long past a code's expiry the worker has to say so itself before the row is closed here. */
+    static final Duration EXPIRY_GRACE = Duration.ofMinutes(2);
+
+    private record Unclaimed(UUID id, String harness, Instant requestedAt) {}
+
+    /**
+     * Fails a row only if it is STILL waiting for a worker when the write runs.
+     *
+     * <p>The list of unclaimed rows was read a moment earlier; a prompt that landed since then has
+     * given the row an expiry and its own two-minute grace, and ordinary {@link #fail} accepts a
+     * PROMPTED row too — so it would have ended a sign-in the operator was about to approve
+     * (review of PR #168).
+     */
+    private void failUnclaimed(UUID id, String reason) {
+        update("""
+                UPDATE harness_sign_in SET state='FAILED', reason=?, updated_at=now()
+                 WHERE id=? AND state='PENDING'
+                """, ps -> { ps.setString(1, reason); ps.setObject(2, id); });
+    }
+
+    private java.util.List<Unclaimed> unclaimed(Instant before) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT id, harness, created_at FROM harness_sign_in WHERE state='PENDING' AND created_at < ?")) {
+            ps.setTimestamp(1, Timestamp.from(before));
+            java.util.List<Unclaimed> rows = new java.util.ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) rows.add(new Unclaimed(rs.getObject("id", UUID.class), rs.getString("harness"),
+                        rs.getTimestamp("created_at").toInstant()));
+            }
+            return rows;
+        } catch (SQLException failure) {
+            throw new IllegalStateException("The waiting sign-ins could not be read", failure);
+        }
     }
 
     /** What the operator must do. Written straight through: the screen is polling for exactly this. */

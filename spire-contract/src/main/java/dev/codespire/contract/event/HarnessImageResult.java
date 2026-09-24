@@ -68,13 +68,21 @@ public sealed interface HarnessImageResult {
      *                    when it could not be reached. A run of this harness uses it rather than the tag,
      *                    so it runs the image these models were read from (review of PR #167). Null in an
      *                    answer sent before pins existed.
+     * @param askedAt when the question this answers was asked, echoed back. The cache keeps the answer to
+     *                the NEWEST question, so a replayed older answer cannot roll it back. Null in an answer
+     *                sent before this existed.
      */
     record Described(String requestId, String harness, String image, Status status, List<Model> models,
-                     String pinnedImage)
+                     String pinnedImage, java.time.Instant askedAt)
             implements HarnessImageResult {
 
         public Described(String requestId, String harness, String image, Status status, List<Model> models) {
-            this(requestId, harness, image, status, models, null);
+            this(requestId, harness, image, status, models, null, null);
+        }
+
+        public Described(String requestId, String harness, String image, Status status, List<Model> models,
+                         String pinnedImage) {
+            this(requestId, harness, image, status, models, pinnedImage, null);
         }
 
         public Described {

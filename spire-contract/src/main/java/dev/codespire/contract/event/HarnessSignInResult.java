@@ -105,6 +105,8 @@ public sealed interface HarnessSignInResult {
         public static final String UNIT_FAILED = "sign_in_unit_failed";
         /** The CLI signed in, but as an API key rather than a subscription. */
         public static final String WRONG_MODE = "sign_in_wrong_mode";
+        /** No worker picked the sign-in up before its wait ran out, re-sends included. */
+        public static final String NOT_STARTED = "sign_in_not_started";
 
         public Failed {
             if (signInId == null || signInId.isBlank()) throw new IllegalArgumentException("A sign-in id is required");

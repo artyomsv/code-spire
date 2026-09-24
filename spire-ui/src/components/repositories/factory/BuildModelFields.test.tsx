@@ -43,6 +43,14 @@ it('shows a model the harness runs but that has no price, and says what is missi
   expect(choices.find(choice => choice.value === 'TEST-fast')?.blocked).toBeNull();
 });
 
+// Every option disabled makes the select ignore clicks and keys, which reads as broken (operator,
+// 2026-09-23). The screen names the reason; see BuildStep.
+it('marks every model blocked when none has a price', () => {
+  const choices = modelChoices('codex', KNOWN, [], REPORTED);
+
+  expect(choices.every(choice => choice.blocked !== null)).toBe(true);
+});
+
 // When the image did not say, the price list is all there is — what this screen offered before — and it
 // is not dressed up as the harness's own list.
 it('falls back to the price list, and says why, when the harness list is unknown', () => {

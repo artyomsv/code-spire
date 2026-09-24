@@ -38,13 +38,64 @@ class HarnessImageWorkerTest {
         worker.ackSeconds = 5;
         worker.results = new Capturing(sent);
 
-        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-1", "codex", "TEST-image")));
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-1", "codex", "TEST-image",
+                java.time.Instant.now())));
 
         assertEquals(1, sent.size());
         assertEquals("codex", sent.getFirst().key());
         // The exact image read travels with the answer, so a run can use it instead of the tag.
         assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 ((HarnessImageResult.Described) sent.getFirst().value()).pinnedImage());
+    }
+
+    /** A replayed backlog is dropped instead of pulled image by image ahead of the current question. */
+    @Test
+    void aQuestionTooOldToMatterIsSkippedWithoutReadingTheImage() {
+        List<Record<String, HarnessImageResult>> sent = new ArrayList<>();
+        HarnessImageWorker worker = new HarnessImageWorker();
+        worker.runtime = (RunRuntime) Proxy.newProxyInstance(RunRuntime.class.getClassLoader(), new Class<?>[] { RunRuntime.class },
+                (proxy, method, args) -> { throw new AssertionError("a stale question must not reach the image"); });
+        worker.mapper = new ObjectMapper();
+        worker.ackSeconds = 5;
+        worker.results = new Capturing(sent);
+        java.time.Instant longAgo = java.time.Instant.now().minus(HarnessImageWorker.STALE_AFTER).minusSeconds(60);
+
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-old", "codex", "TEST-image", longAgo)));
+
+        assertEquals(0, sent.size());
+    }
+
+    /** A question with no time predates times, so it can only be a replay (review of PR #168). */
+    @Test
+    void aQuestionWithNoTimeIsSkippedWithoutReadingTheImage() {
+        List<Record<String, HarnessImageResult>> sent = new ArrayList<>();
+        HarnessImageWorker worker = new HarnessImageWorker();
+        worker.runtime = (RunRuntime) Proxy.newProxyInstance(RunRuntime.class.getClassLoader(), new Class<?>[] { RunRuntime.class },
+                (proxy, method, args) -> { throw new AssertionError("an undated question must not reach the image"); });
+        worker.mapper = new ObjectMapper();
+        worker.ackSeconds = 5;
+        worker.results = new Capturing(sent);
+
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-undated", "codex", "TEST-image")));
+
+        assertEquals(0, sent.size());
+    }
+
+    @Test
+    void theAnswerCarriesTheTimeOfTheQuestion() {
+        List<Record<String, HarnessImageResult>> sent = new ArrayList<>();
+        HarnessImageWorker worker = new HarnessImageWorker();
+        worker.runtime = (RunRuntime) Proxy.newProxyInstance(RunRuntime.class.getClassLoader(), new Class<?>[] { RunRuntime.class },
+                (proxy, method, args) -> method.getName().equals("describeImage")
+                        ? new dev.codespire.runtime.ImageDescription("TEST-pin", Map.of()) : null);
+        worker.mapper = new ObjectMapper();
+        worker.ackSeconds = 5;
+        worker.results = new Capturing(sent);
+        java.time.Instant asked = java.time.Instant.now().minusSeconds(5);
+
+        worker.onCommand(Message.of(new HarnessImageCommand.Describe("TEST-request-new", "codex", "TEST-image", asked)));
+
+        assertEquals(asked, ((HarnessImageResult.Described) sent.getFirst().value()).askedAt());
     }
 
     /** One partition keeps order only if the worker does not answer two of its messages at once. */

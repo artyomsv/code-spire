@@ -103,6 +103,18 @@ class MessagingChannelsAreDeclaredTest {
         assertEquals(WORK_CHANNEL, incoming.value());
     }
 
+    /** A question sent while the worker's group was still being assigned must not be skipped. */
+    @Test
+    void anImageQuestionSentBeforeTheWorkerJoinedIsStillAnswered() {
+        assertTrue(channelBlock(applicationYaml(), "harness-image-commands-in").contains("reset: earliest"));
+    }
+
+    /** A start lost the same way left the sign-in PENDING for ever (review of PR #168). */
+    @Test
+    void aSignInStartSentBeforeTheWorkerJoinedIsStillRead() {
+        assertTrue(channelBlock(applicationYaml(), "harness-sign-in-commands-in").contains("reset: earliest"));
+    }
+
     private static Method onControl() {
         return method(RunControlListener.class, "onControl", dev.codespire.contract.command.RunCommand.class);
     }

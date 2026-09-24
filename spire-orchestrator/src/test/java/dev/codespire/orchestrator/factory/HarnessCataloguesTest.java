@@ -41,6 +41,53 @@ class HarnessCataloguesTest {
     }
 
     /**
+     * The channel replays from its oldest record, so an answer can arrive after a newer one. The answer to
+     * the NEWEST question is kept, whatever order they arrive in (review of PR #168).
+     */
+    @Test
+    void anOlderAnswerArrivingLateDoesNotRollTheListBack() {
+        java.time.Instant earlier = java.time.Instant.parse("2026-09-23T07:00:00Z");
+        java.time.Instant later = earlier.plusSeconds(600);
+        catalogues.record(new HarnessImageResult.Described("TEST-new", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-current", true, 1)), "TEST-pin-new", later));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-old", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-previous", true, 1)), "TEST-pin-old", earlier));
+        // An answer from before times were sent is the oldest of all.
+        catalogues.record(new HarnessImageResult.Described("TEST-untimed", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-untimed", true, 1)), "TEST-pin-untimed"));
+
+        var kept = catalogues.get(HARNESS).orElseThrow();
+        assertEquals("TEST-pin-new", kept.pinnedImage());
+        assertTrue(kept.find("TEST-current").isPresent());
+    }
+
+    /** An answer with no time predates times: it may fill an empty cache, never replace a row. */
+    @Test
+    void anAnswerWithNoTimeReplacesNothing() {
+        catalogues.record(new HarnessImageResult.Described("TEST-first", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-first", true, 1)), "TEST-pin-first"));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-second", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-second", true, 1)), "TEST-pin-second"));
+
+        assertEquals("TEST-pin-first", catalogues.get(HARNESS).orElseThrow().pinnedImage());
+    }
+
+    @Test
+    void aNewerAnswerReplacesAnOlderOne() {
+        java.time.Instant earlier = java.time.Instant.parse("2026-09-23T07:00:00Z");
+        catalogues.record(new HarnessImageResult.Described("TEST-old", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-previous", true, 1)), "TEST-pin-old", earlier));
+
+        catalogues.record(new HarnessImageResult.Described("TEST-new", HARNESS, image(),
+                HarnessImageResult.Status.OK, List.of(model("TEST-current", true, 1)), "TEST-pin-new",
+                earlier.plusSeconds(600)));
+
+        assertEquals("TEST-pin-new", catalogues.get(HARNESS).orElseThrow().pinnedImage());
+    }
+
+    /**
      * A run uses the exact image the list was read from; with nothing read, the tag, as before part M.
      * And an answer about an image the harness has since left pins nothing (review of PR #167).
      */
@@ -64,7 +111,9 @@ class HarnessCataloguesTest {
 
     private HarnessImageResult.Described answer(String image, HarnessImageResult.Status status,
                                                 List<HarnessImageResult.Model> models) {
-        return new HarnessImageResult.Described("TEST-request", HARNESS, image, status, models);
+        // Timed, as every answer is now: an untimed one predates times and replaces nothing.
+        return new HarnessImageResult.Described("TEST-request", HARNESS, image, status, models, null,
+                java.time.Instant.now());
     }
 
     /** "Not asked yet" and "the image declares nothing" send an operator to different places. */

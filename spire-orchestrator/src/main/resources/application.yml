@@ -278,9 +278,14 @@ mp:
           id: spire-orchestrator-harness-image
         value:
           deserializer: dev.codespire.orchestrator.factory.HarnessImageResultDeserializer
+        # Earliest, not latest. A new group, or one rejoining while a dead member's session runs
+        # out after a restart, is only assigned its partition after a delay; with latest, a message
+        # sent in that window is skipped, and the model list stayed unknown until the next refresh.
+        # Measured on the dev stack on 2026-09-23. Replaying is harmless: answers are idempotent,
+        # handled in order, and an answer about an image no longer configured is dropped.
         auto:
           offset:
-            reset: latest
+            reset: earliest
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
@@ -291,10 +296,14 @@ mp:
           id: spire-orchestrator-harness-sign-in
         value:
           deserializer: dev.codespire.orchestrator.factory.HarnessSignInResultDeserializer
-        # Latest: a restart must not replay prompts whose codes expired days ago onto a screen.
+        # Earliest (was latest). Under latest a result sent while this group was being assigned its
+        # partition was never read: a prompt the screen was waiting for, or a finished sign-in, was
+        # lost (review of PR #168). Replay only moves a sign-in forward -- a prompt applies to a PENDING
+        # row, a completion or failure to an open one -- and an open row past its code's expiry is
+        # closed by HarnessSignIns.resendUnclaimed, so an old prompt cannot keep one on screen.
         auto:
           offset:
-            reset: latest
+            reset: earliest
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
@@ -476,6 +485,7 @@ spire:
     work-gate-expiry-interval: "off"
     work-preparation-interval: "off"
     harness-catalogue-interval: "off"
+    harness-sign-in-retry-interval: "off"
     work-run-interval: "off"
     work-delivery-interval: "off"
     work-activity-interval: "off"
