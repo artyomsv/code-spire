@@ -29,6 +29,12 @@ class HarnessSignInStartTest {
     }
 
     @Test
+    void theDeadlinesAreCountedFromThePress() {
+        assertEquals(PRESSED.plusSeconds(240), start(PRESSED).promptDeadline());
+        assertEquals(PRESSED.plusSeconds(840), start(PRESSED).approvalDeadline());
+    }
+
+    @Test
     void aStartWithNoWindowOrNoPressOpensNothing() {
         assertEquals(false, new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, PRESSED, 0)
                 .mayOpenAt(PRESSED, Duration.ZERO));

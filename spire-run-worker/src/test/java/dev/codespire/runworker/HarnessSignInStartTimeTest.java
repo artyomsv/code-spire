@@ -90,6 +90,84 @@ class HarnessSignInStartTimeTest {
         assertEquals(0, sent.size());
     }
 
+    /**
+     * A unit admitted in time that then starts slowly — or whose process is paused — prints its code
+     * after the window has closed. The row has been ended by then, so nothing may be published; the unit
+     * is destroyed (review of PR #168).
+     */
+    @Test
+    void aCodePrintedAfterTheWindowIsNotPublished() {
+        HarnessSignInWorker worker = worker();
+        worker.harnesses = new HarnessRegistry();
+        Instant pressed = Instant.parse("2026-09-24T12:00:00Z");
+        java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(pressed);
+        worker.clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now.get(); }
+        };
+        List<String> destroyed = new ArrayList<>();
+        worker.runtime = (SignInRuntime) Proxy.newProxyInstance(SignInRuntime.class.getClassLoader(),
+                new Class<?>[] { SignInRuntime.class }, (proxy, method, args) -> switch (method.getName()) {
+                    case "start" -> {
+                        now.set(pressed.plusSeconds(600));
+                        @SuppressWarnings("unchecked")
+                        java.util.function.Consumer<String> lines = (java.util.function.Consumer<String>) args[1];
+                        lines.accept("1. Open this link in your browser and sign in to your account");
+                        lines.accept("   https://auth.openai.com/codex/device");
+                        lines.accept("2. Enter this one-time code (expires in 15 minutes)");
+                        lines.accept("   ABCD-12345");
+                        yield new SignInRuntime.Handle("TEST-sign-in", "TEST-unit");
+                    }
+                    case "destroy" -> { destroyed.add("TEST-unit"); yield true; }
+                    default -> throw new AssertionError("a late unit must not be waited on: " + method.getName());
+                });
+
+        worker.onCommand(Message.of(pressed(pressed)));
+
+        assertEquals(0, sent.size(), "no code for a row already ended");
+        assertEquals(List.of("TEST-unit"), destroyed);
+    }
+
+    /**
+     * A slow start inside the window: the code is shown, but the time left for the person is measured
+     * after the start, not before it, so the fourteen-minute limit is not stretched (review of PR #168).
+     */
+    @Test
+    void theTimeLeftIsMeasuredAfterASlowStart() {
+        HarnessSignInWorker worker = worker();
+        worker.harnesses = new HarnessRegistry();
+        Instant pressed = Instant.parse("2026-09-24T12:00:00Z");
+        java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(pressed);
+        worker.clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now.get(); }
+        };
+        List<java.time.Duration> waited = new ArrayList<>();
+        worker.runtime = (SignInRuntime) Proxy.newProxyInstance(SignInRuntime.class.getClassLoader(),
+                new Class<?>[] { SignInRuntime.class }, (proxy, method, args) -> switch (method.getName()) {
+                    case "start" -> {
+                        now.set(pressed.plusSeconds(150));
+                        @SuppressWarnings("unchecked")
+                        java.util.function.Consumer<String> lines = (java.util.function.Consumer<String>) args[1];
+                        lines.accept("   https://auth.openai.com/codex/device");
+                        lines.accept("   ABCD-12345");
+                        yield new SignInRuntime.Handle("TEST-sign-in", "TEST-unit");
+                    }
+                    case "awaitExit" -> { waited.add((java.time.Duration) args[1]); yield new SignInRuntime.Exit.StillRunning(); }
+                    case "destroy" -> true;
+                    case "cancel" -> null;
+                    default -> throw new AssertionError("unexpected: " + method.getName());
+                });
+
+        worker.onCommand(Message.of(pressed(pressed)));
+
+        var prompted = (HarnessSignInResult.Prompted) sent.getFirst();
+        assertEquals(pressed.plusSeconds(840), prompted.expiresAt(), "the approval time ends 840s after the press");
+        assertEquals(List.of(java.time.Duration.ofSeconds(690)), waited);
+    }
+
     /** A replay of the start for a unit still running here must not fail that unit. */
     @Test
     void aReplayedStartForAUnitStillRunningIsIgnored() throws Exception {

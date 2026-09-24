@@ -127,6 +127,18 @@ class HarnessSignInRetriesTest {
         assertEquals(1, startsFor(id, 1).size(), "a sign-in whose wait is gone is not sent again");
     }
 
+    /** Past the start window a worker opens nothing, so nothing is sent; the row waits for its deadline. */
+    @Test
+    void aStartPastItsWindowIsNotSentAgainButNotYetEnded() throws Exception {
+        UUID id = start("TEST-retry-window-closed");
+        pressedAgo(id, HarnessSignIns.START_WITHIN.plusSeconds(30));
+
+        signIns.resendUnclaimed();
+
+        assertEquals(1, startsFor(id, 1).size());
+        assertEquals("PENDING", signIns.get(id).orElseThrow().state(), "a code may still be on its way");
+    }
+
     @Test
     void aFreshStartIsNotSentAgainYet() throws Exception {
         UUID id = start("TEST-retry-fresh");

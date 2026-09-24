@@ -54,6 +54,9 @@ public class HarnessSignInWorker {
      */
     private static final Duration ABANDONED_AFTER = Duration.ofMinutes(30);
 
+    /** The time the deadlines are read against. Replaceable so a test can make a unit start slowly. */
+    java.time.Clock clock = java.time.Clock.systemUTC();
+
     @Inject SignInRuntime runtime;
     @Inject EncryptionService encryption;
     @Inject HarnessRegistry harnesses;
@@ -121,13 +124,13 @@ public class HarnessSignInWorker {
         // workers, a late copy reaching one of them would otherwise fail a sign-in the other is running
         // and the operator can still approve. Ending a sign-in nobody runs is the orchestrator's job, and
         // it does it from the row's own clock (HarnessSignIns.resendUnclaimed).
-        if (!command.mayOpenAt(Instant.now(), PROMPT_TIMEOUT)) {
+        if (!command.mayOpenAt(Instant.now(clock), PROMPT_TIMEOUT)) {
             LOG.infof("not starting sign-in %s: requested at %s, and its start window has closed",
                     command.signInId(), command.requestedAt());
             running.remove(command.signInId());
             return;
         }
-        Duration wait = command.remainingWait(Instant.now());
+        Duration wait = command.remainingWait(Instant.now(clock));
         if (cancelled.remove(command.signInId()) != null) {
             // The cancel got here first. Creating the unit now would mean the operator's cancel did
             // nothing and a container waited out its ceiling on a code nobody would type.
@@ -175,7 +178,12 @@ public class HarnessSignInWorker {
             runtime.cancel(handle);
         }
         try {
-            if (!awaitPrompt(prompt)) {
+            // Absolute deadlines, taken from the press and checked where they matter, not durations taken
+            // before the unit started: a slow start or a paused process used to stretch both — a code
+            // published after the row had been ended, and a wait longer than the person's (review of PR #168).
+            Instant promptBy = command.promptDeadline();
+            Instant approveBy = command.approvalDeadline();
+            if (!awaitPrompt(prompt, promptBy)) {
                 // The CLI said nothing this build can read, or said two different things. Never invent a
                 // link or a code, and never pick between two: an operator sent to a guessed address is
                 // worse than one told the sign-in did not start, because they will type their account
@@ -186,15 +194,23 @@ public class HarnessSignInWorker {
                                 : "the sign-in tool printed no link and code this build could read"));
                 return;
             }
-            // The EFFECTIVE deadline: the sooner of what the vendor promised and what this worker was
-            // given. The screen counted down the vendor's figure while the worker waited on its own, so
-            // it could show a minute remaining on a unit that had already been destroyed.
-            Duration budget = wait;
+            if (Instant.now(clock).isAfter(promptBy)) {
+                // Printed, but too late: the orchestrator has ended, or is about to end, this row as not
+                // started. Publishing now would put a code on screen for a sign-in nobody can finish. The
+                // unit is destroyed below; nothing is reported, because the row already has its answer.
+                LOG.infof("sign-in %s printed its code after its window closed; discarding the unit",
+                        command.signInId());
+                return;
+            }
+            // The EFFECTIVE deadline: the sooner of what the vendor promised and what is left of the
+            // person's time, measured NOW. The screen counted down the vendor's figure while the worker
+            // waited on its own, so it could show a minute remaining on a unit already destroyed.
+            Duration budget = nonNegative(Duration.between(Instant.now(clock), approveBy));
             Duration life = prompt.expiresIn().filter(vendor -> vendor.compareTo(budget) < 0).orElse(budget);
             emit(new HarnessSignInResult.Prompted(command.signInId(), prompt.link(), prompt.code(),
-                    Instant.now().plus(life)));
+                    Instant.now(clock).plus(life)));
 
-            SignInRuntime.Exit exit = runtime.awaitExit(handle, wait);
+            SignInRuntime.Exit exit = runtime.awaitExit(handle, nonNegative(Duration.between(Instant.now(clock), approveBy)));
             if (!(exit instanceof SignInRuntime.Exit.Observed observed)) {
                 runtime.cancel(handle);
                 boolean fault = exit instanceof SignInRuntime.Exit.Unobservable;
@@ -214,10 +230,9 @@ public class HarnessSignInWorker {
                 // A second send is attempted, and it is NOT claimed to arrive. It travels the same
                 // broker path that has just failed, so in the outage this exists for it fails too.
                 //
-                // What the operator sees depends on when the outage began: a row that reached PROMPTED
-                // counts down and expires visibly, while one that never did stays PENDING with no
-                // countdown, because the prompt is the only thing that writes an expiry. Both are
-                // cleared by cancelling, which also needs the broker back. UNVERIFIED.md A5.
+                // What the operator sees: a row that reached PROMPTED counts down and is closed after its
+                // expiry; one that never did is ended as not started. Both by the orchestrator on its own
+                // clock, without this broker (HarnessSignIns.resendUnclaimed). UNVERIFIED.md A5.
                 LOG.errorf("sign-in %s completed but could not be delivered; the credential is discarded"
                         + " and the row stays open until the operator cancels it", command.signInId());
                 emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.UNIT_FAILED,
@@ -305,9 +320,15 @@ public class HarnessSignInWorker {
         emit(new HarnessSignInResult.Failed(command.signInId(), HarnessSignInResult.Failed.CANCELLED, command.reason()));
     }
 
-    private boolean awaitPrompt(SignInPrompt prompt) {
-        Instant deadline = Instant.now().plus(PROMPT_TIMEOUT);
-        while (Instant.now().isBefore(deadline)) {
+    private static Duration nonNegative(Duration duration) {
+        return duration.isNegative() ? Duration.ZERO : duration;
+    }
+
+    /** Waits for the code, but never past the window it must be on screen by. */
+    private boolean awaitPrompt(SignInPrompt prompt, Instant promptBy) {
+        Instant patience = Instant.now(clock).plus(PROMPT_TIMEOUT);
+        Instant deadline = patience.isBefore(promptBy) ? patience : promptBy;
+        while (Instant.now(clock).isBefore(deadline)) {
             // Ambiguity does not improve by waiting, and waiting out the whole timeout for a decision
             // already made just keeps a container and an operator hanging.
             if (prompt.ambiguous()) return false;

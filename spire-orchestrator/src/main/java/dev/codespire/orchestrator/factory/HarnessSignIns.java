@@ -173,10 +173,14 @@ public class HarnessSignIns {
         });
         for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
             String image = config.agentImage().get(row.harness());
+            boolean windowClosed = !row.requestedAt().plus(START_WITHIN).isAfter(Instant.now());
             if (row.requestedAt().plus(UNCLAIMED_DEADLINE).isBefore(Instant.now()) || image == null) {
                 failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
                 continue;
             }
+            // Past the start window a worker drops the start unopened, so sending it is only noise. The row
+            // stays PENDING until the deadline above, which leaves room for a code already on its way.
+            if (windowClosed) continue;
             try {
                 KafkaSends.sendAndAwait(commands, row.id().toString(), new HarnessSignInCommand.Start(
                         row.id().toString(), row.harness(), image, MAX_WAIT.toSeconds(), row.requestedAt(),

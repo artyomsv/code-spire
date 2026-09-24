@@ -59,6 +59,16 @@ public sealed interface HarnessSignInCommand {
             this(signInId, harness, image, maxWaitSeconds, null, 0);
         }
 
+        /** When the code must be on screen by; after this the orchestrator ends the row. Null if unknown. */
+        public java.time.Instant promptDeadline() {
+            return requestedAt == null ? null : requestedAt.plusSeconds(startWithinSeconds);
+        }
+
+        /** When the person's time to approve runs out, counted from the press. Null if unknown. */
+        public java.time.Instant approvalDeadline() {
+            return requestedAt == null ? null : requestedAt.plusSeconds(maxWaitSeconds);
+        }
+
         /**
          * Whether a unit opened now could still show its code in time: the code must be on screen by the
          * end of the start window, and the unit may take {@code toPrompt} to print it.
