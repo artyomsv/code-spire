@@ -168,6 +168,46 @@ class HarnessSignInStartTimeTest {
         assertEquals(List.of(java.time.Duration.ofSeconds(690)), waited);
     }
 
+    /**
+     * Time passes between any two readings of the clock. The countdown shown must still end exactly at
+     * the approval deadline, never after it (review of PR #168).
+     */
+    @Test
+    void theShownExpiryNeverPassesTheApprovalDeadline() {
+        HarnessSignInWorker worker = worker();
+        worker.harnesses = new HarnessRegistry();
+        Instant pressed = Instant.parse("2026-09-24T12:00:00Z");
+        java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(pressed);
+        java.util.concurrent.atomic.AtomicBoolean ticking = new java.util.concurrent.atomic.AtomicBoolean();
+        worker.clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+            // After the unit starts, every reading is a second later than the one before it.
+            @Override public Instant instant() { return ticking.get() ? now.updateAndGet(at -> at.plusSeconds(1)) : now.get(); }
+        };
+        worker.runtime = (SignInRuntime) Proxy.newProxyInstance(SignInRuntime.class.getClassLoader(),
+                new Class<?>[] { SignInRuntime.class }, (proxy, method, args) -> switch (method.getName()) {
+                    case "start" -> {
+                        now.set(pressed.plusSeconds(150));
+                        ticking.set(true);
+                        @SuppressWarnings("unchecked")
+                        java.util.function.Consumer<String> lines = (java.util.function.Consumer<String>) args[1];
+                        lines.accept("   https://auth.openai.com/codex/device");
+                        lines.accept("   ABCD-12345");
+                        yield new SignInRuntime.Handle("TEST-sign-in", "TEST-unit");
+                    }
+                    case "awaitExit" -> new SignInRuntime.Exit.StillRunning();
+                    case "destroy" -> true;
+                    case "cancel" -> null;
+                    default -> throw new AssertionError("unexpected: " + method.getName());
+                });
+
+        worker.onCommand(Message.of(pressed(pressed)));
+
+        var prompted = (HarnessSignInResult.Prompted) sent.getFirst();
+        assertEquals(pressed.plusSeconds(840), prompted.expiresAt());
+    }
+
     /** A replay of the start for a unit still running here must not fail that unit. */
     @Test
     void aReplayedStartForAUnitStillRunningIsIgnored() throws Exception {

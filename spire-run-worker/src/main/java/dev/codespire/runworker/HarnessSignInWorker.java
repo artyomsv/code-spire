@@ -205,10 +205,13 @@ public class HarnessSignInWorker {
             // The EFFECTIVE deadline: the sooner of what the vendor promised and what is left of the
             // person's time, measured NOW. The screen counted down the vendor's figure while the worker
             // waited on its own, so it could show a minute remaining on a unit already destroyed.
-            Duration budget = nonNegative(Duration.between(Instant.now(clock), approveBy));
-            Duration life = prompt.expiresIn().filter(vendor -> vendor.compareTo(budget) < 0).orElse(budget);
-            emit(new HarnessSignInResult.Prompted(command.signInId(), prompt.link(), prompt.code(),
-                    Instant.now(clock).plus(life)));
+            // ONE reading of the clock for the expiry: a duration from one reading added to a later one
+            // put the countdown past the real deadline by however long passed between them — visible
+            // after a pause (review of PR #168).
+            Instant shown = Instant.now(clock);
+            Instant expires = prompt.expiresIn().map(shown::plus).filter(vendor -> vendor.isBefore(approveBy))
+                    .orElse(approveBy);
+            emit(new HarnessSignInResult.Prompted(command.signInId(), prompt.link(), prompt.code(), expires));
 
             SignInRuntime.Exit exit = runtime.awaitExit(handle, nonNegative(Duration.between(Instant.now(clock), approveBy)));
             if (!(exit instanceof SignInRuntime.Exit.Observed observed)) {
