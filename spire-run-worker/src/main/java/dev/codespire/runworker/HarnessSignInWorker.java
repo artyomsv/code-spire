@@ -113,20 +113,21 @@ public class HarnessSignInWorker {
             return;
         }
         // Counted from the operator's press, not from delivery: a start can be replayed or re-sent. One
-        // whose wait has run out, or that carries no press time at all (sent before times existed, so
-        // only a replay), opens nothing: its code could never be typed (review of PR #168).
+        // that could not show its code before its start window closes — the window the orchestrator ends
+        // unclaimed sign-ins by — opens nothing, and neither does one with no press time (sent before
+        // times existed, so only a replay). Its code would reach a row already ended (review of PR #168).
         //
         // And it SAYS nothing. "Too late to start another unit" is not "this sign-in expired": with two
         // workers, a late copy reaching one of them would otherwise fail a sign-in the other is running
         // and the operator can still approve. Ending a sign-in nobody runs is the orchestrator's job, and
         // it does it from the row's own clock (HarnessSignIns.resendUnclaimed).
-        Duration wait = command.requestedAt() == null ? Duration.ZERO : command.remainingWait(Instant.now());
-        if (wait.compareTo(PROMPT_TIMEOUT) <= 0) {
-            LOG.infof("not starting sign-in %s: requested at %s, and too little of its wait is left",
+        if (!command.mayOpenAt(Instant.now(), PROMPT_TIMEOUT)) {
+            LOG.infof("not starting sign-in %s: requested at %s, and its start window has closed",
                     command.signInId(), command.requestedAt());
             running.remove(command.signInId());
             return;
         }
+        Duration wait = command.remainingWait(Instant.now());
         if (cancelled.remove(command.signInId()) != null) {
             // The cancel got here first. Creating the unit now would mean the operator's cancel did
             // nothing and a container waited out its ceiling on a code nobody would type.

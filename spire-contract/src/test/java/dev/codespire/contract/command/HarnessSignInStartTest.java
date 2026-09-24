@@ -16,7 +16,23 @@ class HarnessSignInStartTest {
     private static final Instant PRESSED = Instant.parse("2026-09-23T07:00:00Z");
 
     private static HarnessSignInCommand.Start start(Instant requestedAt) {
-        return new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, requestedAt);
+        return new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, requestedAt, 240);
+    }
+
+    /** A unit may be opened only if it can print its code before the start window closes. */
+    @Test
+    void aUnitMayBeOpenedOnlyWhileItsCodeCanStillBeShownInTime() {
+        Duration toPrompt = Duration.ofSeconds(60);
+        assertEquals(true, start(PRESSED).mayOpenAt(PRESSED.plusSeconds(180), toPrompt));
+        assertEquals(false, start(PRESSED).mayOpenAt(PRESSED.plusSeconds(181), toPrompt),
+                "the wait is far from over, but the code would land after the window");
+    }
+
+    @Test
+    void aStartWithNoWindowOrNoPressOpensNothing() {
+        assertEquals(false, new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, PRESSED, 0)
+                .mayOpenAt(PRESSED, Duration.ZERO));
+        assertEquals(false, start(null).mayOpenAt(PRESSED, Duration.ZERO));
     }
 
     @Test

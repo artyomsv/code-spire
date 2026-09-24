@@ -38,7 +38,7 @@ class HarnessSignInStartTimeTest {
     }
 
     private static HarnessSignInCommand.Start pressed(Instant at) {
-        return new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, at);
+        return new HarnessSignInCommand.Start("TEST-sign-in", "codex", "TEST-image", 840, at, 240);
     }
 
     /**
@@ -48,6 +48,17 @@ class HarnessSignInStartTimeTest {
     @Test
     void aStartWhoseWaitHasRunOutOpensNoUnitAndReportsNothing() {
         worker().onCommand(Message.of(pressed(Instant.now().minusSeconds(900))));
+
+        assertEquals(0, sent.size());
+    }
+
+    /**
+     * Most of the person's wait is left, but a code printed now would land after the orchestrator ended
+     * the row (review of PR #168). The start window, not the wait, decides.
+     */
+    @Test
+    void aStartPastItsWindowOpensNoUnitEvenWithWaitLeft() {
+        worker().onCommand(Message.of(pressed(Instant.now().minusSeconds(200))));
 
         assertEquals(0, sent.size());
     }

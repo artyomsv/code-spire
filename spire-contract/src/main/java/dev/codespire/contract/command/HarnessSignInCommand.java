@@ -45,12 +45,27 @@ public sealed interface HarnessSignInCommand {
      *     the channel replays from its oldest record and the orchestrator re-sends a start nobody picked
      *     up, so a start can arrive late or twice. One whose wait has already run out opens no unit, and
      *     a late one gets only the time left (review of PR #168). Null in a start sent before this existed.
+     * @param startWithinSeconds how long after the press a unit may still be OPENED, as distinct from how
+     *     long a person may take to approve ({@code maxWaitSeconds}). The orchestrator ends a sign-in that
+     *     shows no code a little after this, so a worker must not open one it could only prompt for once
+     *     that has happened. Carried rather than configured twice, so the two sides cannot drift. Zero in
+     *     a start sent before this existed, which then opens nothing.
      */
-    record Start(String signInId, String harness, String image, long maxWaitSeconds, java.time.Instant requestedAt)
+    record Start(String signInId, String harness, String image, long maxWaitSeconds, java.time.Instant requestedAt,
+                 long startWithinSeconds)
             implements HarnessSignInCommand {
 
         public Start(String signInId, String harness, String image, long maxWaitSeconds) {
-            this(signInId, harness, image, maxWaitSeconds, null);
+            this(signInId, harness, image, maxWaitSeconds, null, 0);
+        }
+
+        /**
+         * Whether a unit opened now could still show its code in time: the code must be on screen by the
+         * end of the start window, and the unit may take {@code toPrompt} to print it.
+         */
+        public boolean mayOpenAt(java.time.Instant now, java.time.Duration toPrompt) {
+            if (requestedAt == null || startWithinSeconds <= 0) return false;
+            return !now.plus(toPrompt).isAfter(requestedAt.plusSeconds(startWithinSeconds));
         }
 
         /** How long the unit may still wait, counted from the request; the full wait when that is unknown. */
@@ -65,6 +80,8 @@ public sealed interface HarnessSignInCommand {
             if (signInId == null || signInId.isBlank()) throw new IllegalArgumentException("A sign-in id is required");
             if (harness == null || harness.isBlank()) throw new IllegalArgumentException("A harness name is required");
             if (image == null || image.isBlank()) throw new IllegalArgumentException("An agent image is required");
+            if (startWithinSeconds < 0 || startWithinSeconds > maxWaitSeconds) throw new IllegalArgumentException(
+                    "A start window of " + startWithinSeconds + " seconds must lie within the wait of " + maxWaitSeconds);
             if (maxWaitSeconds <= 0) throw new IllegalArgumentException(
                     "A sign-in wait of " + maxWaitSeconds + " seconds would end the unit before the operator"
                             + " could read the code; the wait is a ceiling, not a switch");

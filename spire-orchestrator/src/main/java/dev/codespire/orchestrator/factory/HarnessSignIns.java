@@ -114,7 +114,8 @@ public class HarnessSignIns {
         // screen shows and the operator cancels — visible, rather than a unit nobody knows about.
         try {
             KafkaSends.sendAndAwait(commands, id.toString(),
-                    new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds(), requested),
+                    new HarnessSignInCommand.Start(id.toString(), harness, image, MAX_WAIT.toSeconds(), requested,
+                            START_WITHIN.toSeconds()),
                     "harness sign-in start for " + id);
         } catch (RuntimeException undelivered) {
             LOG.errorf(undelivered, "sign-in %s could not be asked for", id);
@@ -135,14 +136,20 @@ public class HarnessSignIns {
     static final Duration RESEND_AFTER = Duration.ofSeconds(45);
 
     /**
-     * How long a sign-in may go without showing a code before it is ended as not started.
+     * How long after the press a worker may still OPEN a unit. Sent with every start, so the worker and
+     * this class use one number (review of PR #168).
      *
-     * <p>Much shorter than {@link #MAX_WAIT}, which is how long a PERSON may take. A worker shows the
-     * code within a minute of starting; the rest is headroom for a first pull of the agent image. It has
-     * to be short because a worker that cannot start a unit now says nothing — another worker may hold
-     * it — so this deadline is the only way a broken worker's operator hears anything.
+     * <p>Much shorter than {@link #MAX_WAIT}, which is how long a PERSON may take. It has to be short
+     * because a worker that cannot start a unit says nothing — another worker may hold it — so the
+     * deadline below is the only way the operator of a broken worker hears anything.
      */
-    static final Duration UNCLAIMED_DEADLINE = Duration.ofMinutes(5);
+    static final Duration START_WITHIN = Duration.ofMinutes(4);
+
+    /**
+     * When a sign-in that still shows no code is ended as not started: the start window, plus room for
+     * the code to cross the bus. A worker opens a unit only if it can print the code inside the window.
+     */
+    static final Duration UNCLAIMED_DEADLINE = START_WITHIN.plusMinutes(2);
 
     /**
      * Re-sends every start nobody has picked up, and fails the ones whose wait has run out.
@@ -172,7 +179,8 @@ public class HarnessSignIns {
             }
             try {
                 KafkaSends.sendAndAwait(commands, row.id().toString(), new HarnessSignInCommand.Start(
-                        row.id().toString(), row.harness(), image, MAX_WAIT.toSeconds(), row.requestedAt()),
+                        row.id().toString(), row.harness(), image, MAX_WAIT.toSeconds(), row.requestedAt(),
+                        START_WITHIN.toSeconds()),
                         "harness sign-in re-send for " + row.id());
             } catch (RuntimeException undelivered) {
                 // The next pass tries again; the row keeps its own deadline either way.

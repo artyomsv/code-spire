@@ -108,6 +108,9 @@ class HarnessSignInRetriesTest {
                 "the first start carries the press time too");
         // The wait is anchored to the press, so a worker receiving this late gives it only what is left.
         assertEquals(pressed, mapper.convertValue(starts.get(1).path("requestedAt"), Instant.class));
+        // The window the worker must open a unit in is the one this side ends unclaimed rows by.
+        assertEquals(HarnessSignIns.START_WITHIN.toSeconds(), starts.get(0).path("startWithinSeconds").asLong());
+        assertEquals(HarnessSignIns.START_WITHIN.toSeconds(), starts.get(1).path("startWithinSeconds").asLong());
         assertEquals("PENDING", signIns.get(id).orElseThrow().state());
     }
 

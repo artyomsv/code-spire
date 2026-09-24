@@ -417,7 +417,7 @@ What the operator sees depends on WHEN the outage began, and the two are not the
   row itself as expired (`HarnessSignIns.resendUnclaimed`, 2026-09-23).
 - **Before it** — the row stays PENDING. Since 2026-09-23 (review of PR #168) the orchestrator re-sends
   an unanswered start every 30 seconds, and closes the row as
-  `sign_in_not_started` if no worker has shown a code within five minutes. A worker that cannot
+  `sign_in_not_started` if no worker has shown a code within six minutes (a four-minute start window, carried in the start itself, plus two for the code to cross the bus). A worker that cannot
   start a unit reports nothing, because another worker may hold it. So the screen no longer says "starting the sign-in" for ever; it ends within
   the wait.
 
