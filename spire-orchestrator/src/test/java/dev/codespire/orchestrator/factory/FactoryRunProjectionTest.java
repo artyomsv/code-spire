@@ -411,7 +411,7 @@ class FactoryRunProjectionTest {
     void aRunPaidByASubscriptionSaysSo() throws SQLException {
         UUID seat;
         try (Connection c = dataSource.getConnection()) {
-            seat = pool.addSubscription(c, "TEST-frp-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\"}");
+            seat = pool.addSubscription(c, "TEST-frp-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + UUID.randomUUID() + "\"}}");
         }
         try {
             String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";

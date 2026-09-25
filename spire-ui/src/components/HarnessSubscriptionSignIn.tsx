@@ -15,6 +15,7 @@ const REASONS: Record<string, string> = {
   sign_in_cancelled: 'The sign-in was cancelled.',
   sign_in_unit_failed: 'The sign-in tool did not start, or printed something this version cannot read. Nothing was stored.',
   sign_in_wrong_mode: 'That signed in as an API key, not a subscription. Add it as an API key instead.',
+  subscription_unidentified: 'The sign-in did not say which account it belongs to, so it was not stored. Start again.',
   sign_in_not_started: 'No run worker showed a code within six minutes. Check that the run worker is running and has the agent image, then start again.',
 };
 

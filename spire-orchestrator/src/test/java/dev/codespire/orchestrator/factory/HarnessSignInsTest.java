@@ -37,8 +37,11 @@ class HarnessSignInsTest {
     private static final String HARNESS = "codex";
 
     /** A subscription-shaped file. The mode is NOT the measured API-key one, which is all that matters. */
-    private static final String SUBSCRIPTION_FILE =
-            "{\"auth_mode\":\"TEST-chatgpt\",\"tokens\":{\"access\":\"TEST-not-a-real-token\"}}";
+    private static final String SUBSCRIPTION_FILE = subscriptionFile("TEST-account-" + UUID.randomUUID(), "TEST-not-a-real-token");
+
+    private static String subscriptionFile(String account, String token) {
+        return "{\"auth_mode\":\"TEST-chatgpt\",\"tokens\":{\"access\":\"" + token + "\",\"account_id\":\"" + account + "\"}}";
+    }
 
     /** The measured API-key file, with an obviously fake key. */
     private static final String API_KEY_FILE = "{\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"sk-TEST-not-real\"}";
@@ -126,6 +129,46 @@ class HarnessSignInsTest {
      * bill per token — the exact outcome this part exists to prevent, and one nothing downstream could
      * detect, because both look like a pool member afterwards.
      */
+    /**
+     * Signing in again to an account that has a seat renews that seat's file instead of adding a second
+     * seat — the way an expired seat is renewed, and never a second lease on one sign-in (review of PR #178).
+     */
+    @Test
+    void aSecondSignInToTheSameAccountRenewsItsSeat() throws SQLException {
+        String account = "TEST-account-" + UUID.randomUUID();
+        HarnessSignIns.View first = start("TEST-seat-renew-first");
+        signIns.completed(completion(first.id(), subscriptionFile(account, "TEST-old-token")));
+        UUID seat = signIns.get(first.id()).orElseThrow().credentialId();
+
+        HarnessSignIns.View second = start("TEST-seat-renew-second");
+        signIns.completed(completion(second.id(), subscriptionFile(account, "TEST-new-token")));
+
+        HarnessSignIns.View renewed = signIns.get(second.id()).orElseThrow();
+        assertEquals("COMPLETE", renewed.state());
+        assertEquals(seat, renewed.credentialId(), "the same seat, not a second one");
+        assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-renew-second")));
+        try (Connection c = dataSource.getConnection();
+             java.sql.PreparedStatement ps = c.prepareStatement("SELECT api_key FROM harness_credential WHERE id = ?")) {
+            ps.setObject(1, seat);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertTrue(encryption.decryptString(rs.getString(1), "harness-credential:" + seat).contains("TEST-new-token"));
+            }
+        }
+    }
+
+    @Test
+    void aSignInThatNamesNoAccountIsRefused() {
+        HarnessSignIns.View view = start("TEST-seat-no-account");
+
+        signIns.completed(completion(view.id(), "{\"auth_mode\":\"TEST-chatgpt\",\"tokens\":{\"access\":\"TEST-token\"}}"));
+
+        HarnessSignIns.View after = signIns.get(view.id()).orElseThrow();
+        assertEquals("FAILED", after.state());
+        assertEquals("subscription_unidentified", after.reason());
+        assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-no-account")));
+    }
+
     @Test
     void anApiKeySignInIsRefusedRatherThanStoredAsASubscription() {
         HarnessSignIns.View view = start("TEST-seat-wrong-mode");

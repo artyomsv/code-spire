@@ -56,6 +56,25 @@ public class RunResultReporter {
         }
     }
 
+    /**
+     * Report the run's agent as stopped when the runtime KNOWS it is not running — what frees a signed-in
+     * seat (M3.5 part F). Silent when the agent may still run or the runtime cannot tell: the seat then
+     * stays held, which is the safe way to be wrong, and a later sweep or an operator frees it.
+     *
+     * @return whether the report was sent and acknowledged
+     */
+    public boolean agentStoppedIfKnown(dev.codespire.runtime.RunRuntime runtime, String runId) {
+        boolean running;
+        try {
+            running = runtime.agentRunning(new dev.codespire.runtime.RunHandle(runId, runId));
+        } catch (RuntimeException unknown) {
+            LOG.warnf("run %s: whether its agent still runs is unknown (%s); a seat it holds stays held",
+                    runId, unknown.getClass().getSimpleName());
+            return false;
+        }
+        return !running && report(new RunResult.RunAgentStopped(runId));
+    }
+
     /** Publish, awaiting the broker's acknowledgement, and report rather than throw on a refusal. */
     /**
      * @return true when the broker acknowledged the result; false when it did not.

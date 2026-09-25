@@ -1700,8 +1700,10 @@ export interface HarnessCredentialView {
   lastUsedAt: string | null;
   /** How this member pays: a shared API key, or a signed-in seat that serves one build at a time. */
   authMode?: 'API_KEY' | 'SUBSCRIPTION';
-  /** When a seat's current lease runs out; null while no build holds it. Always null for a key. */
-  leasedUntil?: string | null;
+  /** Whether a build's agent holds this seat now. Always false for a key, which is shared. */
+  inUse?: boolean;
+  /** False for a seat whose account is unknown: it is never used until it is signed in again. */
+  identified?: boolean;
 }
 
 export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }
@@ -1731,6 +1733,7 @@ export const disableHarnessCredential = (id: string) => credentialAction(id, '',
 export const enableHarnessCredential = (id: string) => credentialAction(id, '/enable', 'POST', 'Failed to switch the credential on');
 export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
 export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');
+export const freeHarnessSeat = (id: string) => credentialAction(id, '/free-seat', 'POST', 'Failed to free the seat');
 
 /**
  * A subscription sign-in in progress (M3.5 part F).

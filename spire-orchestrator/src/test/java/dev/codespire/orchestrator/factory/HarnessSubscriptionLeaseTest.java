@@ -30,8 +30,16 @@ class HarnessSubscriptionLeaseTest {
     @Inject DataSource dataSource;
 
     private static final String HARNESS = "TEST-lease-harness";
-    private static final String FILE = "{\"auth_mode\":\"TEST\",\"tokens\":{\"refresh_token\":\"TEST-refresh\"}}";
     private final List<UUID> seats = new ArrayList<>();
+
+    /** A sign-in file of its own account: one account has one enabled seat. */
+    private static String file(String account) {
+        return "{\"auth_mode\":\"TEST\",\"tokens\":{\"refresh_token\":\"TEST-refresh\",\"account_id\":\"" + account + "\"}}";
+    }
+
+    private static String anAccount() {
+        return "TEST-account-" + UUID.randomUUID();
+    }
 
     @AfterEach
     void switchSeatsOff() {
@@ -39,11 +47,26 @@ class HarnessSubscriptionLeaseTest {
     }
 
     private UUID seat(String label) throws SQLException {
+        return seatOn(label, anAccount());
+    }
+
+    private UUID seatOn(String label, String account) throws SQLException {
         try (Connection c = dataSource.getConnection()) {
-            UUID id = pool.addSubscription(c, label + "-" + UUID.randomUUID(), HARNESS, FILE);
+            UUID id = pool.addSubscription(c, label + "-" + UUID.randomUUID(), HARNESS, file(account));
             seats.add(id);
             return id;
         }
+    }
+
+    private void sql(String statement, Object... params) throws SQLException {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(statement)) {
+            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            ps.executeUpdate();
+        }
+    }
+
+    private HarnessCredentialPool.MemberView view(UUID seat) {
+        return pool.list().stream().filter(member -> member.id().equals(seat)).findFirst().orElseThrow();
     }
 
     private static Instant inAnHour() {
@@ -58,7 +81,7 @@ class HarnessSubscriptionLeaseTest {
         Optional<HarnessCredentialPool.PoolMember> second = pool.selectSubscription(HARNESS, "TEST-run-2", inAnHour());
 
         assertEquals(seat, first.orElseThrow().id());
-        assertEquals(FILE, first.orElseThrow().apiKey(), "the whole stored file; the dispatch empties its refresh token");
+        assertTrue(first.orElseThrow().apiKey().contains("TEST-refresh"), "the whole stored file; the dispatch empties its refresh token");
         assertTrue(second.isEmpty(), "one sign-in, one agent");
     }
 
@@ -107,12 +130,83 @@ class HarnessSubscriptionLeaseTest {
     void theListSaysWhenASeatIsInUse() throws SQLException {
         UUID seat = seat("TEST-lease-view");
         pool.selectSubscription(HARNESS, "TEST-run-view", inAnHour()).orElseThrow();
+        assertTrue(view(seat).inUse());
 
-        var view = pool.list().stream().filter(member -> member.id().equals(seat)).findFirst().orElseThrow();
-        assertNotNull(view.leasedUntil());
+        pool.holdWhileRunning("TEST-run-view");
+        assertTrue(view(seat).inUse(), "a running agent's seat is in use");
 
         pool.releaseLease("TEST-run-view");
-        assertNull(pool.list().stream().filter(member -> member.id().equals(seat)).findFirst().orElseThrow().leasedUntil());
+        assertFalse(view(seat).inUse());
+    }
+
+    /**
+     * Once the agent starts, no clock frees its seat: only the worker's word that the agent stopped does
+     * (review of PR #178 — a failed stop can leave an agent running long past its wall clock).
+     */
+    @Test
+    void aRunningAgentsSeatIsNeverFreedByTheClock() throws SQLException {
+        UUID seat = seat("TEST-lease-running");
+        pool.selectSubscription(HARNESS, "TEST-run-running", Instant.now().minusSeconds(60)).orElseThrow();
+        pool.holdWhileRunning("TEST-run-running");
+
+        assertTrue(pool.selectSubscription(HARNESS, "TEST-run-other", inAnHour()).isEmpty());
+
+        pool.releaseLease("TEST-run-running");
+        assertTrue(pool.selectSubscription(HARNESS, "TEST-run-other", inAnHour()).isPresent());
+    }
+
+    /** A worker that died for good never reports; an operator frees the seat. */
+    @Test
+    void anOperatorCanFreeASeatWhoseWorkerIsGone() throws SQLException {
+        UUID seat = seat("TEST-lease-freed");
+        assertFalse(pool.freeSeat(seat), "a seat nobody holds has nothing to free");
+        pool.selectSubscription(HARNESS, "TEST-run-lost-worker", inAnHour()).orElseThrow();
+        pool.holdWhileRunning("TEST-run-lost-worker");
+
+        assertTrue(pool.freeSeat(seat));
+
+        assertFalse(view(seat).inUse());
+        assertTrue(pool.selectSubscription(HARNESS, "TEST-run-after-freeing", inAnHour()).isPresent());
+    }
+
+    /** A seat whose account is unknown could be a second seat on one account, so it is never leased. */
+    @Test
+    void aSeatWithNoKnownAccountIsNeverLeased() throws SQLException {
+        UUID seat = seat("TEST-lease-unidentified");
+        sql("UPDATE harness_credential SET account_ref = NULL WHERE id = ?", seat);
+
+        assertTrue(pool.selectSubscription(HARNESS, "TEST-run-unidentified", inAnHour()).isEmpty());
+        assertFalse(view(seat).identified());
+    }
+
+    /** A sign-in that names no account is not stored as a seat at all. */
+    @Test
+    void aSignInWithNoAccountIsRefused() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, () -> {
+            try (Connection c = dataSource.getConnection()) {
+                pool.addSubscription(c, "TEST-lease-no-account-" + UUID.randomUUID(), HARNESS, "{\"auth_mode\":\"TEST\"}");
+            }
+        });
+        assertEquals("subscription_unidentified", refused.getMessage());
+    }
+
+    /**
+     * Seats stored before accounts were recorded are identified from their own files. The newest seat of
+     * an account keeps it; an older one is switched off, and cannot be switched back on beside it.
+     */
+    @Test
+    void identifyingOldSeatsKeepsTheNewestSeatOfAnAccount() throws SQLException {
+        String account = anAccount();
+        UUID older = seatOn("TEST-lease-older", account);
+        sql("UPDATE harness_credential SET account_ref = NULL, updated_at = now() - interval '2 days' WHERE id = ?", older);
+        UUID newer = seatOn("TEST-lease-newer", account);
+        sql("UPDATE harness_credential SET account_ref = NULL, updated_at = now() - interval '1 day' WHERE id = ?", newer);
+
+        assertTrue(pool.identifySeats() >= 1);
+
+        assertTrue(view(newer).enabled() && view(newer).identified());
+        assertFalse(view(older).enabled(), "a second seat on one account is a second lease on one sign-in");
+        assertThrows(HarnessCredentialPool.SeatTakenException.class, () -> pool.enable(older));
     }
 
     /** API-key selection never reaches a seat: that path hands its credential out whole, to anyone. */

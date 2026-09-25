@@ -196,6 +196,8 @@ final class RunTokenUsage {
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
+            // Not an outcome and never charged: the saga stops at it.
+            case RunResult.RunAgentStopped ignored -> null;
         };
     }
 

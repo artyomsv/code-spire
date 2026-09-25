@@ -164,6 +164,14 @@ public class RunDispatcher {
             ack(message);
             return DONE;
         }
+        if (execute.harnessSignIn()) {
+            // A seat pays for held item builds only, whose worker path reports the agent stopped and
+            // frees the seat. This path does not, so a sign-in here would hold a seat for ever.
+            ack(message);
+            emit(failures.of(execute, RunFailureCause.BAD_COMMAND.name(),
+                    "a subscription seat pays for item builds only, and this run is not one"));
+            return DONE;
+        }
         if (!claims.claim(execute.runId(), EXECUTE_SLOT)) {
             // A redelivery. Not an error, and NOT a reason to re-run the agent: the first delivery
             // either finished or is finishing, and a second unit would spend money twice.
@@ -214,6 +222,8 @@ public class RunDispatcher {
             return DONE;
         }
 
+        // From here the run's credentials are in a container that may log them back; see LiveSecrets.
+        LiveSecrets.register(execute.runId(), () -> failures.scrubFor(execute));
         LeaseKeeper keeper = new LeaseKeeper(execute.runId(), execute.harness());
         RunResult result;
         try {
@@ -240,7 +250,8 @@ public class RunDispatcher {
             // reclaim it. emit is guarded, but asCancellationIfCancelled reaches SecretScrub, which
             // is not, so "nothing after the ack may throw" was a rule this line did not enforce.
             registry.forget(execute.runId());
-            keeper.settle();
+            // A preserved unit may still log; the watchdog forgets it when it reaps the unit.
+            if (keeper.settle()) LiveSecrets.forget(execute.runId());
         }
         return DONE;
     }
@@ -360,13 +371,15 @@ public class RunDispatcher {
          * find — but it is STAMPED rather than merely left alone, which stops the heartbeat from
          * refreshing it forever and so lets it become findable at all.
          */
-        private void settle() {
+        /** @return whether the unit is gone */
+        private boolean settle() {
             if (!unitExists || unitGone) {
                 leases.release(runId);
-                return;
+                return true;
             }
             LOG.infof("run %s: its unit was not destroyed, so the lease is kept for the watchdog", runId);
             leases.preserve(runId);
+            return false;
         }
     }
 

@@ -689,7 +689,7 @@ class RunLauncherTest {
         runtime.salvageFails = new IllegalStateException("codex said: bearer " + accessToken);
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
-                launcher.launch(COMMAND.paidBySignIn(), RunObserver.IGNORING));
+                launcher.launch(COMMAND.paidBySignIn(java.time.Instant.parse("2099-01-01T00:00:00Z")), RunObserver.IGNORING));
 
         assertFalse(failed.detail().contains(accessToken), "one echoed token is still a leaked token");
         assertTrue(failed.detail().contains("codex said"), "the diagnosis itself must survive");

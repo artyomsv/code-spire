@@ -161,7 +161,7 @@ class BuildDefaultsTest {
     /** A signed-in codex seat, switched off by the caller when done: a seat a run points at cannot be deleted. */
     private UUID seat() throws java.sql.SQLException {
         try (var c = dataSource.getConnection()) {
-            return pool.addSubscription(c, "TEST-build-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\"}");
+            return pool.addSubscription(c, "TEST-build-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + UUID.randomUUID() + "\"}}");
         }
     }
 

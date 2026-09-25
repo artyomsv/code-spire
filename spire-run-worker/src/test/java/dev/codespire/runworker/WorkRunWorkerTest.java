@@ -14,7 +14,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Discriminating worker decisions; persistence and containers have separate real integration proofs. */
 class WorkRunWorkerTest {
-    final RunCommand.ExecuteWorkRun command=HeldRunLauncherTest.COMMAND;
+    RunCommand.ExecuteWorkRun command=HeldRunLauncherTest.COMMAND;
+    /** What the fake runtime says about the agent: null is "cannot tell". */
+    Boolean agentRunning;
     final RunResult.RunWorkReady ready=new RunResult.RunWorkReady(command.runId(),command.work(),HeldRunLauncherTest.HEAD,List.of("TEST-file"),Map.of("INPUT",7L),9);
     final RunCommand.PublishWorkRun permit=new RunCommand.PublishWorkRun(command.runId(),new WorkPublicationPermit(command.work(),UUID.randomUUID(),ready.head(),Instant.now().minusSeconds(1),Instant.now().plusSeconds(60),List.of()),"TEST-current-scm");
     final List<String> events=new ArrayList<>();
@@ -60,6 +62,11 @@ class WorkRunWorkerTest {
             if(lateCancel)WorkRunWorkerTest.this.cancelled=true;
             return WorkRunWorkerTest.this.finalization;
         }
+        @Override public boolean agentRunning(RunHandle run){
+            assertEquals(command.runId(),run.runId());
+            if(agentRunning==null)throw new UnsupportedOperationException("TEST runtime cannot tell");
+            return agentRunning;
+        }
         @Override public void destroyHeld(RunHandle run,PublicationKey key){events.add("destroy");assertNotNull(terminal,"Record final evidence before deleting the workspace");deletions++;present=false;}
     }
     final Runtime runtime=new Runtime();
@@ -79,6 +86,52 @@ class WorkRunWorkerTest {
     }
     @AfterEach void close(){worker.launcher.stopStreams();}
     void execute(){worker.execute(Message.of((RunCommand)command,()->{events.add("ack-command");return CompletableFuture.completedFuture(null);}),command).toCompletableFuture().join();}
+    /** The same held build, paid by a signed-in seat that must be in use by {@code startBy}. */
+    void paidBySignIn(Instant startBy){command=new RunCommand.ExecuteWorkRun(command.execution().paidBySignIn(startBy),command.work());}
+    List<RunResult> agentStopped(){return reported.stream().filter(result->result instanceof RunResult.RunAgentStopped).toList();}
+
+    /**
+     * A command that waited past its start deadline never starts: its seat may serve another build by now,
+     * and one sign-in serves one agent (review of PR #178). Nothing ran, so the seat is freed at once.
+     */
+    @Test void aSignInBuildPastItsStartDeadlineNeverStarts(){
+        paidBySignIn(Instant.now().minusSeconds(1));agentRunning=false;
+        execute();
+        assertEquals(0,launches);
+        assertEquals("BAD_COMMAND",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());
+        assertEquals(List.of(new RunResult.RunAgentStopped(command.runId())),agentStopped());
+    }
+    @Test void aSignInBuildInTimeStarts(){
+        paidBySignIn(Instant.now().plusSeconds(600));agentRunning=false;
+        execute();
+        assertEquals(1,launches);
+    }
+    /** A seat is freed only on the runtime's word that the agent is not running — never on an outcome. */
+    @Test void aSignInBuildReportsItsAgentStoppedOnlyWhenTheRuntimeKnows(){
+        paidBySignIn(Instant.now().plusSeconds(600));
+        agentRunning=true;execute();
+        assertTrue(agentStopped().isEmpty(),"an agent that may still run keeps its seat");
+    }
+    @Test void aRuntimeThatCannotTellKeepsTheSeatHeld(){
+        paidBySignIn(Instant.now().plusSeconds(600));
+        agentRunning=null;execute();
+        assertTrue(agentStopped().isEmpty());
+    }
+    @Test void aStoppedAgentFreesItsSeat(){
+        paidBySignIn(Instant.now().plusSeconds(600));
+        agentRunning=false;execute();
+        assertEquals(List.of(new RunResult.RunAgentStopped(command.runId())),agentStopped());
+    }
+    @Test void anApiKeyBuildSaysNothingAboutSeats(){
+        agentRunning=false;execute();
+        assertTrue(agentStopped().isEmpty());
+    }
+    /** An abandoned build is stopped by recovery, and its seat freed once the runtime confirms it. */
+    @Test void recoveryFreesTheSeatOfAnAbandonedSignInBuild(){
+        paidBySignIn(Instant.now().plusSeconds(600));state="building";agentRunning=false;
+        worker.recover();
+        assertEquals(List.of(new RunResult.RunAgentStopped(command.runId())),agentStopped());
+    }
     @Test void aFailedClaimCannotAcknowledgeTheCommand(){claimFails=true;assertThrows(IllegalStateException.class,this::execute);assertEquals(List.of("claim"),events);}
     @Test void anExecuteRedeliveryCannotRunTheHarnessAgain(){claim=false;execute();assertEquals(0,launches);assertTrue(reported.isEmpty());assertEquals(List.of("claim","ack-command"),events);}
     @Test void cancellationBeforeBuildBuysNoHarnessCall(){cancelled=true;execute();assertEquals(0,launches);assertEquals("CANCELLED",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());}

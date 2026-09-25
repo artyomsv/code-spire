@@ -112,7 +112,7 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
     void theSavedWayToPayIsCopiedIntoThePreparedTask() throws Exception {
         java.util.UUID seat;
         try (Connection c = dataSource.getConnection()) {
-            seat = pool.addSubscription(c, "TEST-sweep-seat-" + java.util.UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\"}");
+            seat = pool.addSubscription(c, "TEST-sweep-seat-" + java.util.UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + java.util.UUID.randomUUID() + "\"}}");
         }
         try {
             defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model,

@@ -42,6 +42,19 @@ final class SignInFiles {
         }
     }
 
+    /**
+     * The vendor account a sign-in belongs to: {@code tokens.account_id}, measured on codex-cli 0.156.1
+     * (design §5.3). Empty when the file names none, which the caller refuses rather than guesses.
+     */
+    static java.util.Optional<String> accountOf(String storedFile) {
+        try {
+            String account = JSON.readTree(storedFile).path("tokens").path("account_id").asText("");
+            return account.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(account);
+        } catch (JsonProcessingException unreadable) {
+            return java.util.Optional.empty();
+        }
+    }
+
     /** Every level, arrays included: the vendor may add a list of sessions, each with its own token. */
     private static void emptyRefreshTokens(JsonNode node) {
         if (node instanceof ArrayNode array) {

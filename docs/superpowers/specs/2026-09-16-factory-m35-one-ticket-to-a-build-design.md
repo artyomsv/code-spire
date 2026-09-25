@@ -271,14 +271,28 @@ takes no sign-in and never replays the agent (`WorkRunWorker.java:91`). Cases th
 duplicate command delivery, worker death before release, a failed stop, a late release from an old
 lease, dispatch failure before the container exists, and two uploads of the same sign-in.
 
-- **Built 2026-09-25, and where it differs.** The fence is the **run id**, not a separate
-  `lease_version`: a run id names one attempt, so a late release from an older run cannot match a newer
-  run's lease. `RunResultSaga` releases on every run result except `RunStarted` — `RunWorkReady`
-  included, so a held build frees its seat when the agent stops, not when the item ends. A lease whose
-  release never arrives expires at wall clock + 10 minutes. **Known gap:** the watchdog can report a
-  failure before its stop completes (above), and that report releases the seat, so a next run can
-  briefly share it with a dying agent. Tested: two runs contending, the fence, expiry, and a release on
-  each ending result. Not tested: duplicate delivery and a failed stop on a real worker.
+- **Built 2026-09-25, as the review of PR #178 reshaped it.** The fence is the **run id**, not a
+  separate `lease_version`: a run id names one attempt, so a message from an older run cannot touch a
+  newer run's lease. The lease has two phases:
+  - **Before the agent starts** it is time-bound: the command carries `signInStartBy` (assembly + 10
+    minutes) and the lease lasts 5 minutes longer. The worker refuses a sign-in build it picks up after
+    that time (`BAD_COMMAND`), so a command that waited in the queue never starts on a seat that has
+    meanwhile gone to another build. A build that never starts frees its seat when the time runs out; an
+    assembly that fails after leasing frees it at once; a dispatch the broker definitely missed gets the
+    same seat back under the same run id.
+  - **Once the agent starts** (`RunStarted`) the time bound is removed. Only `RunAgentStopped` frees
+    the seat — a result the worker sends when the runtime (`RunRuntime.agentRunning`, Docker: the agent
+    container's state) confirms no agent process runs. An outcome never frees it: a failed run can leave
+    its agent running when a stop does not take. The worker checks after the build, on recovery, on a
+    takeover hold, and the watchdog checks every reaped or held unit once. A runtime that cannot tell,
+    or an agent that may still run, keeps the seat held.
+  - **An operator's "Free seat"** is the recovery for a worker that died for good, since nothing else
+    will ever report. It asks the operator to confirm no build still uses the seat.
+- **One seat per account.** `account_ref` is filled from the measured `tokens.account_id`, an enabled
+  seat's account is unique per harness (V85), and a seat with no known account is never leased. Signing
+  in again to an account that has a seat replaces that seat's file — which is also how a seat whose access
+  token expired is renewed. Seats stored before this are identified at startup; older duplicates are
+  switched off and cannot be switched back on beside the newest.
 
 ### 5.6 Injection and refresh — the agent never hands a credential back
 

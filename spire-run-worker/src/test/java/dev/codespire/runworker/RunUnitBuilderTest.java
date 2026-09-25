@@ -195,7 +195,7 @@ class RunUnitBuilderTest {
     /** A run paid by a sign-in hands the agent the file, never as a key (M3.5 part F). */
     @Test
     void aRunPaidBySignInHandsTheAgentTheFileNotAKey() {
-        Map<String, String> env = builder.build(command().paidBySignIn(), new CodexAdapter()).agent().environment();
+        Map<String, String> env = builder.build(command().paidBySignIn(java.time.Instant.parse("2099-01-01T00:00:00Z")), new CodexAdapter()).agent().environment();
 
         assertEquals(HARNESS_KEY, env.get("CODEX_SIGN_IN_FILE"));
         assertFalse(env.containsKey("OPENAI_API_KEY"));

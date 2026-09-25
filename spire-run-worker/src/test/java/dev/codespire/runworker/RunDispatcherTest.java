@@ -460,6 +460,21 @@ class RunDispatcherTest {
         assertTrue(results.sent.isEmpty());
     }
 
+    /**
+     * A seat pays for held item builds only: this path never reports an agent stopped, so a sign-in run
+     * here would hold its seat for ever (review of PR #178).
+     */
+    @Test
+    void aSignInRunIsRefusedOnTheStandalonePath() {
+        Delivery delivery = new Delivery(order);
+        dispatcher.onCommand(delivery.of(EXECUTE.paidBySignIn(java.time.Instant.now().plusSeconds(600))))
+                .toCompletableFuture().join();
+
+        assertTrue(delivery.acked);
+        assertEquals(0, launcher.launches);
+        assertEquals("BAD_COMMAND", assertInstanceOf(RunResult.RunFailed.class, results.sent.getLast()).cause());
+    }
+
     @Test
     void aCancelIsAcknowledgedWithoutAClaimOrARun() {
         Delivery delivery = new Delivery(order);
@@ -562,6 +577,7 @@ class RunDispatcherTest {
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         assertTrue(leases.released);
+        assertFalse(LiveSecrets.holds(EXECUTE.runId()), "a gone unit logs nothing more, so its secrets are let go");
     }
 
     @Test
@@ -577,6 +593,9 @@ class RunDispatcherTest {
 
         assertFalse(leases.released);
         assertTrue(leases.preserved);
+        // A surviving unit can still log; its secrets stay scrubbed until the watchdog reaps it.
+        assertTrue(LiveSecrets.holds(EXECUTE.runId()));
+        LiveSecrets.forget(EXECUTE.runId());
     }
 
     @Test

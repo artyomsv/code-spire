@@ -32,7 +32,7 @@ public class RunResultSaga {
     @Inject
     FactoryPullRequests pullRequests;
 
-    /** Frees the signed-in seat a finished agent held (M3.5 part F). */
+    /** Holds and frees the signed-in seat a run's agent uses (M3.5 part F). */
     @Inject
     HarnessCredentialPool pool;
 
@@ -52,10 +52,15 @@ public class RunResultSaga {
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
-            // FIRST, before any check that may drop the result: every one of these says the agent has
-            // stopped, so the signed-in seat it held is free for the next run whatever else happens to
-            // this result. Fenced by run id, so a late result from an older run frees nothing.
-            if (!(result instanceof RunResult.RunStarted)) pool.releaseLease(result.runId());
+            // A seat is freed only when the worker confirms the agent stopped, never on an outcome: a
+            // failed run can leave its agent running (review of PR #178). Not an outcome, so nothing
+            // else reads it. Both writes are fenced by run id, so a late message frees nothing else.
+            if (result instanceof RunResult.RunAgentStopped) {
+                pool.releaseLease(result.runId());
+                return;
+            }
+            // The agent is running: its seat is held until it is confirmed stopped, however long.
+            if (result instanceof RunResult.RunStarted) pool.holdWhileRunning(result.runId());
             if(!workItems.acceptsBinding(result))return;
             projection.apply(result);
             // AFTER the projection, deliberately. The run's outcome is the fact an operator is

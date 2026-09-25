@@ -68,6 +68,9 @@ quarkus:
     create-schemas: true
   log:
     console:
+      # Scrubs every held run secret out of every record, exceptions included (SecretLogFilter).
+      # Some exceptions quote a container's create request, and with it the run's credentials.
+      filter: run-secrets
       json:
         enabled: true
         # The same two fields the other deployables carry, so one log pipeline can tell the

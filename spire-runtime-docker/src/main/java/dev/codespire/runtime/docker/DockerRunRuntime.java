@@ -754,6 +754,25 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
     }
 
+    /** Found by the run's label, so a unit that was never announced is still found. */
+    @Override
+    public boolean agentRunning(RunHandle handle) {
+        return containerRecordOf(handle.runId(), AGENT).map(Container::getState).map(DockerRunRuntime::mayBeRunning)
+                .orElse(false);
+    }
+
+    /**
+     * Docker's container states, read for "may a process still run here". A paused or restarting agent is
+     * alive; a created one has not started, and nothing in this arm starts it later.
+     */
+    static boolean mayBeRunning(String state) {
+        if (state == null) return true;
+        return switch (state.toLowerCase(java.util.Locale.ROOT)) {
+            case "exited", "dead", "created" -> false;
+            default -> true;
+        };
+    }
+
     private void killAgent(RunHandle handle) {
         containerOf(handle.runId(), AGENT).ifPresent(this::killQuietly);
     }

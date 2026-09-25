@@ -72,7 +72,8 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
         UUID seat;
         try(var c=dataSource.getConnection()) {
             seat=pool.addSubscription(c,"TEST-dispatch-seat-"+UUID.randomUUID(),"codex",
-                    "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"TEST-access\",\"refresh_token\":\"TEST-refresh-must-not-leave\"}}");
+                    "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"TEST-access\",\"refresh_token\":\"TEST-refresh-must-not-leave\","
+                    +"\"account_id\":\"TEST-account-"+UUID.randomUUID()+"\"}}");
         }
         try {
             String id=admit("autonomous",58);var plain=preparation("TEST-prepared-admin");
@@ -91,7 +92,37 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
                     "the run names the seat that paid");
             assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND paid_by='SUBSCRIPTION'",command.runId()),
                     "the run records how it paid, where a re-arm cannot erase it");
-            assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&member.leasedUntil()!=null),"the seat is leased");
+            assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&member.inUse()),"the seat is leased");
+            // The worker must start it soon, or refuse it: a late start could meet a seat given to another build.
+            java.time.Duration window=java.time.Duration.between(java.time.Instant.now(),command.signInStartBy());
+            assertTrue(window.toSeconds()>500 && window.toSeconds()<=600,"start within ten minutes, was "+window);
+        } finally { pool.remove(seat); }
+    }
+
+    /** An assembly that fails after the seat is leased dispatches nothing, so it frees the seat at once. */
+    @Test void aSubscriptionBuildThatCannotBeAssembledFreesItsSeat() throws Exception {
+        UUID seat;
+        try(var c=dataSource.getConnection()) {
+            seat=pool.addSubscription(c,"TEST-dispatch-unreadable-"+UUID.randomUUID(),"codex",
+                    "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-"+UUID.randomUUID()+"\"}}");
+            // The stored file becomes unreadable after it was identified: the hand-over fails after the lease.
+            try(var ps=c.prepareStatement("UPDATE harness_credential SET api_key=? WHERE id=?")) {
+                ps.setString(1,encryption.encryptString("TEST-not-a-sign-in","harness-credential:"+seat));
+                ps.setObject(2,seat);ps.executeUpdate();
+            }
+        }
+        try {
+            String id=admit("autonomous",59);var plain=preparation("TEST-prepared-admin");
+            var paying=new WorkPreparation(plain.specification(),plain.plan(),plain.baseBranch(),plain.baseCommit(),plain.harness(),
+                    plain.model(),plain.registeredBy(),WorkPreparation.PAY_WITH_BINDING,null,PayWith.SUBSCRIPTION);
+            var outcome=transitions.prepare(id,store.history(id).size(),paying);assertEquals(200,outcome.status(),outcome.reason());
+            int before=heldCommands.size();
+
+            dispatcher.drain();
+
+            assertEquals(before,heldCommands.size(),"nothing was dispatched");
+            assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&!member.inUse()),
+                    "no agent uses the seat, so it is free now rather than at its deadline");
         } finally { pool.remove(seat); }
     }
     @Inject RunResultSaga saga;

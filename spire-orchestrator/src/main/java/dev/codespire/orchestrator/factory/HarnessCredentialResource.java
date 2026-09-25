@@ -118,9 +118,31 @@ public class HarnessCredentialResource {
     @Path("/{id}/enable")
     @Consumes(MediaType.WILDCARD)
     public Response enable(@PathParam("id") String id) {
-        if (!pool.enable(uuid(id))) {
+        boolean enabled;
+        try {
+            enabled = pool.enable(uuid(id));
+        } catch (HarnessCredentialPool.SeatTakenException taken) {
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("subscription_account_taken").type(MediaType.TEXT_PLAIN).build());
+        }
+        if (!enabled) {
             throw new NotFoundException("no disabled harness credential with id: " + id);
         }
+        return Response.noContent().build();
+    }
+
+    /**
+     * Free a seat whose build will never report its agent stopped — the worker running it is gone.
+     * An operator's call: only a person can know no agent still uses the sign-in.
+     */
+    @POST
+    @Path("/{id}/free-seat")
+    @Consumes(MediaType.WILDCARD)
+    public Response freeSeat(@PathParam("id") String id) {
+        if (!pool.freeSeat(uuid(id))) {
+            throw new NotFoundException("no leased subscription seat with id: " + id);
+        }
+        LOG.warnf("subscription seat %s was freed by an operator", id);
         return Response.noContent().build();
     }
 

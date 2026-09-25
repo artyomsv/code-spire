@@ -59,6 +59,9 @@ public class HarnessSignInWorker {
 
     @Inject SignInRuntime runtime;
     @Inject EncryptionService encryption;
+
+    /** Keys a sign-in's entry in LiveSecrets apart from any run id. */
+    private static final String SIGN_IN_SECRETS = "sign-in:";
     @Inject HarnessRegistry harnesses;
 
     /** Keyed and AWAITABLE: a Record send answers a stage, which a bare Message send does not. */
@@ -243,6 +246,7 @@ public class HarnessSignInWorker {
             }
         } finally {
             running.remove(command.signInId());
+            LiveSecrets.forget(SIGN_IN_SECRETS + command.signInId());
             // ALWAYS, including after a failure. What this removes is a credential the operator just
             // created; leaving it in a stopped container leaves it readable by anything that can reach
             // the daemon, for as long as nobody notices.
@@ -270,6 +274,10 @@ public class HarnessSignInWorker {
                     "the sign-in ended without a credential (exit " + exit + ")");
         }
         String body = new String(written.get(), StandardCharsets.UTF_8);
+        // A person's account credential, in this process until the unit is destroyed; see LiveSecrets.
+        LiveSecrets.register(SIGN_IN_SECRETS + signInId, () -> dev.codespire.secrets.SecretScrub.of(
+                Credentials.signInSecrets(body).stream()
+                        .map(secret -> new dev.codespire.secrets.SecretScrub.Credential(null, secret)).toList()));
         String mode = SignInAuthMode.of(body);
         if (mode == null) {
             return new HarnessSignInResult.Failed(signInId, HarnessSignInResult.Failed.UNIT_FAILED,
