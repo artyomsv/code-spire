@@ -1680,6 +1680,28 @@
   .field-pr { flex: 1 1 100%; min-width: 0; }
 }
 
+/* ---- signing a harness in with a subscription: the device code (M3.5 part F) ---- */
+@layer components {
+  .signin-code { display: flex; flex-direction: column; gap: 14px; }
+  /* Numbered because they are used in this order; the number is real order, never decoration. */
+  .signin-steps { list-style: none; counter-reset: signin; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  .signin-steps li { counter-increment: signin; display: grid; grid-template-columns: 22px 1fr; column-gap: 10px; row-gap: 7px; }
+  .signin-steps li::before {
+    content: counter(signin); grid-row: 1 / span 2;
+    width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11.5px; font-weight: 600; color: var(--iris); background: var(--iris-soft);
+  }
+  .signin-step-title { font-size: 12.5px; font-weight: 550; color: var(--text); line-height: 22px; }
+  .signin-steps .reveal-value { padding: 6px 6px 6px 12px; }
+  .signin-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--iris); text-decoration: none; }
+  .signin-link:hover { text-decoration: underline; }
+  /* The one thing typed by hand on another device: large, spaced, and easy to read aloud. */
+  .signin-steps .reveal-value .signin-user-code { font-size: 22px; font-weight: 600; letter-spacing: 0.12em; }
+  .signin-expiry { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; color: var(--text-2); }
+  .signin-expiry svg { flex: none; color: var(--text-3); }
+  .signin-copy-failed, .signin-copy-failed svg { color: var(--warn); }
+}
+
 /* ---- proving an SCM account by signing in (FR-11) ---- */
 @layer components {
   /* One platform's sign-in application: a summary row that opens into its form. */

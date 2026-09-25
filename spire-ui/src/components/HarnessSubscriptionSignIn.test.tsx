@@ -33,7 +33,7 @@ it('shows the link and the code the operator must use', async () => {
   // A new tab, and no referrer or opener handed to whatever is on the other side.
   expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
   expect(screen.getByLabelText('One-time code')).toHaveTextContent('ABCD-12345');
-  expect(screen.getByText(/left$/)).toBeInTheDocument();
+  expect(screen.getByText(/^The code expires in \d+m \d{2}s\./)).toBeInTheDocument();
   await waitFor(() => expect(api.startHarnessSignIn).toHaveBeenCalledWith('TEST-factory-seat', 'codex'));
 });
 
