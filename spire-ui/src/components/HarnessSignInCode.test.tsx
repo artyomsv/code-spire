@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import HarnessSignInCode from './HarnessSignInCode';
@@ -90,6 +91,28 @@ it('offers no link and no open button for an address that is not https', () => {
   expect(screen.queryByRole('link')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Copy the code and open the sign-in page' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Copy the code' })).toBeInTheDocument();
+});
+
+// The dev build runs under StrictMode, which mounts, unmounts and mounts again. The result of a copy
+// must still reach the screen afterwards (review of PR #177).
+it('still reports a copy after StrictMode mounts the panel twice', async () => {
+  render(<StrictMode><HarnessSignInCode verificationUri={LINK} userCode={CODE} remaining="13m 30s" /></StrictMode>);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Copy the code' }));
+  await act(async () => settle(true));
+
+  expect(screen.getByRole('status')).toHaveTextContent('Code copied.');
+});
+
+// Asking the operator to type a code that has already run out is worse than saying it ran out.
+it('says the code expired even after a copy failed', async () => {
+  const { rerender } = view();
+  fireEvent.click(screen.getByRole('button', { name: 'Copy the code' }));
+  await act(async () => settle(false));
+
+  rerender(<HarnessSignInCode verificationUri={LINK} userCode={CODE} remaining={null} />);
+
+  expect(screen.getByRole('status')).toHaveTextContent('The code has expired.');
 });
 
 it('says when the code has run out', () => {

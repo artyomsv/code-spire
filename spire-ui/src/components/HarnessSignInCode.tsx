@@ -31,7 +31,13 @@ export default function HarnessSignInCode({ verificationUri, userCode, remaining
   const [outcome, setOutcome] = useState<Outcome>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; clearTimeout(timer.current); }, []);
+  // Set on every mount, not only at creation: React's development StrictMode mounts, unmounts and
+  // mounts again, and a flag cleared by the first unmount would silence every copy result after it
+  // (review of PR #177).
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; clearTimeout(timer.current); };
+  }, []);
   const safeUri = isHttps(verificationUri) ? verificationUri : null;
 
   function report(next: Outcome) {
@@ -53,7 +59,7 @@ export default function HarnessSignInCode({ verificationUri, userCode, remaining
     void copying.then(done => report(done ? 'opened-copied' : 'opened-copy-failed'));
   }
 
-  const failed = outcome === 'copy-failed' || outcome === 'opened-copy-failed';
+  const failed = remaining !== null && (outcome === 'copy-failed' || outcome === 'opened-copy-failed');
   return <div className="signin-code">
     <ol className="signin-steps">
       <li>
@@ -100,13 +106,14 @@ function copy(text: string): Promise<boolean> {
   }
 }
 
-/** What the last click achieved, or else how long the code has left. */
+/** How long the code has left, unless the last click has something to say about a code still usable. */
 function statusLine(outcome: Outcome, remaining: string | null): string {
+  // Expiry wins: a copy failure asks the operator to type the code, which is pointless once it is gone.
+  if (!remaining) return 'The code has expired.';
   if (outcome === 'opened-copied') return 'Code copied. Paste it on the page that just opened.';
   if (outcome === 'opened-copy-failed') return 'The page opened, but the code could not be copied. Type it from here.';
   if (outcome === 'copied') return 'Code copied.';
   if (outcome === 'copy-failed') return 'The code could not be copied. Type it from here.';
-  if (!remaining) return 'The code has expired.';
   return `The code expires in ${remaining}. This panel closes by itself once you approve.`;
 }
 
