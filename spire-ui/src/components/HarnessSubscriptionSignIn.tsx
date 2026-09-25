@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cancelHarnessSignIn, fetchHarnessSignIn, fetchHarnessSignInProgress, startHarnessSignIn, type HarnessSignInView } from '../api';
+import HarnessSignInCode from './HarnessSignInCode';
 import SettingField from './SettingField';
 
 /** How often the screen asks. The operator is walking to another device; this is not a race. */
@@ -20,11 +21,12 @@ const REASONS: Record<string, string> = {
 const sentence = (reason: string | null) =>
   (reason && REASONS[reason]) || 'The sign-in did not finish, and nothing was stored.';
 
-function remaining(expiresAt: string | null): string {
-  if (!expiresAt) return '';
+/** "13m 30s" until the code runs out, then null. */
+function remaining(expiresAt: string | null): string | null {
+  if (!expiresAt) return null;
   const seconds = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000);
-  if (seconds <= 0) return 'expired';
-  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s left`;
+  if (seconds <= 0) return null;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
 interface Props {
@@ -49,7 +51,8 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
   const [label, setLabel] = useState('');
   const [signIn, setSignIn] = useState<HarnessSignInView | null>(null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const [tick, setTick] = useState(0);
+  // Only re-renders the countdown between polls; the value itself is never read.
+  const [, setTick] = useState(0);
   const active = useRef(true);
   /**
    * Which sign-in the screen is on. Every start, cancel and unmount moves it on, and a poll that
@@ -123,12 +126,9 @@ export default function HarnessSubscriptionSignIn({ harness, done }: Props) {
   if (watching && signIn) {
     return <>
       {signIn.state === 'PENDING' && <p className="prov-note" role="status">Starting the sign-in. This takes a few seconds.</p>}
-      {signIn.state === 'PROMPTED' && signIn.verificationUri && signIn.userCode && <>
-        <p className="prov-note">Open this link on any device, sign in, and type the code.</p>
-        <p><a href={signIn.verificationUri} target="_blank" rel="noopener noreferrer">{signIn.verificationUri}</a></p>
-        <p className="mono" aria-label="One-time code">{signIn.userCode}</p>
-        <p className="prov-sub" role="status" data-tick={tick}>{remaining(signIn.expiresAt)}</p>
-      </>}
+      {signIn.state === 'PROMPTED' && signIn.verificationUri && signIn.userCode &&
+        <HarnessSignInCode verificationUri={signIn.verificationUri} userCode={signIn.userCode}
+          remaining={remaining(signIn.expiresAt)} />}
       {error && <p className="prov-error" role="alert">{error}</p>}
       <div className="prov-actions">
         <button className="btn-ghost sm" type="button" disabled={busy} onClick={() => void stop()}>Cancel sign-in</button>
