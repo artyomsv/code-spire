@@ -376,6 +376,36 @@ class FactoryRunProjectionTest {
         assertEquals("API_KEY", view.credentialAuthMode());
     }
 
+    /**
+     * A re-arm clears the credential on purpose, but not how the run paid: charging reads that, so a
+     * subscription retry is never priced as an API-key run (review of PR #178).
+     */
+    @Test
+    void aReArmKeepsHowTheRunPaid() {
+        String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+        var row = new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234",
+                "spire/TEST-paid", null, null).paidBySubscription();
+        assertTrue(projection.queued(row, "TEST summary", null));
+        projection.dispatchFailed(runId, "TEST: the broker did not answer");
+
+        assertTrue(projection.queued(row, "TEST summary", null), "the same request re-arms");
+
+        assertEquals(Optional.of("SUBSCRIPTION"), projection.paidByOf(runId));
+    }
+
+    /** A retry that pays another way is a different request, refused like any other differing component. */
+    @Test
+    void aReArmThatPaysAnotherWayIsRefused() {
+        String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+        var row = new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234",
+                "spire/TEST-paid", null, null);
+        assertTrue(projection.queued(row, "TEST summary", null));
+        projection.dispatchFailed(runId, "TEST: the broker did not answer");
+
+        assertFalse(projection.queued(row.paidBySubscription(), "TEST summary", null));
+        assertEquals(Optional.of("API_KEY"), projection.paidByOf(runId));
+    }
+
     /** A run a signed-in seat paid for says so; the screen must not call it an API key billed per token. */
     @Test
     void aRunPaidByASubscriptionSaysSo() throws SQLException {

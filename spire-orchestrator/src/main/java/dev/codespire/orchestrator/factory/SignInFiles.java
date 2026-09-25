@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.factory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.Iterator;
@@ -41,11 +42,17 @@ final class SignInFiles {
         }
     }
 
-    private static void emptyRefreshTokens(ObjectNode node) {
-        for (Iterator<Map.Entry<String, JsonNode>> fields = node.properties().iterator(); fields.hasNext(); ) {
+    /** Every level, arrays included: the vendor may add a list of sessions, each with its own token. */
+    private static void emptyRefreshTokens(JsonNode node) {
+        if (node instanceof ArrayNode array) {
+            array.forEach(SignInFiles::emptyRefreshTokens);
+            return;
+        }
+        if (!(node instanceof ObjectNode object)) return;
+        for (Iterator<Map.Entry<String, JsonNode>> fields = object.properties().iterator(); fields.hasNext(); ) {
             Map.Entry<String, JsonNode> field = fields.next();
             if (field.getKey().equals(REFRESH_TOKEN)) field.setValue(JSON.getNodeFactory().textNode(""));
-            else if (field.getValue() instanceof ObjectNode child) emptyRefreshTokens(child);
+            else emptyRefreshTokens(field.getValue());
         }
     }
 }

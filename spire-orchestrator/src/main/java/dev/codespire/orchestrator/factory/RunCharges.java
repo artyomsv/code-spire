@@ -66,10 +66,6 @@ public class RunCharges {
     @Inject
     LlmModelPricer pricer;
 
-    /** How the run's credential paid: the pricing rule, where the model used to be (M3.5 part F). */
-    @Inject
-    HarnessCredentialPool pool;
-
     /**
      * The largest self-reported usage this deployment will PRICE for one run.
      *
@@ -109,9 +105,8 @@ public class RunCharges {
             Optional<UUID> credential = runs.harnessCredentialOf(runId);
             // Priced by how the run PAID, not by its model: a subscription run's tokens cost nothing per
             // token, and the same model's API-key run must still be priced (M3.5 part F, design §5.7).
-            // A lambda, not pool::authModeOf: a bound method reference dereferences pool at once, so a run
-            // with no credential at all would fail on a pool it never needed.
-            boolean subscription = credential.flatMap(id -> pool.authModeOf(id))
+            // Read from the run, not through its credential: a re-armed dispatch clears the credential.
+            boolean subscription = runs.paidByOf(runId)
                     .filter(dev.codespire.contract.work.PayWith.SUBSCRIPTION::equals).isPresent();
             List<ChargeLine> lines = subscription ? pricer.priceUnmetered(usage) : pricer.priceCall(model, usage);
             String credentialRef = credential.map(UUID::toString).orElse(null);

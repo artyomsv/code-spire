@@ -89,6 +89,8 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
             assertTrue(handedOver.contains("TEST-access"));
             assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND harness_credential_id=?",command.runId(),seat),
                     "the run names the seat that paid");
+            assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND paid_by='SUBSCRIPTION'",command.runId()),
+                    "the run records how it paid, where a re-arm cannot erase it");
             assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&member.leasedUntil()!=null),"the seat is leased");
         } finally { pool.remove(seat); }
     }

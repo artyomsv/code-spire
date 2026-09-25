@@ -62,6 +62,19 @@ class HarnessSubscriptionLeaseTest {
         assertTrue(second.isEmpty(), "one sign-in, one agent");
     }
 
+    /**
+     * A dispatch the broker definitely missed is assembled again under the same run id; the seat it
+     * leased and never used is still its own (review of PR #178).
+     */
+    @Test
+    void theSameRunGetsItsOwnSeatBackAndNoOtherRunDoes() throws SQLException {
+        UUID seat = seat("TEST-lease-reentrant");
+        pool.selectSubscription(HARNESS, "TEST-run-missed", inAnHour()).orElseThrow();
+
+        assertTrue(pool.selectSubscription(HARNESS, "TEST-run-other", inAnHour()).isEmpty());
+        assertEquals(seat, pool.selectSubscription(HARNESS, "TEST-run-missed", inAnHour()).orElseThrow().id());
+    }
+
     /** Fenced by run id: a late release from an earlier run cannot free a seat another run is using. */
     @Test
     void onlyTheRunHoldingTheLeaseCanRelease() throws SQLException {

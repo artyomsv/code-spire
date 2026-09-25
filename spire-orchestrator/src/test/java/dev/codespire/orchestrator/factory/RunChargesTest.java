@@ -75,6 +75,14 @@ class RunChargesTest {
         public Optional<java.util.UUID> harnessCredentialOf(String runId) {
             return Optional.ofNullable(credential);
         }
+
+        String paidBy = "API_KEY";
+
+        /** How the run paid, answered here for the same reason as the credential above. */
+        @Override
+        public Optional<String> paidByOf(String runId) {
+            return Optional.ofNullable(paidBy);
+        }
     }
 
     /** Prices everything at a flat metered rate, so a line's presence is the thing under test. */
@@ -93,20 +101,6 @@ class RunChargesTest {
     private final RecordingLedger ledger = new RecordingLedger();
     private final StubRuns runs = new StubRuns();
     private final StubPricer pricer = new StubPricer();
-    /**
-     * How the run's credential paid. Overridden on purpose, for the reason StubRuns gives: the real one
-     * reads the database, and RunCharges would swallow the failure.
-     */
-    private static final class StubPool extends HarnessCredentialPool {
-        String mode = "API_KEY";
-
-        @Override
-        public Optional<String> authModeOf(java.util.UUID id) {
-            return Optional.of(mode);
-        }
-    }
-
-    private final StubPool pool = new StubPool();
     private final RunCharges charges = charges();
 
     private RunCharges charges() {
@@ -114,7 +108,6 @@ class RunChargesTest {
         c.ledger = ledger;
         c.runs = runs;
         c.pricer = pricer;
-        c.pool = pool;
         // Stated rather than left at the field default. Outside CDI a long field is 0, and these
         // tests are about what gets charged -- not about a ceiling nobody set.
         c.maxReportedTokens = RunTokenUsage.UNBOUNDED;
@@ -131,8 +124,9 @@ class RunChargesTest {
      */
     @Test
     void aSubscriptionRunIsChargedNothingPerTokenWithItsRealCounts() {
-        runs.credential = java.util.UUID.fromString("00000000-0000-4000-8000-00000000c0de");
-        pool.mode = "SUBSCRIPTION";
+        // No credential at all: a re-armed dispatch clears it, and the run must still be charged as paid.
+        runs.credential = null;
+        runs.paidBy = "SUBSCRIPTION";
 
         charges.record(finished(RUN_ID, Map.of("INPUT", 1200L, "OUTPUT", 340L)));
 
@@ -146,7 +140,7 @@ class RunChargesTest {
     @Test
     void anApiKeyRunOfTheSameModelIsStillPriced() {
         runs.credential = java.util.UUID.fromString("00000000-0000-4000-8000-00000000c0de");
-        pool.mode = "API_KEY";
+        runs.paidBy = "API_KEY";
 
         charges.record(finished(RUN_ID, Map.of("INPUT", 1200L)));
 

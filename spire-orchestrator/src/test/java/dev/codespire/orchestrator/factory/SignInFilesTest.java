@@ -34,6 +34,18 @@ class SignInFilesTest {
         assertEquals("chatgpt", file.path("auth_mode").asText());
     }
 
+    /** A token inside a list is still a refresh token (review of PR #178). */
+    @Test
+    void aRefreshTokenInsideAListIsEmptiedToo() throws Exception {
+        String stored = "{\"sessions\":[{\"refresh_token\":\"TEST-listed-refresh\",\"access_token\":\"TEST-listed-access\"}]}";
+
+        String forAgent = SignInFiles.forAgent(stored);
+
+        assertFalse(forAgent.contains("TEST-listed-refresh"));
+        assertEquals("", JSON.readTree(forAgent).path("sessions").path(0).path("refresh_token").asText());
+        assertTrue(forAgent.contains("TEST-listed-access"));
+    }
+
     @Test
     void storedBytesThatAreNotAJsonObjectAreRefusedWithoutQuotingThem() {
         IllegalStateException refused = assertThrows(IllegalStateException.class,

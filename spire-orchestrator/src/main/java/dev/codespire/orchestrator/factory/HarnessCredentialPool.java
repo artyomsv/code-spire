@@ -227,7 +227,10 @@ public class HarnessCredentialPool {
                           AND type = ?
                           AND rejected_at IS NULL
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
-                          AND (leased_until IS NULL OR leased_until <= now())
+                          -- A lease this same run already holds is its own: a dispatch the broker
+                          -- definitely missed is assembled again under the same run id, and must not
+                          -- be locked out by the seat it never used.
+                          AND (leased_until IS NULL OR leased_until <= now() OR leased_by_run = ?)
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED)
@@ -237,6 +240,7 @@ public class HarnessCredentialPool {
             ps.setString(1, runId);
             ps.setTimestamp(2, java.sql.Timestamp.from(leasedUntil));
             ps.setString(3, harness);
+            ps.setString(4, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(decrypt(rs.getObject("id", UUID.class), rs)) : Optional.empty();
             }

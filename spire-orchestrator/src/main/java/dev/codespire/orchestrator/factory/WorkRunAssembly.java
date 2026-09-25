@@ -81,7 +81,8 @@ public class WorkRunAssembly {
         if(subscription)command=command.paidBySignIn();
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
-        return new Prepared(held,new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),member.id()));
+        var row=new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),member.id());
+        return new Prepared(held,subscription?row.paidBySubscription():row);
     }
 
     /**
