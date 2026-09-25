@@ -373,6 +373,26 @@ class FactoryRunProjectionTest {
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(member.label(), view.credentialLabel());
         assertEquals("openai", view.credentialType());
+        assertEquals("API_KEY", view.credentialAuthMode());
+    }
+
+    /** A run a signed-in seat paid for says so; the screen must not call it an API key billed per token. */
+    @Test
+    void aRunPaidByASubscriptionSaysSo() throws SQLException {
+        UUID seat;
+        try (Connection c = dataSource.getConnection()) {
+            seat = pool.addSubscription(c, "TEST-frp-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\"}");
+        }
+        try {
+            String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+            assertTrue(queueWith(runId, seat));
+
+            FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+            assertEquals("SUBSCRIPTION", view.credentialAuthMode());
+            assertEquals("codex", view.credentialType());
+        } finally {
+            pool.remove(seat);
+        }
     }
 
     /** A run dispatched with no pool member names none, rather than inventing one. */
@@ -381,6 +401,7 @@ class FactoryRunProjectionTest {
         FactoryRunProjection.RunView view = projection.find(queuedRun()).orElseThrow();
         assertNull(view.credentialLabel());
         assertNull(view.credentialType());
+        assertNull(view.credentialAuthMode());
     }
 
     private String queuedRun() {

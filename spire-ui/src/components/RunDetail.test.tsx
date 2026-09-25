@@ -196,6 +196,13 @@ it('names the key a run was billed to', async () => {
   expect(screen.getByText('API key TEST-factory-key · openai, billed per token')).toBeInTheDocument();
 });
 
+// A seat's run is not billed per token; calling it an API key would answer the question wrongly.
+it('names a subscription seat as a subscription, not as a key billed per token', async () => {
+  show(runView({ credentialLabel: 'TEST-factory-seat', credentialType: 'codex', credentialAuthMode: 'SUBSCRIPTION' }));
+  expect(await screen.findByText('Subscription TEST-factory-seat · codex, no per-token price')).toBeInTheDocument();
+  expect(screen.queryByText(/API key/)).toBeNull();
+});
+
 // An unrecorded key reads as unknown, never as a run nobody paid for.
 it('shows no key rather than inventing one when a run recorded none', async () => {
   show(runView({ credentialLabel: null, credentialType: null }));

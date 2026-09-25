@@ -216,6 +216,19 @@ EXECUTION-LAYER §3.3 with their date and the CLI version:
 5. What a usage-limit refusal looks like on the NDJSON stream and in the exit code, so the pool can tell
    `rate_limited` from `rejected`, and which usage buckets a subscription run reports.
 
+**Measured on 2026-09-25** from the first real sign-in made through 5.2's screen, with
+`@openai/codex@0.156.1`. Field names, types and token lifetimes only; no value was printed:
+
+| Asked | Answer |
+|---|---|
+| 1. What a ChatGPT-mode `auth.json` holds | `auth_mode` = `chatgpt`; `OPENAI_API_KEY` null; `tokens.id_token` (JWT, **1 hour**); `tokens.access_token` (JWT, **10 days**); `tokens.refresh_token` (opaque); `tokens.account_id`; `last_refresh`. |
+| Does `codex login --with-access-token` take that access token? | **No.** It expects an agent-identity JWT and refuses: "agent identity JWT payload is not valid JSON". 5.6's first plan does not work. |
+| Does a file with an EMPTY refresh token work? | **Yes.** A missing `refresh_token` field is refused as malformed; an empty one is accepted ("Logged in using ChatGPT"). A live `codex exec` three hours after sign-in — the id token already expired — answered and exited 0. |
+| 2. Does a run rewrite the file? | **Not that run:** the file was byte-identical afterwards. A run near the access token's expiry is not yet measured. |
+| Usage on a subscription run | The same five buckets as an API-key run: input, cached input, cache write, output, reasoning. |
+
+Questions 3–5 (refresh-token rotation, a quota-free renewal command, the usage-limit refusal) remain open.
+
 **Nothing is built on an unmeasured answer.** Where one is missing, the design takes the option that is
 safe when the guess is wrong: no automatic refresh, and a sign-in that is used until the vendor refuses
 it.
@@ -258,12 +271,23 @@ takes no sign-in and never replays the agent (`WorkRunWorker.java:91`). Cases th
 duplicate command delivery, worker death before release, a failed stop, a late release from an old
 lease, dispatch failure before the container exists, and two uploads of the same sign-in.
 
+- **Built 2026-09-25, and where it differs.** The fence is the **run id**, not a separate
+  `lease_version`: a run id names one attempt, so a late release from an older run cannot match a newer
+  run's lease. `RunResultSaga` releases on every run result except `RunStarted` — `RunWorkReady`
+  included, so a held build frees its seat when the agent stops, not when the item ends. A lease whose
+  release never arrives expires at wall clock + 10 minutes. **Known gap:** the watchdog can report a
+  failure before its stop completes (above), and that report releases the seat, so a next run can
+  briefly share it with a dying agent. Tested: two runs contending, the fence, expiry, and a release on
+  each ending result. Not tested: duplicate delivery and a failed stop on a real worker.
+
 ### 5.6 Injection and refresh — the agent never hands a credential back
 
-- The worker passes the credential kind beside `HarnessInvocation.CREDENTIAL`. `CodexAdapter` pipes an
-  **access token** into `codex login --with-access-token` on stdin, exactly as it pipes an API key into
-  `--with-api-key` today (F0 measured both). Then it starts `codex exec`. No credential file is written
-  into the agent container, and nothing reaches argv or the environment.
+- **Revised 2026-09-25 (5.3):** `--with-access-token` refuses a ChatGPT access token, so the first plan —
+  piping the access token into it — cannot work. Instead the worker hands the adapter the stored sign-in
+  file **with its refresh token emptied**, and `CodexAdapter` writes that file as the agent's
+  `auth.json` before `codex exec`. It arrives the same way an API key does today: in the environment
+  under the neutral credential name, never on argv. The access token and id token go in; the refresh token
+  does not.
 - **The refresh token never leaves the orchestrator.** An access token expires on its own; a refresh
   token does not, and an agent that reads one holds the sign-in until a person revokes it. Handing the
   agent the short-lived half is therefore not a detail of the plumbing — it is the whole difference
@@ -314,6 +338,10 @@ changes nothing by itself. F names the whole path: the adapter's classification,
 translation, a retry-time field on the refusal, durable handling of that result, attribution to the leased
 credential **version**, and the matching change to the arch guard
 `spire-arch/src/test/java/dev/codespire/arch/CredentialRefusalHasNoProducerTest.java`.
+
+**Not built in the first part F change (2026-09-25).** A seat whose quota runs out is reported the way
+any provider failure is today (collapsed as described above); nothing marks the seat resting. The first live runs show the operator the real quota
+message, which is what this path must then classify.
 
 ### 5.9 Risks, stated plainly
 

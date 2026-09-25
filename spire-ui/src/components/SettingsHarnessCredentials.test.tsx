@@ -50,6 +50,18 @@ it('tells a resting key apart from a refused one, and offers the action each nee
   expect(within(rejected).queryByRole('button', { name: 'Rest longer' })).toBeNull();
 });
 
+// A signed-in seat pays for one build at a time: "In use" is the state a shared key never has (M3.5 part F).
+it('shows a subscription as ready, and as in use while a build holds it', async () => {
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-seat-free', label: 'TEST-seat-free', type: 'codex', authMode: 'SUBSCRIPTION', leasedUntil: null }),
+    member({ id: 'TEST-seat-busy', label: 'TEST-seat-busy', type: 'codex', authMode: 'SUBSCRIPTION', leasedUntil: '2099-01-01T00:00:00Z' }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  expect(within(await row('TEST-seat-free')).getByText('Ready · subscription')).toBeInTheDocument();
+  expect(within(await row('TEST-seat-busy')).getByText('In use')).toBeInTheDocument();
+});
+
 it('switches a member off and back on, and says which one changed', async () => {
   // The list is read again after the change, so the second answer is the switched-off row.
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValueOnce([member()]).mockResolvedValue([member({ enabled: false })]);

@@ -39,6 +39,25 @@ class RunResultSagaTest {
         }
     }
 
+    /** Which runs' seats the saga released. Static because the saga factories below are. */
+    private static final List<String> released = new ArrayList<>();
+
+    /**
+     * Every result that says the agent has stopped frees the seat it held; a start does not (M3.5 part F).
+     * Released even when the work-item bridge would drop the result, because the agent is still done.
+     */
+    @Test
+    void aResultThatEndsTheAgentFreesItsSeatAndAStartDoesNot() {
+        released.clear();
+        RunResultSaga saga = saga(new RecordingProjection());
+
+        saga.on(new RunResult.RunStarted("run::github:TEST-acme/app:started:1", "TEST-unit"));
+        saga.on(new RunResult.RunFinished("run::github:TEST-acme/app:done:1", "refs/heads/spire/s",
+                List.of(), List.of(), Map.of("input", 10L), false));
+
+        assertEquals(List.of("run::github:TEST-acme/app:done:1"), released);
+    }
+
     private static RunResultSaga saga(RecordingProjection projection) {
         return saga(projection, new RecordingCharges());
     }
@@ -57,6 +76,13 @@ class RunResultSagaTest {
         // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
         // reads the run's row to find which pool member to mark, so leaving it null is an NPE and
         // leaving it real is a database call from a unit test.
+        // The same trap once more: releasing a seat's lease writes to the pool's table. Recorded instead.
+        saga.pool = new HarnessCredentialPool() {
+            @Override
+            public void releaseLease(String runId) {
+                released.add(runId);
+            }
+        };
         saga.credentials = new RunCredentialFeedback() {
             @Override
             public void reactTo(RunResult result) {

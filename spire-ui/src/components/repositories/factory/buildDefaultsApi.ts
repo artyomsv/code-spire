@@ -9,9 +9,13 @@ export interface BuildDefaults {
   model: string | null;
   /** The thinking level, or null for the model's own default. Absent from an older server. */
   effort?: string | null;
+  /** How builds pay: per token with an API key, or on a signed-in subscription. Absent from an older server. */
+  payWith?: PayWith | null;
   updatedBy: string | null;
   updatedAt: string | null;
 }
+export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
+
 /** One model a harness can run, as its agent image declares it. */
 export interface HarnessModel {
   slug: string;
@@ -61,7 +65,7 @@ const base = (repository: string) => `/api/repositories/${encodeURIComponent(rep
 
 export const buildDefaults = (repository: string) => read<BuildDefaults>(`${base(repository)}/build`);
 export const buildOptions = (repository: string) => read<BuildOptions>(`${base(repository)}/build/options`);
-export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null }) =>
+export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null; payWith: PayWith }) =>
   read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);

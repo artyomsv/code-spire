@@ -1,7 +1,7 @@
 import type { LlmModelView } from '../../../api';
 import { TOKEN_TYPE_LABEL, unpricedTypesFor } from '../../../llmPricing';
 import SettingField from '../../SettingField';
-import type { HarnessModels } from './buildDefaultsApi';
+import type { HarnessModels, PayWith } from './buildDefaultsApi';
 
 /** Why a harness has no model list, as a sentence. The empty dropdown alone could mean any of these. */
 const NO_LIST: Record<string, string> = {
@@ -24,8 +24,10 @@ export interface ModelChoice { value: string; label: string; blocked: string | n
  * before, and the screen says so rather than presenting it as the harness's own list.
  */
 export function modelChoices(harness: string, known: HarnessModels | undefined, priced: LlmModelView[],
-                             reported: Record<string, string[]>): ModelChoice[] {
-  const unpriced = (model: LlmModelView) => (harness ? unpricedTypesFor(model, reported[harness]) : []);
+                             reported: Record<string, string[]>, payWith: PayWith = 'API_KEY'): ModelChoice[] {
+  // A subscription is not priced per token (M3.5 part F): no model is held back for a missing rate.
+  const subscription = payWith === 'SUBSCRIPTION';
+  const unpriced = (model: LlmModelView) => (harness && !subscription ? unpricedTypesFor(model, reported[harness]) : []);
   if (known?.status === 'OK') {
     return known.offered.map(model => {
       const price = priced.find(entry => entry.name === model.slug);
@@ -35,7 +37,7 @@ export function modelChoices(harness: string, known: HarnessModels | undefined, 
         label: model.displayName === model.slug ? model.slug : `${model.displayName} (${model.slug})`,
         // Not offered as runnable until it can be paid for: an API-key run needs a rate for every type
         // the harness reports, and the save would refuse it anyway.
-        blocked: !price ? 'no price yet — add it in Settings → LLM'
+        blocked: subscription ? null : !price ? 'no price yet — add it in Settings → LLM'
           : missing.length ? `no price for ${missingLabel(missing)}` : null,
       };
     });

@@ -11,7 +11,7 @@ import java.util.UUID;
 /** Pinned references and execution coordinates only; tracker artifact text never enters aggregate history. */
 public record WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                               String harness, String model, String registeredBy, int bindingVersion,
-                              String effort) {
+                              String effort, String payWith) {
 
     /** Where an artifact's approved bytes live. Absent in stored history means {@link Origin#TRACKER}. */
     public enum Origin {
@@ -68,15 +68,28 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
      */
     public static final int EFFORT_BINDING = 3;
 
+    /**
+     * Adds how the build pays (M3.5 part F). Part of the binding because it decides what a build costs:
+     * a plan approved to run on a subscription must not start billing an API key per token because the
+     * build setup changed after the decision. Its own version for the reason the others have one.
+     */
+    public static final int PAY_WITH_BINDING = 4;
+
+    /** Every preparation written before payment modes existed pays with an API key. */
+    public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
+                           String harness, String model, String registeredBy, int bindingVersion, String effort) {
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, bindingVersion, effort, null);
+    }
+
     public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                            String harness, String model, String registeredBy) {
-        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, TRACKER_BINDING, null);
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, TRACKER_BINDING, null, null);
     }
 
     /** Every preparation written before thinking levels existed carries the model's own default. */
     public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                            String harness, String model, String registeredBy, int bindingVersion) {
-        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, bindingVersion, null);
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, bindingVersion, null, null);
     }
 
     public WorkPreparation {
@@ -90,13 +103,18 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         baseCommit = baseCommit.toLowerCase(java.util.Locale.ROOT);
         // Absent in older stored JSON, where every artifact was a tracker ticket.
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
-        if (bindingVersion != TRACKER_BINDING && bindingVersion != STORED_BINDING && bindingVersion != EFFORT_BINDING)
+        if (bindingVersion < TRACKER_BINDING || bindingVersion > PAY_WITH_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
         effort = ThinkingLevel.normalise(effort);
         // A level under a version that does not hash it would be carried to the build without being part
         // of what was approved -- exactly what the version exists to prevent.
         if (effort != null && bindingVersion < EFFORT_BINDING)
             throw new IllegalArgumentException("A thinking level needs binding version " + EFFORT_BINDING);
+        payWith = PayWith.normalise(payWith);
+        // A subscription under a version that does not hash it would reach the build without being part
+        // of what was approved.
+        if (!payWith.equals(PayWith.API_KEY) && bindingVersion < PAY_WITH_BINDING)
+            throw new IllegalArgumentException("Paying with " + payWith + " needs binding version " + PAY_WITH_BINDING);
         if (bindingVersion == TRACKER_BINDING
                 && (specification.origin() != Origin.TRACKER || plan.origin() != Origin.TRACKER))
             throw new IllegalArgumentException("A version 1 binding describes tracker artifacts only");
@@ -123,6 +141,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
             String level = effort == null ? "" : effort;
             value.append(level.length()).append(':').append(level);
         }
+        if (bindingVersion >= PAY_WITH_BINDING) value.append(payWith.length()).append(':').append(payWith);
         return digest(value.toString());
     }
 

@@ -238,11 +238,31 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
       // No level chosen is the model's own default, sent as null rather than as a level called ''.
-      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null }));
+      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY' }));
     expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
   });
 
   /** A model with no output price is refused at dispatch, so it cannot be chosen here either. */
+  // A subscription is not priced per token (M3.5 part F): an unpriced model can be picked and saved.
+  it('pays with a subscription without needing a price for the model', async () => {
+    const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: types },
+      models: { codex: { status: 'OK', offered: [{ slug: 'TEST-unpriced-only', displayName: 'TEST unpriced only',
+        defaultEffort: 'medium', efforts: ['medium'], visible: true, priority: 1 }] } } });
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Pay with' }), { target: { value: 'SUBSCRIPTION' } });
+
+    expect(await screen.findByRole('option', { name: 'TEST unpriced only (TEST-unpriced-only)' })).toBeEnabled();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: 'TEST-unpriced-only' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id, expect.objectContaining({
+      model: 'TEST-unpriced-only', payWith: 'SUBSCRIPTION' })));
+  });
+
   // Every option disabled: the select ignores clicks and keys, which the operator read as broken.
   it('says why no model can be picked when every one lacks a price', async () => {
     const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
@@ -356,7 +376,7 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the model default' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null }));
+      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY' }));
   });
 
   // A level belongs to one harness's list: switching away and back must not bring it back unseen.

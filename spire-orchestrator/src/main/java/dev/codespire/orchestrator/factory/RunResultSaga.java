@@ -32,6 +32,10 @@ public class RunResultSaga {
     @Inject
     FactoryPullRequests pullRequests;
 
+    /** Frees the signed-in seat a finished agent held (M3.5 part F). */
+    @Inject
+    HarnessCredentialPool pool;
+
     @Inject
     dev.codespire.orchestrator.work.WorkItemRunBridge workItems;
 
@@ -48,6 +52,10 @@ public class RunResultSaga {
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
+            // FIRST, before any check that may drop the result: every one of these says the agent has
+            // stopped, so the signed-in seat it held is free for the next run whatever else happens to
+            // this result. Fenced by run id, so a late result from an older run frees nothing.
+            if (!(result instanceof RunResult.RunStarted)) pool.releaseLease(result.runId());
             if(!workItems.acceptsBinding(result))return;
             projection.apply(result);
             // AFTER the projection, deliberately. The run's outcome is the fact an operator is

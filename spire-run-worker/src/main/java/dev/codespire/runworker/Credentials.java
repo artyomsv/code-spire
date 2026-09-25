@@ -91,4 +91,43 @@ public class Credentials {
         return Map.of(HarnessInvocation.CREDENTIAL,
                 encryption.decryptString(packed, RunCommand.harnessCredentialAad(runId)));
     }
+
+    /**
+     * The same credential, handed over under {@link HarnessInvocation#SIGN_IN} when it is a sign-in file.
+     * It goes through {@link #harnessEnv(String, String)} rather than decrypting again, so that method
+     * stays the one a test fake overrides: a second decrypting overload let the scrub path bypass every
+     * fake and leave the key unscrubbed.
+     */
+    public Map<String, String> harnessEnv(String runId, String packed, boolean signIn) {
+        Map<String, String> env = harnessEnv(runId, packed);
+        if (!signIn || env.isEmpty()) return env;
+        return Map.of(HarnessInvocation.SIGN_IN, env.values().iterator().next());
+    }
+
+    /**
+     * Everything in a sign-in file that must never reach a log: the file itself, and every text value in
+     * it long enough to be a token or an account id. A tool that echoes one token prints that token, not
+     * the whole file, so scrubbing the file as one string would miss exactly what leaks.
+     */
+    public static java.util.List<String> signInSecrets(String file) {
+        java.util.List<String> secrets = new java.util.ArrayList<>();
+        secrets.add(file);
+        try {
+            collect(JSON.readTree(file), secrets);
+        } catch (JsonProcessingException unreadable) {
+            // The whole file is still scrubbed; nothing inside it can be named.
+        }
+        return secrets;
+    }
+
+    private static void collect(com.fasterxml.jackson.databind.JsonNode node, java.util.List<String> secrets) {
+        if (node.isTextual() && node.asText().length() >= SHORTEST_SCRUBBED_VALUE) secrets.add(node.asText());
+        node.forEach(child -> collect(child, secrets));
+    }
+
+    /** Short enough to cover an account id, long enough to leave a word like "chatgpt" alone. */
+    private static final int SHORTEST_SCRUBBED_VALUE = 16;
+
+    /** For the static helper above; it reads a document and never serialises one. */
+    private static final ObjectMapper JSON = new ObjectMapper();
 }

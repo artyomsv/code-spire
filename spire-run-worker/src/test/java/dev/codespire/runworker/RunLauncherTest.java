@@ -670,6 +670,31 @@ class RunLauncherTest {
         assertTrue(failed.detail().contains("create failed"), "the diagnosis itself must survive");
     }
 
+    /** A sign-in is scrubbed token by token: an echoed access token is not the whole file (M3.5 part F). */
+    @Test
+    void aSignInRunScrubsEachTokenOfTheFile() {
+        String accessToken = "TEST-access-token-0123456789";
+        launcher.failures = failuresWith(new Credentials() {
+            @Override
+            public Scm scm(String runId, String packed) {
+                return new Scm(SCM_USERNAME, READ_SECRET, SCM_USERNAME, WRITE_SECRET);
+            }
+
+            @Override
+            public Map<String, String> harnessEnv(String runId, String packed) {
+                return Map.of(dev.codespire.harness.HarnessInvocation.CREDENTIAL,
+                        "{\"tokens\":{\"access_token\":\"" + accessToken + "\"}}");
+            }
+        });
+        runtime.salvageFails = new IllegalStateException("codex said: bearer " + accessToken);
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
+                launcher.launch(COMMAND.paidBySignIn(), RunObserver.IGNORING));
+
+        assertFalse(failed.detail().contains(accessToken), "one echoed token is still a leaked token");
+        assertTrue(failed.detail().contains("codex said"), "the diagnosis itself must survive");
+    }
+
     @Test
     void aFailureIsRetryableOnlyWhenItsCauseIs() {
         // Every publisher failure used to be reported retryable. A push the forge rejected refuses

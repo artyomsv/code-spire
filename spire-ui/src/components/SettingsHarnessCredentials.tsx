@@ -21,10 +21,10 @@ function state(member: HarnessCredentialView): { label: string; tone: string } {
   if (member.rejectedAt) return { label: 'Rejected', tone: 'chip danger' };
   if (member.rateLimitedUntil && new Date(member.rateLimitedUntil) > new Date()) return { label: 'Resting', tone: 'chip warn' };
   if (!member.enabled) return { label: 'Switched off', tone: 'chip' };
-  // Before "Available", because it is not. A subscription is stored and safe, and no run can use it
-  // until the factory can select, inject and bill one. Rendering it as ready told the operator the
-  // factory was finished and left them to discover otherwise at the first build.
-  if (member.authMode === 'SUBSCRIPTION') return { label: 'Not usable yet', tone: 'chip warn' };
+  // A signed-in seat serves one build at a time; "In use" is the state a shared key never has.
+  if (member.authMode === 'SUBSCRIPTION' && member.leasedUntil && new Date(member.leasedUntil) > new Date())
+    return { label: 'In use', tone: 'chip warn' };
+  if (member.authMode === 'SUBSCRIPTION') return { label: 'Ready · subscription', tone: 'chip ok' };
   return { label: 'Available', tone: 'chip ok' };
 }
 
@@ -98,8 +98,8 @@ export default function SettingsHarnessCredentials() {
           load rather than burning one window.
         </p>
         <p className="prov-note">
-          A Codex subscription can be signed in and is kept safely, but no run can use one yet: choosing
-          it, handing it to a run and recording its cost as zero are not built. Every run uses an API key.
+          A signed-in Codex subscription pays for builds whose setup says Pay with: subscription, one build
+          at a time. A build on it costs nothing per token; its token counts are still recorded.
         </p>
 
         {signingIn && (
@@ -110,8 +110,7 @@ export default function SettingsHarnessCredentials() {
               // Says what actually happened. "Runs can now be paid by the subscription" was false:
               // nothing selects, injects or bills one yet, and the credential is deliberately
               // unreachable by every run until all three exist.
-              reload(`Saved ${label}. It is kept safely, and no run can use it yet — paying with a`
-                + ' subscription is not built. Runs keep using an API key.');
+              reload(`Saved ${label}. Builds whose setup pays with a subscription can use it now.`);
             }} />
           </SidePanel>
         )}

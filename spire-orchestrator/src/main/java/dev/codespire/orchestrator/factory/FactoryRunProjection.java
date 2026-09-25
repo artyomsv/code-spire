@@ -174,7 +174,8 @@ public class FactoryRunProjection {
                           List<RunResult.BlockedChange> blocked,
                           String failureCause, String failureDetail, String unitId,
                           String prUrl, String prError, Instant agentStartedAt,
-                          String kind, String harness, String model, String credentialLabel, String credentialType, String providerType,
+                          String kind, String harness, String model, String credentialLabel, String credentialType,
+                          String credentialAuthMode, String providerType,
                           String workspace, String slug, String subject, int attempt,
                           String baseBranch, String baseCommit, String branch, String pushedAs,
                           String reviewId, String findingRef, String taskSummary,
@@ -1015,14 +1016,14 @@ public class FactoryRunProjection {
 
     public Optional<RunView> find(String runId) {
         // The credential names WHO paid for this run and how it is billed. Its secret is never
-        // selected here; the label and type are the operator metadata that name the key.
+        // selected here; the label, type and auth mode are the operator metadata that name the key.
         String sql = """
                 SELECT r.status, r.pushed_ref, r.blocked_changes, r.failure_cause, r.failure_detail, r.unit_id,
                        r.pr_url, r.pr_error, r.agent_started_at, r.kind, r.harness, r.model, r.provider_type,
                        r.workspace, r.slug, r.subject, r.attempt, r.base_branch, r.base_commit, r.branch, r.pushed_as,
                        r.review_id, r.finding_ref, r.task_summary, r.started_at, r.ended_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
-                       h.label AS credential_label, h.type AS credential_type
+                       h.label AS credential_label, h.type AS credential_type, h.auth_mode AS credential_auth_mode
                   FROM factory_run r
                   LEFT JOIN harness_credential h ON h.id = r.harness_credential_id
                  WHERE r.run_id = ?
@@ -1051,7 +1052,7 @@ public class FactoryRunProjection {
                 rs.getString("unit_id"), rs.getString("pr_url"), rs.getString("pr_error"),
                 instant(rs, "agent_started_at"), rs.getString("kind"), rs.getString("harness"),
                 rs.getString("model"), rs.getString("credential_label"), rs.getString("credential_type"),
-                rs.getString("provider_type"), rs.getString("workspace"),
+                rs.getString("credential_auth_mode"), rs.getString("provider_type"), rs.getString("workspace"),
                 rs.getString("slug"), rs.getString("subject"), rs.getInt("attempt"),
                 rs.getString("base_branch"), rs.getString("base_commit"), rs.getString("branch"),
                 rs.getString("pushed_as"), rs.getString("review_id"), rs.getString("finding_ref"),

@@ -1103,6 +1103,8 @@ export interface RunView extends RunListEntry {
   // Which pool member paid for this run. Null on a run dispatched before a credential was recorded.
   credentialLabel: string | null;
   credentialType: string | null;
+  // API_KEY or SUBSCRIPTION; absent from a server older than M3.5 part F, which only held API keys.
+  credentialAuthMode?: string | null;
   providerType: string;
   workspace: string;
   slug: string;
@@ -1696,11 +1698,10 @@ export interface HarnessCredentialView {
   /** When the vendor refused the key. Only an operator clears this. */
   rejectedAt: string | null;
   lastUsedAt: string | null;
-  /**
-   * How this member pays. A SUBSCRIPTION is deliberately unreachable by any run until selection,
-   * injection and zero-cost charging exist, so the screen must not render it as ready to use.
-   */
+  /** How this member pays: a shared API key, or a signed-in seat that serves one build at a time. */
   authMode?: 'API_KEY' | 'SUBSCRIPTION';
+  /** When a seat's current lease runs out; null while no build holds it. Always null for a key. */
+  leasedUntil?: string | null;
 }
 
 export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }

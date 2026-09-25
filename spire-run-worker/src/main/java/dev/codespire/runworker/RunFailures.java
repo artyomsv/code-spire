@@ -113,8 +113,12 @@ public class RunFailures {
         try {
             // No username: an API key rides a Bearer header, not a Basic pair, so a base64 form
             // built for it would match nothing.
-            credentials.harnessEnv(command.runId(), command.harnessCredential()).values()
-                    .forEach(secret -> forms.add(new SecretScrub.Credential(null, secret)));
+            for (String secret : credentials.harnessEnv(command.runId(), command.harnessCredential(),
+                    command.harnessSignIn()).values()) {
+                // A sign-in file is scrubbed token by token as well as whole (M3.5 part F).
+                for (String form : command.harnessSignIn() ? Credentials.signInSecrets(secret) : java.util.List.of(secret))
+                    forms.add(new SecretScrub.Credential(null, form));
+            }
         } catch (RuntimeException undecryptable) {
             LOG.warnf("run %s: the harness credential could not be decrypted to redact it; this "
                     + "run's failure details are unscrubbed for it", command.runId());

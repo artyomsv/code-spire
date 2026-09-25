@@ -15,6 +15,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -163,12 +164,11 @@ public class HarnessCredentialPool {
                  WHERE id = (
                        SELECT id FROM harness_credential
                         -- API keys only, and this is a CONTAINMENT boundary rather than a filter. A
-                        -- subscription row holds the whole sign-in file; the harness arm would feed it
-                        -- to --with-api-key, and the agent container -- which runs untrusted ticket
-                        -- text at full shell access -- could then read it, refresh credential and all.
-                        -- Until selection, injection and charging exist for a subscription, no run may
-                        -- reach one. The rule lives here rather than in a caller's discipline because
-                        -- three dispatch paths call this and each would have to remember.
+                        -- subscription row holds the whole sign-in file, refresh token included; it is
+                        -- reached only through selectSubscription, which leases it to one run and hands
+                        -- out a copy with the refresh token removed. The rule lives here rather than in
+                        -- a caller's discipline because three dispatch paths call this and each would
+                        -- have to remember.
                         WHERE enabled
                           AND auth_mode = 'API_KEY'
                           AND rejected_at IS NULL
@@ -203,6 +203,87 @@ public class HarnessCredentialPool {
             return whyNothingIsAvailable();
         }
         return whyNothingIsAvailable();
+    }
+
+    /**
+     * Leases a signed-in seat of this harness to one run, and hands out its sign-in file (M3.5 part F).
+     *
+     * <p>A lease, where an API key is shared: two agents on one sign-in can each invalidate the other's
+     * session. The pick and the lease are ONE statement with {@code SKIP LOCKED}, so two dispatches cannot
+     * take the same seat. A seat whose lease has run out is free again — that bound is what frees a seat
+     * whose release never arrived.
+     *
+     * @return the member with its sign-in file as {@code apiKey}, or empty when every seat is in use,
+     *     rejected, switched off, or none is signed in. The caller reports that as one refusal.
+     */
+    public Optional<PoolMember> selectSubscription(String harness, String runId, Instant leasedUntil) {
+        String sql = """
+                UPDATE harness_credential
+                   SET last_used_at = now(), updated_at = now(), leased_by_run = ?, leased_until = ?
+                 WHERE id = (
+                       SELECT id FROM harness_credential
+                        WHERE enabled
+                          AND auth_mode = 'SUBSCRIPTION'
+                          AND type = ?
+                          AND rejected_at IS NULL
+                          AND (rate_limited_until IS NULL OR rate_limited_until <= now())
+                          AND (leased_until IS NULL OR leased_until <= now())
+                        ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED)
+                RETURNING id, label, type, base_url, api_key
+                """;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, runId);
+            ps.setTimestamp(2, java.sql.Timestamp.from(leasedUntil));
+            ps.setString(3, harness);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(decrypt(rs.getObject("id", UUID.class), rs)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The harness credential pool could not be read", e);
+        }
+    }
+
+    /**
+     * Ends the lease this run holds, if it still holds one. Fenced by the run id, which is unique per
+     * attempt: a late release from an earlier run matches nothing and so cannot free a seat another run
+     * is using.
+     */
+    public void releaseLease(String runId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE harness_credential SET leased_by_run = NULL, leased_until = NULL WHERE leased_by_run = ?")) {
+            ps.setString(1, runId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("The lease of run " + runId + " could not be released", e);
+        }
+    }
+
+    /** How a member pays: {@code API_KEY} or {@code SUBSCRIPTION}. Empty for an unknown id. */
+    public Optional<String> authModeOf(UUID id) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT auth_mode FROM harness_credential WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The harness credential pool could not be read", e);
+        }
+    }
+
+    /** Whether any enabled, unrejected seat is signed in for this harness — the question a build setup asks. */
+    public boolean hasSubscription(String harness) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                SELECT 1 FROM harness_credential
+                 WHERE enabled AND auth_mode = 'SUBSCRIPTION' AND type = ? AND rejected_at IS NULL LIMIT 1
+                """)) {
+            ps.setString(1, harness);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The harness credential pool could not be read", e);
+        }
     }
 
     private PoolMember decrypt(UUID id, ResultSet rs) throws SQLException {
@@ -301,19 +382,19 @@ public class HarnessCredentialPool {
     /**
      * What the settings surface shows. Never carries the key.
      *
-     * @param authMode {@code API_KEY} or {@code SUBSCRIPTION}. On the view because the screen must be
-     *     able to say that a subscription cannot pay for a run yet: it is deliberately unreachable by
-     *     the selector, and a row rendered as plain "Available" told the operator the opposite.
+     * @param authMode {@code API_KEY} or {@code SUBSCRIPTION}, so the screen can say which kind a row is.
+     * @param leasedUntil when a subscription's current lease runs out, or null when no run holds it —
+     *     "in use" is the one state an operator sees for a seat and not for a shared key.
      */
     public record MemberView(UUID id, String label, String type, String baseUrl, boolean enabled,
                              Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt,
-                             String authMode) {
+                             String authMode, Instant leasedUntil) {
     }
 
     public List<MemberView> list() {
         String sql = """
                 SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at,
-                       auth_mode
+                       auth_mode, CASE WHEN leased_until > now() THEN leased_until END AS leased_until
                   FROM harness_credential ORDER BY label
                 """;
         List<MemberView> members = new ArrayList<>();
@@ -323,7 +404,7 @@ public class HarnessCredentialPool {
                 members.add(new MemberView(rs.getObject("id", UUID.class), rs.getString("label"),
                         rs.getString("type"), rs.getString("base_url"), rs.getBoolean("enabled"),
                         instant(rs, "rate_limited_until"), instant(rs, "rejected_at"),
-                        instant(rs, "last_used_at"), rs.getString("auth_mode")));
+                        instant(rs, "last_used_at"), rs.getString("auth_mode"), instant(rs, "leased_until")));
             }
             return members;
         } catch (SQLException e) {
@@ -358,7 +439,7 @@ public class HarnessCredentialPool {
             ps.setString(4, baseUrl);
             ps.setString(5, encryption.encryptString(apiKey, aad(id)));
             ps.executeUpdate();
-            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY");
+            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY", null);
         } catch (SQLException e) {
             if ("23505".equals(e.getSQLState())) {
                 throw new DuplicateLabelException(label, e);

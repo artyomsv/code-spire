@@ -126,7 +126,8 @@ public class RunUnitBuilder {
                     + "); the channel's ack budget is sized to the latter");
         }
         Credentials.Scm scm = credentials.scm(command.runId(), command.scmCredential());
-        Map<String, String> harnessEnv = credentials.harnessEnv(command.runId(), command.harnessCredential());
+        Map<String, String> harnessEnv = credentials.harnessEnv(command.runId(), command.harnessCredential(),
+                command.harnessSignIn());
 
         ContainerSpec init = new ContainerSpec(
                 publisherImage,

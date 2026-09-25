@@ -31,6 +31,14 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
      */
     public static final String CREDENTIAL = "HARNESS_CREDENTIAL";
 
+    /**
+     * The key under which the worker supplies a SIGN-IN FILE instead of an API key (M3.5 part F): the
+     * vendor CLI's own sign-in record, with its refresh token already emptied by the orchestrator. A
+     * separate key rather than a flag beside {@link #CREDENTIAL}, so an arm that knows only API keys
+     * never mistakes a file for a key and pipes it into a login that would echo it.
+     */
+    public static final String SIGN_IN = "HARNESS_SIGN_IN";
+
     public HarnessInvocation {
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(prompt, "prompt");

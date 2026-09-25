@@ -192,6 +192,15 @@ class RunUnitBuilderTest {
         assertFalse(env.containsKey("SPIRE_BRANCH_MODE"), env.keySet().toString());
     }
 
+    /** A run paid by a sign-in hands the agent the file, never as a key (M3.5 part F). */
+    @Test
+    void aRunPaidBySignInHandsTheAgentTheFileNotAKey() {
+        Map<String, String> env = builder.build(command().paidBySignIn(), new CodexAdapter()).agent().environment();
+
+        assertEquals(HARNESS_KEY, env.get("CODEX_SIGN_IN_FILE"));
+        assertFalse(env.containsKey("OPENAI_API_KEY"));
+    }
+
     /** The level on the command is the level in the agent's command line, not lost on the way. */
     @Test
     void theThinkingLevelReachesTheAgentsCommand() {

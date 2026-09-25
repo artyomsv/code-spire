@@ -3,7 +3,7 @@ import { fetchLlmModels, type LlmModelView } from '../../../api';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
-import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels } from './buildDefaultsApi';
+import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -23,12 +23,15 @@ interface Props {
  * here once, they are offered as what this deployment can actually run, and the same refusals arrive
  * where they can be fixed.
  */
+/** How a build pays, in the words the setup shows. */
+const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
+
 export default function BuildStep({ repositoryId, defaults, open, setOpen, changed, reload }: Props) {
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [form, setForm] = useState({
     baseBranch: defaults.baseBranch ?? '', harness: defaults.harness ?? '', model: defaults.model ?? '',
-    effort: defaults.effort ?? '',
+    effort: defaults.effort ?? '', payWith: (defaults.payWith ?? 'API_KEY') as PayWith,
   });
   const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
     harnessModels: Record<string, HarnessModels> }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {} });
@@ -62,7 +65,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     try {
       // An empty level is the model's own default, sent as null rather than as a level called "".
       await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...form, effort: form.effort || null });
-      if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, starting from ${form.baseBranch}.`);
+      if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }
   }
@@ -70,7 +73,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   // The chosen PAIR, not just three non-empty fields. Choosing a model and then changing the harness
   // can leave a selection the dispatch refuses; the option goes grey, and Save used to stay live.
   const known = choices.harnessModels[form.harness];
-  const offered = modelChoices(form.harness, known, choices.models, choices.reportedTypes);
+  const offered = modelChoices(form.harness, known, choices.models, choices.reportedTypes, form.payWith);
   const picked = offered.find(choice => choice.value === form.model);
   // An unresolved model is UNKNOWN, not complete: before the catalogue answers, and for a saved name the
   // catalogue no longer offers, there is nothing to judge — so Save waits rather than guessing.
@@ -83,7 +86,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
     {defaults.revision > 0
-      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch}</span></div>
+      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch} · paid with {PAY_WITH_LABEL[(defaults.payWith ?? 'API_KEY') as PayWith]}</span></div>
       : <p className="factory-note">Not set, so every ticket has to be given a branch, a harness and a model by hand.</p>}
     <p className="factory-note">A prepared task copies these. Changing them here never changes a decision that is already open.</p>
     {editing && <fieldset className="form-lock factory-form" aria-label="Set up the build" disabled={busy !== null}>
@@ -101,6 +104,12 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
           <option value="">{choices.harnesses.length ? 'Select a harness' : 'No harness is configured'}</option>
           {choices.harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
           {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{form.harness} (not configured here)</option>}
+        </select></SettingField>
+      <SettingField label="Pay with" scope="build setup" hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in Codex seat, one build at a time, at no per-token cost.">
+        <select aria-label="Pay with" value={form.payWith}
+          onChange={event => setForm(previous => ({ ...previous, payWith: event.target.value as PayWith }))}>
+          <option value="API_KEY">{PAY_WITH_LABEL.API_KEY}</option>
+          <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>
         </select></SettingField>
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}

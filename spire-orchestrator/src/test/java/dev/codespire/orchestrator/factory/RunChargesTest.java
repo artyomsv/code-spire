@@ -93,6 +93,20 @@ class RunChargesTest {
     private final RecordingLedger ledger = new RecordingLedger();
     private final StubRuns runs = new StubRuns();
     private final StubPricer pricer = new StubPricer();
+    /**
+     * How the run's credential paid. Overridden on purpose, for the reason StubRuns gives: the real one
+     * reads the database, and RunCharges would swallow the failure.
+     */
+    private static final class StubPool extends HarnessCredentialPool {
+        String mode = "API_KEY";
+
+        @Override
+        public Optional<String> authModeOf(java.util.UUID id) {
+            return Optional.of(mode);
+        }
+    }
+
+    private final StubPool pool = new StubPool();
     private final RunCharges charges = charges();
 
     private RunCharges charges() {
@@ -100,6 +114,7 @@ class RunChargesTest {
         c.ledger = ledger;
         c.runs = runs;
         c.pricer = pricer;
+        c.pool = pool;
         // Stated rather than left at the field default. Outside CDI a long field is 0, and these
         // tests are about what gets charged -- not about a ceiling nobody set.
         c.maxReportedTokens = RunTokenUsage.UNBOUNDED;
@@ -108,6 +123,34 @@ class RunChargesTest {
 
     private static RunResult.RunFinished finished(String runId, Map<String, Long> usage) {
         return new RunResult.RunFinished(runId, "refs/heads/spire/s", List.of(), List.of(), usage, false);
+    }
+
+    /**
+     * A run paid for by a subscription costs nothing per token, whatever its model's rates — and keeps its
+     * real token counts, so what a subscription run used is still visible (M3.5 part F, design §5.7).
+     */
+    @Test
+    void aSubscriptionRunIsChargedNothingPerTokenWithItsRealCounts() {
+        runs.credential = java.util.UUID.fromString("00000000-0000-4000-8000-00000000c0de");
+        pool.mode = "SUBSCRIPTION";
+
+        charges.record(finished(RUN_ID, Map.of("INPUT", 1200L, "OUTPUT", 340L)));
+
+        var lines = ledger.calls.getFirst().lines();
+        assertEquals(2, lines.size());
+        assertTrue(lines.stream().allMatch(line -> line.mode() == dev.codespire.orchestrator.llm.PricingMode.UNMETERED && Long.valueOf(0L).equals(line.costMillicents())), lines.toString());
+        assertEquals(1540, lines.stream().mapToInt(ChargeLine::tokens).sum());
+    }
+
+    /** The same model paid with an API key is still priced: pricing follows the payment, not the model. */
+    @Test
+    void anApiKeyRunOfTheSameModelIsStillPriced() {
+        runs.credential = java.util.UUID.fromString("00000000-0000-4000-8000-00000000c0de");
+        pool.mode = "API_KEY";
+
+        charges.record(finished(RUN_ID, Map.of("INPUT", 1200L)));
+
+        assertEquals(dev.codespire.orchestrator.llm.PricingMode.METERED, ledger.calls.getFirst().lines().getFirst().mode());
     }
 
     @Test

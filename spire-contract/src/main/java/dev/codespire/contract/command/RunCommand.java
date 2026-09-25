@@ -81,7 +81,7 @@ public sealed interface RunCommand {
                       List<String> protectedPaths, long maxWallClockSeconds,
                       String scmCredential, String harnessCredential,
                       boolean existingBranch, String protectedBranch,
-                      String reasoningEffort) implements RunCommand {
+                      String reasoningEffort, boolean harnessSignIn) implements RunCommand {
 
         // Every call site that predates ADR-040 keeps working and keeps the M0 rule — the
         // additive treatment the other wire records take. A run already on the bus reads as
@@ -93,7 +93,7 @@ public sealed interface RunCommand {
                           String scmCredential, String harnessCredential) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, false, "", null);
+                    harnessCredential, false, "", null, false);
         }
 
         /**
@@ -108,7 +108,22 @@ public sealed interface RunCommand {
                           boolean existingBranch, String protectedBranch) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, null);
+                    harnessCredential, existingBranch, protectedBranch, null, false);
+        }
+
+        /**
+         * Every caller written before subscriptions existed passes an API key (M3.5 part F). A run already
+         * on the bus decodes with false, which is what every such run carried.
+         */
+        public ExecuteRun(String runId, RepoRef repo, String remoteUri,
+                          String baseBranch, String baseCommit, String branch,
+                          String prompt, String harness, String model, String agentImage,
+                          List<String> protectedPaths, long maxWallClockSeconds,
+                          String scmCredential, String harnessCredential,
+                          boolean existingBranch, String protectedBranch, String reasoningEffort) {
+            this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, false);
         }
 
         public ExecuteRun {
@@ -170,7 +185,7 @@ public sealed interface RunCommand {
         public ExecuteRun onExistingBranch(String destination) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, true, destination, reasoningEffort);
+                    harnessCredential, true, destination, reasoningEffort, harnessSignIn);
         }
 
         /**
@@ -181,7 +196,18 @@ public sealed interface RunCommand {
         public ExecuteRun atEffort(String level) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, level);
+                    harnessCredential, existingBranch, protectedBranch, level, harnessSignIn);
+        }
+
+        /**
+         * The same run, where {@code harnessCredential} is a sealed sign-in file rather than an API key
+         * (M3.5 part F). The worker needs to know which, because the two are handed to the harness
+         * differently — and guessing from the bytes is how a key ends up written as a file.
+         */
+        public ExecuteRun paidBySignIn() {
+            return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
+                    harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, true);
         }
 
         @Override
@@ -198,6 +224,7 @@ public sealed interface RunCommand {
                     + ", protectedPaths=" + protectedPaths
                     + ", maxWallClockSeconds=" + maxWallClockSeconds
                     + ", existingBranch=" + existingBranch
+                    + ", harnessSignIn=" + harnessSignIn
                     + ", protectedBranch=" + protectedBranch
                     + ", reasoningEffort=" + reasoningEffort
                     + ", promptChars=" + prompt.length()

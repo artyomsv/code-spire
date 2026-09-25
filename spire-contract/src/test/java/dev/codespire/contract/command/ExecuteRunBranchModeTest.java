@@ -47,6 +47,15 @@ class ExecuteRunBranchModeTest {
         assertThrows(IllegalArgumentException.class, () -> run().atEffort("high'; rm"));
     }
 
+    /** A sign-in is written as a file and a key is piped into a login; losing the flag swaps the two. */
+    @Test
+    void aRunPaidBySignInSaysSoThroughEveryRebuild() {
+        RunCommand.ExecuteRun run = run().paidBySignIn().atEffort("high").onExistingBranch("develop");
+
+        assertTrue(run.harnessSignIn());
+        assertFalse(run().harnessSignIn(), "every run before part F paid with a key");
+    }
+
     @Test
     void aCommandThatSaysNothingUsesTheNamespaceMode() {
         assertFalse(run().pushesToAnExistingBranch());
