@@ -1699,6 +1699,7 @@
   .signin-steps .reveal-value .signin-user-code { font-size: 22px; font-weight: 600; letter-spacing: 0.12em; }
   .signin-expiry { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; color: var(--text-2); }
   .signin-expiry svg { flex: none; color: var(--text-3); }
+  .signin-copy-failed, .signin-copy-failed svg { color: var(--warn); }
 }
 
 /* ---- proving an SCM account by signing in (FR-11) ---- */
