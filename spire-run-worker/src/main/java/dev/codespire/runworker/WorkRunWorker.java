@@ -55,9 +55,12 @@ public class WorkRunWorker {
                 // Held until the retained workspace is released: a held unit's publisher runs later. Not
                 // before the refusals above, which create nothing and would leave the entry held for ever.
                 LiveSecrets.register(id,()->failures.scrubFor(command.execution()));
-                HeldObserver observer=new HeldObserver(command);
-                result=launcher.launchHeld(command,observer,unit->store.saveUnit(id,unit));
-                if(!observer.created)LiveSecrets.forget(id);
+                // The topology is saved immediately before creation is attempted. Only a launch that
+                // never got that far is proven to have created nothing: a create that fails part-way can
+                // leave credential-bearing containers behind with no unit reported (review of PR #178).
+                boolean[] creationAttempted={false};
+                result=launcher.launchHeld(command,new HeldObserver(command),unit->{creationAttempted[0]=true;store.saveUnit(id,unit);});
+                if(!creationAttempted[0])LiveSecrets.forget(id);
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
@@ -216,8 +219,6 @@ public class WorkRunWorker {
 
     private final class HeldObserver implements RunObserver {
         private final RunCommand.ExecuteWorkRun command;
-        /** Whether a unit exists; without one, nothing can log this run's secrets. */
-        private boolean created;
         HeldObserver(RunCommand.ExecuteWorkRun command){this.command=command;}
         public void event(RunEventRecord record){
             transcript.emit(record,(sent,error)->{
@@ -226,7 +227,6 @@ public class WorkRunWorker {
             });
         }
         public void unitCreated(String unitId,RunNotes notes) {
-            created=true;
             String id=command.runId();
             RunHandle handle=new RunHandle(id,unitId);
             registry.register(id,command.execution().harness(),handle,notes);

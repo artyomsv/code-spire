@@ -22,8 +22,8 @@ class WorkRunWorkerTest {
     RunResult terminal;
     String state="ready";
     boolean claim=true,permitAllowed=true,cancelled,claimFails,leaseAvailable=true,reportAccepted=true,present=true,held=true,lateCancel;
-    /** Whether the fake launch creates a unit; a launch refused by the runtime creates none. */
-    boolean createsUnit=true;
+    /** Whether the fake launch reaches creation, and whether creation reports a unit. */
+    boolean attemptsCreation=true,createsUnit=true;
     /** What the log filter did to the rotated publisher secret while the publisher ran. */
     String cleanedDuringPublish;
     int launches,publicationClaims,publications,deletions;
@@ -47,6 +47,8 @@ class WorkRunWorkerTest {
         @Override public void abandonBuild(RunResult.RunFailed result){terminal(result);}
         // Answered here: a launch that creates a unit records it, and the parent would open a database.
         @Override public void recordUnit(String id,String unitId){events.add("record-unit");}
+        // Answered for the same reason: a launch saves its topology just before creating.
+        @Override public void saveUnit(String id,RunUnitSpec unit){events.add("save-unit");}
     };
     final WorkspaceLeases leases=new WorkspaceLeases(){
         @Override public boolean take(String id){return leaseAvailable;}
@@ -78,7 +80,8 @@ class WorkRunWorkerTest {
         worker.store=store;worker.leases=leases;worker.registry=new RunRegistry();worker.runtime=runtime;worker.staleAfterSeconds=60;
         worker.claims=new RunClaimStore(){@Override public boolean taken(String id,String slot){return cancelled;}};
         worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
-            launches++;if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);if(lateCancel)cancelled=true;return buildResult;}};
+            launches++;if(attemptsCreation)saved.accept(null);if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
+            if(lateCancel)cancelled=true;return buildResult;}};
         worker.builder=new RunUnitBuilder(){@Override public RunUnitSpec publication(RunUnitSpec original,RunCommand.ExecuteWorkRun execution,RunCommand.PublishWorkRun request){return null; /* TEST runtime does not consume topology. */}};
         worker.failures=new RunFailures(){
             @Override public RunResult.RunFailed of(RunCommand.ExecuteRun execution,String cause,String detail){return new RunResult.RunFailed(execution.runId(),cause,detail,false,null);}
@@ -111,10 +114,16 @@ class WorkRunWorkerTest {
         cancelled=true;execute();
         assertFalse(LiveSecrets.holds(command.runId()));
     }
-    @Test void aLaunchThatCreatedNothingLetsItsSecretsGo(){
-        createsUnit=false;execute();
+    /** A launch refused before creation was attempted created nothing, so its secrets are let go. */
+    @Test void aLaunchRefusedBeforeCreationLetsItsSecretsGo(){
+        attemptsCreation=false;createsUnit=false;execute();
         assertEquals(1,launches);
         assertFalse(LiveSecrets.holds(command.runId()));
+    }
+    /** A creation that failed part-way may have left containers, so their secrets stay scrubbed. */
+    @Test void aCreationThatFailedPartWayKeepsItsSecretsScrubbed(){
+        attemptsCreation=true;createsUnit=false;execute();
+        assertTrue(LiveSecrets.holds(command.runId()));
     }
     /** A publisher runs with its permit's forge credential, which may be a rotated one the build never saw. */
     @Test void aRotatedPublisherCredentialIsScrubbedFromLogsWhileItPublishes(){
