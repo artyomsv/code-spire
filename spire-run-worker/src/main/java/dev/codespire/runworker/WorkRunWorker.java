@@ -59,7 +59,8 @@ public class WorkRunWorker {
                 // never got that far is proven to have created nothing: a create that fails part-way can
                 // leave credential-bearing containers behind with no unit reported (review of PR #178).
                 boolean[] creationAttempted={false};
-                result=launcher.launchHeld(command,new HeldObserver(command),unit->{creationAttempted[0]=true;store.saveUnit(id,unit);});
+                // After the save: a save that throws stops the launch before anything is created.
+                result=launcher.launchHeld(command,new HeldObserver(command),unit->{store.saveUnit(id,unit);creationAttempted[0]=true;});
                 if(!creationAttempted[0])LiveSecrets.forget(id);
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);

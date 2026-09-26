@@ -23,7 +23,7 @@ class WorkRunWorkerTest {
     String state="ready";
     boolean claim=true,permitAllowed=true,cancelled,claimFails,leaseAvailable=true,reportAccepted=true,present=true,held=true,lateCancel;
     /** Whether the fake launch reaches creation, and whether creation reports a unit. */
-    boolean attemptsCreation=true,createsUnit=true;
+    boolean attemptsCreation=true,createsUnit=true,saveFails;
     /** What the log filter did to the rotated publisher secret while the publisher ran. */
     String cleanedDuringPublish;
     int launches,publicationClaims,publications,deletions;
@@ -48,7 +48,7 @@ class WorkRunWorkerTest {
         // Answered here: a launch that creates a unit records it, and the parent would open a database.
         @Override public void recordUnit(String id,String unitId){events.add("record-unit");}
         // Answered for the same reason: a launch saves its topology just before creating.
-        @Override public void saveUnit(String id,RunUnitSpec unit){events.add("save-unit");}
+        @Override public void saveUnit(String id,RunUnitSpec unit){if(saveFails)throw new IllegalStateException("TEST save failed");events.add("save-unit");}
     };
     final WorkspaceLeases leases=new WorkspaceLeases(){
         @Override public boolean take(String id){return leaseAvailable;}
@@ -80,7 +80,10 @@ class WorkRunWorkerTest {
         worker.store=store;worker.leases=leases;worker.registry=new RunRegistry();worker.runtime=runtime;worker.staleAfterSeconds=60;
         worker.claims=new RunClaimStore(){@Override public boolean taken(String id,String slot){return cancelled;}};
         worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
-            launches++;if(attemptsCreation)saved.accept(null);if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
+            launches++;
+            // As the real launcher does: a failed topology save ends the launch before creation.
+            if(attemptsCreation){try{saved.accept(null);}catch(RuntimeException saveFailed){return new RunResult.RunFailed(execution.runId(),"RUNTIME_UNAVAILABLE","TEST save failed",true,null);}}
+            if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
             if(lateCancel)cancelled=true;return buildResult;}};
         worker.builder=new RunUnitBuilder(){@Override public RunUnitSpec publication(RunUnitSpec original,RunCommand.ExecuteWorkRun execution,RunCommand.PublishWorkRun request){return null; /* TEST runtime does not consume topology. */}};
         worker.failures=new RunFailures(){
@@ -118,6 +121,12 @@ class WorkRunWorkerTest {
     @Test void aLaunchRefusedBeforeCreationLetsItsSecretsGo(){
         attemptsCreation=false;createsUnit=false;execute();
         assertEquals(1,launches);
+        assertFalse(LiveSecrets.holds(command.runId()));
+    }
+    /** A topology save that failed stopped the launch before creation, so nothing holds the secrets. */
+    @Test void aFailedTopologySaveLetsItsSecretsGo(){
+        saveFails=true;createsUnit=false;execute();
+        assertFalse(events.contains("save-unit"));
         assertFalse(LiveSecrets.holds(command.runId()));
     }
     /** A creation that failed part-way may have left containers, so their secrets stay scrubbed. */
