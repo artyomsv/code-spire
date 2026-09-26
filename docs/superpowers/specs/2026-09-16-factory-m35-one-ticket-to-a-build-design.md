@@ -271,28 +271,22 @@ takes no sign-in and never replays the agent (`WorkRunWorker.java:91`). Cases th
 duplicate command delivery, worker death before release, a failed stop, a late release from an old
 lease, dispatch failure before the container exists, and two uploads of the same sign-in.
 
-- **Built 2026-09-25, as the review of PR #178 reshaped it.** The fence is the **run id**, not a
-  separate `lease_version`: a run id names one attempt, so a message from an older run cannot touch a
-  newer run's lease. The lease has two phases:
-  - **Before the agent starts** it is time-bound: the command carries `signInStartBy` (assembly + 10
-    minutes) and the lease lasts 5 minutes longer. The worker refuses a sign-in build it picks up after
-    that time (`BAD_COMMAND`), so a command that waited in the queue never starts on a seat that has
-    meanwhile gone to another build. A build that never starts frees its seat when the time runs out; an
-    assembly that fails after leasing frees it at once; a dispatch the broker definitely missed gets the
-    same seat back under the same run id.
-  - **Once the agent starts** (`RunStarted`) the time bound is removed. Only `RunAgentStopped` frees
-    the seat — a result the worker sends when the runtime (`RunRuntime.agentRunning`, Docker: the agent
-    container's state) confirms no agent process runs. An outcome never frees it: a failed run can leave
-    its agent running when a stop does not take. The worker checks after the build, on recovery, on a
-    takeover hold, and the watchdog checks every reaped or held unit once. A runtime that cannot tell,
-    or an agent that may still run, keeps the seat held.
-  - **An operator's "Free seat"** is the recovery for a worker that died for good, since nothing else
-    will ever report. It asks the operator to confirm no build still uses the seat.
+- **Decided 2026-09-26: no lease. Seats are shared like API keys.** A per-run lease was built and
+  reviewed twice (PR #178), and each round found another race between workers: a queued command
+  starting after its lease ran out, a failure result freeing the seat of an agent still running, a
+  worker that does not own a unit reporting it stopped. Closing them needs a durable start permit —
+  the same weight as the publication permit. The reason for the lease is gone instead: an agent's copy
+  of the sign-in has its refresh token emptied (§5.6), so two agents cannot refresh one sign-in and log
+  each other out. The operator chose to share seats. Several builds may use one seat at once; the
+  subscription's own limits decide how much they get, and seats rotate least recently used first.
+  **Not verified:** whether the vendor accepts two sessions of one account at the same moment.
 - **One seat per account.** `account_ref` is filled from the measured `tokens.account_id`, an enabled
-  seat's account is unique per harness (V85), and a seat with no known account is never leased. Signing
-  in again to an account that has a seat replaces that seat's file — which is also how a seat whose access
-  token expired is renewed. Seats stored before this are identified at startup; older duplicates are
-  switched off and cannot be switched back on beside the newest.
+  seat's account is unique per harness (V85), and a seat with no known account is never used. Two seats
+  on one account would share one subscription's limits while looking like two. Signing in again to an
+  account that has a seat replaces that seat's file — which is also how a seat whose access token
+  expired is renewed. Seats stored before this are identified at startup, under an advisory lock so two
+  orchestrators cannot both do it; older duplicates are switched off and cannot be switched back on
+  beside the newest.
 
 ### 5.6 Injection and refresh — the agent never hands a credential back
 

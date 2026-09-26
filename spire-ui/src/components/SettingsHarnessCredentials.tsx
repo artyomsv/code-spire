@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import {
   addHarnessCredential, clearHarnessCredentialRejection, disableHarnessCredential,
-  enableHarnessCredential, fetchHarnessCredentials, freeHarnessSeat, restHarnessCredential,
+  enableHarnessCredential, fetchHarnessCredentials, restHarnessCredential,
   type HarnessCredentialView,
 } from '../api';
 import HarnessSubscriptionSignIn from './HarnessSubscriptionSignIn';
@@ -23,8 +23,6 @@ function state(member: HarnessCredentialView): { label: string; tone: string } {
   if (!member.enabled) return { label: 'Switched off', tone: 'chip' };
   // A seat whose account is unknown could be a second seat on one account, so no build uses it.
   if (member.authMode === 'SUBSCRIPTION' && member.identified === false) return { label: 'Sign in again', tone: 'chip warn' };
-  // A signed-in seat serves one build at a time; "In use" is the state a shared key never has.
-  if (member.authMode === 'SUBSCRIPTION' && member.inUse) return { label: 'In use', tone: 'chip warn' };
   if (member.authMode === 'SUBSCRIPTION') return { label: 'Ready · subscription', tone: 'chip ok' };
   return { label: 'Available', tone: 'chip ok' };
 }
@@ -53,8 +51,6 @@ export default function SettingsHarnessCredentials() {
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [adding, setAdding] = useState(false), [busy, setBusy] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
-  // The seat an operator asked to free, waiting for them to confirm no build still uses it.
-  const [freeing, setFreeing] = useState<string | null>(null);
   const [form, setForm] = useState({ label: '', type: 'openai', baseUrl: '', apiKey: '' });
   const [refresh, setRefresh] = useState(0);
 
@@ -72,7 +68,7 @@ export default function SettingsHarnessCredentials() {
     setBusy(true); setError('');
     try { await action(); reload(message); }
     catch (failure) { setError(sentence(String(failure instanceof Error ? failure.message : failure))); }
-    finally { setBusy(false); setFreeing(null); }
+    finally { setBusy(false); }
   }
 
   async function save() {
@@ -158,23 +154,6 @@ export default function SettingsHarnessCredentials() {
                     </td>
                     <td>{when(member.lastUsedAt)}</td>
                     <td className="cell-r">
-                      {member.inUse && freeing !== member.id && (
-                        <button className="btn-ghost sm" type="button" disabled={busy} onClick={() => setFreeing(member.id)}>
-                          Free seat
-                        </button>
-                      )}
-                      {member.inUse && freeing === member.id && (
-                        <>
-                          <span className="prov-sub">Only if its build's worker is gone for good. </span>
-                          <button className="btn-ghost sm danger" type="button" disabled={busy}
-                            onClick={() => void act(() => freeHarnessSeat(member.id), `${member.label} is free for the next build.`)}>
-                            Free it
-                          </button>
-                          <button className="btn-ghost sm" type="button" disabled={busy} onClick={() => setFreeing(null)}>
-                            Keep
-                          </button>
-                        </>
-                      )}
                       {member.rejectedAt && (
                         <button className="btn-ghost sm" type="button" disabled={busy}
                           onClick={() => void act(() => clearHarnessCredentialRejection(member.id),

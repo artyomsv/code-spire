@@ -13,8 +13,7 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunResult.RunStarted.class, name = "RunStarted"),
         @JsonSubTypes.Type(value = RunResult.RunWorkReady.class, name = "RunWorkReady"),
         @JsonSubTypes.Type(value = RunResult.RunFinished.class, name = "RunFinished"),
-        @JsonSubTypes.Type(value = RunResult.RunFailed.class, name = "RunFailed"),
-        @JsonSubTypes.Type(value = RunResult.RunAgentStopped.class, name = "RunAgentStopped")
+        @JsonSubTypes.Type(value = RunResult.RunFailed.class, name = "RunFailed")
 })
 public sealed interface RunResult {
 
@@ -23,23 +22,6 @@ public sealed interface RunResult {
     record RunStarted(String runId, String providerRunId) implements RunResult {
 
         public RunStarted {
-            Objects.requireNonNull(runId, "runId");
-        }
-    }
-
-    /**
-     * The run's agent is confirmed not running: its exit was observed, it was stopped, or it never
-     * started (M3.5 part F).
-     *
-     * <p>Not an outcome — the terminal result says how the run went, and may arrive before or after
-     * this. It exists because a failure does not prove the agent stopped: a run can be reported failed
-     * while its unit is preserved and, if the stop did not take, still running. A signed-in seat is
-     * freed on THIS, never on the outcome, so it is never handed to a second agent while the first
-     * may still use it. The worker sends it only when it knows; silence keeps the seat held.
-     */
-    record RunAgentStopped(String runId) implements RunResult {
-
-        public RunAgentStopped {
             Objects.requireNonNull(runId, "runId");
         }
     }

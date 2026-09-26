@@ -132,21 +132,6 @@ public class HarnessCredentialResource {
     }
 
     /**
-     * Free a seat whose build will never report its agent stopped — the worker running it is gone.
-     * An operator's call: only a person can know no agent still uses the sign-in.
-     */
-    @POST
-    @Path("/{id}/free-seat")
-    @Consumes(MediaType.WILDCARD)
-    public Response freeSeat(@PathParam("id") String id) {
-        if (!pool.freeSeat(uuid(id))) {
-            throw new NotFoundException("no leased subscription seat with id: " + id);
-        }
-        LOG.warnf("subscription seat %s was freed by an operator", id);
-        return Response.noContent().build();
-    }
-
-    /**
      * The operator says a refused key works again — a rotated secret, or restored credit.
      *
      * <p>This is the ONLY way a rejection clears. Nothing expires it, because a key the provider

@@ -68,21 +68,7 @@ public class WorkRunAssembly {
         if(spend.decide().refused())throw new IllegalStateException("deployment_spend_cap_reached");
         String id=RunIds.of(source.scm(),in.workspace(),in.slug(),subject,1),branch=DispatchRequestParser.RUN_BRANCH_PREFIX+subject;
         long wall=Math.min(config.wallClockSeconds(),Math.subtractExact(item.policy().limits().maxWallClockSeconds(),item.progress().wallSeconds()));
-        java.time.Instant startBy=java.time.Instant.now().plusSeconds(START_WITHIN_SECONDS);
-        HarnessCredentialPool.PoolMember member=subscription ? leaseSeat(in.harness(),id,startBy.plusSeconds(START_REPORT_SECONDS)) : pickKey();
-        try {
-            return prepare(source,item,in,account,admission,id,branch,wall,member,subscription?startBy:null);
-        } catch(RuntimeException failure) {
-            // Nothing was dispatched, so no agent uses the seat: free it now rather than at its deadline.
-            if(subscription)pool.releaseLease(id);
-            throw failure;
-        }
-    }
-
-    private Prepared prepare(WorkSourceRegistry.Source source,WorkItemEvent item,DispatchRequestParser.Parsed in,
-                             dev.codespire.orchestrator.provider.ScmProvider account,HarnessCatalogues.Admission admission,String id,String branch,
-                             long wall,HarnessCredentialPool.PoolMember member,java.time.Instant signInStartBy) {
-        boolean subscription=signInStartBy!=null;
+        HarnessCredentialPool.PoolMember member=subscription ? pickSeat(in.harness()) : pickKey();
         // The agent gets the sign-in with its refresh token emptied; the whole file stays here, encrypted.
         String handedOver=subscription ? SignInFiles.forAgent(member.apiKey()) : member.apiKey();
         RunCommand.ExecuteRun command=new RunCommand.ExecuteRun(id,source.repository(),FactoryCloneUrls.cloneUrl(source.scm(),account.baseUrl(),source.repository()),
@@ -92,29 +78,15 @@ public class WorkRunAssembly {
                 credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,handedOver))
                 // The level the approved binding hashed, so the build runs at what was approved (M3.5 part M).
                 .atEffort(item.preparation().effort());
-        if(subscription)command=command.paidBySignIn(signInStartBy);
+        if(subscription)command=command.paidBySignIn();
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
         var row=new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),member.id());
         return new Prepared(held,subscription?row.paidBySubscription():row);
     }
 
-    /**
-     * How long a worker has to start a subscription build. The worker refuses the build after this, so a
-     * command that waited in the queue cannot start on a seat that has meanwhile gone to another build.
-     */
-    static final long START_WITHIN_SECONDS=600;
-
-    /**
-     * How long after the start deadline the seat stays held for the build's start to be reported. The
-     * report removes the time bound; a lease that reaches this without one belonged to a build that
-     * never started, and frees itself.
-     */
-    static final long START_REPORT_SECONDS=300;
-
-    private HarnessCredentialPool.PoolMember leaseSeat(String harness,String runId,java.time.Instant leasedUntil) {
-        return pool.selectSubscription(harness,runId,leasedUntil)
-                .orElseThrow(()->new IllegalStateException("subscription_unavailable"));
+    private HarnessCredentialPool.PoolMember pickSeat(String harness) {
+        return pool.selectSubscription(harness).orElseThrow(()->new IllegalStateException("subscription_unavailable"));
     }
 
     private HarnessCredentialPool.PoolMember pickKey() {

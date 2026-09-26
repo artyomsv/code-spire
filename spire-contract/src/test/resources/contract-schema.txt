@@ -43,14 +43,13 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 
 # RunCommand
 CancelRun(runId: java.lang.String, reason: java.lang.String)
-ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String, reasoningEffort: java.lang.String, signInStartBy: java.time.Instant)
+ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String, reasoningEffort: java.lang.String, harnessSignIn: boolean)
 ExecuteWorkRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, work: dev.codespire.contract.work.WorkRunBinding)
 HoldWorkRun(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding)
 PublishWorkRun(runId: java.lang.String, permit: dev.codespire.contract.work.WorkPublicationPermit, scmCredential: java.lang.String)
 SteerRun(runId: java.lang.String, instruction: java.lang.String)
 
 # RunResult
-RunAgentStopped(runId: java.lang.String)
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)

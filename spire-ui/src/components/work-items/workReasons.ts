@@ -23,7 +23,7 @@ const REASONS = new Map(Object.entries({
   catalogue_unavailable: 'The model catalogue could not be read, so whether that model may run is unknown. The build was not started.',
   model_disabled: 'That model is switched off in the catalogue, so a run cannot call it.',
   subscription_not_signed_in: 'No Codex subscription is signed in for this harness. Sign one in under Settings → Harness credentials, or pay with an API key.',
-  subscription_unavailable: 'Every signed-in subscription is busy with another build, switched off or refused. The build was not started; it can start once one is free.',
+  subscription_unavailable: 'No signed-in subscription can be used: each is switched off, refused, resting, or needs to be signed in again. The build was not started.',
   subscription_unreadable: 'The stored subscription sign-in could not be read. Sign in again under Settings → Harness credentials.',
   pay_with_invalid: 'Choose how builds pay: an API key or a subscription.',
   model_not_run_by_harness: 'The agent image for that harness does not run this model. Choose one of the models it offers in the build setup.',

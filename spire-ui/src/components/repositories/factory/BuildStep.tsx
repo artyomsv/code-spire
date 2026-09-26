@@ -105,7 +105,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
           {choices.harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
           {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{form.harness} (not configured here)</option>}
         </select></SettingField>
-      <SettingField label="Pay with" scope="build setup" hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in Codex seat, one build at a time, at no per-token cost.">
+      <SettingField label="Pay with" scope="build setup" hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in Codex seat at no per-token cost; the subscription's own limits apply.">
         <select aria-label="Pay with" value={form.payWith}
           onChange={event => setForm(previous => ({ ...previous, payWith: event.target.value as PayWith }))}>
           <option value="API_KEY">{PAY_WITH_LABEL.API_KEY}</option>

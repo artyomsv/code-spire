@@ -49,11 +49,6 @@ public class WorkRunWorker {
             RunResult result;
             if(claims.taken(id,RunDispatcher.CANCEL_SLOT) || store.revoked(command)) {
                 result=failures.of(command.execution(),"CANCELLED","Cancelled before the held build started");
-            } else if(startedTooLate(command)) {
-                // The seat was leased for a bounded time until the agent starts. Past it, the seat may
-                // already serve another build, and two agents must never share one sign-in.
-                result=failures.of(command.execution(),"BAD_COMMAND","The subscription seat's start deadline passed before"
-                        +" a worker took the build; it may serve another build by now, so this one did not start");
             } else if(!leases.take(id)) {
                 result=failures.of(command.execution(),"WORKER_FAILED","No lease was taken; the held build was not started");
             } else {
@@ -69,13 +64,8 @@ public class WorkRunWorker {
             leases.preserve(id);
             active.remove(id);
         }
-        if(command.execution().harnessSignIn())results.agentStoppedIfKnown(runtime,id);
         flushResults();
         return CompletableFuture.completedFuture(null);
-    }
-
-    private static boolean startedTooLate(RunCommand.ExecuteWorkRun command) {
-        return command.execution().harnessSignIn() && Instant.now().isAfter(command.execution().signInStartBy());
     }
 
     public void publish(RunCommand.PublishWorkRun request) {
@@ -151,7 +141,6 @@ public class WorkRunWorker {
                 } else if("ready".equals(held.state()) && (cancelled(id) || store.revoked(held.execution()))) {
                     unit.ifPresent(publication::cancel);
                     store.terminal(cancelledResult(held.execution(),held.ready()));
-                    if(held.execution().execution().harnessSignIn())results.agentStoppedIfKnown(runtime,id);
                 } else if("building".equals(held.state()) && held.updatedAt().isBefore(horizon.orElseThrow())) {
                     var lease=leases.find(id);
                     if(lease.isPresent() && !lease.orElseThrow().preserved()
@@ -161,7 +150,6 @@ public class WorkRunWorker {
                     unit.ifPresent(publication::cancel);
                     store.abandonBuild(failures.of(held.execution().execution(),RunFailureCause.SALVAGE_FAILED.name(),
                             "The worker stopped before recording build readiness; its unpublished workspace is retained"));
-                    if(held.execution().execution().harnessSignIn())results.agentStoppedIfKnown(runtime,id);
                 }
             } catch(RuntimeException failure) {
                 LOG.warnf("run %s: retained work recovery deferred (%s)",id,failure.getClass().getSimpleName());
@@ -214,7 +202,6 @@ public class WorkRunWorker {
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
-            case RunResult.RunAgentStopped ignored -> null;
         };
         return failures.of(command.execution(),"CANCELLED","The held run was cancelled; its unpublished workspace is retained").withUsage(usage);
     }
@@ -247,6 +234,5 @@ public class WorkRunWorker {
         registry.cancel(command.runId());
         if(runtime instanceof PublicationRuntime publication)
             localUnit(command.runId()).filter(publication::publicationHeld).ifPresent(publication::cancel);
-        if(held.orElseThrow().execution().execution().harnessSignIn())results.agentStoppedIfKnown(runtime,command.runId());
     }
 }

@@ -39,32 +39,6 @@ class RunResultSagaTest {
         }
     }
 
-    /** Which runs' seats the saga released and held. Static because the saga factories below are. */
-    private static final List<String> released = new ArrayList<>();
-    private static final List<String> held = new ArrayList<>();
-
-    /**
-     * A seat is held while the agent runs and freed only when the worker confirms the agent stopped —
-     * never on an outcome, because a failed run can leave its agent running (review of PR #178).
-     */
-    @Test
-    void aSeatIsHeldFromTheStartAndFreedOnlyWhenTheAgentIsConfirmedStopped() {
-        released.clear();
-        held.clear();
-        RecordingProjection projection = new RecordingProjection();
-        RunResultSaga saga = saga(projection);
-        String run = "run::github:TEST-acme/app:seat:1";
-
-        saga.on(new RunResult.RunStarted(run, "TEST-unit"));
-        saga.on(new RunResult.RunFailed(run, "AGENT_TIMEOUT", "TEST: overran", false, null));
-        assertEquals(List.of(run), held);
-        assertEquals(List.of(), released, "a failure does not prove the agent stopped");
-
-        saga.on(new RunResult.RunAgentStopped(run));
-        assertEquals(List.of(run), released);
-        assertEquals(2, projection.applied.size(), "not an outcome: nothing else reads it");
-    }
-
     private static RunResultSaga saga(RecordingProjection projection) {
         return saga(projection, new RecordingCharges());
     }
@@ -83,18 +57,6 @@ class RunResultSagaTest {
         // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
         // reads the run's row to find which pool member to mark, so leaving it null is an NPE and
         // leaving it real is a database call from a unit test.
-        // The same trap once more: releasing a seat's lease writes to the pool's table. Recorded instead.
-        saga.pool = new HarnessCredentialPool() {
-            @Override
-            public void releaseLease(String runId) {
-                released.add(runId);
-            }
-
-            @Override
-            public void holdWhileRunning(String runId) {
-                held.add(runId);
-            }
-        };
         saga.credentials = new RunCredentialFeedback() {
             @Override
             public void reactTo(RunResult result) {

@@ -55,14 +55,6 @@ class OrphanWatchdogTest {
         final List<RunHandle> destroyed = new ArrayList<>();
         Finalization finalization = Finalization.salvaged(0, "exited");
         RuntimeException salvageFails;
-        /** What the runtime says about the agent; null is "cannot tell", which the SPI default throws. */
-        Boolean agentRunning;
-
-        @Override
-        public boolean agentRunning(RunHandle handle) {
-            if (agentRunning == null) throw new UnsupportedOperationException("TEST runtime cannot tell");
-            return agentRunning;
-        }
 
         @Override
         public RuntimeType type() {
@@ -274,38 +266,6 @@ class OrphanWatchdogTest {
         assertEquals(List.of(), runtime.lifecycle,
                 "a fresh heartbeat means a live run, whoever owns it");
         assertEquals(List.of(), reported);
-    }
-
-    /**
-     * A held unit is stopped again on every sweep; its agent is reported stopped once, when the runtime
-     * confirms it — which frees a signed-in seat (M3.5 part F, review of PR #178).
-     */
-    @Test void aStoppedHeldAgentIsReportedOnceAcrossSweeps() {
-        runtime.held=true;runtime.agentRunning=false;
-        runtime.units.add(new RunHandle("TEST-held-stopped","TEST-unit"));
-        watchdog().sweep();
-        watchdog().sweep();
-        assertEquals(List.of(new RunResult.RunAgentStopped("TEST-held-stopped")),reported);
-    }
-
-    /** An agent that may still run is not reported, and the next sweep asks again. */
-    @Test void anAgentThatMayStillRunIsAskedAgainNextSweep() {
-        runtime.held=true;runtime.agentRunning=true;
-        runtime.units.add(new RunHandle("TEST-held-alive","TEST-unit"));
-        watchdog().sweep();
-        assertTrue(reported.isEmpty(),"a seat is never freed under an agent that may still run");
-
-        runtime.agentRunning=false;
-        watchdog().sweep();
-        assertEquals(List.of(new RunResult.RunAgentStopped("TEST-held-alive")),reported);
-    }
-
-    /** A reaped unit's agent is reported stopped too, after the run's own reclamation report. */
-    @Test void aReapedUnitsAgentIsReportedStopped() {
-        runtime.agentRunning=false;
-        runtime.units.add(new RunHandle("TEST-reaped","TEST-unit"));
-        watchdog().sweep();
-        assertEquals(new RunResult.RunAgentStopped("TEST-reaped"),reported.getLast());
     }
 
     @Test void aHeldWorkspaceWithNoLeaseIsStoppedAndRetainedWithoutInventingATerminalResult() {

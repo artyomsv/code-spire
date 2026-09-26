@@ -165,8 +165,8 @@ public class HarnessCredentialPool {
                        SELECT id FROM harness_credential
                         -- API keys only, and this is a CONTAINMENT boundary rather than a filter. A
                         -- subscription row holds the whole sign-in file, refresh token included; it is
-                        -- reached only through selectSubscription, which leases it to one run and hands
-                        -- out a copy with the refresh token removed. The rule lives here rather than in
+                        -- reached only through selectSubscription, whose caller hands the agent a copy
+                        -- with the refresh token removed. The rule lives here rather than in
                         -- a caller's discipline because three dispatch paths call this and each would
                         -- have to remember.
                         WHERE enabled
@@ -206,23 +206,21 @@ public class HarnessCredentialPool {
     }
 
     /**
-     * Leases a signed-in seat of this harness to one run, and hands out its sign-in file (M3.5 part F).
+     * Picks a signed-in seat of this harness and hands out its sign-in file (M3.5 part F).
      *
-     * <p>A lease, where an API key is shared: one sign-in serves one agent. The pick and the lease are ONE
-     * statement with {@code SKIP LOCKED}, so two dispatches cannot take the same seat.
+     * <p>Shared like an API key: several builds may use one seat at once, and the vendor's own limits
+     * decide how much they get. An exclusive per-run lease was built and reviewed, and every round found
+     * another race between workers; the reason for it — two agents refreshing one sign-in and logging each
+     * other out — is gone, because an agent's copy carries no refresh token (operator decision,
+     * 2026-09-26). Rotation is the same least-recently-used order the key pool uses.
      *
-     * <p>The lease has two phases. Until the agent starts it runs out at {@code leasedUntil}, which frees a
-     * seat whose build never reached a worker. Once the agent starts, {@link #holdWhileRunning} removes
-     * the time bound, and only {@link #releaseLease} — sent when the agent is confirmed stopped — or an
-     * operator's {@link #freeSeat} ends it. A seat is never freed by a clock while an agent may use it.
-     *
-     * @return the member with its sign-in file as {@code apiKey}, or empty when every seat is in use,
-     *     rejected, switched off, or none is signed in. The caller reports that as one refusal.
+     * @return the member with its sign-in file as {@code apiKey}, or empty when no identified seat is
+     *     enabled, unrefused and not resting. The caller reports that as one refusal.
      */
-    public Optional<PoolMember> selectSubscription(String harness, String runId, Instant leasedUntil) {
+    public Optional<PoolMember> selectSubscription(String harness) {
         String sql = """
                 UPDATE harness_credential
-                   SET last_used_at = now(), updated_at = now(), leased_by_run = ?, leased_until = ?
+                   SET last_used_at = now(), updated_at = now()
                  WHERE id = (
                        SELECT id FROM harness_credential
                         WHERE enabled
@@ -232,66 +230,18 @@ public class HarnessCredentialPool {
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                           -- A seat whose account is unknown could be a second seat on one account.
                           AND account_ref IS NOT NULL
-                          -- Free: nobody holds it, or a holder that never started ran out of time. A
-                          -- lease with no end is a running agent's and is never taken. A lease this same
-                          -- run already holds is its own: a dispatch the broker definitely missed is
-                          -- assembled again under the same run id, and must not be locked out by it.
-                          AND (leased_by_run IS NULL OR leased_until <= now() OR leased_by_run = ?)
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED)
                 RETURNING id, label, type, base_url, api_key
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, runId);
-            ps.setTimestamp(2, java.sql.Timestamp.from(leasedUntil));
-            ps.setString(3, harness);
-            ps.setString(4, runId);
+            ps.setString(1, harness);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? Optional.of(decrypt(rs.getObject("id", UUID.class), rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("The harness credential pool could not be read", e);
-        }
-    }
-
-    /**
-     * The run's agent has started: its lease now lasts until the agent is confirmed stopped, however long
-     * that takes. Fenced by run id like the release.
-     */
-    public void holdWhileRunning(String runId) {
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
-                "UPDATE harness_credential SET leased_until = NULL WHERE leased_by_run = ?")) {
-            ps.setString(1, runId);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("The lease of run " + runId + " could not be held", e);
-        }
-    }
-
-    /**
-     * An operator frees a seat whose worker will never report — a worker that died for good. Only the
-     * operator can know no agent still uses it, so nothing calls this on its own.
-     *
-     * @return false when the member is not a leased seat
-     */
-    public boolean freeSeat(UUID id) {
-        return update("UPDATE harness_credential SET leased_by_run = NULL, leased_until = NULL"
-                + " WHERE id = ? AND auth_mode = 'SUBSCRIPTION' AND leased_by_run IS NOT NULL", id) == 1;
-    }
-
-    /**
-     * Ends the lease this run holds, if it still holds one. Fenced by the run id, which is unique per
-     * attempt: a late release from an earlier run matches nothing and so cannot free a seat another run
-     * is using.
-     */
-    public void releaseLease(String runId) {
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
-                "UPDATE harness_credential SET leased_by_run = NULL, leased_until = NULL WHERE leased_by_run = ?")) {
-            ps.setString(1, runId);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("The lease of run " + runId + " could not be released", e);
         }
     }
 
@@ -312,7 +262,8 @@ public class HarnessCredentialPool {
     public boolean hasSubscription(String harness) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 SELECT 1 FROM harness_credential
-                 WHERE enabled AND auth_mode = 'SUBSCRIPTION' AND type = ? AND rejected_at IS NULL LIMIT 1
+                 WHERE enabled AND auth_mode = 'SUBSCRIPTION' AND type = ? AND rejected_at IS NULL
+                   AND account_ref IS NOT NULL LIMIT 1
                 """)) {
             ps.setString(1, harness);
             try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
@@ -418,20 +369,17 @@ public class HarnessCredentialPool {
      * What the settings surface shows. Never carries the key.
      *
      * @param authMode {@code API_KEY} or {@code SUBSCRIPTION}, so the screen can say which kind a row is.
-     * @param leasedUntil when a subscription's current lease runs out, or null when no run holds it —
-     *     "in use" is the one state an operator sees for a seat and not for a shared key.
+     * @param identified false for a seat whose account is unknown: it is never used until signed in again.
      */
     public record MemberView(UUID id, String label, String type, String baseUrl, boolean enabled,
                              Instant rateLimitedUntil, Instant rejectedAt, Instant lastUsedAt,
-                             String authMode, boolean inUse, boolean identified) {
+                             String authMode, boolean identified) {
     }
 
     public List<MemberView> list() {
         String sql = """
                 SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at,
-                       auth_mode,
-                       leased_by_run IS NOT NULL AND (leased_until IS NULL OR leased_until > now()) AS in_use,
-                       auth_mode <> 'SUBSCRIPTION' OR account_ref IS NOT NULL AS identified
+                       auth_mode, auth_mode <> 'SUBSCRIPTION' OR account_ref IS NOT NULL AS identified
                   FROM harness_credential ORDER BY label
                 """;
         List<MemberView> members = new ArrayList<>();
@@ -441,8 +389,7 @@ public class HarnessCredentialPool {
                 members.add(new MemberView(rs.getObject("id", UUID.class), rs.getString("label"),
                         rs.getString("type"), rs.getString("base_url"), rs.getBoolean("enabled"),
                         instant(rs, "rate_limited_until"), instant(rs, "rejected_at"),
-                        instant(rs, "last_used_at"), rs.getString("auth_mode"), rs.getBoolean("in_use"),
-                        rs.getBoolean("identified")));
+                        instant(rs, "last_used_at"), rs.getString("auth_mode"), rs.getBoolean("identified")));
             }
             return members;
         } catch (SQLException e) {
@@ -477,7 +424,7 @@ public class HarnessCredentialPool {
             ps.setString(4, baseUrl);
             ps.setString(5, encryption.encryptString(apiKey, aad(id)));
             ps.executeUpdate();
-            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY", false, true);
+            return new MemberView(id, label, type, baseUrl, true, null, null, null, "API_KEY", true);
         } catch (SQLException e) {
             if ("23505".equals(e.getSQLState())) {
                 throw new DuplicateLabelException(label, e);
@@ -548,8 +495,8 @@ public class HarnessCredentialPool {
     /**
      * A new sign-in to an account that already has a seat replaces that seat's file rather than adding a
      * second seat — which is also how a seat whose access token expired is signed in again. A refusal the
-     * old file earned is cleared: the new file has not been refused. A lease is left alone: the agent
-     * holding it runs on its own copy.
+     * old file earned is cleared: the new file has not been refused. A build already running keeps its
+     * own copy.
      */
     public void replaceSubscription(Connection c, UUID id, String body) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
@@ -563,15 +510,46 @@ public class HarnessCredentialPool {
 
     /**
      * Fills the account of every seat stored before accounts were recorded, from its own file. The newest
-     * seat of an account keeps it; older seats of the same account are switched off, because two seats on
-     * one account are two leases on one sign-in. A file that names no account, or cannot be read, stays
-     * unidentified and is never leased.
+     * seat of an account keeps it; older seats of the same account are switched off, because one account
+     * has one seat. A file that names no account, or cannot be read, stays unidentified and is never used.
+     *
+     * <p>One transaction under an advisory lock, taken BEFORE the unidentified seats are read: two
+     * orchestrators starting together would otherwise both read the same seat, and the second would find
+     * the first's work and switch that very seat off as its own duplicate (review of PR #178). Under the
+     * lock the second reads after the first commits, and finds nothing left to identify.
      *
      * @return how many seats were switched off as duplicates
      */
     public int identifySeats() {
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                int switchedOff = identifySeats(c);
+                c.commit();
+                if (switchedOff > 0) {
+                    LOG.warnf("%d subscription seat(s) were switched off: another seat is signed in to the same"
+                            + " account", switchedOff);
+                }
+                return switchedOff;
+            } catch (SQLException | RuntimeException failure) {
+                c.rollback();
+                throw failure;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Subscription seats could not be identified", e);
+        }
+    }
+
+    /** Any constant shared by every orchestrator; it names this one piece of startup work. */
+    static final long IDENTIFY_LOCK = 0x5EA7_1D_E7L;
+
+    private int identifySeats(Connection c) throws SQLException {
+        try (PreparedStatement lock = c.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
+            lock.setLong(1, IDENTIFY_LOCK);
+            lock.execute();
+        }
         int switchedOff = 0;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+        try (PreparedStatement ps = c.prepareStatement("""
                 SELECT id, type, api_key FROM harness_credential
                  WHERE auth_mode = 'SUBSCRIPTION' AND account_ref IS NULL ORDER BY updated_at DESC
                 """); ResultSet rs = ps.executeQuery()) {
@@ -595,12 +573,6 @@ public class HarnessCredentialPool {
                 }
                 if (duplicate) switchedOff++;
             }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Subscription seats could not be identified", e);
-        }
-        if (switchedOff > 0) {
-            LOG.warnf("%d subscription seat(s) were switched off: another seat is signed in to the same account",
-                    switchedOff);
         }
         return switchedOff;
     }

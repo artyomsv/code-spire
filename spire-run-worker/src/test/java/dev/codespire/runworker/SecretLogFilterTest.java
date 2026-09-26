@@ -59,6 +59,26 @@ class SecretLogFilterTest {
         assertEquals(frames.length, record.getThrown().getStackTrace().length, "the trace still points where it did");
     }
 
+    /** A formatter prints suppressed exceptions too; a secret there is still a secret in the log. */
+    @Test
+    void aSecretInASuppressedExceptionIsScrubbed() {
+        hold();
+        ExtLogRecord record = new ExtLogRecord(Level.SEVERE, "cleanup failed", ExtLogRecord.FormatStyle.NO_FORMAT,
+                SecretLogFilterTest.class.getName());
+        IllegalStateException outer = new IllegalStateException("harmless");
+        outer.addSuppressed(new RuntimeException("close failed: " + SECRET));
+        record.setThrown(outer);
+
+        new SecretLogFilter().isLoggable(record);
+
+        Throwable shown = record.getThrown();
+        assertEquals(1, shown.getSuppressed().length, "the suppressed exception is kept, scrubbed");
+        assertFalse(shown.getSuppressed()[0].getMessage().contains(SECRET), shown.getSuppressed()[0].getMessage());
+        java.io.StringWriter printed = new java.io.StringWriter();
+        shown.printStackTrace(new java.io.PrintWriter(printed));
+        assertFalse(printed.toString().contains(SECRET), "nothing a formatter prints quotes the secret");
+    }
+
     @Test
     void aForgottenRunIsNoLongerScrubbed() {
         hold();

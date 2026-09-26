@@ -280,8 +280,8 @@ public class HarnessSignIns {
                     return;
                 }
                 // One seat per account. Signing in again to an account that has a seat replaces that
-                // seat's file: it is how an expired seat is renewed, and a second seat would be a second
-                // lease on the same sign-in.
+                // seat's file: it is how an expired seat is renewed. A second seat would share the one
+                // subscription's limits while looking like more, and keep the older, expiring copy in use.
                 Optional<String> account = SignInFiles.accountOf(body);
                 if (account.isEmpty()) {
                     fail(c, id, "subscription_unidentified");

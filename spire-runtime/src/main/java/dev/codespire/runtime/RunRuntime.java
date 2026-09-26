@@ -41,23 +41,6 @@ public interface RunRuntime {
      */
     void steer(RunHandle handle, String instruction);
 
-    /**
-     * Whether the run's agent may still be running (M3.5 part F).
-     *
-     * <p>The one fact that frees a signed-in seat: a seat serves one agent, and a run reported failed can
-     * still have a live agent when a stop did not take. So an arm answers {@code false} only when it
-     * KNOWS no agent process runs — exited, never started, or gone — and {@code true} whenever it may.
-     *
-     * <p>A default that throws rather than answering: "not running" from an arm that did not look would
-     * free a seat under a live agent, and "running" would hold every seat for ever. The caller treats the
-     * throw as unknown and keeps the seat held.
-     *
-     * @throws UnsupportedOperationException from an arm that cannot tell
-     */
-    default boolean agentRunning(RunHandle handle) {
-        throw new UnsupportedOperationException("this runtime cannot tell whether an agent is running");
-    }
-
     /** Takes everything worth keeping, BEFORE {@link #destroy}. Never destroys anything itself. */
     Finalization salvage(RunHandle handle);
 

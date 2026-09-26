@@ -10,18 +10,24 @@ import java.util.logging.LogRecord;
 import java.util.logging.SimpleFormatter;
 
 /**
- * Scrubs every held run secret out of every log record: the message, and each message in the exception
- * chain (review of PR #178). Configured on the console handler as {@code run-secrets}.
+ * Scrubs every held run secret out of every log record: the message, and every exception a formatter
+ * prints — the cause chain and each suppressed exception (review of PR #178). Configured on the console
+ * handler as {@code run-secrets}.
  *
  * <p>An exception is replaced, not edited — a {@link Throwable}'s message cannot be changed — by a copy
  * that keeps the original class name in its message and the original stack frames, so the trace still
- * points where it did. Suppressed exceptions are not copied.
+ * points where it did. When anything in the graph quotes a secret, the WHOLE graph is copied: a copy
+ * that kept an original branch would print that branch as it was.
  */
 @LoggingFilter(name = "run-secrets")
 public final class SecretLogFilter implements Filter {
 
-    /** Deep enough for any real chain; a guard against a cycle the identity map somehow missed. */
-    private static final int MAX_CAUSES = 32;
+    /**
+     * How many exceptions one graph may hold before the rest is cut off. A real one has a handful; the
+     * bound exists so a pathological graph cannot stall logging, and what is cut is dropped, never
+     * printed unscrubbed.
+     */
+    private static final int MAX_EXCEPTIONS = 64;
 
     @Override
     public boolean isLoggable(LogRecord record) {
@@ -33,33 +39,44 @@ public final class SecretLogFilter implements Filter {
             else record.setMessage(cleaned);
             record.setParameters(null);
         }
-        if (record.getThrown() != null && quotesASecret(record.getThrown())) record.setThrown(scrubbed(record.getThrown()));
+        Throwable thrown = record.getThrown();
+        if (thrown != null && quotesASecret(thrown, new IdentityHashMap<>())) record.setThrown(copy(thrown, new Budget()));
         return true;
     }
 
-    private static boolean quotesASecret(Throwable thrown) {
-        int depth = 0;
-        for (Throwable at = thrown; at != null && depth < MAX_CAUSES; at = at.getCause(), depth++) {
-            String message = at.getMessage();
-            if (message != null && !message.equals(LiveSecrets.clean(message))) return true;
-        }
+    private static boolean quotesASecret(Throwable thrown, Map<Throwable, Boolean> seen) {
+        if (thrown == null || seen.size() >= MAX_EXCEPTIONS || seen.put(thrown, Boolean.TRUE) != null) return false;
+        String message = thrown.getMessage();
+        if (message != null && !message.equals(LiveSecrets.clean(message))) return true;
+        if (quotesASecret(thrown.getCause(), seen)) return true;
+        for (Throwable suppressed : thrown.getSuppressed()) if (quotesASecret(suppressed, seen)) return true;
         return false;
     }
 
-    private static Throwable scrubbed(Throwable thrown) {
-        return copy(thrown, new IdentityHashMap<>(), 0);
+    /** Counts every exception copied, so a cycle or a huge graph ends in a cut, not a stall. */
+    private static final class Budget {
+        private final Map<Throwable, Boolean> seen = new IdentityHashMap<>();
+
+        boolean admit(Throwable thrown) {
+            return seen.size() < MAX_EXCEPTIONS && seen.put(thrown, Boolean.TRUE) == null;
+        }
     }
 
-    private static Throwable copy(Throwable original, Map<Throwable, Boolean> seen, int depth) {
-        if (original == null || depth >= MAX_CAUSES || seen.put(original, Boolean.TRUE) != null) return null;
-        return new Scrubbed(original, copy(original.getCause(), seen, depth + 1));
+    private static Throwable copy(Throwable original, Budget budget) {
+        if (original == null || !budget.admit(original)) return null;
+        Scrubbed copy = new Scrubbed(original, copy(original.getCause(), budget));
+        for (Throwable suppressed : original.getSuppressed()) {
+            Throwable scrubbed = copy(suppressed, budget);
+            if (scrubbed != null) copy.addSuppressed(scrubbed);
+        }
+        return copy;
     }
 
     /** A stand-in carrying the original's class name, scrubbed message and stack frames. */
     static final class Scrubbed extends RuntimeException {
         Scrubbed(Throwable original, Throwable cause) {
             super(original.getClass().getName() + ": " + LiveSecrets.clean(String.valueOf(original.getMessage())),
-                    cause, false, true);
+                    cause, true, true);
             setStackTrace(original.getStackTrace());
         }
 

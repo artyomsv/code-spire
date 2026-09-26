@@ -50,16 +50,14 @@ it('tells a resting key apart from a refused one, and offers the action each nee
   expect(within(rejected).queryByRole('button', { name: 'Rest longer' })).toBeNull();
 });
 
-// A signed-in seat pays for one build at a time: "In use" is the state a shared key never has (M3.5 part F).
-it('shows a subscription as ready, and as in use while a build holds it', async () => {
+// A signed-in seat reads as a subscription, so it is never mistaken for a key billed per token (M3.5 part F).
+it('shows a signed-in seat as a ready subscription', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
-    member({ id: 'TEST-seat-free', label: 'TEST-seat-free', type: 'codex', authMode: 'SUBSCRIPTION', inUse: false, identified: true }),
-    member({ id: 'TEST-seat-busy', label: 'TEST-seat-busy', type: 'codex', authMode: 'SUBSCRIPTION', inUse: true, identified: true }),
+    member({ id: 'TEST-seat-free', label: 'TEST-seat-free', type: 'codex', authMode: 'SUBSCRIPTION', identified: true }),
   ]);
   render(<SettingsHarnessCredentials />);
 
   expect(within(await row('TEST-seat-free')).getByText('Ready · subscription')).toBeInTheDocument();
-  expect(within(await row('TEST-seat-busy')).getByText('In use')).toBeInTheDocument();
 });
 
 it('switches a member off and back on, and says which one changed', async () => {
@@ -112,26 +110,10 @@ it('shows the server refusal rather than a status line', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load the harness credential pool');
 });
 
-// A worker that died for good never reports its agent stopped, so only a person can free the seat —
-// and only after saying no build still uses it (review of PR #178).
-it('frees a seat only after the operator confirms its build is gone', async () => {
-  const free = vi.spyOn(api, 'freeHarnessSeat').mockResolvedValue(undefined);
-  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
-    member({ id: 'TEST-seat-busy', label: 'TEST-seat-busy', type: 'codex', authMode: 'SUBSCRIPTION', inUse: true, identified: true }),
-  ]);
-  render(<SettingsHarnessCredentials />);
-
-  fireEvent.click(within(await row('TEST-seat-busy')).getByRole('button', { name: 'Free seat' }));
-  expect(free).not.toHaveBeenCalled();
-  fireEvent.click(within(await row('TEST-seat-busy')).getByRole('button', { name: 'Free it' }));
-
-  await waitFor(() => expect(free).toHaveBeenCalledWith('TEST-seat-busy'));
-});
-
 // A seat whose account is unknown could be a second seat on one account; no build uses it.
 it('asks for a new sign-in on a seat whose account is unknown', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
-    member({ id: 'TEST-seat-old', label: 'TEST-seat-old', type: 'codex', authMode: 'SUBSCRIPTION', inUse: false, identified: false }),
+    member({ id: 'TEST-seat-old', label: 'TEST-seat-old', type: 'codex', authMode: 'SUBSCRIPTION', identified: false }),
   ]);
   render(<SettingsHarnessCredentials />);
 

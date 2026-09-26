@@ -81,7 +81,7 @@ public sealed interface RunCommand {
                       List<String> protectedPaths, long maxWallClockSeconds,
                       String scmCredential, String harnessCredential,
                       boolean existingBranch, String protectedBranch,
-                      String reasoningEffort, java.time.Instant signInStartBy) implements RunCommand {
+                      String reasoningEffort, boolean harnessSignIn) implements RunCommand {
 
         // Every call site that predates ADR-040 keeps working and keeps the M0 rule — the
         // additive treatment the other wire records take. A run already on the bus reads as
@@ -93,7 +93,7 @@ public sealed interface RunCommand {
                           String scmCredential, String harnessCredential) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, false, "", null, null);
+                    harnessCredential, false, "", null, false);
         }
 
         /**
@@ -108,12 +108,12 @@ public sealed interface RunCommand {
                           boolean existingBranch, String protectedBranch) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, null, null);
+                    harnessCredential, existingBranch, protectedBranch, null, false);
         }
 
         /**
          * Every caller written before subscriptions existed passes an API key (M3.5 part F). A run already
-         * on the bus decodes with no start-by time, which is what every such run carried.
+         * on the bus decodes with false, which is what every such run carried.
          */
         public ExecuteRun(String runId, RepoRef repo, String remoteUri,
                           String baseBranch, String baseCommit, String branch,
@@ -123,7 +123,7 @@ public sealed interface RunCommand {
                           boolean existingBranch, String protectedBranch, String reasoningEffort) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, null);
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, false);
         }
 
         public ExecuteRun {
@@ -185,7 +185,7 @@ public sealed interface RunCommand {
         public ExecuteRun onExistingBranch(String destination) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, true, destination, reasoningEffort, signInStartBy);
+                    harnessCredential, true, destination, reasoningEffort, harnessSignIn);
         }
 
         /**
@@ -196,31 +196,18 @@ public sealed interface RunCommand {
         public ExecuteRun atEffort(String level) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, level, signInStartBy);
+                    harnessCredential, existingBranch, protectedBranch, level, harnessSignIn);
         }
 
         /**
-         * Whether {@code harnessCredential} is a sealed sign-in file rather than an API key (M3.5 part F).
-         * The worker needs to know which, because the two are handed to the harness differently — and
-         * guessing from the bytes is how a key ends up written as a file.
+         * The same run, where {@code harnessCredential} is a sealed sign-in file rather than an API key
+         * (M3.5 part F). The worker needs to know which, because the two are handed to the harness
+         * differently — and guessing from the bytes is how a key ends up written as a file.
          */
-        public boolean harnessSignIn() {
-            return signInStartBy != null;
-        }
-
-        /**
-         * The same run, paid by a signed-in seat that it must start using by {@code startBy}.
-         *
-         * <p>The seat is leased when the build is assembled, and the lease is only held for a bounded
-         * time until the agent starts. A command that waits in the queue past that time could start
-         * after its seat was handed to another build, so the worker refuses it instead (review of
-         * PR #178). Once the agent starts, the lease holds until the agent is confirmed stopped.
-         */
-        public ExecuteRun paidBySignIn(java.time.Instant startBy) {
-            Objects.requireNonNull(startBy, "startBy");
+        public ExecuteRun paidBySignIn() {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, startBy);
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, true);
         }
 
         @Override
@@ -237,7 +224,7 @@ public sealed interface RunCommand {
                     + ", protectedPaths=" + protectedPaths
                     + ", maxWallClockSeconds=" + maxWallClockSeconds
                     + ", existingBranch=" + existingBranch
-                    + ", signInStartBy=" + signInStartBy
+                    + ", harnessSignIn=" + harnessSignIn
                     + ", protectedBranch=" + protectedBranch
                     + ", reasoningEffort=" + reasoningEffort
                     + ", promptChars=" + prompt.length()

@@ -164,14 +164,6 @@ public class RunDispatcher {
             ack(message);
             return DONE;
         }
-        if (execute.harnessSignIn()) {
-            // A seat pays for held item builds only, whose worker path reports the agent stopped and
-            // frees the seat. This path does not, so a sign-in here would hold a seat for ever.
-            ack(message);
-            emit(failures.of(execute, RunFailureCause.BAD_COMMAND.name(),
-                    "a subscription seat pays for item builds only, and this run is not one"));
-            return DONE;
-        }
         if (!claims.claim(execute.runId(), EXECUTE_SLOT)) {
             // A redelivery. Not an error, and NOT a reason to re-run the agent: the first delivery
             // either finished or is finishing, and a second unit would spend money twice.

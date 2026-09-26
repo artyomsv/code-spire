@@ -123,15 +123,8 @@ class HarnessSignInsTest {
     }
 
     /**
-     * A sign-in that came back as an API key is refused rather than stored as a subscription.
-     *
-     * <p>A subscription member that is really a key would be selected for subscription work and then
-     * bill per token — the exact outcome this part exists to prevent, and one nothing downstream could
-     * detect, because both look like a pool member afterwards.
-     */
-    /**
      * Signing in again to an account that has a seat renews that seat's file instead of adding a second
-     * seat — the way an expired seat is renewed, and never a second lease on one sign-in (review of PR #178).
+     * seat — the way an expired seat is renewed (review of PR #178).
      */
     @Test
     void aSecondSignInToTheSameAccountRenewsItsSeat() throws SQLException {
@@ -169,6 +162,13 @@ class HarnessSignInsTest {
         assertTrue(pool.list().stream().noneMatch(member -> member.label().equals("TEST-seat-no-account")));
     }
 
+    /**
+     * A sign-in that came back as an API key is refused rather than stored as a subscription.
+     *
+     * <p>A subscription member that is really a key would be selected for subscription work and then
+     * bill per token — the exact outcome this part exists to prevent, and one nothing downstream could
+     * detect, because both look like a pool member afterwards.
+     */
     @Test
     void anApiKeySignInIsRefusedRatherThanStoredAsASubscription() {
         HarnessSignIns.View view = start("TEST-seat-wrong-mode");

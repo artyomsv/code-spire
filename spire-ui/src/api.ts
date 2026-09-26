@@ -1698,10 +1698,8 @@ export interface HarnessCredentialView {
   /** When the vendor refused the key. Only an operator clears this. */
   rejectedAt: string | null;
   lastUsedAt: string | null;
-  /** How this member pays: a shared API key, or a signed-in seat that serves one build at a time. */
+  /** How this member pays: an API key, or a signed-in subscription seat. Both are shared by builds. */
   authMode?: 'API_KEY' | 'SUBSCRIPTION';
-  /** Whether a build's agent holds this seat now. Always false for a key, which is shared. */
-  inUse?: boolean;
   /** False for a seat whose account is unknown: it is never used until it is signed in again. */
   identified?: boolean;
 }
@@ -1733,7 +1731,6 @@ export const disableHarnessCredential = (id: string) => credentialAction(id, '',
 export const enableHarnessCredential = (id: string) => credentialAction(id, '/enable', 'POST', 'Failed to switch the credential on');
 export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
 export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');
-export const freeHarnessSeat = (id: string) => credentialAction(id, '/free-seat', 'POST', 'Failed to free the seat');
 
 /**
  * A subscription sign-in in progress (M3.5 part F).

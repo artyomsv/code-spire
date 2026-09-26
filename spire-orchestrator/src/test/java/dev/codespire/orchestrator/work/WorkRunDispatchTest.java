@@ -92,20 +92,16 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
                     "the run names the seat that paid");
             assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND paid_by='SUBSCRIPTION'",command.runId()),
                     "the run records how it paid, where a re-arm cannot erase it");
-            assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&member.inUse()),"the seat is leased");
-            // The worker must start it soon, or refuse it: a late start could meet a seat given to another build.
-            java.time.Duration window=java.time.Duration.between(java.time.Instant.now(),command.signInStartBy());
-            assertTrue(window.toSeconds()>500 && window.toSeconds()<=600,"start within ten minutes, was "+window);
         } finally { pool.remove(seat); }
     }
 
-    /** An assembly that fails after the seat is leased dispatches nothing, so it frees the seat at once. */
-    @Test void aSubscriptionBuildThatCannotBeAssembledFreesItsSeat() throws Exception {
+    /** A stored sign-in that cannot be read is refused by name, and nothing reaches a worker. */
+    @Test void aSubscriptionBuildWhoseSignInCannotBeReadDispatchesNothing() throws Exception {
         UUID seat;
         try(var c=dataSource.getConnection()) {
             seat=pool.addSubscription(c,"TEST-dispatch-unreadable-"+UUID.randomUUID(),"codex",
                     "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-"+UUID.randomUUID()+"\"}}");
-            // The stored file becomes unreadable after it was identified: the hand-over fails after the lease.
+            // The stored file becomes unreadable after it was identified: the hand-over fails at assembly.
             try(var ps=c.prepareStatement("UPDATE harness_credential SET api_key=? WHERE id=?")) {
                 ps.setString(1,encryption.encryptString("TEST-not-a-sign-in","harness-credential:"+seat));
                 ps.setObject(2,seat);ps.executeUpdate();
@@ -121,8 +117,6 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
             dispatcher.drain();
 
             assertEquals(before,heldCommands.size(),"nothing was dispatched");
-            assertTrue(pool.list().stream().anyMatch(member->member.id().equals(seat)&&!member.inUse()),
-                    "no agent uses the seat, so it is free now rather than at its deadline");
         } finally { pool.remove(seat); }
     }
     @Inject RunResultSaga saga;

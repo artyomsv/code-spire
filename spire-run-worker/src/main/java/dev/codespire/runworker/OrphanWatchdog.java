@@ -67,12 +67,6 @@ public class OrphanWatchdog {
     static final String REAP_SLOT = "reap";
 
     /**
-     * Once-only, like the reap report: a held unit is stopped again on every sweep, and reporting its
-     * agent stopped each time would repeat one message for as long as the workspace is kept.
-     */
-    static final String AGENT_STOPPED_SLOT = "agent-stopped";
-
-    /**
      * How many consecutive missed heartbeats a live run must survive before it looks abandoned.
      *
      * <p>A floor rather than a target: the shipped defaults give twenty, so nothing near the boundary
@@ -217,7 +211,6 @@ public class OrphanWatchdog {
             // ordinary salvage, terminal failure or deletion can stand in for a delivery decision.
             stop(unit);
             LOG.warn("publication is held; stopped the abandoned processes and retained their workspace");
-            agentStopped(unit);
             return;
         }
         boolean preserved = lease.map(WorkspaceLeases.Lease::preserved).orElse(false);
@@ -258,7 +251,6 @@ public class OrphanWatchdog {
                         + finalization.detail() + "); the unit is preserved and was not destroyed");
             }
             stop(unit);
-            agentStopped(unit);
             return;
         }
         if (!alreadyReported) {
@@ -269,18 +261,6 @@ public class OrphanWatchdog {
             leases.release(unit.runId());
             LiveSecrets.forget(unit.runId());
         }
-        agentStopped(unit);
-    }
-
-    /**
-     * Frees a signed-in seat once the runtime confirms the agent stopped (M3.5 part F). Every unit, not
-     * only a seat's: the watchdog cannot tell which paid by sign-in, and freeing a seat nobody holds is a
-     * no-op on the other side. The claim is given back when nothing was sent — the agent may still run,
-     * or the broker refused — so the next sweep asks again.
-     */
-    private void agentStopped(RunHandle unit) {
-        if (!claims.claim(unit.runId(), AGENT_STOPPED_SLOT)) return;
-        if (!results.agentStoppedIfKnown(runtime, unit.runId())) claims.release(unit.runId(), AGENT_STOPPED_SLOT);
     }
 
     private Finalization salvage(RunHandle unit) {

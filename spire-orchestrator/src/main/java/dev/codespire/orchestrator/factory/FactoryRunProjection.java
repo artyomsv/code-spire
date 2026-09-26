@@ -786,10 +786,6 @@ public class FactoryRunProjection {
             case RunResult.RunWorkReady ready -> workReady(ready);
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
-            // Not an outcome: the saga frees the run's seat on it and hands it to nothing else.
-            case RunResult.RunAgentStopped ignored -> {
-                return;
-            }
         }
         push(result.runId());
     }

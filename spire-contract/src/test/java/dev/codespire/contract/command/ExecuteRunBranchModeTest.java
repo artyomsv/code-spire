@@ -50,10 +50,9 @@ class ExecuteRunBranchModeTest {
     /** A sign-in is written as a file and a key is piped into a login; losing the flag swaps the two. */
     @Test
     void aRunPaidBySignInSaysSoThroughEveryRebuild() {
-        RunCommand.ExecuteRun run = run().paidBySignIn(java.time.Instant.parse("2099-01-01T00:00:00Z")).atEffort("high").onExistingBranch("develop");
+        RunCommand.ExecuteRun run = run().paidBySignIn().atEffort("high").onExistingBranch("develop");
 
         assertTrue(run.harnessSignIn());
-        assertEquals(java.time.Instant.parse("2099-01-01T00:00:00Z"), run.signInStartBy(), "the deadline survives every rebuild");
         assertFalse(run().harnessSignIn(), "every run before part F paid with a key");
     }
 
