@@ -24,6 +24,7 @@ public class BuildDefaults {
     @Inject LlmModelRegistry models;
     @Inject dev.codespire.orchestrator.llm.LlmModelPricer pricer;
     @Inject HarnessCatalogues catalogues;
+    @Inject HarnessCredentialPool pool;
 
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
@@ -31,18 +32,28 @@ public class BuildDefaults {
      */
     /**
      * @param effort the thinking level, or null for the model's own default — a real choice, not a gap
+     * @param payWith {@code API_KEY} or {@code SUBSCRIPTION} (M3.5 part F)
      */
     public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
-                           String updatedBy, Instant updatedAt) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null, null); }
+                           String payWith, String updatedBy, Instant updatedAt) {
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, null, null); }
         public boolean set() { return revision > 0; }
     }
 
-    /** @param effort null for the model's own default */
-    public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort) {
+    /**
+     * @param effort null for the model's own default
+     * @param payWith null or blank for an API key, which is what every setup paid with before part F
+     */
+    public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort,
+                        String payWith) {
         /** Every caller written before thinking levels existed keeps the model's own default. */
         public Input(long expectedRevision, String baseBranch, String harness, String model) {
-            this(expectedRevision, baseBranch, harness, model, null);
+            this(expectedRevision, baseBranch, harness, model, null, null);
+        }
+
+        /** Every caller written before payment modes existed pays with an API key. */
+        public Input(long expectedRevision, String baseBranch, String harness, String model, String effort) {
+            this(expectedRevision, baseBranch, harness, model, effort, null);
         }
     }
 
@@ -63,14 +74,14 @@ public class BuildDefaults {
      * against the saved one INSIDE the transaction that registers the result (M3.5 part C).
      */
     public Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
-        String sql = "SELECT revision,base_branch,harness,model,effort,updated_by,updated_at"
+        String sql = "SELECT revision,base_branch,harness,model,effort,pay_with,updated_by,updated_at"
                 + " FROM repository_build_defaults WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, repository);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Defaults.none();
                 return new Defaults(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                        rs.getString(5), rs.getString(6), rs.getTimestamp(7).toInstant());
+                        rs.getString(5), rs.getString(6), rs.getString(7), rs.getTimestamp(8).toInstant());
             }
         }
     }
@@ -97,14 +108,23 @@ public class BuildDefaults {
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
         checkAgainstTheHarness(harness, model, effort);
-        // Exactly what the dispatch refuses, asked here: the model must be offered, and it must price
-        // every token type this harness can report. A model disabled AFTER this save is refused at
-        // dispatch too (WorkRunAssembly), so the two no longer disagree in either direction.
-        if (models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
-            throw new Refused("model_unknown");
-        var unpriced = pricer.unpricedTypes(model, harness);
-        if (!unpriced.isEmpty()) throw new Refused("model_pricing_incomplete:"
-                + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
+        String payWith;
+        try { payWith = dev.codespire.contract.work.PayWith.normalise(input.payWith()); }
+        catch (IllegalArgumentException unknown) { throw new Refused("pay_with_invalid"); }
+        if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION)) {
+            // A subscription is not priced per token, so the model needs no rates and no catalogue entry
+            // — the harness's own list above is what says it can run. What it does need is a seat.
+            if (!pool.hasSubscription(harness)) throw new Refused("subscription_not_signed_in");
+        } else {
+            // Exactly what the dispatch refuses, asked here: the model must be offered, and it must price
+            // every token type this harness can report. A model disabled AFTER this save is refused at
+            // dispatch too (WorkRunAssembly), so the two no longer disagree in either direction.
+            if (models.list().stream().noneMatch(known -> known.enabled() && known.name().equals(model)))
+                throw new Refused("model_unknown");
+            var unpriced = pricer.unpricedTypes(model, harness);
+            if (!unpriced.isEmpty()) throw new Refused("model_pricing_incomplete:"
+                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
+        }
         try (Connection c = dataSource.getConnection()) {
             // Same lock order as the policy save: the repository row first, so a save cannot interleave
             // with a repository or account edit that decides whether these coordinates can run at all.
@@ -115,14 +135,15 @@ public class BuildDefaults {
             if (get(c, repository, true).revision() != input.expectedRevision())
                 throw new Refused("build_defaults_changed");
             try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by)
-                    VALUES (?,?,?,?,?,?)
+                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by,pay_with)
+                    VALUES (?,?,?,?,?,?,?)
                     ON CONFLICT (repository_id) DO UPDATE SET base_branch=excluded.base_branch,harness=excluded.harness,
                         model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=now(),
+                        pay_with=excluded.pay_with,
                         revision=repository_build_defaults.revision+1
                     """)) {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
-                ps.setString(4, model); ps.setString(5, effort); ps.setString(6, actor);
+                ps.setString(4, model); ps.setString(5, effort); ps.setString(6, actor); ps.setString(7, payWith);
                 ps.executeUpdate();
             }
             // Saving a setup is the repair for "this repository has no build setup", so the items that

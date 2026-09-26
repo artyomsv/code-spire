@@ -562,6 +562,7 @@ class RunDispatcherTest {
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
         assertTrue(leases.released);
+        assertFalse(LiveSecrets.holds(EXECUTE.runId()), "a gone unit logs nothing more, so its secrets are let go");
     }
 
     @Test
@@ -577,6 +578,9 @@ class RunDispatcherTest {
 
         assertFalse(leases.released);
         assertTrue(leases.preserved);
+        // A surviving unit can still log; its secrets stay scrubbed until the watchdog reaps it.
+        assertTrue(LiveSecrets.holds(EXECUTE.runId()));
+        LiveSecrets.forget(EXECUTE.runId());
     }
 
     @Test

@@ -118,7 +118,14 @@ public class HarnessCredentialResource {
     @Path("/{id}/enable")
     @Consumes(MediaType.WILDCARD)
     public Response enable(@PathParam("id") String id) {
-        if (!pool.enable(uuid(id))) {
+        boolean enabled;
+        try {
+            enabled = pool.enable(uuid(id));
+        } catch (HarnessCredentialPool.SeatTakenException taken) {
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("subscription_account_taken").type(MediaType.TEXT_PLAIN).build());
+        }
+        if (!enabled) {
             throw new NotFoundException("no disabled harness credential with id: " + id);
         }
         return Response.noContent().build();

@@ -53,6 +53,12 @@ public final class CodexAdapter implements HarnessAdapter {
     private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
 
     /**
+     * Where the sign-in file waits for the login step to write it (M3.5 part F). This arm's own name: the
+     * script below reads it once, writes the file Codex reads, and unsets it before Codex starts.
+     */
+    private static final String SIGN_IN_VARIABLE = "CODEX_SIGN_IN_FILE";
+
+    /**
      * The exit code the login step uses when it cannot authenticate, so a run that never reached
      * the model is not reported as one the model failed to answer.
      *
@@ -122,14 +128,34 @@ public final class CodexAdapter implements HarnessAdapter {
         // nothing lingers to interpret anything, and the two interpolations are quoted and refused
         // if they could close the quote. The prompt still arrives on the harness's stdin, which the
         // entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
-        String script = "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
-                + " || exit " + LOGIN_FAILED + "; "
+        String script = login(invocation)
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
                 + " -";
         return List.of("sh", "-c", script);
+    }
+
+    /**
+     * How this run signs Codex in: a key piped into {@code --with-api-key}, or a sign-in file written
+     * where Codex reads one.
+     *
+     * <p>The file is written because no login flag takes it. {@code --with-access-token} was the plan and
+     * refuses a ChatGPT access token (measured 2026-09-25, codex-cli 0.156.1: design §5.3); the file,
+     * with its refresh token emptied by the orchestrator, is accepted and runs. Written owner-only
+     * ({@code umask 077}), and the variable that carried it is unset before Codex starts, so the process
+     * that runs ticket text does not also inherit it. The agent can still read the file, as it can read
+     * a key today — what it cannot hold is a refresh token, because none was ever sent.
+     */
+    private static String login(HarnessInvocation invocation) {
+        if (invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)) {
+            return "mkdir -p \"$HOME/.codex\" && (umask 077 && printenv " + SIGN_IN_VARIABLE
+                    + " > \"$HOME/.codex/auth.json\") || exit " + LOGIN_FAILED + "; "
+                    + "unset " + SIGN_IN_VARIABLE + "; ";
+        }
+        return "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
+                + " || exit " + LOGIN_FAILED + "; ";
     }
 
     /**
@@ -176,6 +202,10 @@ public final class CodexAdapter implements HarnessAdapter {
         String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
         if (apiKey != null) {
             credentials.put(API_KEY_VARIABLE, apiKey);
+        }
+        String signIn = credentials.remove(HarnessInvocation.SIGN_IN);
+        if (signIn != null) {
+            credentials.put(SIGN_IN_VARIABLE, signIn);
         }
         return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
     }
@@ -341,7 +371,7 @@ public final class CodexAdapter implements HarnessAdapter {
             // never started, so nothing about the model or the work item is implicated. The first
             // live dispatch spent its diagnosis on the model because this case had no name.
             return TerminalOutcome.failure(FailureCause.HARNESS_EXIT_NONZERO,
-                    "codex login did not accept the API key, so the harness never ran");
+                    "codex login failed with the run's credential (a key or a sign-in file), so the harness never ran");
         }
         if (!seen.sawAnyOutput()) {
             // Distinct and nameable: the model spent its whole budget and said nothing. Reported as

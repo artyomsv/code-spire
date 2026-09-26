@@ -373,6 +373,56 @@ class FactoryRunProjectionTest {
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(member.label(), view.credentialLabel());
         assertEquals("openai", view.credentialType());
+        assertEquals("API_KEY", view.credentialAuthMode());
+    }
+
+    /**
+     * A re-arm clears the credential on purpose, but not how the run paid: charging reads that, so a
+     * subscription retry is never priced as an API-key run (review of PR #178).
+     */
+    @Test
+    void aReArmKeepsHowTheRunPaid() {
+        String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+        var row = new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234",
+                "spire/TEST-paid", null, null).paidBySubscription();
+        assertTrue(projection.queued(row, "TEST summary", null));
+        projection.dispatchFailed(runId, "TEST: the broker did not answer");
+
+        assertTrue(projection.queued(row, "TEST summary", null), "the same request re-arms");
+
+        assertEquals(Optional.of("SUBSCRIPTION"), projection.paidByOf(runId));
+    }
+
+    /** A retry that pays another way is a different request, refused like any other differing component. */
+    @Test
+    void aReArmThatPaysAnotherWayIsRefused() {
+        String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+        var row = new FactoryRunProjection.QueuedRun(runId, "codex", "gpt-5.6", "main", "abc1234",
+                "spire/TEST-paid", null, null);
+        assertTrue(projection.queued(row, "TEST summary", null));
+        projection.dispatchFailed(runId, "TEST: the broker did not answer");
+
+        assertFalse(projection.queued(row.paidBySubscription(), "TEST summary", null));
+        assertEquals(Optional.of("API_KEY"), projection.paidByOf(runId));
+    }
+
+    /** A run a signed-in seat paid for says so; the screen must not call it an API key billed per token. */
+    @Test
+    void aRunPaidByASubscriptionSaysSo() throws SQLException {
+        UUID seat;
+        try (Connection c = dataSource.getConnection()) {
+            seat = pool.addSubscription(c, "TEST-frp-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + UUID.randomUUID() + "\"}}");
+        }
+        try {
+            String runId = "run::github:TEST-acme/app:subject-" + UUID.randomUUID() + ":1";
+            assertTrue(queueWith(runId, seat));
+
+            FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
+            assertEquals("SUBSCRIPTION", view.credentialAuthMode());
+            assertEquals("codex", view.credentialType());
+        } finally {
+            pool.remove(seat);
+        }
     }
 
     /** A run dispatched with no pool member names none, rather than inventing one. */
@@ -381,6 +431,7 @@ class FactoryRunProjectionTest {
         FactoryRunProjection.RunView view = projection.find(queuedRun()).orElseThrow();
         assertNull(view.credentialLabel());
         assertNull(view.credentialType());
+        assertNull(view.credentialAuthMode());
     }
 
     private String queuedRun() {

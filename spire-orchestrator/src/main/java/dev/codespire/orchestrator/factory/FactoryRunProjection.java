@@ -148,6 +148,25 @@ public class FactoryRunProjection {
      * The caller must treat both the same way and mark nothing: guessing a member here would take
      * a working key out of rotation on the strength of a run that never used it.
      */
+    /**
+     * How a run paid: {@code API_KEY} or {@code SUBSCRIPTION}, empty for a run this deployment never
+     * queued. Unlike the credential, a re-arm cannot clear it.
+     *
+     * @throws IllegalStateException when the row cannot be read. Not "empty": an unreadable row read as
+     *     an API key would price a subscription run at a key's rates.
+     */
+    public Optional<String> paidByOf(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT paid_by FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString("paid_by")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("How run " + runId + " paid could not be read", e);
+        }
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -174,7 +193,8 @@ public class FactoryRunProjection {
                           List<RunResult.BlockedChange> blocked,
                           String failureCause, String failureDetail, String unitId,
                           String prUrl, String prError, Instant agentStartedAt,
-                          String kind, String harness, String model, String credentialLabel, String credentialType, String providerType,
+                          String kind, String harness, String model, String credentialLabel, String credentialType,
+                          String credentialAuthMode, String providerType,
                           String workspace, String slug, String subject, int attempt,
                           String baseBranch, String baseCommit, String branch, String pushedAs,
                           String reviewId, String findingRef, String taskSummary,
@@ -370,11 +390,34 @@ public class FactoryRunProjection {
      *                            Deliberately NOT part of the re-arm comparison: a retry may
      *                            legitimately draw a different member, which is the rotation working
      *                            rather than a different request.
+     * @param paidBy              {@code API_KEY} or {@code SUBSCRIPTION}: how the run pays, which decides
+     *                            how it is charged. Kept apart from the credential because a re-arm
+     *                            clears that and must not change this (M3.5 part F).
      */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
                             UUID harnessCredentialId, String kind, String reviewId,
-                            String findingRef, String commentId) {
+                            String findingRef, String commentId, String paidBy) {
+
+        public QueuedRun {
+            paidBy = dev.codespire.contract.work.PayWith.normalise(paidBy);
+        }
+
+        /** Every run before M3.5 part F paid with an API key. */
+        public QueuedRun(String runId, String harness, String model, String baseBranch,
+                         String baseCommit, String branch, String pushedAs,
+                         UUID harnessCredentialId, String kind, String reviewId,
+                         String findingRef, String commentId) {
+            this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, null);
+        }
+
+        /** The same row, paid by a signed-in subscription seat. */
+        public QueuedRun paidBySubscription() {
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId,
+                    dev.codespire.contract.work.PayWith.SUBSCRIPTION);
+        }
 
         /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
         public QueuedRun(String runId, String harness, String model, String baseBranch,
@@ -415,7 +458,7 @@ public class FactoryRunProjection {
                         + "it, or a redelivery of that comment buys a second run with no symptom");
             }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId);
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId, paidBy);
         }
     }
 
@@ -496,8 +539,8 @@ public class FactoryRunProjection {
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
-                                         comment_id, task_summary, repository_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         comment_id, task_summary, repository_id, paid_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -522,7 +565,10 @@ public class FactoryRunProjection {
                    SET status = EXCLUDED.status, failure_cause = NULL, failure_detail = NULL,
                        ended_at = NULL, harness_credential_id = NULL,
                        task_summary = EXCLUDED.task_summary
-                 WHERE factory_run.status = ? AND factory_run.failure_cause = ?
+                 WHERE factory_run.status = ?
+                   -- How the run pays is part of what it IS: a retry that pays another way is a
+                   -- different request, refused like any other differing component.
+                   AND factory_run.paid_by = EXCLUDED.paid_by AND factory_run.failure_cause = ?
                    AND factory_run.harness = EXCLUDED.harness AND factory_run.model = EXCLUDED.model
                    AND factory_run.base_branch = EXCLUDED.base_branch AND factory_run.base_commit = EXCLUDED.base_commit
                    AND factory_run.branch = EXCLUDED.branch
@@ -567,8 +613,9 @@ public class FactoryRunProjection {
             // column, and a finished run knows only a branch name and a list of paths.
             ps.setString(19, taskSummary);
             ps.setObject(20, repositoryId);
-            ps.setString(21, FAILED);
-            ps.setString(22, DISPATCH_FAILED);
+            ps.setString(21, row.paidBy());
+            ps.setString(22, FAILED);
+            ps.setString(23, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             changed = ps.executeUpdate() == 1;
@@ -1015,14 +1062,14 @@ public class FactoryRunProjection {
 
     public Optional<RunView> find(String runId) {
         // The credential names WHO paid for this run and how it is billed. Its secret is never
-        // selected here; the label and type are the operator metadata that name the key.
+        // selected here; the label, type and auth mode are the operator metadata that name the key.
         String sql = """
                 SELECT r.status, r.pushed_ref, r.blocked_changes, r.failure_cause, r.failure_detail, r.unit_id,
                        r.pr_url, r.pr_error, r.agent_started_at, r.kind, r.harness, r.model, r.provider_type,
                        r.workspace, r.slug, r.subject, r.attempt, r.base_branch, r.base_commit, r.branch, r.pushed_as,
                        r.review_id, r.finding_ref, r.task_summary, r.started_at, r.ended_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
-                       h.label AS credential_label, h.type AS credential_type
+                       h.label AS credential_label, h.type AS credential_type, h.auth_mode AS credential_auth_mode
                   FROM factory_run r
                   LEFT JOIN harness_credential h ON h.id = r.harness_credential_id
                  WHERE r.run_id = ?
@@ -1051,7 +1098,7 @@ public class FactoryRunProjection {
                 rs.getString("unit_id"), rs.getString("pr_url"), rs.getString("pr_error"),
                 instant(rs, "agent_started_at"), rs.getString("kind"), rs.getString("harness"),
                 rs.getString("model"), rs.getString("credential_label"), rs.getString("credential_type"),
-                rs.getString("provider_type"), rs.getString("workspace"),
+                rs.getString("credential_auth_mode"), rs.getString("provider_type"), rs.getString("workspace"),
                 rs.getString("slug"), rs.getString("subject"), rs.getInt("attempt"),
                 rs.getString("base_branch"), rs.getString("base_commit"), rs.getString("branch"),
                 rs.getString("pushed_as"), rs.getString("review_id"), rs.getString("finding_ref"),

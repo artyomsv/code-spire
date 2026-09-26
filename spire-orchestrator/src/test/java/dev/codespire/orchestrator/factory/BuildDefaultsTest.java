@@ -156,6 +156,64 @@ class BuildDefaultsTest {
         assertNull(defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").effort());
     }
 
+    @Inject HarnessCredentialPool pool;
+
+    /** A signed-in codex seat, switched off by the caller when done: a seat a run points at cannot be deleted. */
+    private UUID seat() throws java.sql.SQLException {
+        try (var c = dataSource.getConnection()) {
+            return pool.addSubscription(c, "TEST-build-seat-" + UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + UUID.randomUUID() + "\"}}");
+        }
+    }
+
+    /**
+     * A subscription is not priced per token, so a model with no price at all may be saved — the harness's
+     * own list is what says it can run (M3.5 part F).
+     */
+    @Test
+    void aSubscriptionSetupNeedsASeatButNoPrice() throws java.sql.SQLException {
+        String unpriced = "TEST-unpriced-" + UUID.randomUUID().toString().substring(0, 8);
+        UUID seat = seat();
+        try {
+            var saved = defaults.save(repository, new BuildDefaults.Input(0, "main", "codex", unpriced, null, "SUBSCRIPTION"),
+                    "TEST-operator");
+
+            assertEquals("SUBSCRIPTION", saved.payWith());
+            assertEquals("SUBSCRIPTION", defaults.get(repository).payWith());
+        } finally {
+            pool.remove(seat);
+        }
+    }
+
+    /** Paying with a subscription nobody has signed in would refuse every build it prepares. */
+    @Test
+    void aSubscriptionSetupIsRefusedWhileNoSeatIsSignedIn() {
+        assumeNoCodexSeat();
+        assertEquals("subscription_not_signed_in", refusal(new BuildDefaults.Input(0, "main", "codex", model, null, "SUBSCRIPTION")));
+    }
+
+    /** Other suites switch their seats off; one left on would make the refusal above untestable, not wrong. */
+    private void assumeNoCodexSeat() {
+        org.junit.jupiter.api.Assumptions.assumeFalse(pool.hasSubscription("codex"), "a codex seat is signed in on this database");
+    }
+
+    /** The same model paid with an API key is still refused without its prices. */
+    @Test
+    void theSameModelPaidWithAKeyStillNeedsItsPrices() {
+        String unpriced = "TEST-unpriced-" + UUID.randomUUID().toString().substring(0, 8);
+
+        assertEquals("model_unknown", refusal(new BuildDefaults.Input(0, "main", "codex", unpriced, null, "API_KEY")));
+    }
+
+    @Test
+    void anUnknownWayToPayIsRefused() {
+        assertEquals("pay_with_invalid", refusal(new BuildDefaults.Input(0, "main", "codex", model, null, "TEST-free")));
+    }
+
+    @Test
+    void aSetupThatSaysNothingPaysWithAKey() {
+        assertEquals("API_KEY", defaults.save(repository, input("main", "codex", model, 0), "TEST-operator").payWith());
+    }
+
     private String refusal(BuildDefaults.Input input) {
         return assertThrows(BuildDefaults.Refused.class, () -> defaults.save(repository, input, "TEST-operator")).reason();
     }

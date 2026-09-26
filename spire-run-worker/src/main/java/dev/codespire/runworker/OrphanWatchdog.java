@@ -259,6 +259,7 @@ public class OrphanWatchdog {
         }
         if (destroy(unit)) {
             leases.release(unit.runId());
+            LiveSecrets.forget(unit.runId());
         }
     }
 

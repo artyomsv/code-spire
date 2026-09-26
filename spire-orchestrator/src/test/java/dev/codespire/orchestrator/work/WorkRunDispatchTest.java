@@ -62,6 +62,63 @@ class WorkRunDispatchTest extends WorkPreparedFixture {
                 "TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000"));
     }
     @org.junit.jupiter.api.AfterEach void forgetTheCatalogue() throws Exception {executeWith("DELETE FROM harness_catalogue");}
+    @Inject dev.codespire.encryption.EncryptionService encryption;
+
+    /**
+     * A build approved to pay with a subscription leases a seat and hands the agent the sign-in with its
+     * refresh token emptied — never the whole stored file (M3.5 part F, design §5.6).
+     */
+    @Test void aSubscriptionBuildLeasesASeatAndHandsOverNoRefreshToken() throws Exception {
+        UUID seat;
+        try(var c=dataSource.getConnection()) {
+            seat=pool.addSubscription(c,"TEST-dispatch-seat-"+UUID.randomUUID(),"codex",
+                    "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"TEST-access\",\"refresh_token\":\"TEST-refresh-must-not-leave\","
+                    +"\"account_id\":\"TEST-account-"+UUID.randomUUID()+"\"}}");
+        }
+        try {
+            String id=admit("autonomous",58);var plain=preparation("TEST-prepared-admin");
+            var paying=new WorkPreparation(plain.specification(),plain.plan(),plain.baseBranch(),plain.baseCommit(),plain.harness(),
+                    plain.model(),plain.registeredBy(),WorkPreparation.PAY_WITH_BINDING,null,PayWith.SUBSCRIPTION);
+            var outcome=transitions.prepare(id,store.history(id).size(),paying);assertEquals(200,outcome.status(),outcome.reason());
+
+            dispatcher.drain();
+
+            var command=heldCommands.getLast().execution();
+            assertTrue(command.harnessSignIn(),"the worker must write a file, not pipe a key");
+            String handedOver=encryption.decryptString(command.harnessCredential(),dev.codespire.contract.command.RunCommand.harnessCredentialAad(command.runId()));
+            assertFalse(handedOver.contains("TEST-refresh-must-not-leave"),"the refresh token never leaves the orchestrator");
+            assertTrue(handedOver.contains("TEST-access"));
+            assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND harness_credential_id=?",command.runId(),seat),
+                    "the run names the seat that paid");
+            assertEquals(1,count("SELECT count(*) FROM factory_run WHERE run_id=? AND paid_by='SUBSCRIPTION'",command.runId()),
+                    "the run records how it paid, where a re-arm cannot erase it");
+        } finally { pool.remove(seat); }
+    }
+
+    /** A stored sign-in that cannot be read is refused by name, and nothing reaches a worker. */
+    @Test void aSubscriptionBuildWhoseSignInCannotBeReadDispatchesNothing() throws Exception {
+        UUID seat;
+        try(var c=dataSource.getConnection()) {
+            seat=pool.addSubscription(c,"TEST-dispatch-unreadable-"+UUID.randomUUID(),"codex",
+                    "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-"+UUID.randomUUID()+"\"}}");
+            // The stored file becomes unreadable after it was identified: the hand-over fails at assembly.
+            try(var ps=c.prepareStatement("UPDATE harness_credential SET api_key=? WHERE id=?")) {
+                ps.setString(1,encryption.encryptString("TEST-not-a-sign-in","harness-credential:"+seat));
+                ps.setObject(2,seat);ps.executeUpdate();
+            }
+        }
+        try {
+            String id=admit("autonomous",59);var plain=preparation("TEST-prepared-admin");
+            var paying=new WorkPreparation(plain.specification(),plain.plan(),plain.baseBranch(),plain.baseCommit(),plain.harness(),
+                    plain.model(),plain.registeredBy(),WorkPreparation.PAY_WITH_BINDING,null,PayWith.SUBSCRIPTION);
+            var outcome=transitions.prepare(id,store.history(id).size(),paying);assertEquals(200,outcome.status(),outcome.reason());
+            int before=heldCommands.size();
+
+            dispatcher.drain();
+
+            assertEquals(before,heldCommands.size(),"nothing was dispatched");
+        } finally { pool.remove(seat); }
+    }
     @Inject RunResultSaga saga;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly assembly;
     String ready() throws Exception {String id=admit("autonomous",56);register(id);return id;}

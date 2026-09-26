@@ -137,6 +137,34 @@ class WorkPreparationBindingVersionTest {
         assertEquals(null, atLevel("  ").effort(), "blank is the model's own default, not a level called blank");
     }
 
+    private static WorkPreparation paying(String payWith) {
+        UUID specId = UUID.fromString("00000000-0000-4000-8000-000000000071");
+        UUID planId = UUID.fromString("00000000-0000-4000-8000-000000000072");
+        return new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, specId),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, planId),
+                "main", COMMIT, "codex", "TEST-model", "system", WorkPreparation.PAY_WITH_BINDING, null, payWith);
+    }
+
+    /** How a build pays decides what it costs, so an approval for one is not an approval for the other. */
+    @Test
+    void howABuildPaysIsPartOfWhatIsApproved() {
+        assertNotEquals(paying(PayWith.API_KEY).binding(), paying(PayWith.SUBSCRIPTION).binding());
+        assertEquals(PayWith.API_KEY, paying(null).payWith(), "no choice is the API key every build used before");
+        assertNotEquals(atLevel(null).binding(), paying(PayWith.API_KEY).binding(), "version 4 is not version 3");
+    }
+
+    /** Versions 1 to 3 do not hash the payment, so they may not carry a subscription to the build. */
+    @Test
+    void aSubscriptionUnderAVersionThatDoesNotHashItIsRefused() {
+        UUID specId = UUID.randomUUID(), planId = UUID.randomUUID();
+        assertThrows(IllegalArgumentException.class, () -> new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, specId),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, planId),
+                "main", COMMIT, "codex", "TEST-model", "system", WorkPreparation.EFFORT_BINDING, null, PayWith.SUBSCRIPTION));
+        assertThrows(IllegalArgumentException.class, () -> paying("TEST-free"));
+    }
+
     @Test
     void anUnknownVersionIsRefusedRatherThanHashedSomeOtherWay() {
         assertThrows(IllegalArgumentException.class, () -> new WorkPreparation(

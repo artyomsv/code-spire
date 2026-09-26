@@ -279,6 +279,24 @@ public class HarnessSignIns {
                     fail(c, id, HarnessSignInResult.Failed.WRONG_MODE);
                     return;
                 }
+                // One seat per account. Signing in again to an account that has a seat replaces that
+                // seat's file: it is how an expired seat is renewed. A second seat would share the one
+                // subscription's limits while looking like more, and keep the older, expiring copy in use.
+                Optional<String> account = SignInFiles.accountOf(body);
+                if (account.isEmpty()) {
+                    fail(c, id, "subscription_unidentified");
+                    return;
+                }
+                Optional<UUID> existing = pool.seatFor(c, pending.get().harness(), account.orElseThrow());
+                if (existing.isPresent()) {
+                    pool.replaceSubscription(c, existing.orElseThrow(), body);
+                    try (PreparedStatement ps = c.prepareStatement("""
+                            UPDATE harness_sign_in SET state='COMPLETE', credential_id=?, updated_at=now() WHERE id=?
+                            """)) {
+                        ps.setObject(1, existing.orElseThrow()); ps.setObject(2, id); ps.executeUpdate();
+                    }
+                    return;
+                }
                 if (pool.hasLabel(c, pending.get().label())) {
                     // Taken by an ordinary key while this person was approving. Refusing by name beats
                     // letting the unique constraint throw, because that throw used to be swallowed:

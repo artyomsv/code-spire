@@ -203,9 +203,12 @@ public class WorkPreparationSweep {
         if (!setup.set()) return refuse(id, generation, expectedRevision, "build_defaults_missing");
         // What the dispatch will ask, asked before an approval is opened on it. Without this, disabling
         // a model after the setup was saved still produced a decision whose build was already refused.
+        boolean subscription = dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(setup.payWith());
         try {
-            if (models.isDisabled(setup.model())) return refuse(id, generation, expectedRevision, "model_disabled");
-            var unpriced = pricer.unpricedTypes(setup.model(), setup.harness());
+            // A subscription is not priced per token, so the price list neither enables nor blocks it.
+            if (!subscription && models.isDisabled(setup.model())) return refuse(id, generation, expectedRevision, "model_disabled");
+            var unpriced = subscription ? java.util.List.<dev.codespire.contract.review.TokenType>of()
+                    : pricer.unpricedTypes(setup.model(), setup.harness());
             if (!unpriced.isEmpty()) return refuse(id, generation, expectedRevision, "model_pricing_incomplete:"
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
             // The setup was checked against the image it was saved for; the harness may run another now.
@@ -247,7 +250,7 @@ public class WorkPreparationSweep {
                         WorkPreparation.Origin.STORED, planId),
                 setup.baseBranch(), head, setup.harness(), setup.model(),
                 actor == null ? "system:build-defaults@" + setup.revision() : actor,
-                WorkPreparation.EFFORT_BINDING, setup.effort());
+                WorkPreparation.PAY_WITH_BINDING, setup.effort(), setup.payWith());
 
         // The saved setup is compared again INSIDE the registration's own transaction: it was read
         // before a forge call this waited on, and a repository whose branch, harness or model changed

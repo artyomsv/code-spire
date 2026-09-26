@@ -14,6 +14,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -99,10 +100,16 @@ public class RunCharges {
             // IllegalArgumentException out of valueOf — which would reach the messaging layer and
             // produce exactly the redelivery loop the comment below says this catch prevents.
             ModelUsage usage = RunTokenUsage.of(result, model, maxReportedTokens);
-            List<ChargeLine> lines = pricer.priceCall(model, usage);
             // Which key paid, read from the run's own row like the model beside it. Empty for a run
             // dispatched before the pool existed; the column is nullable for exactly that.
-            String credentialRef = runs.harnessCredentialOf(runId).map(UUID::toString).orElse(null);
+            Optional<UUID> credential = runs.harnessCredentialOf(runId);
+            // Priced by how the run PAID, not by its model: a subscription run's tokens cost nothing per
+            // token, and the same model's API-key run must still be priced (M3.5 part F, design §5.7).
+            // Read from the run, not through its credential: a re-armed dispatch clears the credential.
+            boolean subscription = runs.paidByOf(runId)
+                    .filter(dev.codespire.contract.work.PayWith.SUBSCRIPTION::equals).isPresent();
+            List<ChargeLine> lines = subscription ? pricer.priceUnmetered(usage) : pricer.priceCall(model, usage);
+            String credentialRef = credential.map(UUID::toString).orElse(null);
             ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model,
                     lines, credentialRef));
             // The terminal-status push precedes charging. FIX runs and runs that delivered nothing

@@ -21,14 +21,20 @@ function state(member: HarnessCredentialView): { label: string; tone: string } {
   if (member.rejectedAt) return { label: 'Rejected', tone: 'chip danger' };
   if (member.rateLimitedUntil && new Date(member.rateLimitedUntil) > new Date()) return { label: 'Resting', tone: 'chip warn' };
   if (!member.enabled) return { label: 'Switched off', tone: 'chip' };
-  // Before "Available", because it is not. A subscription is stored and safe, and no run can use it
-  // until the factory can select, inject and bill one. Rendering it as ready told the operator the
-  // factory was finished and left them to discover otherwise at the first build.
-  if (member.authMode === 'SUBSCRIPTION') return { label: 'Not usable yet', tone: 'chip warn' };
+  // A seat whose account is unknown could be a second seat on one account, so no build uses it.
+  if (member.authMode === 'SUBSCRIPTION' && member.identified === false) return { label: 'Sign in again', tone: 'chip warn' };
+  if (member.authMode === 'SUBSCRIPTION') return { label: 'Ready · subscription', tone: 'chip ok' };
   return { label: 'Available', tone: 'chip ok' };
 }
 
 const when = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
+
+/** Server refusals that have a sentence; anything else is shown as the server said it. */
+function sentence(message: string): string {
+  if (message.includes('subscription_account_taken'))
+    return 'Another seat is already signed in to this account. Switch that one off first.';
+  return message;
+}
 
 /**
  * The keys a factory run may call the model with (FR-F12, ADR-031).
@@ -61,7 +67,7 @@ export default function SettingsHarnessCredentials() {
   async function act(action: () => Promise<unknown>, message: string) {
     setBusy(true); setError('');
     try { await action(); reload(message); }
-    catch (failure) { setError(String(failure instanceof Error ? failure.message : failure)); }
+    catch (failure) { setError(sentence(String(failure instanceof Error ? failure.message : failure))); }
     finally { setBusy(false); }
   }
 
@@ -98,8 +104,9 @@ export default function SettingsHarnessCredentials() {
           load rather than burning one window.
         </p>
         <p className="prov-note">
-          A Codex subscription can be signed in and is kept safely, but no run can use one yet: choosing
-          it, handing it to a run and recording its cost as zero are not built. Every run uses an API key.
+          A signed-in Codex subscription pays for builds whose setup says Pay with: subscription. Builds share
+          it, within the subscription's own limits. A build on it costs nothing per token; its token counts
+          are still recorded.
         </p>
 
         {signingIn && (
@@ -110,8 +117,7 @@ export default function SettingsHarnessCredentials() {
               // Says what actually happened. "Runs can now be paid by the subscription" was false:
               // nothing selects, injects or bills one yet, and the credential is deliberately
               // unreachable by every run until all three exist.
-              reload(`Saved ${label}. It is kept safely, and no run can use it yet — paying with a`
-                + ' subscription is not built. Runs keep using an API key.');
+              reload(`Saved ${label}. Builds whose setup pays with a subscription can use it now.`);
             }} />
           </SidePanel>
         )}

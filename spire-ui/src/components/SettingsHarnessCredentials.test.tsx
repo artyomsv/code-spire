@@ -50,6 +50,16 @@ it('tells a resting key apart from a refused one, and offers the action each nee
   expect(within(rejected).queryByRole('button', { name: 'Rest longer' })).toBeNull();
 });
 
+// A signed-in seat reads as a subscription, so it is never mistaken for a key billed per token (M3.5 part F).
+it('shows a signed-in seat as a ready subscription', async () => {
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-seat-free', label: 'TEST-seat-free', type: 'codex', authMode: 'SUBSCRIPTION', identified: true }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  expect(within(await row('TEST-seat-free')).getByText('Ready · subscription')).toBeInTheDocument();
+});
+
 it('switches a member off and back on, and says which one changed', async () => {
   // The list is read again after the change, so the second answer is the switched-off row.
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValueOnce([member()]).mockResolvedValue([member({ enabled: false })]);
@@ -98,4 +108,26 @@ it('shows the server refusal rather than a status line', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockRejectedValue(new Error('Failed to load the harness credential pool'));
   render(<SettingsHarnessCredentials />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load the harness credential pool');
+});
+
+// A seat whose account is unknown could be a second seat on one account; no build uses it.
+it('asks for a new sign-in on a seat whose account is unknown', async () => {
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-seat-old', label: 'TEST-seat-old', type: 'codex', authMode: 'SUBSCRIPTION', identified: false }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  expect(within(await row('TEST-seat-old')).getByText('Sign in again')).toBeInTheDocument();
+});
+
+it('says why a second seat of one account cannot be switched back on', async () => {
+  vi.mocked(api.enableHarnessCredential).mockRejectedValue(new Error('Failed to switch the credential on: subscription_account_taken'));
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-seat-off', label: 'TEST-seat-off', type: 'codex', authMode: 'SUBSCRIPTION', enabled: false, identified: true }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  fireEvent.click(within(await row('TEST-seat-off')).getByRole('button', { name: 'Switch on' }));
+
+  expect(await screen.findByText('Another seat is already signed in to this account. Switch that one off first.')).toBeInTheDocument();
 });

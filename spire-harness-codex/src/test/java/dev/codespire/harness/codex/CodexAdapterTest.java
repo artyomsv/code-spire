@@ -55,6 +55,31 @@ class CodexAdapterTest {
         assertFalse(script(adapter.command(invocation())).contains("model_reasoning_effort"));
     }
 
+    /**
+     * A sign-in is WRITTEN where Codex reads one, owner-only, and the variable that carried it is unset
+     * before Codex starts; no key is piped into a login (M3.5 part F — design §5.3 measured that no login
+     * flag takes a ChatGPT sign-in).
+     */
+    @Test
+    void aSignInIsWrittenAsTheFileCodexReadsAndNotPipedIntoALogin() {
+        HarnessInvocation signedIn = new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
+                Map.of(HarnessInvocation.SIGN_IN, "{\"auth_mode\":\"TEST\"}"), Duration.ofMinutes(30));
+
+        String script = script(adapter.command(signedIn));
+        Map<String, String> env = adapter.environment(signedIn);
+
+        assertTrue(script.contains("umask 077 && printenv CODEX_SIGN_IN_FILE > \"$HOME/.codex/auth.json\""), script);
+        assertTrue(script.contains("unset CODEX_SIGN_IN_FILE; exec codex exec"), script);
+        assertFalse(script.contains("--with-api-key"), script);
+        assertEquals("{\"auth_mode\":\"TEST\"}", env.get("CODEX_SIGN_IN_FILE"));
+        assertFalse(env.containsKey("OPENAI_API_KEY"));
+    }
+
+    @Test
+    void anApiKeyIsStillPipedIntoTheLogin() {
+        assertTrue(script(adapter.command(invocation())).startsWith("printenv OPENAI_API_KEY | codex login --with-api-key"));
+    }
+
     @Test
     void theTypeIsCodex() {
         assertEquals(HarnessType.CODEX, adapter.type());

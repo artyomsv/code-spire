@@ -105,6 +105,30 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         }
     }
 
+    @Inject dev.codespire.orchestrator.factory.HarnessCredentialPool pool;
+
+    /** How the setup pays is what the prepared task binds, so the approval covers it (M3.5 part F). */
+    @Test
+    void theSavedWayToPayIsCopiedIntoThePreparedTask() throws Exception {
+        java.util.UUID seat;
+        try (Connection c = dataSource.getConnection()) {
+            seat = pool.addSubscription(c, "TEST-sweep-seat-" + java.util.UUID.randomUUID(), "codex", "{\"auth_mode\":\"TEST\",\"tokens\":{\"account_id\":\"TEST-account-" + java.util.UUID.randomUUID() + "\"}}");
+        }
+        try {
+            defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model,
+                    null, "SUBSCRIPTION"), "TEST-prepared-admin");
+            String id = admit("assisted", 83);
+
+            sweep.sweep();
+
+            var prepared = store.load(id).preparation();
+            assertNotNull(prepared);
+            assertEquals(dev.codespire.contract.work.PayWith.SUBSCRIPTION, prepared.payWith());
+        } finally {
+            pool.remove(seat);
+        }
+    }
+
     /** The level saved with the build setup is the level the prepared task binds (M3.5 part M). */
     @Test
     void theSavedThinkingLevelIsCopiedIntoThePreparedTask() throws Exception {
@@ -119,7 +143,7 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
             var prepared = store.load(id).preparation();
             assertNotNull(prepared);
             assertEquals("high", prepared.effort());
-            assertEquals(WorkPreparation.EFFORT_BINDING, prepared.bindingVersion());
+            assertEquals(WorkPreparation.PAY_WITH_BINDING, prepared.bindingVersion());
         } finally {
             executeWith("DELETE FROM harness_catalogue");
         }
@@ -134,8 +158,9 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
 
         var prepared = store.load(id).preparation();
         assertNotNull(prepared, "the ticket alone must be enough");
-        assertEquals(WorkPreparation.EFFORT_BINDING, prepared.bindingVersion());
+        assertEquals(WorkPreparation.PAY_WITH_BINDING, prepared.bindingVersion());
         assertNull(prepared.effort(), "no level was saved, so the model's own default applies");
+        assertEquals(dev.codespire.contract.work.PayWith.API_KEY, prepared.payWith(), "a setup that says nothing pays with a key");
         assertEquals(WorkPreparation.Origin.STORED, prepared.specification().origin());
         assertEquals(WorkPreparation.Origin.STORED, prepared.plan().origin());
         // The build coordinates come from the repository's saved setup, and the commit from the forge.

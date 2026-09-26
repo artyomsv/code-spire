@@ -75,6 +75,21 @@ public class LlmModelPricer {
         return counts.stream().map(count -> line(pricing, count)).toList();
     }
 
+    /**
+     * A call paid for by a subscription rather than per token (M3.5 part F): rate 0 and cost 0, with the
+     * real token counts, whatever the model's own pricing says. Priced by how the call PAID rather than by
+     * model, so one model can serve an API-key run and a subscription run in the same deployment.
+     *
+     * <p>Missing usage stays UNKNOWN, exactly as in {@link #priceCall}: a subscription makes a reported
+     * call cost zero; it does not make an unreported one free.
+     */
+    public List<ChargeLine> priceUnmetered(ModelUsage usage) {
+        List<TokenCount> counts = usage == null ? List.of() : usage.counts();
+        if (counts.isEmpty()) return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
+        if (!usage.reconciled()) return List.of(ChargeLine.unmetered(TokenType.TOTAL, usage.reportedTotal()));
+        return counts.stream().map(count -> ChargeLine.unmetered(count.type(), count.tokens())).toList();
+    }
+
     /** Whether a review may be started against this model: priceable, or explicitly unbilled. */
     public boolean isPriceable(String model) {
         Pricing pricing = pricingFor(model);

@@ -75,6 +75,14 @@ class RunChargesTest {
         public Optional<java.util.UUID> harnessCredentialOf(String runId) {
             return Optional.ofNullable(credential);
         }
+
+        String paidBy = "API_KEY";
+
+        /** How the run paid, answered here for the same reason as the credential above. */
+        @Override
+        public Optional<String> paidByOf(String runId) {
+            return Optional.ofNullable(paidBy);
+        }
     }
 
     /** Prices everything at a flat metered rate, so a line's presence is the thing under test. */
@@ -108,6 +116,35 @@ class RunChargesTest {
 
     private static RunResult.RunFinished finished(String runId, Map<String, Long> usage) {
         return new RunResult.RunFinished(runId, "refs/heads/spire/s", List.of(), List.of(), usage, false);
+    }
+
+    /**
+     * A run paid for by a subscription costs nothing per token, whatever its model's rates — and keeps its
+     * real token counts, so what a subscription run used is still visible (M3.5 part F, design §5.7).
+     */
+    @Test
+    void aSubscriptionRunIsChargedNothingPerTokenWithItsRealCounts() {
+        // No credential at all: a re-armed dispatch clears it, and the run must still be charged as paid.
+        runs.credential = null;
+        runs.paidBy = "SUBSCRIPTION";
+
+        charges.record(finished(RUN_ID, Map.of("INPUT", 1200L, "OUTPUT", 340L)));
+
+        var lines = ledger.calls.getFirst().lines();
+        assertEquals(2, lines.size());
+        assertTrue(lines.stream().allMatch(line -> line.mode() == dev.codespire.orchestrator.llm.PricingMode.UNMETERED && Long.valueOf(0L).equals(line.costMillicents())), lines.toString());
+        assertEquals(1540, lines.stream().mapToInt(ChargeLine::tokens).sum());
+    }
+
+    /** The same model paid with an API key is still priced: pricing follows the payment, not the model. */
+    @Test
+    void anApiKeyRunOfTheSameModelIsStillPriced() {
+        runs.credential = java.util.UUID.fromString("00000000-0000-4000-8000-00000000c0de");
+        runs.paidBy = "API_KEY";
+
+        charges.record(finished(RUN_ID, Map.of("INPUT", 1200L)));
+
+        assertEquals(dev.codespire.orchestrator.llm.PricingMode.METERED, ledger.calls.getFirst().lines().getFirst().mode());
     }
 
     @Test

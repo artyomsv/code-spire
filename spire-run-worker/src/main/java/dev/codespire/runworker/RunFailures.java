@@ -64,13 +64,20 @@ public class RunFailures {
     /** Publication may use a rotated identity. Redact it as well as the original build secrets. */
     public RunResult.RunFailed ofPublication(RunCommand.ExecuteRun command, RunCommand.PublishWorkRun publication,
                                              String cause, String detail) {
-        Credentials.Scm scm = credentials.scm(command.runId(), publication.scmCredential());
-        SecretScrub current = SecretScrub.of(List.of(
-                new SecretScrub.Credential(scm.readUsername(), scm.readSecret()),
-                new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret())));
         // A failed current-credential read propagates to retained publication recovery. It must
         // never turn potentially credential-bearing publisher text into an emitted failure.
-        return of(command, cause, current.clean(detail));
+        return of(command, cause, scrubForPublication(command, publication).clean(detail));
+    }
+
+    /**
+     * The forge credential a publication runs with — the CURRENT one its permit carries, which may have
+     * been rotated since the build and so be absent from {@link #scrubFor}.
+     */
+    SecretScrub scrubForPublication(RunCommand.ExecuteRun command, RunCommand.PublishWorkRun publication) {
+        Credentials.Scm scm = credentials.scm(command.runId(), publication.scmCredential());
+        return SecretScrub.of(List.of(
+                new SecretScrub.Credential(scm.readUsername(), scm.readSecret()),
+                new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret())));
     }
 
     /**
@@ -113,8 +120,12 @@ public class RunFailures {
         try {
             // No username: an API key rides a Bearer header, not a Basic pair, so a base64 form
             // built for it would match nothing.
-            credentials.harnessEnv(command.runId(), command.harnessCredential()).values()
-                    .forEach(secret -> forms.add(new SecretScrub.Credential(null, secret)));
+            for (String secret : credentials.harnessEnv(command.runId(), command.harnessCredential(),
+                    command.harnessSignIn()).values()) {
+                // A sign-in file is scrubbed token by token as well as whole (M3.5 part F).
+                for (String form : command.harnessSignIn() ? Credentials.signInSecrets(secret) : java.util.List.of(secret))
+                    forms.add(new SecretScrub.Credential(null, form));
+            }
         } catch (RuntimeException undecryptable) {
             LOG.warnf("run %s: the harness credential could not be decrypted to redact it; this "
                     + "run's failure details are unscrubbed for it", command.runId());

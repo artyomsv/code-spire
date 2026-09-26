@@ -42,6 +42,8 @@ public final class WorkRunChargeProof {
             charges.runs=new FactoryRunProjection(){
                 @Override public Optional<String> modelOf(String id){return Optional.of("TEST-metered-model");}
                 @Override public Optional<UUID> harnessCredentialOf(String id){return Optional.empty();}
+                // Overridden for the trap RunChargesTest names: the real one reads a row this proof never wrote.
+                @Override public Optional<String> paidByOf(String id){return Optional.of("API_KEY");}
                 @Override protected void push(String id){ /* TEST: no dashboard websocket */ }
             };
             charges.pricer=new LlmModelPricer(){@Override public List<ChargeLine> priceCall(String model,ModelUsage usage){
