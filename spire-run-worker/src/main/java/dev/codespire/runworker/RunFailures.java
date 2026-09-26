@@ -64,13 +64,20 @@ public class RunFailures {
     /** Publication may use a rotated identity. Redact it as well as the original build secrets. */
     public RunResult.RunFailed ofPublication(RunCommand.ExecuteRun command, RunCommand.PublishWorkRun publication,
                                              String cause, String detail) {
-        Credentials.Scm scm = credentials.scm(command.runId(), publication.scmCredential());
-        SecretScrub current = SecretScrub.of(List.of(
-                new SecretScrub.Credential(scm.readUsername(), scm.readSecret()),
-                new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret())));
         // A failed current-credential read propagates to retained publication recovery. It must
         // never turn potentially credential-bearing publisher text into an emitted failure.
-        return of(command, cause, current.clean(detail));
+        return of(command, cause, scrubForPublication(command, publication).clean(detail));
+    }
+
+    /**
+     * The forge credential a publication runs with — the CURRENT one its permit carries, which may have
+     * been rotated since the build and so be absent from {@link #scrubFor}.
+     */
+    SecretScrub scrubForPublication(RunCommand.ExecuteRun command, RunCommand.PublishWorkRun publication) {
+        Credentials.Scm scm = credentials.scm(command.runId(), publication.scmCredential());
+        return SecretScrub.of(List.of(
+                new SecretScrub.Credential(scm.readUsername(), scm.readSecret()),
+                new SecretScrub.Credential(scm.writeUsername(), scm.writeSecret())));
     }
 
     /**

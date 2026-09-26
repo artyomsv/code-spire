@@ -231,9 +231,12 @@ public class HarnessCredentialPool {
                           -- A seat whose account is unknown could be a second seat on one account.
                           AND account_ref IS NOT NULL
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
-                        -- No SKIP LOCKED: a seat is shared, so a dispatch picking it at the same moment is
-                        -- no reason to refuse this one. It waits a moment instead.
-                        LIMIT 1)
+                        -- FOR UPDATE, not SKIP LOCKED: a seat is shared, so a dispatch picking it at the
+                        -- same moment is no reason to refuse this one — it waits a moment instead. The lock
+                        -- is what makes the wait re-check the row: a seat switched off meanwhile is not
+                        -- returned (review of PR #178).
+                        LIMIT 1
+                        FOR UPDATE)
                 RETURNING id, label, type, base_url, api_key
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

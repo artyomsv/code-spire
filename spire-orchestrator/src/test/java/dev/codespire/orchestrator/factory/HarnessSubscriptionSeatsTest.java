@@ -110,6 +110,25 @@ class HarnessSubscriptionSeatsTest {
         }
     }
 
+    /** A seat switched off while a pick waits for it is not handed out when the wait ends. */
+    @Test
+    void aSeatSwitchedOffDuringAWaitIsNotHandedOut() throws Exception {
+        UUID seat = seat("TEST-seat-switched-off");
+        try (Connection other = dataSource.getConnection()) {
+            other.setAutoCommit(false);
+            try (PreparedStatement off = other.prepareStatement("UPDATE harness_credential SET enabled = FALSE WHERE id = ?")) {
+                off.setObject(1, seat);
+                off.executeUpdate();
+            }
+            CompletableFuture<java.util.Optional<HarnessCredentialPool.PoolMember>> picking =
+                    CompletableFuture.supplyAsync(() -> pool.selectSubscription(HARNESS));
+
+            assertThrows(TimeoutException.class, () -> picking.get(1, TimeUnit.SECONDS));
+            other.commit();
+            assertTrue(picking.get(30, TimeUnit.SECONDS).isEmpty(), "a switched-off seat pays for nothing");
+        }
+    }
+
     /** Two seats take turns, least recently used first, like the key pool. */
     @Test
     void seatsTakeTurns() throws SQLException {

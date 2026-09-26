@@ -36,14 +36,14 @@ public class WorkRunWorker {
     @Inject RunTranscript transcript;
     @ConfigProperty(name="spire.run.orphan-stale-after-seconds") long staleAfterSeconds;
     private final Set<String> active=ConcurrentHashMap.newKeySet();
+    /** Keys a publication's own credential apart from the build's, under the same run id. */
+    static final String PUBLICATION_SECRETS=":publication";
 
     public CompletionStage<Void> execute(Message<RunCommand> message,RunCommand.ExecuteWorkRun command) {
         boolean claimed=store.claim(command); // No ack until the command and shared M2 execute slot commit together.
         message.ack().toCompletableFuture().join();
         if(!claimed){flushResults();return CompletableFuture.completedFuture(null);}
         String id=command.runId();
-        // Held until the retained workspace is released: a held unit's publisher runs later.
-        LiveSecrets.register(id,()->failures.scrubFor(command.execution()));
         active.add(id);
         try {
             RunResult result;
@@ -52,7 +52,12 @@ public class WorkRunWorker {
             } else if(!leases.take(id)) {
                 result=failures.of(command.execution(),"WORKER_FAILED","No lease was taken; the held build was not started");
             } else {
-                result=launcher.launchHeld(command,new HeldObserver(command),unit->store.saveUnit(id,unit));
+                // Held until the retained workspace is released: a held unit's publisher runs later. Not
+                // before the refusals above, which create nothing and would leave the entry held for ever.
+                LiveSecrets.register(id,()->failures.scrubFor(command.execution()));
+                HeldObserver observer=new HeldObserver(command);
+                result=launcher.launchHeld(command,observer,unit->store.saveUnit(id,unit));
+                if(!observer.created)LiveSecrets.forget(id);
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
@@ -85,8 +90,10 @@ public class WorkRunWorker {
 
     private void publishClaimed(WorkRunStore.Held held,RunHandle handle,PublicationRuntime publication) {
         String id=held.execution().runId();
-        // A publisher may run in a later process than the build did, so its secrets are held again here.
+        // A publisher may run in a later process than the build did, so its secrets are held again here —
+        // and the permit's forge credential with them, which may have been rotated since the build.
         LiveSecrets.register(id,()->failures.scrubFor(held.execution().execution()));
+        LiveSecrets.register(id+PUBLICATION_SECRETS,()->failures.scrubForPublication(held.execution().execution(),held.permit()));
         // Register the retained handle before publisher creation so control can find this run again.
         registry.register(id,held.execution().execution().harness(),handle,RunNotes.IGNORING);
         try {
@@ -178,6 +185,7 @@ public class WorkRunWorker {
         store.released(id);
         leases.release(id);
         LiveSecrets.forget(id);
+        LiveSecrets.forget(id+PUBLICATION_SECRETS);
     }
 
     private Optional<RunHandle> localUnit(String id) {
@@ -208,6 +216,8 @@ public class WorkRunWorker {
 
     private final class HeldObserver implements RunObserver {
         private final RunCommand.ExecuteWorkRun command;
+        /** Whether a unit exists; without one, nothing can log this run's secrets. */
+        private boolean created;
         HeldObserver(RunCommand.ExecuteWorkRun command){this.command=command;}
         public void event(RunEventRecord record){
             transcript.emit(record,(sent,error)->{
@@ -216,6 +226,7 @@ public class WorkRunWorker {
             });
         }
         public void unitCreated(String unitId,RunNotes notes) {
+            created=true;
             String id=command.runId();
             RunHandle handle=new RunHandle(id,unitId);
             registry.register(id,command.execution().harness(),handle,notes);

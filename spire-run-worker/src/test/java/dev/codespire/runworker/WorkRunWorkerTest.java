@@ -22,6 +22,10 @@ class WorkRunWorkerTest {
     RunResult terminal;
     String state="ready";
     boolean claim=true,permitAllowed=true,cancelled,claimFails,leaseAvailable=true,reportAccepted=true,present=true,held=true,lateCancel;
+    /** Whether the fake launch creates a unit; a launch refused by the runtime creates none. */
+    boolean createsUnit=true;
+    /** What the log filter did to the rotated publisher secret while the publisher ran. */
+    String cleanedDuringPublish;
     int launches,publicationClaims,publications,deletions;
     boolean revoked;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
@@ -41,6 +45,8 @@ class WorkRunWorkerTest {
         @Override public List<Held> awaitingRelease(){return List.of();}
         @Override public boolean claimPublicationRecovery(String id,Instant stale){return permitAllowed;}
         @Override public void abandonBuild(RunResult.RunFailed result){terminal(result);}
+        // Answered here: a launch that creates a unit records it, and the parent would open a database.
+        @Override public void recordUnit(String id,String unitId){events.add("record-unit");}
     };
     final WorkspaceLeases leases=new WorkspaceLeases(){
         @Override public boolean take(String id){return leaseAvailable;}
@@ -48,6 +54,8 @@ class WorkRunWorkerTest {
         @Override public void release(String id){events.add("release-lease");}
         @Override public Optional<Instant> staleBefore(Duration duration){return Optional.of(Instant.now().minusSeconds(60));}
         @Override public Optional<Lease> find(String id){return Optional.empty();}
+        // Answered for the same reason as the store's recordUnit.
+        @Override public void recordUnit(String id,String unitId){events.add("lease-unit");}
     };
     final class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
         @Override public List<RunHandle> discoverUnits(){return present?List.of(new RunHandle(command.runId(),"TEST-unit")):List.of();}
@@ -56,6 +64,7 @@ class WorkRunWorkerTest {
         @Override public Finalization publishHeld(RunHandle run,PublicationKey key,UUID attempt,RunUnitSpec spec,Consumer<String> lines,BooleanSupplier allowed){
             publications++;assertEquals("publishing",state,"The durable claim must precede publisher IO");
             assertEquals(command.work().publicationKey(),key.value());assertEquals(permit.permit().deliveryAttemptId(),attempt);
+            cleanedDuringPublish=LiveSecrets.clean("token=TEST-current-publisher-secret");
             if(!allowed.getAsBoolean())lines.accept("{\"event\":\"failed\",\"cause\":\"PUBLICATION_CANCELLED\"}");else WorkRunWorkerTest.this.publisherLines.forEach(lines);
             if(lateCancel)WorkRunWorkerTest.this.cancelled=true;
             return WorkRunWorkerTest.this.finalization;
@@ -68,7 +77,8 @@ class WorkRunWorkerTest {
     @BeforeEach void wire(){
         worker.store=store;worker.leases=leases;worker.registry=new RunRegistry();worker.runtime=runtime;worker.staleAfterSeconds=60;
         worker.claims=new RunClaimStore(){@Override public boolean taken(String id,String slot){return cancelled;}};
-        worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){launches++;if(lateCancel)cancelled=true;return buildResult;}};
+        worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
+            launches++;if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);if(lateCancel)cancelled=true;return buildResult;}};
         worker.builder=new RunUnitBuilder(){@Override public RunUnitSpec publication(RunUnitSpec original,RunCommand.ExecuteWorkRun execution,RunCommand.PublishWorkRun request){return null; /* TEST runtime does not consume topology. */}};
         worker.failures=new RunFailures(){
             @Override public RunResult.RunFailed of(RunCommand.ExecuteRun execution,String cause,String detail){return new RunResult.RunFailed(execution.runId(),cause,detail,false,null);}
@@ -84,7 +94,7 @@ class WorkRunWorkerTest {
     }
     // LiveSecrets is static and every case uses one run id: a leftover entry would let a case pass for another.
     @BeforeEach void noHeldSecrets(){LiveSecrets.forget(command.runId());}
-    @AfterEach void close(){worker.launcher.stopStreams();LiveSecrets.forget(command.runId());}
+    @AfterEach void close(){worker.launcher.stopStreams();LiveSecrets.forget(command.runId());LiveSecrets.forget(command.runId()+WorkRunWorker.PUBLICATION_SECRETS);}
     void execute(){worker.execute(Message.of((RunCommand)command,()->{events.add("ack-command");return CompletableFuture.completedFuture(null);}),command).toCompletableFuture().join();}
     /** A held build's secrets are scrubbed from logs until its workspace is released (review of PR #178). */
     @Test void aHeldBuildsSecretsAreScrubbedUntilItsWorkspaceIsReleased(){
@@ -95,6 +105,25 @@ class WorkRunWorkerTest {
             worker.publish(permit);
             assertFalse(LiveSecrets.holds(command.runId()),"a released workspace logs nothing more");
         } finally {LiveSecrets.forget(command.runId());}
+    }
+    /** A build refused before it starts creates nothing, so nothing holds its secrets (review of PR #178). */
+    @Test void aBuildCancelledBeforeItStartsHoldsNoSecrets(){
+        cancelled=true;execute();
+        assertFalse(LiveSecrets.holds(command.runId()));
+    }
+    @Test void aLaunchThatCreatedNothingLetsItsSecretsGo(){
+        createsUnit=false;execute();
+        assertEquals(1,launches);
+        assertFalse(LiveSecrets.holds(command.runId()));
+    }
+    /** A publisher runs with its permit's forge credential, which may be a rotated one the build never saw. */
+    @Test void aRotatedPublisherCredentialIsScrubbedFromLogsWhileItPublishes(){
+        publicationFailureCredentials(false);
+        try {
+            worker.publish(permit);
+            assertNotNull(cleanedDuringPublish);
+            assertFalse(cleanedDuringPublish.contains("TEST-current-publisher-secret"),cleanedDuringPublish);
+        } finally {LiveSecrets.forget(command.runId()+WorkRunWorker.PUBLICATION_SECRETS);}
     }
     @Test void aFailedClaimCannotAcknowledgeTheCommand(){claimFails=true;assertThrows(IllegalStateException.class,this::execute);assertEquals(List.of("claim"),events);}
     @Test void anExecuteRedeliveryCannotRunTheHarnessAgain(){claim=false;execute();assertEquals(0,launches);assertTrue(reported.isEmpty());assertEquals(List.of("claim","ack-command"),events);}
