@@ -79,6 +79,24 @@ class SecretLogFilterTest {
         assertFalse(printed.toString().contains(SECRET), "nothing a formatter prints quotes the secret");
     }
 
+    /** A secret beyond what the filter scans is not trusted to be absent (review of PR #178). */
+    @Test
+    void aSecretBeyondTheScanLimitDoesNotReachTheLog() {
+        hold();
+        Throwable deepest = new RuntimeException("deep: " + SECRET);
+        Throwable chain = deepest;
+        for (int i = 0; i < 100; i++) chain = new RuntimeException("layer " + i, chain);
+        ExtLogRecord record = new ExtLogRecord(Level.SEVERE, "failed", ExtLogRecord.FormatStyle.NO_FORMAT,
+                SecretLogFilterTest.class.getName());
+        record.setThrown(chain);
+
+        new SecretLogFilter().isLoggable(record);
+
+        java.io.StringWriter printed = new java.io.StringWriter();
+        record.getThrown().printStackTrace(new java.io.PrintWriter(printed));
+        assertFalse(printed.toString().contains(SECRET), "cut off, never printed as it was");
+    }
+
     @Test
     void aForgottenRunIsNoLongerScrubbed() {
         hold();

@@ -82,11 +82,14 @@ class WorkRunWorkerTest {
         };
         worker.results=new RunResultReporter(){@Override public boolean report(RunResult result){reported.add(result);return reportAccepted;}};
     }
-    @AfterEach void close(){worker.launcher.stopStreams();}
+    // LiveSecrets is static and every case uses one run id: a leftover entry would let a case pass for another.
+    @BeforeEach void noHeldSecrets(){LiveSecrets.forget(command.runId());}
+    @AfterEach void close(){worker.launcher.stopStreams();LiveSecrets.forget(command.runId());}
     void execute(){worker.execute(Message.of((RunCommand)command,()->{events.add("ack-command");return CompletableFuture.completedFuture(null);}),command).toCompletableFuture().join();}
     /** A held build's secrets are scrubbed from logs until its workspace is released (review of PR #178). */
     @Test void aHeldBuildsSecretsAreScrubbedUntilItsWorkspaceIsReleased(){
         try {
+            assertFalse(LiveSecrets.holds(command.runId()));
             execute();
             assertTrue(LiveSecrets.holds(command.runId()),"the retained unit's publisher can still log");
             worker.publish(permit);

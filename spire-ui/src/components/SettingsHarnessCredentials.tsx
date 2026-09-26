@@ -104,8 +104,9 @@ export default function SettingsHarnessCredentials() {
           load rather than burning one window.
         </p>
         <p className="prov-note">
-          A signed-in Codex subscription pays for builds whose setup says Pay with: subscription, one build
-          at a time. A build on it costs nothing per token; its token counts are still recorded.
+          A signed-in Codex subscription pays for builds whose setup says Pay with: subscription. Builds share
+          it, within the subscription's own limits. A build on it costs nothing per token; its token counts
+          are still recorded.
         </p>
 
         {signingIn && (

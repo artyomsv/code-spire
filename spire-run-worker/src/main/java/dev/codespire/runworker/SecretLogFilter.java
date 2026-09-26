@@ -44,8 +44,14 @@ public final class SecretLogFilter implements Filter {
         return true;
     }
 
+    /**
+     * Whether the graph may quote a held secret. A graph too large to scan counts as one that does: the
+     * copy is bounded too, and dropping what it cannot hold is safe where trusting it is not.
+     */
     private static boolean quotesASecret(Throwable thrown, Map<Throwable, Boolean> seen) {
-        if (thrown == null || seen.size() >= MAX_EXCEPTIONS || seen.put(thrown, Boolean.TRUE) != null) return false;
+        if (thrown == null) return false;
+        if (seen.size() >= MAX_EXCEPTIONS) return true;
+        if (seen.put(thrown, Boolean.TRUE) != null) return false;
         String message = thrown.getMessage();
         if (message != null && !message.equals(LiveSecrets.clean(message))) return true;
         if (quotesASecret(thrown.getCause(), seen)) return true;

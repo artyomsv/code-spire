@@ -88,6 +88,28 @@ class HarnessSubscriptionSeatsTest {
                 "the whole stored file; the dispatch empties its refresh token");
     }
 
+    /**
+     * A dispatch picking the only seat at the same moment as another waits for it rather than being
+     * refused: the seat is shared (review of PR #178).
+     */
+    @Test
+    void aSeatBeingPickedByAnotherDispatchIsWaitedForNotSkipped() throws Exception {
+        UUID seat = seat("TEST-seat-contended");
+        try (Connection other = dataSource.getConnection()) {
+            other.setAutoCommit(false);
+            try (PreparedStatement lock = other.prepareStatement("SELECT id FROM harness_credential WHERE id = ? FOR UPDATE")) {
+                lock.setObject(1, seat);
+                lock.executeQuery().close();
+            }
+            CompletableFuture<java.util.Optional<HarnessCredentialPool.PoolMember>> picking =
+                    CompletableFuture.supplyAsync(() -> pool.selectSubscription(HARNESS));
+
+            assertThrows(TimeoutException.class, () -> picking.get(1, TimeUnit.SECONDS), "it waits, it does not skip");
+            other.commit();
+            assertEquals(seat, picking.get(30, TimeUnit.SECONDS).orElseThrow().id());
+        }
+    }
+
     /** Two seats take turns, least recently used first, like the key pool. */
     @Test
     void seatsTakeTurns() throws SQLException {

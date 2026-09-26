@@ -253,6 +253,9 @@ it.
 
 ### 5.5 The lease is on agent activity, not on the item
 
+> **Superseded 2026-09-26.** Seats are shared; there is no lease. The paragraphs below record the lease
+> as designed and as reviewed; the decision and its reasons are the notes at the end of this section.
+
 A sign-in serves one agent at a time. The lease must therefore start when the agent container starts and
 end when that container is gone — not when the item finishes:
 
