@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { LlmModelView, PricingMode } from '../api';
 import { dollarsToMillicentsPerMillion, millicentsPerMillionToDollars } from '../money';
 import { MANDATORY_RATE_TYPES, RATE_TYPES, TOKEN_TYPE_LABEL, type RateType } from '../llmPricing';
@@ -85,24 +86,28 @@ interface RateFieldProps {
 }
 
 /** One rate input, mapped over {@link RATE_TYPES} rather than hand-written per dimension — the label,
- *  the optional/mandatory marker and the placeholder all already come from shared, tested tables. */
+ *  the optional/mandatory marker and the placeholder all already come from shared, tested tables. The
+ *  row shows only the type's name and a star when it is required; the input's own name still says the
+ *  whole thing ("Input rate $ / 1M tokens, required"), which a screen reader and the tests both read. */
 function RateField({ type, value, onChange, notBilled, onNotBilled }: RateFieldProps) {
-  const optional = !MANDATORY_RATE_TYPES.includes(type);
+  const id = useId();
+  const mandatory = MANDATORY_RATE_TYPES.includes(type);
   return (
-    <div className="rate-field">
-      <label className="field">
-        <span className="rate-label">
-          {TOKEN_TYPE_LABEL[type]} rate $ / 1M tokens {optional && <span className="field-optional">optional</span>}
-        </span>
-        <input
-          className="mono"
-          inputMode="decimal"
-          placeholder={RATE_PLACEHOLDER[type]}
-          value={notBilled ? '' : value}
-          disabled={notBilled}
-          onChange={(e) => onChange(e.target.value)}
-        />
+    <div className="price-item">
+      <label className="price-name" htmlFor={id}>
+        {TOKEN_TYPE_LABEL[type]}
+        {mandatory && <span className="price-required" aria-hidden="true"> *</span>}
       </label>
+      <input
+        id={id}
+        className="mono price-input"
+        aria-label={`${TOKEN_TYPE_LABEL[type]} rate $ / 1M tokens, ${mandatory ? 'required' : 'optional'}`}
+        inputMode="decimal"
+        placeholder={RATE_PLACEHOLDER[type]}
+        value={notBilled ? '' : value}
+        disabled={notBilled}
+        onChange={(e) => onChange(e.target.value)}
+      />
       {/* An assertion, not a zero: the operator says this vendor charges nothing for this type. A run
           that reports a type with neither a rate nor this box stops the item with an unknown cost. */}
       {(
@@ -132,17 +137,16 @@ interface ModelRateFieldsProps {
 export default function ModelRateFields({ rates, onChange, notBilled, onNotBilled }: ModelRateFieldsProps) {
   return (
     <>
-      <div className="rate-grid">
+      <div className="price-list">
         {RATE_TYPES.map((type) => (
           <RateField key={type} type={type} value={rates[type]} onChange={(v) => onChange(type, v)}
             notBilled={!!notBilled[type]} onNotBilled={(v) => onNotBilled(type, v)} />
         ))}
       </div>
       <small className="field-hint">
-        Enter the provider's current published price per 1M tokens for each dimension it bills — used to
-        cost each run. A dimension left blank means nobody has said what it costs, and a run that reports
-        it stops with an unknown cost. Tick "the vendor does not bill this" to say so on purpose; input
-        and output need one or the other before the model can be saved.
+        Enter the provider's current published price. <span className="price-required">*</span> needs a
+        rate or "not billed". A rate left blank means nobody has said what it costs, and a run that
+        reports it stops with an unknown cost.
       </small>
     </>
   );

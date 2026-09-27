@@ -1147,14 +1147,32 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; word-break: break-all;
   }
   .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
-  /* The price fields line up across both columns whether or not a label wraps for its "optional" marker:
-     each field spans three rows of the grid (label, input, check box) as a subgrid, so the two labels of a
-     row share one track and sit at its bottom. The label element is display: contents so its text and its
-     input can each take a row; it still labels the input. */
-  .rate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .rate-field { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 6px; }
-  .rate-field > label.field { display: contents; }
-  .rate-label { align-self: end; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+  /* The model dialog in two panes: the model and its API settings on the left, the prices in their own
+     pane on the right (operator's choice of three mockups, 2026-09-27). One column was too tall for a
+     laptop window, and a price input half the dialog wide was far wider than any rate. */
+  .modal.model-dialog { max-width: 880px; }
+  .model-panes { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+  .model-pane { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .model-prices {
+    display: flex; flex-direction: column; gap: 12px; padding: 14px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .model-prices-title { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+  .price-list { display: flex; flex-direction: column; gap: 10px; }
+  .price-item { display: grid; grid-template-columns: minmax(0, 1fr) 110px; align-items: center; column-gap: 10px; row-gap: 4px; }
+  .price-item > .field-check { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); }
+  .price-name { font-size: 13px; color: var(--text); }
+  .price-required { color: var(--warn); font-family: var(--font-mono); }
+  .price-input {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    color: var(--text); font-size: 13px; outline: none; width: 100%; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .price-input:focus { border-color: var(--iris); }
+  .price-input:disabled { opacity: 0.5; }
+  @media (max-width: 760px) {
+    .model-panes { grid-template-columns: 1fr; }
+  }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .field-row-12 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; }
 
@@ -1398,7 +1416,7 @@
   .chip-x button:hover { color: var(--crit); }
 
   @media (max-width: 560px) {
-    .field-row-2, .field-row-12, .field-row-13, .rate-grid { grid-template-columns: 1fr; }
+    .field-row-2, .field-row-12, .field-row-13 { grid-template-columns: 1fr; }
   }
 
   /* Settings → Prompts: list of prompt kinds, each a link into its detail/edit page */
