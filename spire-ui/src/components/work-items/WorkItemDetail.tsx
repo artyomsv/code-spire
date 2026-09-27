@@ -17,6 +17,9 @@ import { WorkflowStatus } from './WorkItems';
  * One work item as its journey. The heading names the ticket, the steps say where it is and what a
  * person can do there, and everything else — policy, ticket text, history — folds underneath.
  */
+/** How often an open work item is read again. */
+const DETAIL_POLL_MILLISECONDS = 10_000;
+
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -46,6 +49,18 @@ export default function WorkItemDetail() {
       .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
     return () => { active = false; };
   }, [id, refresh]);
+
+  // Follows the item like Runs does, so a gate opening or a build ending shows without a click. Not while
+  // a panel is open: a re-read under a decision the operator is reading would move what they approve.
+  useEffect(() => {
+    if (panel) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      getWorkItem(id).then(item => setState(previous => previous.item?.id === id ? { item, error: null } : previous))
+        .catch(() => { /* the last good read stays on screen; the next tick tries again */ });
+    }, DETAIL_POLL_MILLISECONDS);
+    return () => clearInterval(timer);
+  }, [id, panel]);
 
   function reread(message = '') { setNotice(message); setRefresh(value => value + 1); }
   function start() { setNotice(''); return ++action.current; }

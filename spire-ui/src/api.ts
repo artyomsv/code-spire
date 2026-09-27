@@ -1732,6 +1732,13 @@ export const enableHarnessCredential = (id: string) => credentialAction(id, '/en
 export const clearHarnessCredentialRejection = (id: string) => credentialAction(id, '/clear-rejection', 'POST', 'Failed to clear the rejection');
 export const restHarnessCredential = (id: string) => credentialAction(id, '/rest', 'POST', 'Failed to rest the credential');
 
+/** DELETED: gone. ERASED: a run used it, so its secret is erased and only its name stays, for that run. */
+export async function deleteHarnessCredential(id: string): Promise<'DELETED' | 'ERASED'> {
+  const res = await apiFetch(`/api/harness-credentials/${encodeURIComponent(id)}/delete`, { method: 'POST' });
+  if (!res.ok) return throwResponse(res, 'Failed to delete the credential');
+  return (await res.json()).outcome;
+}
+
 /**
  * A subscription sign-in in progress (M3.5 part F).
  *

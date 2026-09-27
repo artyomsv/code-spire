@@ -678,3 +678,22 @@ it('offers composing again while a plan decision is open', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Prepare again from the ticket' }));
   await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
 });
+
+// The page follows the item like Runs does, so a build ending shows without a click (feedback, 2026-09-27).
+it('reads the open work item again on its own', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
+
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  } finally {
+    vi.useRealTimers();
+  }
+});

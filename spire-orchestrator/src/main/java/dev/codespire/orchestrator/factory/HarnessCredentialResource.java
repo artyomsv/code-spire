@@ -113,6 +113,25 @@ public class HarnessCredentialResource {
         return Response.noContent().build();
     }
 
+    /**
+     * Delete a switched-off member: outright when no run used it, otherwise by erasing its secret and hiding
+     * it, keeping the name a finished run shows. A member still switched on is refused (409): a build could
+     * be picking it at that moment.
+     */
+    @POST
+    @Path("/{id}/delete")
+    @Consumes(MediaType.WILDCARD)
+    public Response delete(@PathParam("id") String id) {
+        HarnessCredentialPool.Deletion outcome = pool.delete(uuid(id));
+        switch (outcome) {
+            case NOT_FOUND -> throw new NotFoundException("no such harness credential: " + id);
+            case STILL_ON -> throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .entity("harness_credential_still_on").type(MediaType.TEXT_PLAIN).build());
+            case DELETED, ERASED -> LOG.warnf("harness credential %s was deleted by an operator (%s)", id, outcome);
+        }
+        return Response.ok(java.util.Map.of("outcome", outcome.name())).build();
+    }
+
     /** Return a disabled member to the pool. Disabling is not deletion, so it is not one-way. */
     @POST
     @Path("/{id}/enable")
