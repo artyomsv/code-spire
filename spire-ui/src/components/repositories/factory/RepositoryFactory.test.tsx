@@ -263,6 +263,17 @@ describe('build setup', () => {
       model: 'TEST-unpriced-only', payWith: 'SUBSCRIPTION' })));
   });
 
+  // Save stays off until the form is complete; it now says which field is missing (feedback, 2026-09-27).
+  it('names the fields that keep the build setup from saving', async () => {
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+
+    expect(await screen.findByText('To save, fill in: Base branch, Model.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Base branch', field), { target: { value: 'main' } });
+    expect(await screen.findByText('To save, fill in: Model.')).toBeInTheDocument();
+  });
+
   // Every option disabled: the select ignores clicks and keys, which the operator read as broken.
   it('says why no model can be picked when every one lacks a price', async () => {
     const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];

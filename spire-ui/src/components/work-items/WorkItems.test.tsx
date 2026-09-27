@@ -678,3 +678,75 @@ it('offers composing again while a plan decision is open', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Prepare again from the ticket' }));
   await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
 });
+
+// The page follows the item like Runs does, so a build ending shows without a click (feedback, 2026-09-27).
+it('reads the open work item again on its own', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
+
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A slow poll must not put back an older item than a refresh already showed (review of PR #179).
+it('drops a poll answer that a later refresh overtook', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+  let answerPoll: (value: Detail) => void = () => {};
+  vi.spyOn(api, 'getWorkItem')
+    .mockResolvedValueOnce(withEvent('TEST-first read'))
+    .mockImplementationOnce(() => new Promise(resolve => { answerPoll = resolve; }))
+    .mockResolvedValue(withEvent('TEST-refreshed read'));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+    expect(await screen.findByText(/TEST-refreshed read/)).toBeInTheDocument();
+    await act(async () => { answerPoll(withEvent('TEST-stale poll')); });
+
+    expect(screen.getByText(/TEST-refreshed read/)).toBeInTheDocument();
+    expect(screen.queryByText(/TEST-stale poll/)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A first load slower than the first poll must not leave the page loading for ever (review of PR #179).
+it('shows the item from a poll that overtook a slow first load', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+  let failLoad: (reason: Error) => void = () => {};
+  vi.spyOn(api, 'getWorkItem')
+    .mockImplementationOnce(() => new Promise((_, reject) => { failLoad = reject; }))
+    .mockResolvedValue(withEvent('TEST-polled read'));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+
+    expect(await screen.findByText(/TEST-polled read/)).toBeInTheDocument();
+    await act(async () => { failLoad(new Error('TEST-superseded load failed')); });
+    expect(screen.queryByText(/TEST-superseded load failed/)).toBeNull();
+    expect(screen.getByText(/TEST-polled read/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});

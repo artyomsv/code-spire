@@ -54,12 +54,14 @@ it('explains a missing account and links to Accounts instead of an empty picker'
   expect(within(form).getByRole('link', { name: 'Add an account' })).toHaveAttribute('href', '#/settings/accounts');
   expect(within(form).getByRole('button', { name: 'Register work source' })).toBeDisabled();
 });
+// The handle too: it is what a ticket comment shows, and two accounts can share a name (feedback, 2026-09-27).
 it('distinguishes duplicate credential names in the create and edit account pickers', async () => {
-  const accounts = [account('github', { name: 'TEST-shared name' }), account('github', { id: 'TEST-reviewer', name: 'TEST-shared name', role: 'REVIEWER' })];
+  const accounts = [account('github', { name: 'TEST-shared name', botUsername: 'TEST-factory-bot' }),
+    account('github', { id: 'TEST-reviewer', name: 'TEST-shared name', role: 'REVIEWER', botUsername: 'TEST-reviewer-bot' })];
   renderFactory({ accounts });
   const expectDistinct = (select: HTMLElement) => {
-    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Factory' })).toHaveValue('TEST-github');
-    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Reviewer' })).toHaveValue('TEST-reviewer');
+    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Factory · @TEST-factory-bot' })).toHaveValue('TEST-github');
+    expect(within(select).getByRole('option', { name: 'TEST-shared name · github · Reviewer · @TEST-reviewer-bot' })).toHaveValue('TEST-reviewer');
   };
   fireEvent.click(within(await step(1)).getByRole('button', { name: 'Add another source' }));
   expectDistinct(within(screen.getByRole('group', { name: 'Add where tickets come from' })).getByLabelText('Tracker account', field));
@@ -164,4 +166,11 @@ it('reports a scan request while it is in flight and says when the scanner reads
   expect(screen.getByRole('button', { name: 'Scan TEST-source name now' })).toBeDisabled();
   await act(async () => { release(); });
   expect(await screen.findByText(/within about 30 seconds/)).toBeInTheDocument();
+});
+
+// This account also writes the comments on the tickets, so its role and handle are shown, not only a name
+// two accounts can share (feedback, 2026-09-27).
+it('names the account that reads the tickets by its role and handle', async () => {
+  renderFactory();
+  expect(within(await step(1)).getByText(/· Factory · @TEST-bot/)).toBeInTheDocument();
 });

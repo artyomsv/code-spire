@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import {
-  addHarnessCredential, clearHarnessCredentialRejection, disableHarnessCredential,
+  addHarnessCredential, clearHarnessCredentialRejection, deleteHarnessCredential, disableHarnessCredential,
   enableHarnessCredential, fetchHarnessCredentials, restHarnessCredential,
   type HarnessCredentialView,
 } from '../api';
@@ -33,6 +33,7 @@ const when = (value: string | null) => (value ? new Date(value).toLocaleString()
 function sentence(message: string): string {
   if (message.includes('subscription_account_taken'))
     return 'Another seat is already signed in to this account. Switch that one off first.';
+  if (message.includes('harness_credential_still_on')) return 'Switch it off before deleting it.';
   return message;
 }
 
@@ -51,6 +52,8 @@ export default function SettingsHarnessCredentials() {
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [adding, setAdding] = useState(false), [busy, setBusy] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  // The member an operator asked to delete, waiting for them to confirm.
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [form, setForm] = useState({ label: '', type: 'openai', baseUrl: '', apiKey: '' });
   const [refresh, setRefresh] = useState(0);
 
@@ -68,7 +71,19 @@ export default function SettingsHarnessCredentials() {
     setBusy(true); setError('');
     try { await action(); reload(message); }
     catch (failure) { setError(sentence(String(failure instanceof Error ? failure.message : failure))); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setDeleting(null); }
+  }
+
+  // Its own path rather than act(): the message depends on what the server did.
+  async function remove(member: HarnessCredentialView) {
+    setBusy(true); setError('');
+    try {
+      const outcome = await deleteHarnessCredential(member.id);
+      reload(outcome === 'ERASED'
+        ? `${member.label} is deleted. Runs that used it still show its name; its secret is erased.`
+        : `${member.label} is deleted.`);
+    } catch (failure) { setError(sentence(String(failure instanceof Error ? failure.message : failure))); }
+    finally { setBusy(false); setDeleting(null); }
   }
 
   async function save() {
@@ -174,10 +189,20 @@ export default function SettingsHarnessCredentials() {
                           Switch off
                         </button>
                       ) : (
+                        <>
                         <button className="btn-ghost sm" type="button" disabled={busy}
                           onClick={() => void act(() => enableHarnessCredential(member.id), `${member.label} is back in the pool.`)}>
                           Switch on
                         </button>
+                        {deleting !== member.id && <button className="btn-ghost sm danger" type="button" disabled={busy}
+                          onClick={() => setDeleting(member.id)}>Delete</button>}
+                        {deleting === member.id && <>
+                          <span className="prov-sub"> Its stored key or sign-in is erased for good. </span>
+                          <button className="btn-ghost sm danger" type="button" disabled={busy}
+                            onClick={() => void remove(member)}>Delete it</button>
+                          <button className="btn-ghost sm" type="button" disabled={busy} onClick={() => setDeleting(null)}>Keep</button>
+                        </>}
+                        </>
                       )}
                     </td>
                   </tr>

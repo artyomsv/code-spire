@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ProviderView, WebhookRepoView } from '../../../api';
 import type { Repository } from '../repositoriesApi';
+import { accountOptionLabel } from '../../accounts';
 import * as api from '../../work-items/workSourcesApi';
 import FactoryStep from './FactoryStep';
 import InstantUpdates from './InstantUpdates';
@@ -22,7 +23,11 @@ export default function SourceStep({ repository, sources, accounts, webhooks, op
   const [scanning, setScanning] = useState<string | null>(null);
   const reading = sources.some(source => source.enabled);
   const adding = open === 'source:new';
-  const accountName = (id: string) => accounts.find(account => account.id === id)?.name ?? 'an unavailable account';
+  // Role and handle too: two accounts can share a name, and this one writes the comments on the tickets.
+  const accountName = (id: string) => {
+    const account = accounts.find(candidate => candidate.id === id);
+    return account ? accountOptionLabel(account) : 'an unavailable account';
+  };
   // The request only sets a flag; the scanner picks it up on its next sweep, about half a minute
   // later. So the button reports the request, and never claims the scan itself has finished.
   async function rescan(source: api.WorkSource) {

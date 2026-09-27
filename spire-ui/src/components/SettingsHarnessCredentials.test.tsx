@@ -131,3 +131,21 @@ it('says why a second seat of one account cannot be switched back on', async () 
 
   expect(await screen.findByText('Another seat is already signed in to this account. Switch that one off first.')).toBeInTheDocument();
 });
+
+// Switching off kept the key or the sign-in stored for ever; Delete erases it (feedback, 2026-09-27).
+it('deletes a switched-off member only after the operator confirms, and never one still on', async () => {
+  const remove = vi.spyOn(api, 'deleteHarnessCredential').mockResolvedValue('ERASED');
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-off', label: 'TEST-off', enabled: false }),
+    member({ id: 'TEST-on', label: 'TEST-on' }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  expect(within(await row('TEST-on')).queryByRole('button', { name: 'Delete' })).toBeNull();
+  fireEvent.click(within(await row('TEST-off')).getByRole('button', { name: 'Delete' }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(within(await row('TEST-off')).getByRole('button', { name: 'Delete it' }));
+
+  await waitFor(() => expect(remove).toHaveBeenCalledWith('TEST-off'));
+  expect(await screen.findByText('TEST-off is deleted. Runs that used it still show its name; its secret is erased.')).toBeInTheDocument();
+});

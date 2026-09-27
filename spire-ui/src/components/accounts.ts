@@ -45,8 +45,10 @@ export function scopeLabel(scopes: string | null | undefined): string {
  * FACTORY and a migrated CONTEXT row. The kind and role are what tell them apart.
  */
 export function accountOptionLabel(
-  account: { name: string; type: string; role: string; enabled: boolean },
+  account: { name: string; type: string; role: string; enabled: boolean; botUsername?: string | null },
 ): string {
+  // The bot handle too: two accounts can share a name, and the handle is what a ticket comment shows.
   return `${account.name} · ${account.type} · ${roleLabel(account.role)}`
+    + (account.botUsername ? ` · @${account.botUsername}` : '')
     + (account.enabled ? '' : ' (disabled)');
 }

@@ -11,6 +11,8 @@ export interface Artifact {
 }
 export interface Preparation {
   specification: Artifact; plan: Artifact; baseBranch: string; baseCommit: string; harness: string; model: string; registeredBy: string;
+  /** API_KEY or SUBSCRIPTION. Part of what an approval binds; absent on a preparation older than that. */
+  payWith?: 'API_KEY' | 'SUBSCRIPTION';
 }
 export interface ArtifactReference { artifact: Artifact; title: string }
 export interface WorkBuild { attemptId: string; state: string; runId: string | null; reason: string | null; generation: number }

@@ -96,6 +96,8 @@ export default function WorkItems() {
       </div>
     </div>
     {notice && <p className="prov-note" role="status">{notice}</p>}
+    <p className="prov-note">A labelled ticket is found by a scan that runs on a schedule (every 30 seconds by
+      default), then prepared. It can take a minute or two to appear here. This list refreshes by itself.</p>
     {needs !== null && needs > 0 && <div className="attn" role="region" aria-label="Needs you">
       <AlertTriangle size={17} aria-hidden="true" />
       <span className="grow"><b>{needs === 1 ? '1 item needs you' : `${needs} items need you`}</b>

@@ -38,6 +38,15 @@ async function approvable() {
 }
 function show() { return render(<MemoryRouter><DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter>); }
 
+// How it pays is part of what the gate binds, and which text is which was not said (feedback, 2026-09-27).
+it('shows how the build pays and labels the specification and the plan', async () => {
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, preparation: { ...item.preparation, payWith: 'SUBSCRIPTION' } });
+  show();
+  expect(await screen.findByText('Specification — the ticket text, as it was prepared')).toBeInTheDocument();
+  expect(screen.getByText('Plan — the one step the build runs')).toBeInTheDocument();
+  expect(screen.getByText('a Codex subscription')).toBeInTheDocument();
+});
+
 // The old card showed a digest and a generation number. An approver has to see what they approve.
 it('shows what the gate binds before offering an answer', async () => {
   show();

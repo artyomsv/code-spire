@@ -17,6 +17,9 @@ import { WorkflowStatus } from './WorkItems';
  * One work item as its journey. The heading names the ticket, the steps say where it is and what a
  * person can do there, and everything else — policy, ticket text, history — folds underneath.
  */
+/** How often an open work item is read again. */
+const DETAIL_POLL_MILLISECONDS = 10_000;
+
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -31,6 +34,9 @@ export default function WorkItemDetail() {
   const action = useRef(0);
   // The item the page last showed, so a re-read of it keeps its tracker text while a new item starts blank.
   const shown = useRef('');
+  // Every read of the item takes a number, and only the newest one's answer is shown: a slow poll must not
+  // replace what a later refresh already put on screen (review of PR #179).
+  const reads = useRef(0);
   const panel = params.get('decide') ? 'decide' : params.get('prepare') ? 'prepare' : null;
   useEffect(() => { setNotice(''); }, [id]);
   useEffect(() => { if (panel) { action.current++; setNotice(''); } }, [panel]);
@@ -40,12 +46,35 @@ export default function WorkItemDetail() {
     // hide the notice the re-read was started for.
     setState(previous => previous.item?.id === id ? previous : { item: null, error: null });
     setTracker(previous => shown.current === id ? previous : { value: null, error: null });
-    getWorkItem(id).then(item => { if (active) { shown.current = id; setState({ item, error: null }); } })
-      .catch(error => { if (active) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
+    const read = ++reads.current;
+    getWorkItem(id).then(item => { if (active && read === reads.current) { shown.current = id; setState({ item, error: null }); } })
+      .catch(error => { if (active && read === reads.current) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
     getWorkItemTracker(id).then(value => { if (active) setTracker({ value, error: null }); })
       .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
     return () => { active = false; };
   }, [id, refresh]);
+
+  // Follows the item like Runs does, so a gate opening or a build ending shows without a click. Not while
+  // a panel is open: a re-read under a decision the operator is reading would move what they approve.
+  useEffect(() => {
+    if (panel) return;
+    // One poll at a time, and none answered after the panel opens or the page moves on.
+    let live = true, polling = false;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible' || polling) return;
+      polling = true;
+      const read = ++reads.current;
+      getWorkItem(id).then(item => {
+        // Also fills an empty page: a poll that overtook a slow first load is now the newest read, and the
+        // load's own answer will be dropped (review of PR #179).
+        if (!live || read !== reads.current) return;
+        shown.current = id;
+        setState(previous => previous.item && previous.item.id !== id ? previous : { item, error: null });
+      }).catch(() => { /* the last good read stays on screen; the next tick tries again */ })
+        .finally(() => { polling = false; });
+    }, DETAIL_POLL_MILLISECONDS);
+    return () => { live = false; clearInterval(timer); };
+  }, [id, panel]);
 
   function reread(message = '') { setNotice(message); setRefresh(value => value + 1); }
   function start() { setNotice(''); return ++action.current; }

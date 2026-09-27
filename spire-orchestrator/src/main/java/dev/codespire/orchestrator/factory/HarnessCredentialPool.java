@@ -175,6 +175,10 @@ public class HarnessCredentialPool {
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
                         LIMIT 1)
+                   -- Checked again here, after any wait for the row: a member switched off or erased
+                   -- while this pick waited must not be returned, or its missing key would be read as
+                   -- a corrupt one and the member marked refused (review of PR #179).
+                   AND enabled AND erased_at IS NULL
                 RETURNING id, label, type, base_url, api_key
                 """;
         UUID chosen = null;
@@ -384,7 +388,7 @@ public class HarnessCredentialPool {
         String sql = """
                 SELECT id, label, type, base_url, enabled, rate_limited_until, rejected_at, last_used_at,
                        auth_mode, auth_mode <> 'SUBSCRIPTION' OR account_ref IS NOT NULL AS identified
-                  FROM harness_credential ORDER BY label
+                  FROM harness_credential WHERE erased_at IS NULL ORDER BY label
                 """;
         List<MemberView> members = new ArrayList<>();
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
@@ -444,7 +448,7 @@ public class HarnessCredentialPool {
      * person to their phone. Finding out afterwards means a completed sign-in with nowhere to go.
      */
     public boolean hasLabel(Connection c, String label) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM harness_credential WHERE label = ?")) {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM harness_credential WHERE label = ? AND erased_at IS NULL")) {
             ps.setString(1, label);
             try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
         }
@@ -555,7 +559,7 @@ public class HarnessCredentialPool {
         int switchedOff = 0;
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT id, type, api_key FROM harness_credential
-                 WHERE auth_mode = 'SUBSCRIPTION' AND account_ref IS NULL ORDER BY updated_at DESC
+                 WHERE auth_mode = 'SUBSCRIPTION' AND account_ref IS NULL AND erased_at IS NULL ORDER BY updated_at DESC
                 """); ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 UUID id = rs.getObject("id", UUID.class);
@@ -607,10 +611,88 @@ public class HarnessCredentialPool {
                 id) == 1;
     }
 
+    /** What {@link #delete} did. */
+    public enum Deletion {
+        /** No run used it, so the row is gone. */
+        DELETED,
+        /** A run used it: its secret is erased and it is hidden, but the row stays so the run can name it. */
+        ERASED,
+        /** It is still switched on. Switch it off first, so no build is picking it while it goes. */
+        STILL_ON,
+        NOT_FOUND
+    }
+
+    /**
+     * Delete a switched-off member (operator feedback, 2026-09-27).
+     *
+     * <p>Switching off was the only way to remove one, and it kept the key or the person's sign-in file
+     * stored for ever. A member no run used is now deleted outright. One a run used cannot be — the run's
+     * attribution points at it — so its secret is erased and it leaves the pool screen, keeping only the
+     * name a finished run shows. Either way the secret is gone.
+     */
+    public Deletion delete(UUID id) {
+        try (Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                Deletion outcome = delete(c, id);
+                c.commit();
+                return outcome;
+            } catch (SQLException | RuntimeException failure) {
+                c.rollback();
+                throw failure;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The harness credential " + id + " could not be deleted", e);
+        }
+    }
+
+    private Deletion delete(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "SELECT enabled FROM harness_credential WHERE id = ? AND erased_at IS NULL FOR UPDATE")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Deletion.NOT_FOUND;
+                if (rs.getBoolean("enabled")) return Deletion.STILL_ON;
+            }
+        }
+        // Used by a run, or picked lately: a dispatch picks a member and registers its run a moment later,
+        // outside one transaction, so a member picked in the last hour may be about to be named by a run
+        // not written yet. Erasing keeps the row that run will point at; deleting would fail its insert.
+        boolean used;
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT EXISTS (SELECT 1 FROM factory_run WHERE harness_credential_id = ?)
+                    OR EXISTS (SELECT 1 FROM harness_credential WHERE id = ? AND last_used_at > now() - interval '1 hour')
+                """)) {
+            ps.setObject(1, id);
+            ps.setObject(2, id);
+            try (ResultSet rs = ps.executeQuery()) { rs.next(); used = rs.getBoolean(1); }
+        }
+        if (used) {
+            try (PreparedStatement ps = c.prepareStatement("""
+                    UPDATE harness_credential SET api_key = NULL, account_ref = NULL, erased_at = now(), updated_at = now()
+                     WHERE id = ?
+                    """)) {
+                ps.setObject(1, id);
+                ps.executeUpdate();
+            }
+            return Deletion.ERASED;
+        }
+        // The sign-in that produced a seat is history; it keeps its row and forgets the member.
+        try (PreparedStatement ps = c.prepareStatement("UPDATE harness_sign_in SET credential_id = NULL WHERE credential_id = ?")) {
+            ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+        try (PreparedStatement ps = c.prepareStatement("DELETE FROM harness_credential WHERE id = ?")) {
+            ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+        return Deletion.DELETED;
+    }
+
     /** Bring a disabled member back, because disabling is not deletion and must not be one-way. */
     public boolean enable(UUID id) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
-                "UPDATE harness_credential SET enabled = TRUE, updated_at = now() WHERE id = ? AND NOT enabled")) {
+                "UPDATE harness_credential SET enabled = TRUE, updated_at = now() WHERE id = ? AND NOT enabled AND erased_at IS NULL")) {
             ps.setObject(1, id);
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {

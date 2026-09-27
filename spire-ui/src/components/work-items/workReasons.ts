@@ -83,7 +83,7 @@ const REASONS = new Map(Object.entries({
   spec_capability_unavailable: 'Specification generation is not available.',
   plan_capability_unavailable: 'Plan generation is not available.',
   build_capability_unavailable: 'Build execution is not available.',
-  verify_capability_unavailable: 'Verification is not available.',
+  verify_capability_unavailable: 'Verification is not built yet. The build finished and its result is held: the branch is not pushed and no pull request is opened.',
   deliver_capability_unavailable: 'Delivery is not available.',
   review_capability_unavailable: 'Review execution is not available.',
   land_capability_unavailable: 'Automatic merging is not available.',

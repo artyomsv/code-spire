@@ -82,6 +82,9 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   const levels = known?.status === 'OK' ? known.offered.find(model => model.slug === form.model)?.efforts ?? [] : [];
   const levelUnusable = !!form.effort && !levels.includes(form.effort);
   const complete = !!form.baseBranch.trim() && !!form.harness && !!picked && picked.blocked === null && !levelUnusable;
+  // Save stays off until these are filled; saying which is what an operator needs (feedback, 2026-09-27).
+  const missing = [!form.baseBranch.trim() && 'Base branch', !form.harness && 'Harness', form.harness && !form.model && 'Model']
+    .filter((field): field is string => !!field);
   return <FactoryStep number={5} question="How it builds" term="build setup" state={editing ? 'editing' : defaults.revision > 0 ? 'done' : 'missing'}
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
@@ -129,6 +132,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       {error.includes('Reload it') && <div className="prov-actions">
         <button className="btn-ghost sm" type="button" onClick={reload}>Reload the saved setup</button></div>}
       {busy === 'saving' && <p className="factory-note" role="status">Saving the build setup. The form unlocks when the server answers.</p>}
+      {busy === null && missing.length > 0 && <p className="factory-note" role="status">To save, fill in: {missing.join(', ')}.</p>}
       <div className="prov-actions">
         <button className="btn" type="button" disabled={busy !== null || !complete} onClick={() => void submit()}>{busy === 'saving' ? 'Saving…' : 'Save build setup'}</button>
         <button className="btn-ghost" type="button" disabled={busy !== null} onClick={() => setOpen(null)}>Cancel</button></div>
