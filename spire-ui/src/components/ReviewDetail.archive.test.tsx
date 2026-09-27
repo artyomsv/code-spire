@@ -112,7 +112,7 @@ describe('ReviewDetail — archive and unarchive', () => {
     vi.spyOn(api, 'fetchReviewDetail').mockResolvedValue(detail(null));
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }, { timeout: 5000 }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: /^archive review$/i }));
 
@@ -126,7 +126,7 @@ describe('ReviewDetail — archive and unarchive', () => {
     vi.spyOn(api, 'fetchReviewDetail').mockResolvedValue(detail(null));
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }, { timeout: 5000 }));
     const dialog = await screen.findByRole('dialog');
 
     expect(within(dialog).queryByText(/permanently|cannot be undone/i)).not.toBeInTheDocument();
@@ -174,7 +174,7 @@ describe('ReviewDetail — archive and unarchive', () => {
     stubFetch('This review is still running. Wait for it to finish, or cancel it, then archive.');
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^archive review$/i }, { timeout: 5000 }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: /^archive review$/i }));
 

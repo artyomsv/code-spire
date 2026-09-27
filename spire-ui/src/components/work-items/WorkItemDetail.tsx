@@ -48,7 +48,7 @@ export default function WorkItemDetail() {
     setTracker(previous => shown.current === id ? previous : { value: null, error: null });
     const read = ++reads.current;
     getWorkItem(id).then(item => { if (active && read === reads.current) { shown.current = id; setState({ item, error: null }); } })
-      .catch(error => { if (active) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
+      .catch(error => { if (active && read === reads.current) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
     getWorkItemTracker(id).then(value => { if (active) setTracker({ value, error: null }); })
       .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
     return () => { active = false; };

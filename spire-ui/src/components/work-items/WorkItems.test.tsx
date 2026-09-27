@@ -733,9 +733,9 @@ it('shows the item from a poll that overtook a slow first load', async () => {
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
-  let answerLoad: (value: Detail) => void = () => {};
+  let failLoad: (reason: Error) => void = () => {};
   vi.spyOn(api, 'getWorkItem')
-    .mockImplementationOnce(() => new Promise(resolve => { answerLoad = resolve; }))
+    .mockImplementationOnce(() => new Promise((_, reject) => { failLoad = reject; }))
     .mockResolvedValue(withEvent('TEST-polled read'));
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
@@ -743,8 +743,9 @@ it('shows the item from a poll that overtook a slow first load', async () => {
     await act(async () => { vi.advanceTimersByTime(10_000); });
 
     expect(await screen.findByText(/TEST-polled read/)).toBeInTheDocument();
-    await act(async () => { answerLoad(withEvent('TEST-slow first load')); });
-    expect(screen.queryByText(/TEST-slow first load/)).toBeNull();
+    await act(async () => { failLoad(new Error('TEST-superseded load failed')); });
+    expect(screen.queryByText(/TEST-superseded load failed/)).toBeNull();
+    expect(screen.getByText(/TEST-polled read/)).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
