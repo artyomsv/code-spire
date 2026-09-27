@@ -25,6 +25,8 @@ it('lets the two price labels of a row share one height so the inputs line up', 
   expect(css).toMatch(/\.rate-field \{[^}]*grid-row: span 3;[^}]*grid-template-rows: subgrid/);
   expect(css).toMatch(/\.rate-field > label\.field \{[^}]*display: contents/);
   expect(css).toMatch(/\.rate-label \{[^}]*align-self: end/);
+  // On a narrow screen the price fields stack in one column, like the other field rows (review of PR #180).
+  expect(css).toMatch(/@media \(max-width: 560px\) \{\s*[^}]*\.rate-grid \{ grid-template-columns: 1fr; \}/);
   const fields = read('components/SettingsLlmModelRateFields.tsx');
   expect(fields).toContain('<div className="rate-grid">');
   expect(fields).toContain('<div className="rate-field">');
