@@ -175,6 +175,10 @@ public class HarnessCredentialPool {
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
                         LIMIT 1)
+                   -- Checked again here, after any wait for the row: a member switched off or erased
+                   -- while this pick waited must not be returned, or its missing key would be read as
+                   -- a corrupt one and the member marked refused (review of PR #179).
+                   AND enabled AND erased_at IS NULL
                 RETURNING id, label, type, base_url, api_key
                 """;
         UUID chosen = null;
@@ -651,10 +655,17 @@ public class HarnessCredentialPool {
                 if (rs.getBoolean("enabled")) return Deletion.STILL_ON;
             }
         }
+        // Used by a run, or picked lately: a dispatch picks a member and registers its run a moment later,
+        // outside one transaction, so a member picked in the last hour may be about to be named by a run
+        // not written yet. Erasing keeps the row that run will point at; deleting would fail its insert.
         boolean used;
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM factory_run WHERE harness_credential_id = ? LIMIT 1")) {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT EXISTS (SELECT 1 FROM factory_run WHERE harness_credential_id = ?)
+                    OR EXISTS (SELECT 1 FROM harness_credential WHERE id = ? AND last_used_at > now() - interval '1 hour')
+                """)) {
             ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) { used = rs.next(); }
+            ps.setObject(2, id);
+            try (ResultSet rs = ps.executeQuery()) { rs.next(); used = rs.getBoolean(1); }
         }
         if (used) {
             try (PreparedStatement ps = c.prepareStatement("""

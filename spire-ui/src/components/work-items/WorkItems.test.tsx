@@ -697,3 +697,32 @@ it('reads the open work item again on its own', async () => {
     vi.useRealTimers();
   }
 });
+
+// A slow poll must not put back an older item than a refresh already showed (review of PR #179).
+it('drops a poll answer that a later refresh overtook', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+  let answerPoll: (value: Detail) => void = () => {};
+  vi.spyOn(api, 'getWorkItem')
+    .mockResolvedValueOnce(withEvent('TEST-first read'))
+    .mockImplementationOnce(() => new Promise(resolve => { answerPoll = resolve; }))
+    .mockResolvedValue(withEvent('TEST-refreshed read'));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+    expect(await screen.findByText(/TEST-refreshed read/)).toBeInTheDocument();
+    await act(async () => { answerPoll(withEvent('TEST-stale poll')); });
+
+    expect(screen.getByText(/TEST-refreshed read/)).toBeInTheDocument();
+    expect(screen.queryByText(/TEST-stale poll/)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});

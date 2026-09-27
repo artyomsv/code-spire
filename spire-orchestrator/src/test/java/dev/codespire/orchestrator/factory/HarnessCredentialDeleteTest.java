@@ -87,6 +87,67 @@ class HarnessCredentialDeleteTest {
         pool.remove(again);
     }
 
+    /**
+     * A dispatch picks a member and writes its run a moment later; a member picked lately may be about to
+     * be named by a run not written yet, so it is erased rather than deleted (review of PR #179).
+     */
+    @Test
+    void aMemberPickedLatelyIsErasedRatherThanDeleted() throws SQLException {
+        UUID id = switchedOffKey(label());
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("UPDATE harness_credential SET last_used_at = now() WHERE id = ?")) {
+            ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+
+        assertEquals(HarnessCredentialPool.Deletion.ERASED, pool.delete(id));
+        assertEquals(1, rows("SELECT count(*) FROM harness_credential WHERE id = ?", id), "the row a pending run needs stays");
+    }
+
+    /**
+     * A key switched off and erased while a pick waits for it is not handed out, and not mistaken for a
+     * corrupt key and marked refused (review of PR #179). Every other usable key is held and switched off
+     * in the same transaction, so whichever the pick chose, it has to wait and re-check.
+     */
+    @Test
+    void aKeyErasedWhileAPickWaitsIsNotReturnedNorMarkedRefused() throws Exception {
+        UUID id = pool.add(label(), "openai", "https://api.openai.com", "TEST-key-erased-in-flight").id();
+        java.util.List<UUID> others = new java.util.ArrayList<>();
+        try (Connection other = dataSource.getConnection()) {
+            other.setAutoCommit(false);
+            try (PreparedStatement ps = other.prepareStatement("""
+                    UPDATE harness_credential SET enabled = FALSE
+                     WHERE enabled AND auth_mode = 'API_KEY' AND rejected_at IS NULL AND id <> ?
+                    RETURNING id
+                    """)) {
+                ps.setObject(1, id);
+                try (ResultSet rs = ps.executeQuery()) { while (rs.next()) others.add(rs.getObject(1, UUID.class)); }
+            }
+            try (PreparedStatement ps = other.prepareStatement(
+                    "UPDATE harness_credential SET enabled = FALSE, api_key = NULL, erased_at = now() WHERE id = ?")) {
+                ps.setObject(1, id);
+                ps.executeUpdate();
+            }
+            java.util.concurrent.CompletableFuture<HarnessCredentialPool.Selection> picking =
+                    java.util.concurrent.CompletableFuture.supplyAsync(pool::select);
+
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> picking.get(1, java.util.concurrent.TimeUnit.SECONDS), "the pick waits for the held rows");
+            other.commit();
+            HarnessCredentialPool.Selection selection = picking.get(30, java.util.concurrent.TimeUnit.SECONDS);
+
+            assertFalse(selection instanceof HarnessCredentialPool.Selection.Chosen, "every candidate was switched off meanwhile");
+            assertEquals(0, rows("SELECT count(*) FROM harness_credential WHERE id = ? AND rejected_at IS NOT NULL", id),
+                    "an erased key is not a refused one");
+        } finally {
+            try (Connection c = dataSource.getConnection();
+                 PreparedStatement ps = c.prepareStatement("UPDATE harness_credential SET enabled = TRUE WHERE id = ANY (?)")) {
+                ps.setArray(1, c.createArrayOf("uuid", others.toArray()));
+                ps.executeUpdate();
+            }
+        }
+    }
+
     /** A member still switched on could be picked by a build at this moment, so it must be switched off first. */
     @Test
     void aMemberStillSwitchedOnIsRefused() {
