@@ -89,9 +89,9 @@ interface RateFieldProps {
 function RateField({ type, value, onChange, notBilled, onNotBilled }: RateFieldProps) {
   const optional = !MANDATORY_RATE_TYPES.includes(type);
   return (
-    <div className="field">
+    <div className="rate-field">
       <label className="field">
-        <span>
+        <span className="rate-label">
           {TOKEN_TYPE_LABEL[type]} rate $ / 1M tokens {optional && <span className="field-optional">optional</span>}
         </span>
         <input
@@ -132,7 +132,7 @@ interface ModelRateFieldsProps {
 export default function ModelRateFields({ rates, onChange, notBilled, onNotBilled }: ModelRateFieldsProps) {
   return (
     <>
-      <div className="field-row-2">
+      <div className="rate-grid">
         {RATE_TYPES.map((type) => (
           <RateField key={type} type={type} value={rates[type]} onChange={(v) => onChange(type, v)}
             notBilled={!!notBilled[type]} onNotBilled={(v) => onNotBilled(type, v)} />

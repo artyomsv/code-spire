@@ -131,7 +131,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
 
   return (
     <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal tall" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <h3>{editing ? 'Edit model' : 'Add model'}</h3>
         <form className="modal-body" onSubmit={submit}>
           <div className="field-row-2">

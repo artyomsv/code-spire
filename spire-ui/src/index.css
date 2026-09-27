@@ -803,6 +803,15 @@
   }
   /* Roomier variant for content-heavy dialogs (e.g. the webhook-created reveal + setup checklist). */
   .modal.wide { max-width: 600px; }
+  /* A dialog that can be taller than the window: it is capped at the window, its fields scroll, and the
+     buttons stay pinned at the bottom. The model dialog ran off screen with its Save button half hidden. */
+  .modal.tall { max-height: calc(100vh - 40px); display: flex; flex-direction: column; }
+  .modal.tall > h3 { flex: none; }
+  .modal.tall > .modal-body { overflow-y: auto; min-height: 0; }
+  .modal.tall .modal-actions {
+    position: sticky; bottom: -18px; margin: 0 -18px -18px; padding: 12px 18px;
+    background: var(--panel); border-top: 1px solid var(--border);
+  }
   .modal-head {
     display: flex; align-items: center; gap: 12px;
     padding: 15px 18px; border-bottom: 1px solid var(--border);
@@ -1138,6 +1147,14 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; word-break: break-all;
   }
   .field-optional { color: var(--text-3); font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 11px; }
+  /* The price fields line up across both columns whether or not a label wraps for its "optional" marker:
+     each field spans three rows of the grid (label, input, check box) as a subgrid, so the two labels of a
+     row share one track and sit at its bottom. The label element is display: contents so its text and its
+     input can each take a row; it still labels the input. */
+  .rate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rate-field { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 6px; }
+  .rate-field > label.field { display: contents; }
+  .rate-label { align-self: end; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
   .field-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .field-row-12 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; }
 
