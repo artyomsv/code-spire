@@ -429,7 +429,7 @@ function LlmProviderForm({
 
   return (
     <div className="modal-overlay">
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal tall" onClick={(e) => e.stopPropagation()}>
         <h3>{editing ? 'Edit LLM provider' : 'Add LLM provider'}</h3>
         <form className="modal-body" onSubmit={submit}>
           <label className="field">
