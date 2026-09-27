@@ -65,7 +65,11 @@ export default function WorkItemDetail() {
       polling = true;
       const read = ++reads.current;
       getWorkItem(id).then(item => {
-        if (live && read === reads.current) setState(previous => previous.item?.id === id ? { item, error: null } : previous);
+        // Also fills an empty page: a poll that overtook a slow first load is now the newest read, and the
+        // load's own answer will be dropped (review of PR #179).
+        if (!live || read !== reads.current) return;
+        shown.current = id;
+        setState(previous => previous.item && previous.item.id !== id ? previous : { item, error: null });
       }).catch(() => { /* the last good read stays on screen; the next tick tries again */ })
         .finally(() => { polling = false; });
     }, DETAIL_POLL_MILLISECONDS);

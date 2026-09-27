@@ -726,3 +726,26 @@ it('drops a poll answer that a later refresh overtook', async () => {
     vi.useRealTimers();
   }
 });
+
+// A first load slower than the first poll must not leave the page loading for ever (review of PR #179).
+it('shows the item from a poll that overtook a slow first load', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+  let answerLoad: (value: Detail) => void = () => {};
+  vi.spyOn(api, 'getWorkItem')
+    .mockImplementationOnce(() => new Promise(resolve => { answerLoad = resolve; }))
+    .mockResolvedValue(withEvent('TEST-polled read'));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+
+    expect(await screen.findByText(/TEST-polled read/)).toBeInTheDocument();
+    await act(async () => { answerLoad(withEvent('TEST-slow first load')); });
+    expect(screen.queryByText(/TEST-slow first load/)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
