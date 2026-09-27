@@ -131,56 +131,64 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
 
   return (
     <div className="modal-overlay">
-      <div className="modal tall" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div className="modal tall model-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <h3>{editing ? 'Edit model' : 'Add model'}</h3>
         <form className="modal-body" onSubmit={submit}>
-          <div className="field-row-2">
-            <label className="field">
-              <span>Type</span>
-              <Select
-                ariaLabel="Type"
-                value={identity.type}
-                options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
-                onChange={(v) => updateIdentity({ type: v as LlmType })}
+          <div className="model-panes">
+            <div className="model-pane">
+              <div className="field-row-2">
+                <label className="field">
+                  <span>Type</span>
+                  <Select
+                    ariaLabel="Type"
+                    value={identity.type}
+                    options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
+                    onChange={(v) => updateIdentity({ type: v as LlmType })}
+                  />
+                </label>
+                <label className="field">
+                  <span>Model name</span>
+                  <input
+                    className="mono"
+                    placeholder="gpt-4o"
+                    value={identity.name}
+                    onChange={(e) => updateIdentity({ name: e.target.value })}
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>
+                  Label <span className="field-optional">defaults to the model name</span>
+                </span>
+                <input placeholder="GPT-4o" value={identity.label} onChange={(e) => updateIdentity({ label: e.target.value })} />
+              </label>
+
+              <label className="field-check">
+                <input
+                  type="checkbox"
+                  checked={pricingMode === 'UNMETERED'}
+                  onChange={(e) => setPricingMode(e.target.checked ? 'UNMETERED' : 'METERED')}
+                />
+                <span>Self-hosted — no per-token cost (UNMETERED)</span>
+              </label>
+
+              <SettingsLlmModelDialectFields
+                type={identity.type}
+                dialect={dialect}
+                onDialectChange={updateDialect}
+                extraParams={extraParams}
+                onExtraParamsChange={setExtraParams}
               />
-            </label>
-            <label className="field">
-              <span>Model name</span>
-              <input
-                className="mono"
-                placeholder="gpt-4o"
-                value={identity.name}
-                onChange={(e) => updateIdentity({ name: e.target.value })}
-              />
-            </label>
+            </div>
+
+            <section className="model-prices" aria-label="Prices">
+              <div className="model-prices-title">Prices · $ per 1M tokens</div>
+              {pricingMode === 'METERED'
+                ? <ModelRateFields rates={rates} onChange={setRate} notBilled={notBilled} onNotBilled={assert} />
+                : <small className="field-hint">Self-hosted: this model has no per-token price.</small>}
+            </section>
           </div>
-
-          <label className="field">
-            <span>
-              Label <span className="field-optional">defaults to the model name</span>
-            </span>
-            <input placeholder="GPT-4o" value={identity.label} onChange={(e) => updateIdentity({ label: e.target.value })} />
-          </label>
-
-          <label className="field-check">
-            <input
-              type="checkbox"
-              checked={pricingMode === 'UNMETERED'}
-              onChange={(e) => setPricingMode(e.target.checked ? 'UNMETERED' : 'METERED')}
-            />
-            <span>Self-hosted — no per-token cost (UNMETERED)</span>
-          </label>
-
-          {pricingMode === 'METERED' && <ModelRateFields rates={rates} onChange={setRate}
-            notBilled={notBilled} onNotBilled={assert} />}
-
-          <SettingsLlmModelDialectFields
-            type={identity.type}
-            dialect={dialect}
-            onDialectChange={updateDialect}
-            extraParams={extraParams}
-            onExtraParamsChange={setExtraParams}
-          />
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 
