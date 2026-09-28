@@ -286,13 +286,18 @@ public final class CodexAdapter implements HarnessAdapter {
      * cached would be recorded as 24048 tokens for a call that used 14064, inflated by the cache-hit
      * rate and therefore inflated most on the cheapest runs.
      *
-     * <p><b>Two honest limits, recorded rather than papered over.</b> Codex reports no total, so the
-     * independent cross-check {@code TokenUsageMapper} performs against {@code totalTokenCount()} is
-     * not available here — a mis-partition cannot be caught by arithmetic. And
-     * {@code cache_write_input_tokens} is treated as ADDITIONAL to input rather than a subset of it,
-     * matching what the name describes and how Anthropic reports the same concept; every run
-     * observed so far reported zero, so the alternative has not been ruled out by measurement. A
-     * run with a non-zero cache write is what would settle it.
+     * <p>{@code cache_write_input_tokens} is a subset of input too, like the cached count and unlike
+     * Anthropic's cache creation. The first run to report one settled it (work item 38, 2026-09-27):
+     * the Codex session log gave {@code input_tokens=14804, cached_input_tokens=14616,
+     * cache_write_input_tokens=185, output_tokens=64, total_tokens=14868}, so the total is input plus
+     * output and the three input parts add up to 14804. Reading the cache write as additional billed
+     * the run's 14801 cache-write tokens twice, once as input and once as cache write, and recorded
+     * its cost about 43% above what it was.
+     *
+     * <p><b>One honest limit, recorded rather than papered over.</b> The {@code --json} stream this
+     * parses carries no total, so the independent cross-check {@code TokenUsageMapper} performs
+     * against {@code totalTokenCount()} is not available here: a mis-partition that keeps every
+     * part below the headline cannot be caught by arithmetic.
      */
     private Optional<RunEvent> usageEvent(JsonNode usage, Instant at) {
         if (!usage.isObject()) {
@@ -309,12 +314,13 @@ public final class CodexAdapter implements HarnessAdapter {
             // once dead-lettered a paid review; here it degrades the turn to UNKNOWN instead.
             return Optional.empty();
         }
-        if (cached > input || reasoning > output) {
-            return Optional.of(new RunEvent.Usage(at, unreconciled(input, cached, output, reasoning)));
+        long inputParts = cached + cacheWrite;
+        if (inputParts > input || reasoning > output) {
+            return Optional.of(new RunEvent.Usage(at, unreconciled(input, inputParts, output, reasoning)));
         }
 
         Map<TokenBucket, Long> counts = new EnumMap<>(TokenBucket.class);
-        put(counts, TokenBucket.INPUT, input - cached);
+        put(counts, TokenBucket.INPUT, input - inputParts);
         put(counts, TokenBucket.CACHED_INPUT, cached);
         put(counts, TokenBucket.CACHE_WRITE, cacheWrite);
         put(counts, TokenBucket.OUTPUT, output - reasoning);
@@ -342,14 +348,15 @@ public final class CodexAdapter implements HarnessAdapter {
      *
      * <p>{@code TokenUsageMapper} carries the vendor's OWN total here — the one number it has not
      * derived. Codex reports none, so this is derived from the very fields that just failed their
-     * check, and the direction of the guess matters. Under {@code cached > input} the natural
-     * reading is that input EXCLUDES cached, making the true total {@code input + cached + output};
-     * {@code input + output} would then be short by the cached amount. For waste detection,
-     * understating is the harmful direction, so each side takes the larger of its two figures.
+     * check, and the direction of the guess matters. Under {@code cached + cacheWrite > input} the
+     * natural reading is that input EXCLUDES those parts, making the true total
+     * {@code input + parts + output}; {@code input + output} would then be short by the parts. For
+     * waste detection, understating is the harmful direction, so each side takes the larger of its
+     * two figures.
      */
-    private static UsageReport unreconciled(long input, long cached, long output, long reasoning) {
+    private static UsageReport unreconciled(long input, long inputParts, long output, long reasoning) {
         return UsageReport.of(Map.of(TokenBucket.TOTAL,
-                Math.max(input, cached) + Math.max(output, reasoning)));
+                Math.max(input, inputParts) + Math.max(output, reasoning)));
     }
 
     /** A field that is absent reads as zero; one that is present but not a number reads as -1. */

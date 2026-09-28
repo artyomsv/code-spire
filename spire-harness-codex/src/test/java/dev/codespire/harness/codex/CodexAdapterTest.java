@@ -388,25 +388,42 @@ class CodexAdapterTest {
     }
 
     @Test
-    void aNonZeroCacheWriteIsTreatedAsAdditionalToInput() {
-        // Pins an UNVERIFIED reading on purpose. cache_write is treated as ADDITIONAL to input,
-        // matching its name and how Anthropic reports the same concept — but every run observed so
-        // far reported zero, so the subset reading is not ruled out. The contradiction gate cannot
-        // catch a wrong choice here: cacheWrite is compared against nothing, so if it really is a
-        // subset the adapter overstates by exactly that amount and degrades to nothing.
-        //
-        // Asserting the reading explicitly means changing it is a deliberate act with a failing
-        // test, rather than a silent drift in an arithmetic nobody re-reads.
+    void aCacheWriteIsPartOfInputNotAdditionalToIt() {
+        // Measured, not assumed: the first run to report a cache write (work item 38, 2026-09-27).
+        // Its Codex session log gave these counts with total_tokens=14868, which is input plus output,
+        // so cached (14616) + cache write (185) + plain input (3) make up the 14804 input tokens. The
+        // earlier reading, cache write ADDITIONAL to input, billed the cache-write tokens twice and
+        // recorded that run about 43% above its cost.
         RunEvent event = adapter.parse("""
-                {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":10,\
-                "cache_write_input_tokens":7,"output_tokens":5,"reasoning_output_tokens":0}}""")
+                {"type":"turn.completed","usage":{"input_tokens":14804,"cached_input_tokens":14616,\
+                "cache_write_input_tokens":185,"output_tokens":64,"reasoning_output_tokens":0}}""")
                 .orElseThrow();
 
         UsageReport report = adapter.usage(RunEventSummary.of(List.of(event)));
 
-        assertEquals(90L, report.tokens(TokenBucket.INPUT),
-                "input minus cached only — cache_write is NOT subtracted under the additional reading");
-        assertEquals(7L, report.tokens(TokenBucket.CACHE_WRITE));
+        assertEquals(3L, report.tokens(TokenBucket.INPUT), "input minus cached minus cache write");
+        assertEquals(14_616L, report.tokens(TokenBucket.CACHED_INPUT));
+        assertEquals(185L, report.tokens(TokenBucket.CACHE_WRITE));
+        assertEquals(64L, report.tokens(TokenBucket.OUTPUT));
+        assertEquals(14_868L, report.asMap().orElseThrow().values().stream().mapToLong(Long::longValue).sum(),
+                "the parts add up to Codex's own total, counting nothing twice");
+    }
+
+    @Test
+    void cachedPlusCacheWriteAboveInputDegradesToAnUnreconciledTotal() {
+        // Each part fits under input on its own, but together they are more than input: the counts
+        // contradict the subset reading. No split can be trusted, so the run is unreconciled rather
+        // than recorded with an input floored at zero.
+        RunEvent event = adapter.parse("""
+                {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,\
+                "cache_write_input_tokens":30,"output_tokens":10,"reasoning_output_tokens":0}}""")
+                .orElseThrow();
+
+        UsageReport report = adapter.usage(RunEventSummary.of(List.of(event)));
+
+        assertEquals(Set.of(TokenBucket.TOTAL), report.asMap().orElseThrow().keySet(),
+                "no split is offered alongside a TOTAL");
+        assertEquals(120L, report.tokens(TokenBucket.TOTAL), "max(100, 80 + 30) + max(10, 0)");
     }
 
     @Test

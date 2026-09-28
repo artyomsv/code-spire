@@ -476,20 +476,26 @@ The real event vocabulary, captured from two live runs rather than read from doc
   call that used 14064 — a 71% overstatement, worst on the runs that were cheapest.
   `TokenUsageMapper.openAi` in spire-llm already subtracts for this reason; `CodexAdapter` follows it.
 
-**Three limits left open, deliberately.** The cumulative-versus-incremental question above is the
-first. Second, Codex reports **no total**, so the independent cross-check `TokenUsageMapper`
-performs against `totalTokenCount()` is unavailable here — a mis-partition cannot be caught by
-arithmetic, only by a contradiction between the vendor's own fields. Third,
-`cache_write_input_tokens` is treated as *additional* to input rather than a subset of it, matching
-what the name describes and how Anthropic reports the same concept; every run observed so far
-reported zero, so measurement has not ruled out the alternative — and the contradiction gate cannot
-catch a wrong choice here, because `cacheWrite` is compared against nothing. A run with a non-zero
-cache write would settle it.
+- **Cache writes are a subset of input too (measured 2026-09-27).** The first run to report a
+  non-zero `cache_write_input_tokens` (work item 38, an API-key build with 11 tool calls) settled it.
+  Its Codex session log gives `total_tokens` equal to input plus output, and one turn's
+  `input_tokens: 14804` is `cached_input_tokens: 14616` + `cache_write_input_tokens: 185` + 3
+  plain. The adapter had read the cache write as *additional*, as Anthropic reports cache creation;
+  that billed the run's 14801 cache-write tokens twice and recorded its cost about 43% above what it
+  was. `CodexAdapter` now subtracts both parts from input, and a turn whose parts add up to more
+  than input degrades to an unreconciled total.
 
-**What would settle two of the three: one deliberate multi-turn run**, captured with `--json`, its
+**Two limits left open, deliberately.** The cumulative-versus-incremental question above is the
+first. Second, the `--json` stream carries **no total**, so the independent cross-check
+`TokenUsageMapper` performs against `totalTokenCount()` is unavailable here — a mis-partition cannot
+be caught by arithmetic, only by a contradiction between the vendor's own fields. The session log
+Codex writes in the agent's home does carry `total_tokens`, which is how the cache-write reading
+was settled; the adapter does not read that file.
+
+**What would settle the first: one deliberate multi-turn run**, captured with `--json`, its
 `turn.completed` lines compared against each other. That is a run to make on purpose, not a thing to
-wait for. Until it exists, neither the cumulative reading nor the cache-write reading may be cited
-as measured — and this section is the record of which is which.
+wait for. Until it exists, the cumulative reading may not be cited as measured — and this section is
+the record of which is which.
 
 **Version note.** The plan states its flag set was verified against codex-cli **0.152.0**; the
 binary available for this measurement was **0.146.0**. Every flag the adapter uses was re-checked
