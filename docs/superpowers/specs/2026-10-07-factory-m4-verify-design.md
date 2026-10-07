@@ -150,10 +150,12 @@ Verify containers get the agent's network. The Docker arm enforces no egress pol
 ### 3.4 Time, slots and the ack budget
 
 - **Ack budget.** `RunAckBudget` sizes the consumer's ack window from `spire.run.max-wall-clock-seconds`.
-  The verify time limit must therefore not exceed that maximum minus the init timeout. Build setup
-  refuses a larger value on save, and dispatch refuses it again against the worker's current maximum.
+  The verify time limit covers init and the checks together (init waits at most the time left), so it
+  must not exceed that maximum. Build setup refuses a larger value on save (against the orchestrator's
+  `spire.factory.wall-clock-seconds`), and the run worker refuses it again against its own maximum, as
+  `UNVERIFIED / verify_could_not_run`.
 - **Slots.** A verify unit takes the run worker's one execution slot for its length, like a build. It is
-  claimed under its own key, `verify:<attemptId>`, never under the build's run id, which is already
+  claimed under its own key, `verify:<attemptId>` (the claim slot beside the build's run id), never under the build's `execute` slot, which is already
   claimed.
 - **Item caps.** Verify wall seconds count toward `maxWallClockSeconds`, so a long verify shortens the
   wall clock left for a retry.
