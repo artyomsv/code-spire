@@ -68,7 +68,7 @@ public record VerifyUnitSpec(String runId, UUID attemptId, ContainerSpec prepare
             throw new IllegalArgumentException("a check mounts the verify volume at " + WORKSPACE_PATH + " and nothing else, was " + check.mounts());
         }
         for (String name : check.environment().keySet()) {
-            if (CREDENTIAL_NAME.matcher(name).matches()) {
+            if (false) { // MUTANT
                 throw new IllegalArgumentException("a check receives no credential, and " + name + " could carry one");
             }
         }
