@@ -59,6 +59,7 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
         <div><dt>Agent</dt><dd className="v">{preparation.harness} · {preparation.model}</dd></div>
         <div><dt>Plan</dt><dd className="v"><ArtifactRef artifact={preparation.plan} /> · one step</dd></div>
         <div><dt>Pays with</dt><dd className="v">{preparation.payWith === 'SUBSCRIPTION' ? 'a Codex subscription' : 'an API key'}</dd></div>
+        <div><dt>Checks</dt><dd className="v mono">{preparation.verifyCommands?.length ? preparation.verifyCommands.join(' → ') : 'none — builds stop as unverified'}</dd></div>
       </dl>
       {evidence?.specification && <>
         <p className="prov-sub">Specification — the ticket text, as it was prepared</p>

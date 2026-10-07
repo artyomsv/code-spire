@@ -11,6 +11,10 @@ export interface BuildDefaults {
   effort?: string | null;
   /** How builds pay: per token with an API key, or on a signed-in subscription. Absent from an older server. */
   payWith?: PayWith | null;
+  /** The checks verify runs, in order (M4). Absent from an older server. */
+  verifyCommands?: string[];
+  /** The limit for all checks together, in seconds. Absent from an older server. */
+  verifyTimeoutSeconds?: number;
   updatedBy: string | null;
   updatedAt: string | null;
 }
@@ -45,6 +49,8 @@ export interface BuildOptions {
   reportedTypes: Record<string, string[]>;
   /** Per harness, the models its image says it runs. Absent from an older server. */
   models?: Record<string, HarnessModels>;
+  /** The longest verify time limit a save accepts. Absent from an older server. */
+  verifyMaxSeconds?: number;
 }
 /** `account` is the role whose account answered: a REVIEWER-read head is not proof the factory can push. */
 export interface BranchHead { branch: string; commit: string; account: string }
@@ -65,7 +71,8 @@ const base = (repository: string) => `/api/repositories/${encodeURIComponent(rep
 
 export const buildDefaults = (repository: string) => read<BuildDefaults>(`${base(repository)}/build`);
 export const buildOptions = (repository: string) => read<BuildOptions>(`${base(repository)}/build/options`);
-export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null; payWith: PayWith }) =>
+export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null; payWith: PayWith;
+  verifyCommands: string[]; verifyTimeoutSeconds: number }) =>
   read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);
