@@ -82,7 +82,24 @@ public sealed interface RunCommand {
                       List<String> protectedPaths, long maxWallClockSeconds,
                       String scmCredential, String harnessCredential,
                       boolean existingBranch, String protectedBranch,
-                      String reasoningEffort, boolean harnessSignIn) implements RunCommand {
+                      String reasoningEffort, boolean harnessSignIn,
+                      String startFromRunId, String startFromHead) implements RunCommand {
+
+        /**
+         * Every caller written before a build could start from a checkpoint starts from its base (M4 retry
+         * build). A run already on the bus decodes with both null, which is what every such run did.
+         */
+        public ExecuteRun(String runId, RepoRef repo, String remoteUri,
+                          String baseBranch, String baseCommit, String branch,
+                          String prompt, String harness, String model, String agentImage,
+                          List<String> protectedPaths, long maxWallClockSeconds,
+                          String scmCredential, String harnessCredential,
+                          boolean existingBranch, String protectedBranch,
+                          String reasoningEffort, boolean harnessSignIn) {
+            this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, harnessSignIn, null, null);
+        }
 
         // Every call site that predates ADR-040 keeps working and keeps the M0 rule — the
         // additive treatment the other wire records take. A run already on the bus reads as
@@ -94,7 +111,7 @@ public sealed interface RunCommand {
                           String scmCredential, String harnessCredential) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, false, "", null, false);
+                    harnessCredential, false, "", null, false, null, null);
         }
 
         /**
@@ -109,7 +126,7 @@ public sealed interface RunCommand {
                           boolean existingBranch, String protectedBranch) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, null, false);
+                    harnessCredential, existingBranch, protectedBranch, null, false, null, null);
         }
 
         /**
@@ -124,7 +141,7 @@ public sealed interface RunCommand {
                           boolean existingBranch, String protectedBranch, String reasoningEffort) {
             this(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
                     agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, false);
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, false, null, null);
         }
 
         public ExecuteRun {
@@ -153,6 +170,11 @@ public sealed interface RunCommand {
                         "a run needs a wall clock; unlimited is not a limit: " + maxWallClockSeconds);
             }
             protectedBranch = protectedBranch == null ? "" : protectedBranch;
+            // Both or neither: a run id without its head would start from whatever that run last wrote.
+            if ((startFromRunId == null) != (startFromHead == null)
+                    || startFromRunId != null && (startFromRunId.isBlank() || !startFromHead.matches("[0-9a-f]{40}"))) {
+                throw new IllegalArgumentException("A checkpoint start names its held run and its full head");
+            }
             // Refused HERE rather than left to the publisher. The publisher does refuse it, and
             // that refusal is the floor -- but it fires inside a container after an image pull
             // and a clone, and reports as a misconfigured publisher rather than as a command that
@@ -186,7 +208,7 @@ public sealed interface RunCommand {
         public ExecuteRun onExistingBranch(String destination) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, true, destination, reasoningEffort, harnessSignIn);
+                    harnessCredential, true, destination, reasoningEffort, harnessSignIn, startFromRunId, startFromHead);
         }
 
         /**
@@ -197,7 +219,7 @@ public sealed interface RunCommand {
         public ExecuteRun atEffort(String level) {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, level, harnessSignIn);
+                    harnessCredential, existingBranch, protectedBranch, level, harnessSignIn, startFromRunId, startFromHead);
         }
 
         /**
@@ -208,7 +230,14 @@ public sealed interface RunCommand {
         public ExecuteRun paidBySignIn() {
             return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt,
                     harness, model, agentImage, protectedPaths, maxWallClockSeconds, scmCredential,
-                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, true);
+                    harnessCredential, existingBranch, protectedBranch, reasoningEffort, true, startFromRunId, startFromHead);
+        }
+
+        /** The same run, starting from another held run's checkpoint instead of the base (M4 retry build). */
+        public ExecuteRun fromCheckpoint(String previousRunId, String head) {
+            return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential, harnessCredential,
+                    existingBranch, protectedBranch, reasoningEffort, harnessSignIn, previousRunId, head);
         }
 
         @Override
@@ -228,6 +257,7 @@ public sealed interface RunCommand {
                     + ", harnessSignIn=" + harnessSignIn
                     + ", protectedBranch=" + protectedBranch
                     + ", reasoningEffort=" + reasoningEffort
+                    + ", startFromRunId=" + startFromRunId
                     + ", promptChars=" + prompt.length()
                     + ", scmCredential=" + (scmCredential == null ? "absent" : "***")
                     + ", harnessCredential=" + (harnessCredential == null ? "absent" : "***") + "]";
