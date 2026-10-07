@@ -5,6 +5,7 @@ import CopyField from '../CopyField';
 import type { Approval } from './approvalsApi';
 import type { Artifact } from './workPreparationApi';
 import { workRefusal } from './workReasons';
+import { isVerifyResultGate } from './VerifyResult';
 import type { PreparationEvidence } from './workPreparationApi';
 
 interface Props {
@@ -70,7 +71,9 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
     </section>}
     <section className="decision-sec" aria-label="If you approve">
       <h4>If you approve</h4>
-      {gate.phase === 'plan' && limits
+      {isVerifyResultGate(item)
+        ? <p>A new build starts from this build's last commit, with the failure in its prompt. It counts against this item's run limit.</p>
+        : gate.phase === 'plan' && limits
         ? <p>One build starts. It stops at <b>{formatCost(limits.maxCostMillicents)}</b> or after <b>{hours(limits.maxWallClockSeconds)}</b>, and this item may use up to <b>{limits.maxRunsPerItem}</b> runs.</p>
         : <p>The {gate.phase} phase continues within this item's limits.</p>}
     </section>

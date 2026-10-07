@@ -4,6 +4,7 @@ import type { WorkItemDetail } from '../../api';
 import { actorLabel } from '../actorsApi';
 import { JOURNEY, journeyCells, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
+import VerifyResult from './VerifyResult';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress'>;
@@ -95,7 +96,10 @@ function Build({ item }: { item: Item }) {
 function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | 'review' }) {
   const execution = item.progress?.execution;
   if (!execution || !current(item, execution.build.generation)) return null;
-  if (phase === 'verify') return <p className="factory-note">{execution.verificationAttempt ? 'Verification recorded' : 'Verification not recorded'}</p>;
+  // The outcome decides the look: a recorded attempt is not a pass (M4).
+  if (phase === 'verify') return execution.verification
+    ? <VerifyResult verification={execution.verification} />
+    : <p className="factory-note">{execution.verificationAttempt ? 'Verification recorded without a result' : 'Verification not recorded'}</p>;
   if (phase === 'review') return execution.reviewId ? <p className="factory-note">Review recorded for this build.</p> : null;
   const pr = execution.pullRequest;
   if (!pr) return null;

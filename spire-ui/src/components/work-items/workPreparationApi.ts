@@ -19,11 +19,22 @@ export interface Preparation {
 }
 export interface ArtifactReference { artifact: Artifact; title: string }
 export interface WorkBuild { attemptId: string; state: string; runId: string | null; reason: string | null; generation: number }
+/** One verify attempt's result (M4). Only PASSED ever renders as a pass. */
+export interface WorkVerification {
+  attemptId: string;
+  head: string;
+  outcome: 'PASSED' | 'FAILED' | 'UNVERIFIED';
+  reason: string | null;
+  /** exitCode null: the check never ran to an exit (it did not start, or the time limit stopped it) */
+  checks: { command: string; exitCode: number | null; wallMillis: number; outputTail: string }[];
+}
 export interface WorkExecution {
   runId: string;
   build: { workItemId: string; generation: number; buildAttemptId: string; preparationBinding: string };
   head: string;
   verificationAttempt: string | null;
+  /** What the verify found (M4); null before a verify reported, absent from an older server. */
+  verification?: WorkVerification | null;
   pullRequest: { number: number; url: string; draft: boolean | null } | null;
   reviewId: string | null;
 }

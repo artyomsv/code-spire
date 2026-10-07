@@ -217,3 +217,28 @@ it('offers no Approve for a decision whose prepared task the item no longer has'
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
 });
+
+const resultGateRow = { ...row, gate: { ...row.gate, phase: 'verify' } };
+const failedItem = { ...item, phase: 'verify', reason: 'verify_failed', gate: resultGateRow.gate };
+it('a verify result gate offers Retry build and Stop', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(failedItem);
+  show();
+  expect(await screen.findByRole('button', { name: 'Retry build' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+});
+it('Retry build answers approve, and Stop answers reject', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(failedItem);
+  show();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Retry build' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Retry build' }));
+  await waitFor(() => expect(decided).toHaveBeenCalledWith('Retrying the build.'));
+  expect(api.answer).toHaveBeenLastCalledWith(resultGateRow.gate, expect.any(String), true, expect.any(String));
+  cleanup();
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+  await waitFor(() => expect(decided).toHaveBeenCalledWith('Stopped after verification.'));
+  expect(api.answer).toHaveBeenLastCalledWith(resultGateRow.gate, expect.any(String), false, expect.any(String));
+});
