@@ -35,4 +35,35 @@ class WorkPhaseDecisionTest {
     @Test void automaticModeStartsExactlyOneBoundAttempt(){var next=enter(item("auto"),false,true);assertEquals("active",next.workflowStatus());assertEquals("plan",next.progress().attemptPhase());assertNotNull(next.progress().attemptId());assertTrue(next.progress().reserved());}
     @Test void terminalPhaseDoesNotStartAnotherAttempt(){var item=item("auto");var next=enter(item.decision(1,item.authority(),item.policy(),"complete",item.workflowStatus(),item.reason(),item.milestone(),null,item.progress()),false,true);assertEquals("completed",next.workflowStatus());assertNull(next.progress().attemptId());}
     @Test void readmissionPreservesUsageAndAdvancesGeneration(){var item=item("auto");var used=item.progress().start(UUID.randomUUID(),"build",Instant.EPOCH).finish(3,4,5);var next=item.decision(1,item.authority(),item.policy(),item.phase(),item.workflowStatus(),item.reason(),item.milestone(),null,used).readmit();assertEquals(2,next.generation());assertEquals(1,next.progress().runs());assertEquals(3,next.progress().wallSeconds());assertEquals(4,next.progress().costMillicents());assertEquals(5,next.progress().calls());}
+    WorkItemEvent atVerify(String mode) {
+        var modes=Map.of(WorkPolicy.Phase.INTAKE,"auto",WorkPolicy.Phase.SPEC,"auto",WorkPolicy.Phase.PLAN,"auto",WorkPolicy.Phase.BUILD,"auto",WorkPolicy.Phase.VERIFY,mode);
+        var profile=new WorkPolicy.Profile(UUID.randomUUID(),"TEST-policy",1,1,modes,new WorkPolicyLimits(60,5,20,7200,2_000_000,40,Set.of()));
+        var selection=new WorkPolicy.Selection(profile,profile.modes(),List.of(),"policy_selected",List.of(),profile,profile.limits());
+        return new WorkItemEvent("TEST-item",UUID.randomUUID(),UUID.randomUUID(),new WorkIssueLocation(new WorkIssueRef(WorkSourceType.GITHUB,"https://tracker.example.test","TEST-project","TEST-issue"),"TEST-42",URI.create("https://tracker.example.test/TEST-42")),
+                1,1,profile,profile.modes(),new WorkItemEvent.Authority(UUID.randomUUID(),1,1,1),selection,"verify","active","phase_started");
+    }
+    WorkVerification.CheckResult check(int exit){return new WorkVerification.CheckResult("TEST-check",exit,1,"");}
+    @Test void aFailedVerificationOpensAGateInAutoMode(){
+        var item=atVerify("auto");
+        var result=new WorkVerification(UUID.randomUUID(),"b".repeat(40),WorkVerification.Outcome.FAILED,"check_failed",List.of(check(1)));
+        var next=WorkItemLifecycle.verifyResultGate(item,item,4,Instant.EPOCH,UUID.randomUUID(),result);
+        assertEquals("waiting_approval",next.workflowStatus());assertEquals("verify_failed",next.reason());
+        assertEquals("GATE_OPENED",next.milestone());assertEquals("verify",next.gate().phase());assertEquals(5,next.gate().itemRevision());
+        assertEquals(WorkGate.artifactOf(item),next.gate().artifact());assertEquals("OPEN",next.gate().state());
+    }
+    @Test void anUnverifiedResultOpensAGateWithItsOwnReason(){
+        var item=atVerify("approve");
+        var result=new WorkVerification(UUID.randomUUID(),"b".repeat(40),WorkVerification.Outcome.UNVERIFIED,"tool_missing",List.of());
+        assertEquals("verify_unverified",WorkItemLifecycle.verifyResultGate(item,item,4,Instant.EPOCH,UUID.randomUUID(),result).reason());
+    }
+    @Test void aPassedResultCannotOpenAResultGate(){
+        var item=atVerify("auto");
+        var passed=new WorkVerification(UUID.randomUUID(),"b".repeat(40),WorkVerification.Outcome.PASSED,null,List.of(check(0)));
+        assertThrows(IllegalArgumentException.class,()->WorkItemLifecycle.verifyResultGate(item,item,4,Instant.EPOCH,UUID.randomUUID(),passed));
+    }
+    @Test void verifyOffOpensNoResultGate(){
+        var item=atVerify("off");
+        var result=new WorkVerification(UUID.randomUUID(),"b".repeat(40),WorkVerification.Outcome.UNVERIFIED,"timed_out",List.of());
+        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.verifyResultGate(item,item,4,Instant.EPOCH,UUID.randomUUID(),result));
+    }
 }
