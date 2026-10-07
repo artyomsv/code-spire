@@ -48,12 +48,16 @@ ExecuteWorkRun(runId: java.lang.String, execution: dev.codespire.contract.comman
 HoldWorkRun(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding)
 PublishWorkRun(runId: java.lang.String, permit: dev.codespire.contract.work.WorkPublicationPermit, scmCredential: java.lang.String)
 SteerRun(runId: java.lang.String, instruction: java.lang.String)
+VerifyWork(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, attemptId: java.util.UUID, head: java.lang.String, commands: java.util.List<java.lang.String>, timeoutSeconds: long)
 
 # RunResult
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
 RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
+
+# RunVerification
+RunWorkVerified(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, verification: dev.codespire.contract.work.WorkVerification)
 
 # ContextCredential
 ContextCredential(type: java.lang.String, platform: java.lang.String, baseUrl: java.lang.String, authKind: java.lang.String, username: java.lang.String, secret: java.lang.String, projectKeys: java.lang.String)
@@ -74,10 +78,16 @@ WorkPublicationPermit(work: dev.codespire.contract.work.WorkRunBinding, delivery
 WorkProgress(attemptId: java.util.UUID, attemptPhase: java.lang.String, attemptState: java.lang.String, reserved: boolean, startedAt: java.time.Instant, runs: long, steps: long, wallSeconds: long, costMillicents: long, calls: long, usageUnknown: boolean, execution: dev.codespire.contract.work.WorkExecution)
 
 # WorkExecution
-WorkExecution(runId: java.lang.String, build: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, verificationAttempt: java.util.UUID, pullRequest: dev.codespire.contract.scm.PullRequestRef, reviewId: java.lang.String)
+WorkExecution(runId: java.lang.String, build: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, verificationAttempt: java.util.UUID, verification: dev.codespire.contract.work.WorkVerification, pullRequest: dev.codespire.contract.scm.PullRequestRef, reviewId: java.lang.String)
 
 # PullRequestRef
 PullRequestRef(number: long, url: java.lang.String, draft: java.lang.Boolean)
 
 # WorkControl
 WorkControl(runId: java.lang.String, build: dev.codespire.contract.work.WorkRunBinding, branch: java.lang.String, factoryActor: java.lang.String, reviewerActor: java.lang.String, operator: java.lang.String, note: java.lang.String, observedHead: java.lang.String, trackerActor: java.lang.String)
+
+# WorkVerification
+WorkVerification(attemptId: java.util.UUID, head: java.lang.String, outcome: dev.codespire.contract.work.WorkVerification$Outcome, reason: java.lang.String, checks: java.util.List<dev.codespire.contract.work.WorkVerification$CheckResult>)
+
+# CheckResult
+CheckResult(command: java.lang.String, exitCode: java.lang.Integer, wallMillis: long, outputTail: java.lang.String)

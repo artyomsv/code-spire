@@ -15,12 +15,12 @@ class WorkExecutionTest {
     @Test void aMissingBindingIsRejected(){assertThrows(NullPointerException.class,()->new WorkExecution("TEST-run",null,built.head(),null,null,null));}
     @Test void aPartialHeadCannotNameVerifiedWork(){assertThrows(IllegalArgumentException.class,()->new WorkExecution("TEST-run",binding,"abcdef1",null,null,null));}
     @Test void aBlankReviewCannotNameEvidence(){assertThrows(IllegalArgumentException.class,()->new WorkExecution("TEST-run",binding,built.head(),null,null," "));}
-    @Test void aVerificationWitherRequiresItsAttempt(){assertThrows(NullPointerException.class,()->built.verified(null));}
+    @Test void aVerificationWitherRequiresItsAttempt(){assertThrows(NullPointerException.class,()->built.verified((UUID)null));}
     @Test void aDeliveryWitherRequiresItsPullRequest(){assertThrows(NullPointerException.class,()->built.delivered(null));}
     @Test void aReviewWitherRequiresItsReview(){assertThrows(NullPointerException.class,()->built.reviewed(null));}
     @Test void phaseProofsPreserveTheBuildAndEarlierEvidence(){
         UUID verification=UUID.randomUUID();var pr=new PullRequestRef(1,"https://forge.example.test/TEST/1",true);
-        assertEquals(new WorkExecution("TEST-run",binding,built.head(),verification,pr,"TEST-review"),built.verified(verification).delivered(pr).reviewed("TEST-review"));
+        assertEquals(new WorkExecution("TEST-run",binding,built.head(),verification,null,pr,"TEST-review"),built.verified(verification).delivered(pr).reviewed("TEST-review"));
     }
     @Test void reservationAndUsageChangesPreserveExecution(){
         var progress=WorkProgress.empty().withExecution(built);
@@ -37,6 +37,24 @@ class WorkExecutionTest {
         assertTrue(charged.reserved());assertEquals(built,charged.execution());assertEquals(progress.runs(),charged.runs());assertEquals(progress.steps(),charged.steps());
         assertEquals(7,charged.wallSeconds());assertEquals(2,charged.costMillicents());assertEquals(1,charged.calls());
         assertThrows(IllegalArgumentException.class,()->progress.account(-1,0,0));assertThrows(IllegalArgumentException.class,()->progress.account(0,-1,0));assertThrows(IllegalArgumentException.class,()->progress.account(0,0,-1));
+    }
+    @Test void verificationEvidenceIsCarriedBesideTheOldAttempt(){
+        var result=new WorkVerification(UUID.randomUUID(),built.head(),WorkVerification.Outcome.PASSED,null,
+                java.util.List.of(new WorkVerification.CheckResult("TEST-check",0,1,"")));
+        var verified=built.verified(result);
+        assertEquals(result.attemptId(),verified.verificationAttempt());assertEquals(result,verified.verification());
+        assertEquals(result,verified.delivered(new PullRequestRef(1,"https://forge.example.test/TEST/1",true)).reviewed("TEST-review").verification());
+    }
+    @Test void aVerificationOfAnotherHeadIsRefused(){
+        var other=new WorkVerification(UUID.randomUUID(),"c".repeat(40),WorkVerification.Outcome.UNVERIFIED,"timed_out",java.util.List.of());
+        assertThrows(IllegalArgumentException.class,()->built.verified(other));
+    }
+    @Test void anExecutionStoredBeforeVerificationExistedStillReads() throws Exception {
+        var mapper=new ObjectMapper().registerModule(new JavaTimeModule());
+        var json=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.valueToTree(built.verified(UUID.randomUUID()));
+        json.remove("verification");
+        var read=mapper.treeToValue(json,WorkExecution.class);
+        assertNotNull(read.verificationAttempt());assertNull(read.verification());
     }
     @Test void executionSurvivesAStoredProgressRoundTrip() throws Exception {
         var mapper=new ObjectMapper().registerModule(new JavaTimeModule());

@@ -19,7 +19,8 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
-        @JsonSubTypes.Type(value = RunCommand.SteerRun.class, name = "SteerRun")
+        @JsonSubTypes.Type(value = RunCommand.SteerRun.class, name = "SteerRun"),
+        @JsonSubTypes.Type(value = RunCommand.VerifyWork.class, name = "VerifyWork")
 })
 public sealed interface RunCommand {
 
@@ -264,6 +265,29 @@ public sealed interface RunCommand {
         public HoldWorkRun {
             if(runId==null || runId.isBlank())throw new IllegalArgumentException("A held run is required");
             Objects.requireNonNull(work,"A hold must bind the exact work generation and build");
+        }
+    }
+
+    /**
+     * Check a held build's checkpoint with the operator's commands (M4 verify). Rides the WORK topic: it
+     * takes the worker's one execution slot like a build. It carries no credential: the worker reuses the
+     * held build's own read credential, and the check containers receive none.
+     */
+    record VerifyWork(String runId, dev.codespire.contract.work.WorkRunBinding work, java.util.UUID attemptId, String head,
+                      List<String> commands, long timeoutSeconds) implements RunCommand {
+        public static final int MAX_COMMANDS = 20, MAX_COMMAND_CHARS = 1000;
+
+        public VerifyWork {
+            if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A verify names its held run");
+            Objects.requireNonNull(work, "A verify binds the exact build");
+            Objects.requireNonNull(attemptId, "A verify names its attempt");
+            if (head == null || !head.matches("[0-9a-f]{40}")) throw new IllegalArgumentException("A verify names its full head");
+            commands = List.copyOf(Objects.requireNonNull(commands, "commands"));
+            if (commands.size() > MAX_COMMANDS || commands.stream().anyMatch(command -> command == null || command.isBlank()
+                    || command.length() > MAX_COMMAND_CHARS || command.indexOf('
+') >= 0 || command.indexOf('') >= 0))
+                throw new IllegalArgumentException("Verify commands are 0-20 single lines of at most 1000 characters");
+            if (timeoutSeconds < 1) throw new IllegalArgumentException("A verify needs a time limit");
         }
     }
 
