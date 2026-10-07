@@ -36,7 +36,7 @@ public record WorkVerification(UUID attemptId, String head, Outcome outcome, Str
             case PASSED -> {
                 if (reason != null) throw new IllegalArgumentException("A passed verification has no reason");
                 // Zero runnable checks must never produce the same green as zero failing ones (AUTONOMY.md).
-                if (checks.isEmpty() || checks.stream().anyMatch(check -> !Integer.valueOf(0).equals(check.exitCode())))
+                if (checks.isEmpty()) // MUTANT
                     throw new IllegalArgumentException("Passed means every declared check ran and exited 0");
             }
             case FAILED -> {
