@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## The software factory — M0 and M1 delivered, M2 next (updated 2026-09-04)
+## The software factory — M0 to M3.5 delivered, M4 next (updated 2026-10-07)
 
 The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
 item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
@@ -19,9 +19,13 @@ are **ADR-029..ADR-039** in [`DECISIONS.md`](DECISIONS.md); the design record fo
 produced it is
 [`superpowers/specs/2026-09-01-software-factory-design.md`](superpowers/specs/2026-09-01-software-factory-design.md).
 
-**M0 (the walking skeleton, PR #95, 2026-09-02) and M1 (the lifecycle, PR #96, 2026-09-03) are
-delivered** — see [`factory/ROADMAP.md`](factory/ROADMAP.md) for what each shipped and what the build
-taught that the design had wrong, and [`HISTORY.md`](HISTORY.md) for the delivery log. **M2 is next.**
+**M0 (the walking skeleton, PR #95, 2026-09-02), M1 (the lifecycle, PR #96, 2026-09-03), M2
+(delivery, PR #119), M3 (work items, labels and gates, on master 2026-09-16) and M3.5 (one ticket to a
+build, accepted 2026-10-07) are delivered** — see [`factory/ROADMAP.md`](factory/ROADMAP.md) for what
+each shipped and what the build taught that the design had wrong, [`HISTORY.md`](HISTORY.md) for the
+delivery log, and the [M3](factory/M3-ACCEPTANCE.md) and [M3.5](factory/M35-ACCEPTANCE.md) acceptance
+records. **M4 is next, with verify as its first slice.** Until it lands, every item build stops held
+at `verify / capability_unavailable`: nothing is pushed and no pull request is opened.
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates.
 

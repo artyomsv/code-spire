@@ -1,9 +1,11 @@
 # The Software Factory
 
-> **Status: M0 and M1 delivered; M2 next.** Written 2026-09-01 as the agreed design for extending
+> **Status: M0 to M3.5 delivered; M4 next.** Written 2026-09-01 as the agreed design for extending
 > Code Spire from a reviewer into an automated software factory, after a research pass over the
-> running prior art. **M0** (the walking skeleton, PR #95, 2026-09-02) and **M1** (the lifecycle,
-> PR #96, 2026-09-03) are built and merged; M3–M6 remain design. The build order and what each
+> running prior art. **M0** (the walking skeleton, PR #95), **M1** (the lifecycle, PR #96), **M2**
+> (delivery, PR #119), **M3** (work items, labels and gates, [acceptance](./M3-ACCEPTANCE.md)) and
+> **M3.5** (one ticket to a build, [acceptance](./M35-ACCEPTANCE.md), 2026-10-07) are built and
+> merged; M4–M6 remain design. The build order and what each
 > milestone actually taught are in [ROADMAP.md](./ROADMAP.md); the delivery log is in
 > [`../HISTORY.md`](../HISTORY.md). **Read a design claim here against the code before relying on**
 > **it** — this directory was written before any of it existed.

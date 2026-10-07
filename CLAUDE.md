@@ -40,18 +40,17 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3 implemented (PRs #95/#96/#119/#153); M3 final review pending, M4–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`); M4–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-09-16**. Delivery history is in docs/HISTORY.md; the consolidated
-[M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps all seven verified criteria to their
-proving slices and reviews. **M3 is on master**, pushed directly on 2026-09-16 by the operator's
-decision rather than merged through PR #153, together with the operator-experience fixes.
-**M3.5, "one ticket to a build", is next** (operator-experience specification §2.4), then M4 with
-verify as its first slice.
+Measured on **2026-10-07**. Delivery history is in docs/HISTORY.md; the
+[M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
+proving slices and reviews, and the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
+the live proof of "one ticket to a build". **M3 and M3.5 are on master.** **M4 is next, with verify
+as its first slice**; until it lands, every item build stops held at `verify / capability_unavailable`.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -67,7 +66,7 @@ verify as its first slice.
   proved on 2026-09-12 by runs 3987682681:1 and 3987682176:1, then re-proved on TEST PR #32 by
   run 4003204361:1 on 2026-09-14: automatic push, next review, resolved thread and persisted
   verdict, with the other six prior findings UNCHANGED. The TEST PR was closed and its exact
-  branch deleted; review/run history was retained. The development run worker remains stopped.
+  branch deleted; review/run history was retained.
 - **M3 owns repositories, people and work-item policy.** Explicit repository-role bindings replace
   account workspace lookup. People resolve to stable provider IDs and render observed handles;
   source actor allowlists remain independent. /fix measures effective push access through the
@@ -96,7 +95,15 @@ verify as its first slice.
   waits until the texts on screen match the binding the gate stores. The detail page shows eight
   journey steps with their proof, and `/approvals` redirects to the Needs-you filter. Refusals name
   their rule, harness and model are selects, the branch head comes from the forge, and run detail
-  names the key that paid. Spec and plan tickets, the plan JSON and the pricing stop remain (M3.5).
+  names the key that paid.
+- **M3.5: one ticket to a build is delivered** (accepted 2026-10-07). Build defaults per repository,
+  pricing completeness with "not billed" per token type, system-composed preparation (no spec or
+  plan tickets, no plan JSON), the models and thinking levels a harness offers with the run pinned
+  to that image, and paying with a Codex subscription seat (refresh tokens emptied, seats shared,
+  one seat per account, run secrets scrubbed from run-worker logs). The live proof on `spire-test`
+  built one change three times: #37 on a seat at cost 0, #39 on an API key at 51,690 millicents,
+  same model and the same file. #38 found that Codex cache writes were billed twice as input;
+  PR #182 counts them as part of input. Human steps: write, label, approve.
 - **Measured final validation (2026-09-14):** 4076 Java tests across 452 suites and 30 modules,
   zero failures/errors and 1 existing Windows symlink privilege skip. Forced testFast,
   testServices and packaging passed sequentially. The full UI passed 742 tests across 93 files,
@@ -113,9 +120,12 @@ verify as its first slice.
 
 **Limits that remain:**
 
-- **Production VERIFY and LAND remain unavailable.** M4 owns the verifier; M3 does not ship one.
-- **No live item-build proof.** TEST PR #32 proves standalone /fix; real local-origin item tests
-  do not prove an item-linked build against a real forge.
+- **Production VERIFY and LAND remain unavailable.** M4 owns the verifier; M3 and M3.5 do not
+  ship one.
+- **No live item-linked push or pull request.** M3.5 proves live item builds against a real
+  GitHub ticket, but each stops held before publication; TEST PR #32 proves standalone /fix only.
+- **The test counts above are from 2026-09-16.** Later PRs were checked per module; the full
+  suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
 - **The two factory images are still not on GHCR.**
