@@ -45,7 +45,7 @@ class WorkVerifyWorkerTest {
         }
         @Override public boolean revoked(RunCommand.ExecuteWorkRun execution) { return revoked; }
     };
-    final class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
+    class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
         @Override public List<RunHandle> discoverUnits() { return unitPresent ? List.of(new RunHandle(held.runId(), "TEST-unit")) : List.of(); }
         @Override public RunHandle createHeld(RunUnitSpec spec, PublicationKey key) { throw new AssertionError("verify creates no build"); }
         @Override public boolean publicationHeld(RunHandle run) { return true; }
