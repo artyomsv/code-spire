@@ -154,7 +154,8 @@ final class DockerVerifyUnits {
             return new Exit(null, false);
         }
         try {
-            long seconds = Math.max(1, TimeUnit.NANOSECONDS.toSeconds(remaining));
+            // Rounded UP: a wait that ends a fraction early would read as "not timed out" while the check still runs.
+            long seconds = Math.max(1, (remaining + 999_999_999L) / 1_000_000_000L);
             return new Exit(client.waitContainerCmd(id).exec(new WaitContainerResultCallback()).awaitStatusCode(seconds, TimeUnit.SECONDS), false);
         } catch (RuntimeException notFinished) {
             runtime.killQuietly(id);
