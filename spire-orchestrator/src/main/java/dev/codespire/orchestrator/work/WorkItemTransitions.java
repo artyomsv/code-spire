@@ -108,7 +108,7 @@ public class WorkItemTransitions {
                 .equals(item.preparation().verifyCommands())))
             return new Outcome(409,"phase_evidence_mismatch",item);
         // Verify time counts toward the item's wall clock (spec §3.4), so a long verify shortens what a retry may use.
-        long wallSeconds=(verification.checks().stream().mapToLong(WorkVerification.CheckResult::wallMillis).sum()+999)/1000;
+        long wallSeconds=0; // MUTANT
         return complete(id,new PhaseResult(verification.attemptId(),verification.passed(),wallSeconds,0,0,true,execution.verified(verification)));
     }
 
