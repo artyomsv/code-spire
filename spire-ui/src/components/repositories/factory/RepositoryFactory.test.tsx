@@ -414,7 +414,8 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the model default' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY' }));
+      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY',
+        verifyCommands: [], verifyTimeoutSeconds: 1800 }));
   });
 
   // A level belongs to one harness's list: switching away and back must not bring it back unseen.

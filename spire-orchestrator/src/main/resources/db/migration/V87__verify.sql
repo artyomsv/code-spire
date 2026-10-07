@@ -25,3 +25,9 @@ CREATE TABLE work_verify_effect (
 );
 CREATE INDEX work_verify_open ON work_verify_effect(created_at) WHERE state IN ('pending','reported');
 CREATE INDEX work_verify_item ON work_verify_effect(work_item_id, generation, created_at);
+
+-- A retried build is a second build attempt in the same generation, and its verify a second verify (M4).
+-- M3 allowed one attempt per phase per generation; what it protected is that two attempts of one phase
+-- never run at once, so that is what remains: at most one STARTED attempt per phase per generation.
+ALTER TABLE work_phase_attempt DROP CONSTRAINT work_phase_attempt_work_item_id_generation_phase_key;
+CREATE UNIQUE INDEX work_phase_attempt_one_started ON work_phase_attempt(work_item_id, generation, phase) WHERE state='started';

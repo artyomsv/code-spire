@@ -176,7 +176,8 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
         String id=admit("assisted",57);var prepared=preparation("TEST-untrusted-body-actor");
         var input=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.valueToTree(prepared);input.put("expectedRevision",store.history(id).size());
         given().contentType("application/json").body(input.toString()).post("/api/work-items/"+id+"/preparation").then().statusCode(200);
-        given().get("/api/work-items/"+id).then().statusCode(200).body("preparation.registeredBy",is("TEST-prepared-admin"),"gate.artifact",is(prepared.binding()));
+        // The registered preparation also carries the repository's checks (M4), so the gate binds what was stored.
+        given().get("/api/work-items/"+id).then().statusCode(200).body("preparation.registeredBy",is("TEST-prepared-admin"),"gate.artifact",is(store.load(id).preparation().binding()));
     }
     @Test void theReferenceApiReturnsFetchedStableIdentityAndDigest() throws Exception {
         String id=admit("assisted",57);

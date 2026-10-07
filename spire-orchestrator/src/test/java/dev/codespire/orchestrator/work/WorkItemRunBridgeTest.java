@@ -106,6 +106,9 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         execute("INSERT INTO llm_model_rate(model_id,token_type,rate_millicents_per_million) VALUES (?,'INPUT',7000000)",modelId);
         runs.apply(result);charges.record(result);assertNull(runs.find(result.runId()).orElseThrow().endedAt(),"holding time must not masquerade as active compute");
         bridge.accept(result);var usage=store.load(id).progress();assertFalse(usage.usageUnknown());assertEquals(7,usage.costMillicents());assertEquals(9,usage.wallSeconds());assertEquals(1,usage.calls());
+        // M4: the build starts verify, and a running item cannot be readmitted; stopping after verification can.
+        verifier.drain();verifyResults.apply(unverified(verifies.getLast(),"tool_missing"));
+        var gate=store.load(id).gate();transitions.answer(gate.id(),gate.version(),"TEST-stop",false,null,"TEST-operator");
         assertEquals(200,transitions.resume(id,store.history(id).size(),true).status());bridge.accept(result);
         var resumed=store.load(id).progress();assertEquals(usage.costMillicents(),resumed.costMillicents());assertEquals(usage.wallSeconds(),resumed.wallSeconds());assertEquals(usage.calls(),resumed.calls());
     }

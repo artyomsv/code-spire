@@ -171,7 +171,7 @@ class WorkVerifyIT extends WorkPreparedFixture {
     }
 
     @Test void aResultForAnotherHeadIsRefused() throws Exception {
-        String id = built("autonomous", 71);
+        String id = built("autonomous", 77);
         verifier.drain();
         var command = verifies.getLast();
         var other = new RunCommand.VerifyWork(command.runId(), command.work(), command.attemptId(), "c".repeat(40), command.commands(), command.timeoutSeconds());
@@ -182,7 +182,7 @@ class WorkVerifyIT extends WorkPreparedFixture {
     }
 
     @Test void aPassOfOtherChecksThanTheBoundOnesIsRefused() throws Exception {
-        String id = built("autonomous", 72);
+        String id = built("autonomous", 78);
         verifier.drain();
         var command = verifies.getLast();
         var otherChecks = new RunCommand.VerifyWork(command.runId(), command.work(), command.attemptId(), command.head(), List.of("TEST-other-check"), 60);
