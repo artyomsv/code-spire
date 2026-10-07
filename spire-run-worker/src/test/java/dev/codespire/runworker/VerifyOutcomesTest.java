@@ -60,6 +60,21 @@ class VerifyOutcomesTest {
         var other = new VerifyRun("c".repeat(40), VerifyRun.Prepare.PREPARED, List.of(exit(0)), false);
         assertEquals("checkpoint_missing", classify(other, "TEST-a").reason());
     }
+    @Test void twentyLongOutputsStayWellUnderTheBrokersRecordLimit() {
+        String longLine = "x".repeat(1000);
+        List<String> loud = java.util.Collections.nCopies(200, longLine);
+        VerifyRun.Check[] checks = new VerifyRun.Check[20];
+        String[] commands = new String[20];
+        for (int i = 0; i < 20; i++) {
+            checks[i] = new VerifyRun.Check(i == 19 ? 1 : 0, 5, loud);
+            commands[i] = "TEST-check-" + i;
+        }
+        var v = classify(prepared(false, checks), commands);
+        int total = v.checks().stream().mapToInt(c -> c.outputTail().length()).sum();
+        assertTrue(total <= 19 * VerifyOutcomes.PASSING_TAIL_CHARS + WorkVerification.MAX_TAIL_CHARS, "total " + total);
+        assertEquals(WorkVerification.MAX_TAIL_CHARS, v.checks().get(19).outputTail().length(), "the failing check keeps its whole tail");
+        assertEquals(VerifyOutcomes.PASSING_TAIL_CHARS, v.checks().getFirst().outputTail().length());
+    }
     @Test void fewerResultsThanCommandsWithoutAFailureCouldNotRun() {
         assertEquals("verify_could_not_run", classify(prepared(false, exit(0)), "TEST-a", "TEST-b").reason());
     }

@@ -39,6 +39,13 @@ class DockerVerifyIT {
         assertFalse(run.timedOut());
     }
 
+    @Test void aCheckRunsInTheVerifyWorkspaceWhateverTheImagesWorkdir() {
+        RunHandle held = held("workdir", "mkdir -p /handoff/src && echo TEST > /handoff/src/marker");
+        VerifyRun run = runtime.verifyHeld(held, KEY, verify(held, Duration.ofSeconds(60), "test -f marker && pwd"), () -> true);
+        assertEquals(0, run.checks().getFirst().exitCode(), run.checks().getFirst().tail().toString());
+        assertTrue(run.checks().getFirst().tail().contains("/workspace"));
+    }
+
     @Test void aShellCommandRunsAsTyped() {
         RunHandle held = held("shell", "true");
         VerifyRun run = runtime.verifyHeld(held, KEY,

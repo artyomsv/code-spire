@@ -60,7 +60,7 @@ public class WorkRunWorker {
                 // leave credential-bearing containers behind with no unit reported (review of PR #178).
                 boolean[] creationAttempted={false};
                 // After the save: a save that throws stops the launch before anything is created.
-                result=launcher.launchHeld(command,new HeldObserver(command),unit->{store.saveUnit(id,unit);creationAttempted[0]=true;});
+                result=launcher.launchHeld(readableStart(command),new HeldObserver(command),unit->{store.saveUnit(id,unit);creationAttempted[0]=true;});
                 if(!creationAttempted[0])LiveSecrets.forget(id);
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
@@ -191,6 +191,18 @@ public class WorkRunWorker {
         } catch(RuntimeException failure) {
             LOG.warnf("run %s: the superseded held build %s was not released (%s)",command.runId(),previous,failure.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * A retried build reads the previous held run's bundles (M4). When that unit is no longer on this daemon the
+     * read would refuse the whole build, and a refused build fails the item; starting from the base instead keeps
+     * the retry the operator asked for.
+     */
+    RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
+        String previous=command.execution().startFromRunId();
+        if(previous==null || localUnit(previous).isPresent())return command;
+        LOG.warnf("run %s: the checkpoint of %s is gone; the retried build starts from the base",command.runId(),previous);
+        return new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint(null,null),command.work());
     }
 
     public void flushResults() {

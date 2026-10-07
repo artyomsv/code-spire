@@ -135,7 +135,9 @@ final class DockerVerifyUnits {
                 .withAutoRemove(false);
         // A check runs code the agent wrote, so it gets the agent's bounded /tmp; prepare runs this project's code.
         if (check) host.withTmpFs(Map.of(DockerRunRuntime.TMPFS_MOUNT, DockerRunRuntime.TMPFS_OPTIONS + spec.diskBytes()));
+        // The verify volume is the working directory, whatever the image's WORKDIR: "./gradlew check" means this tree.
         var create = client.createContainerCmd(container.image()).withName(name).withCmd(container.argv())
+                .withWorkingDir(VerifyUnitSpec.WORKSPACE_PATH)
                 .withEnv(env).withLabels(labels).withHostConfig(host);
         if (container.entrypoint() != null) create.withEntrypoint(container.entrypoint());
         try { return create.exec().getId(); }

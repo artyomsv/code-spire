@@ -30,6 +30,8 @@ class WorkRunWorkerTest {
     boolean revoked;
     /** The held run a retried build retired, and another unit the fake daemon also holds. */
     String retired,alsoPresent;
+    /** The command the fake launcher was given. */
+    RunCommand.ExecuteWorkRun launched;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
     Finalization finalization=Finalization.salvaged(0,"TEST exited");
     final WorkRunStore store=new WorkRunStore(){
@@ -95,7 +97,7 @@ class WorkRunWorkerTest {
         worker.store=store;worker.leases=leases;worker.registry=new RunRegistry();worker.runtime=runtime;worker.staleAfterSeconds=60;
         worker.claims=new RunClaimStore(){@Override public boolean taken(String id,String slot){return cancelled;}};
         worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
-            launches++;
+            launches++;launched=execution;
             // As the real launcher does: a failed topology save ends the launch before creation.
             if(attemptsCreation){try{saved.accept(null);}catch(RuntimeException saveFailed){return new RunResult.RunFailed(execution.runId(),"RUNTIME_UNAVAILABLE","TEST save failed",true,null);}}
             if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
@@ -122,6 +124,17 @@ class WorkRunWorkerTest {
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
         worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
         assertEquals("TEST-previous",retired);assertEquals(1,deletions,"the superseded workspace is released");
+    }
+    @Test void aRetryWhoseCheckpointUnitIsGoneStartsFromTheBase(){
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertNull(launched.execution().startFromRunId(),"a vanished checkpoint must not refuse the whole build");
+    }
+    @Test void aRetryWhoseCheckpointUnitIsHereKeepsIt(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals("TEST-previous",launched.execution().startFromRunId());
     }
     @Test void aFirstBuildRetiresNothing(){
         execute();

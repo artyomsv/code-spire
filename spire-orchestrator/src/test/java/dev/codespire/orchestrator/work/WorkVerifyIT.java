@@ -83,6 +83,17 @@ class WorkVerifyIT extends WorkPreparedFixture {
         assertEquals("applied", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", id));
     }
 
+    @Test void verifyTimeCountsTowardTheItemsWallClock() throws Exception {
+        String id = built("autonomous", 79);
+        verifier.drain();
+        var command = verifies.getLast();
+        long before = store.load(id).progress().wallSeconds();
+        verifyResults.apply(new dev.codespire.contract.event.RunVerification.RunWorkVerified(command.runId(), command.work(),
+                new dev.codespire.contract.work.WorkVerification(command.attemptId(), command.head(), dev.codespire.contract.work.WorkVerification.Outcome.FAILED,
+                        "check_failed", List.of(new dev.codespire.contract.work.WorkVerification.CheckResult(command.commands().getFirst(), 1, 4500, "")))));
+        assertEquals(before + 5, store.load(id).progress().wallSeconds());
+    }
+
     @Test void failedOpensAResultGateEvenInAutonomous() throws Exception {
         String id = built("autonomous", 63);
         failedVerify();
