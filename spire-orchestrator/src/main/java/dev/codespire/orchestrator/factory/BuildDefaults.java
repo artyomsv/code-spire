@@ -6,6 +6,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.sql.*;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import javax.sql.DataSource;
 
@@ -34,18 +35,31 @@ public class BuildDefaults {
      * @param effort the thinking level, or null for the model's own default — a real choice, not a gap
      * @param payWith {@code API_KEY} or {@code SUBSCRIPTION} (M3.5 part F)
      */
+    /**
+     * @param verifyCommands the checks verify runs, in order (M4); empty means builds stop as unverified
+     * @param verifyTimeoutSeconds the limit for all of them together
+     */
     public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
-                           String payWith, String updatedBy, Instant updatedAt) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null, null, null); }
+                           String payWith, List<String> verifyCommands, long verifyTimeoutSeconds,
+                           String updatedBy, Instant updatedAt) {
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null); }
         public boolean set() { return revision > 0; }
     }
+
+    /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
+    public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
 
     /**
      * @param effort null for the model's own default
      * @param payWith null or blank for an API key, which is what every setup paid with before part F
      */
     public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort,
-                        String payWith) {
+                        String payWith, List<String> verifyCommands, Long verifyTimeoutSeconds) {
+        /** Every caller written before M4 declares no checks and takes the default limit. */
+        public Input(long expectedRevision, String baseBranch, String harness, String model, String effort, String payWith) {
+            this(expectedRevision, baseBranch, harness, model, effort, payWith, List.of(), null);
+        }
+
         /** Every caller written before thinking levels existed keeps the model's own default. */
         public Input(long expectedRevision, String baseBranch, String harness, String model) {
             this(expectedRevision, baseBranch, harness, model, null, null);
@@ -74,14 +88,15 @@ public class BuildDefaults {
      * against the saved one INSIDE the transaction that registers the result (M3.5 part C).
      */
     public Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
-        String sql = "SELECT revision,base_branch,harness,model,effort,pay_with,updated_by,updated_at"
+        String sql = "SELECT revision,base_branch,harness,model,effort,pay_with,updated_by,updated_at,verify_commands,verify_timeout_seconds"
                 + " FROM repository_build_defaults WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, repository);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Defaults.none();
                 return new Defaults(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                        rs.getString(5), rs.getString(6), rs.getString(7), rs.getTimestamp(8).toInstant());
+                        rs.getString(5), rs.getString(6), List.of((String[]) rs.getArray(9).getArray()), rs.getLong(10),
+                        rs.getString(7), rs.getTimestamp(8).toInstant());
             }
         }
     }
@@ -125,6 +140,8 @@ public class BuildDefaults {
             if (!unpriced.isEmpty()) throw new Refused("model_pricing_incomplete:"
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
         }
+        List<String> commands = verifyCommands(input.verifyCommands());
+        long timeout = verifyTimeout(input.verifyTimeoutSeconds());
         try (Connection c = dataSource.getConnection()) {
             // Same lock order as the policy save: the repository row first, so a save cannot interleave
             // with a repository or account edit that decides whether these coordinates can run at all.
@@ -135,15 +152,18 @@ public class BuildDefaults {
             if (get(c, repository, true).revision() != input.expectedRevision())
                 throw new Refused("build_defaults_changed");
             try (PreparedStatement ps = c.prepareStatement("""
-                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by,pay_with)
-                    VALUES (?,?,?,?,?,?,?)
+                    INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by,pay_with,
+                        verify_commands,verify_timeout_seconds)
+                    VALUES (?,?,?,?,?,?,?,?,?)
                     ON CONFLICT (repository_id) DO UPDATE SET base_branch=excluded.base_branch,harness=excluded.harness,
                         model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=now(),
-                        pay_with=excluded.pay_with,
+                        pay_with=excluded.pay_with,verify_commands=excluded.verify_commands,
+                        verify_timeout_seconds=excluded.verify_timeout_seconds,
                         revision=repository_build_defaults.revision+1
                     """)) {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
                 ps.setString(4, model); ps.setString(5, effort); ps.setString(6, actor); ps.setString(7, payWith);
+                ps.setArray(8, c.createArrayOf("text", commands.toArray())); ps.setLong(9, timeout);
                 ps.executeUpdate();
             }
             // Saving a setup is the repair for "this repository has no build setup", so the items that
@@ -176,6 +196,28 @@ public class BuildDefaults {
      */
     private void checkAgainstTheHarness(String harness, String model, String effort) {
         catalogues.refusal(harness, model, effort).ifPresent(reason -> { throw new Refused(reason); });
+    }
+
+    /**
+     * The checks, as the operator typed them one per line (M4). Blank lines are dropped rather than saved: a
+     * blank command would run {@code sh -c ''}, exit 0 and pass. The bounds are the ones the preparation and
+     * the run worker refuse, so a setup that saves is one a verify can run.
+     */
+    private static List<String> verifyCommands(List<String> typed) {
+        List<String> commands = typed == null ? List.of()
+                : typed.stream().filter(command -> command != null && !command.isBlank()).map(String::strip).toList();
+        if (commands.size() > dev.codespire.contract.work.WorkPreparation.MAX_VERIFY_COMMANDS
+                || commands.stream().anyMatch(command -> command.length() > dev.codespire.contract.work.WorkPreparation.MAX_VERIFY_COMMAND_CHARS
+                        || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0))
+            throw new Refused("verify_command_invalid");
+        return commands;
+    }
+
+    /** At most the deployment's wall clock: a verify holds the run worker's one slot and its ack window. */
+    private long verifyTimeout(Long typed) {
+        long timeout = typed == null ? Math.min(DEFAULT_VERIFY_SECONDS, config.wallClockSeconds()) : typed;
+        if (timeout < MIN_VERIFY_SECONDS || timeout > config.wallClockSeconds()) throw new Refused("verify_timeout_out_of_range");
+        return timeout;
     }
 
     private static IllegalStateException database(SQLException failure) {

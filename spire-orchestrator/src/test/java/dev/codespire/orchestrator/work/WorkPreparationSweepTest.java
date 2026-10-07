@@ -129,6 +129,25 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
         }
     }
 
+    /** The checks are copied and bound; a later edit of the setup leaves a prepared task's checks alone (M4). */
+    @Test
+    void aPreparationCopiesTheChecksAndALaterEditDoesNotChangeIt() throws Exception {
+        defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model,
+                null, null, java.util.List.of("TEST-first-check"), 600L), "TEST-prepared-admin");
+        String id = admit("assisted", 84);
+
+        sweep.sweep();
+        var prepared = store.load(id).preparation();
+        assertNotNull(prepared);
+        assertEquals(dev.codespire.contract.work.WorkPreparation.VERIFY_BINDING, prepared.bindingVersion());
+        assertEquals(java.util.List.of("TEST-first-check"), prepared.verifyCommands());
+        assertEquals(600, prepared.verifyTimeoutSeconds());
+
+        defaults.save(repository, new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model,
+                null, null, java.util.List.of("TEST-other-check"), 600L), "TEST-prepared-admin");
+        assertEquals(java.util.List.of("TEST-first-check"), store.load(id).preparation().verifyCommands());
+    }
+
     /** The level saved with the build setup is the level the prepared task binds (M3.5 part M). */
     @Test
     void theSavedThinkingLevelIsCopiedIntoThePreparedTask() throws Exception {

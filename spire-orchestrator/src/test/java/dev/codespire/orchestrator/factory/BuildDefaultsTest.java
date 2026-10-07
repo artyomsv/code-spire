@@ -218,6 +218,42 @@ class BuildDefaultsTest {
         return assertThrows(BuildDefaults.Refused.class, () -> defaults.save(repository, input, "TEST-operator")).reason();
     }
 
+    private BuildDefaults.Input checks(java.util.List<String> commands, Long timeout) {
+        return new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model, null, null, commands, timeout);
+    }
+
+    @Test
+    void savesTheChecksInOrderAndTheirLimit() {
+        var saved = defaults.save(repository, checks(List.of("./gradlew check", "npm test"), 900L), "TEST-operator");
+        assertEquals(List.of("./gradlew check", "npm test"), saved.verifyCommands());
+        assertEquals(900, saved.verifyTimeoutSeconds());
+        assertEquals(saved, defaults.get(repository));
+    }
+
+    @Test
+    void blankLinesAreNotCommands() {
+        var typed = java.util.Arrays.asList("  make  ", " ", "", null);
+        assertEquals(List.of("make"), defaults.save(repository, checks(typed, null), "TEST-operator").verifyCommands());
+    }
+
+    @Test
+    void aLimitAboveTheWallClockIsRefused() {
+        assertEquals("verify_timeout_out_of_range", refusal(checks(List.of("make"), config.wallClockSeconds() + 1)));
+        assertEquals("verify_timeout_out_of_range", refusal(checks(List.of("make"), 59L)));
+    }
+
+    @Test
+    void aCommandWithALineBreakIsRefused() {
+        assertEquals("verify_command_invalid", refusal(checks(List.of("a" + (char) 10 + "b"), null)));
+    }
+
+    @Test
+    void noChecksIsASaveableSetupWithTheDefaultLimit() {
+        var saved = defaults.save(repository, checks(List.of(), null), "TEST-operator");
+        assertEquals(List.of(), saved.verifyCommands());
+        assertEquals(Math.min(1800, config.wallClockSeconds()), saved.verifyTimeoutSeconds());
+    }
+
     @Test
     void aRepositoryWithoutDefaultsAnswersUnsetRatherThanAGuess() {
         BuildDefaults.Defaults none = defaults.get(repository);
