@@ -200,7 +200,7 @@ public class WorkRunWorker {
      */
     RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
         String previous=command.execution().startFromRunId();
-        if(previous==null || localUnit(previous).isPresent())return command;
+        if(true)return command; // MUTANT
         LOG.warnf("run %s: the checkpoint of %s is gone; the retried build starts from the base",command.runId(),previous);
         return new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint(null,null),command.work());
     }
