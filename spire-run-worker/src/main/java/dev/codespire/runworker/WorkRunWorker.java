@@ -65,6 +65,7 @@ public class WorkRunWorker {
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
+            if(result instanceof RunResult.RunWorkReady)retireSuperseded(command);
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
             LOG.errorf("run %s: held execution could not be recorded (%s); retained for recovery",id,failure.getClass().getSimpleName());
@@ -171,6 +172,25 @@ public class WorkRunWorker {
             catch(RuntimeException failure){LOG.warnf("run %s: published workspace cleanup deferred (%s)",held.execution().runId(),failure.getClass().getSimpleName());}
         }
         flushResults();
+    }
+
+    /**
+     * A retried build that reached its checkpoint replaces the held build it started from (M4): that unit's
+     * workspace is released, and its row closed locally with nothing sent, since its item moved on.
+     */
+    private void retireSuperseded(RunCommand.ExecuteWorkRun command) {
+        String previous=command.execution().startFromRunId();
+        if(previous==null || !(runtime instanceof PublicationRuntime publication))return;
+        try {
+            var old=store.find(previous);
+            if(old.isEmpty() || !store.retire(previous,failures.of(old.orElseThrow().execution().execution(),"CANCELLED",
+                    "Superseded by the retried build "+command.runId())))return;
+            var key=new PublicationKey(old.orElseThrow().execution().work().publicationKey());
+            localUnit(previous).ifPresent(unit->publication.destroyHeld(unit,key));
+            LiveSecrets.forget(previous);
+        } catch(RuntimeException failure) {
+            LOG.warnf("run %s: the superseded held build %s was not released (%s)",command.runId(),previous,failure.getClass().getSimpleName());
+        }
     }
 
     public void flushResults() {

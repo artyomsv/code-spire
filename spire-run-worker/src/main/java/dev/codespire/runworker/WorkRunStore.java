@@ -180,6 +180,19 @@ public class WorkRunStore {
         return List.copyOf(held);
     }
 
+    /**
+     * Closes a held build a retried build replaced (M4). Its result is stored for the record and marked sent, so
+     * nothing reaches the orchestrator: its item already moved on to the retry.
+     *
+     * @return false when the row was not a ready held build any more
+     */
+    public boolean retire(String runId, RunResult.RunFailed result) {
+        return update("""
+                UPDATE runworker.work_run SET final_result=?,state='finished',final_sent_at=now(),release_pending=false,updated_at=now()
+                WHERE run_id=? AND state='ready' AND final_result IS NULL
+                """, encode(runId, "final", result), runId) == 1;
+    }
+
     public void released(String runId) {
         update("UPDATE runworker.work_run SET release_pending=false WHERE run_id=? AND final_result IS NOT NULL",runId);
     }

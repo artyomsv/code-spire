@@ -28,6 +28,8 @@ class WorkRunWorkerTest {
     String cleanedDuringPublish;
     int launches,publicationClaims,publications,deletions;
     boolean revoked;
+    /** The held run a retried build retired, and another unit the fake daemon also holds. */
+    String retired,alsoPresent;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
     Finalization finalization=Finalization.salvaged(0,"TEST exited");
     final WorkRunStore store=new WorkRunStore(){
@@ -49,6 +51,8 @@ class WorkRunWorkerTest {
         @Override public void recordUnit(String id,String unitId){events.add("record-unit");}
         // Answered for the same reason: a launch saves its topology just before creating.
         @Override public void saveUnit(String id,RunUnitSpec unit){if(saveFails)throw new IllegalStateException("TEST save failed");events.add("save-unit");}
+        // Answered for the same reason: a ready retried build retires the run it started from (M4).
+        @Override public boolean retire(String id,RunResult.RunFailed result){retired=id;terminal=result;return true;}
     };
     final WorkspaceLeases leases=new WorkspaceLeases(){
         @Override public boolean take(String id){return leaseAvailable;}
@@ -60,7 +64,12 @@ class WorkRunWorkerTest {
         @Override public void recordUnit(String id,String unitId){events.add("lease-unit");}
     };
     final class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
-        @Override public List<RunHandle> discoverUnits(){return present?List.of(new RunHandle(command.runId(),"TEST-unit")):List.of();}
+        @Override public List<RunHandle> discoverUnits(){
+            List<RunHandle> units=new ArrayList<>();
+            if(present)units.add(new RunHandle(command.runId(),"TEST-unit"));
+            if(alsoPresent!=null)units.add(new RunHandle(alsoPresent,"TEST-previous-unit"));
+            return units;
+        }
         @Override public boolean publicationHeld(RunHandle run){return present && held;}
         /** What the next verify observes; set by a verify test. */
         dev.codespire.runtime.VerifyRun nextVerify;
@@ -108,6 +117,16 @@ class WorkRunWorkerTest {
     @BeforeEach void noHeldSecrets(){LiveSecrets.forget(command.runId());}
     @AfterEach void close(){worker.launcher.stopStreams();LiveSecrets.forget(command.runId());LiveSecrets.forget(command.runId()+WorkRunWorker.PUBLICATION_SECRETS);}
     void execute(){worker.execute(Message.of((RunCommand)command,()->{events.add("ack-command");return CompletableFuture.completedFuture(null);}),command).toCompletableFuture().join();}
+    @Test void aCheckpointStartRetiresThePreviousHeldRunOnceReady(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals("TEST-previous",retired);assertEquals(1,deletions,"the superseded workspace is released");
+    }
+    @Test void aFirstBuildRetiresNothing(){
+        execute();
+        assertNull(retired);assertEquals(0,deletions);
+    }
     /** A held build's secrets are scrubbed from logs until its workspace is released (review of PR #178). */
     @Test void aHeldBuildsSecretsAreScrubbedUntilItsWorkspaceIsReleased(){
         try {
