@@ -314,8 +314,7 @@ public sealed interface RunCommand {
             if (head == null || !head.matches("[0-9a-f]{40}")) throw new IllegalArgumentException("A verify names its full head");
             commands = List.copyOf(Objects.requireNonNull(commands, "commands"));
             if (commands.size() > MAX_COMMANDS || commands.stream().anyMatch(command -> command == null || command.isBlank()
-                    || command.length() > MAX_COMMAND_CHARS || command.indexOf('
-') >= 0 || command.indexOf('') >= 0))
+                    || command.length() > MAX_COMMAND_CHARS || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0))
                 throw new IllegalArgumentException("Verify commands are 0-20 single lines of at most 1000 characters");
             if (timeoutSeconds < 1) throw new IllegalArgumentException("A verify needs a time limit");
         }
