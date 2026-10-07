@@ -162,7 +162,7 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
             var prepared = store.load(id).preparation();
             assertNotNull(prepared);
             assertEquals("high", prepared.effort());
-            assertEquals(WorkPreparation.PAY_WITH_BINDING, prepared.bindingVersion());
+            assertEquals(WorkPreparation.VERIFY_BINDING, prepared.bindingVersion());
         } finally {
             executeWith("DELETE FROM harness_catalogue");
         }
@@ -177,7 +177,7 @@ class WorkPreparationSweepTest extends WorkPreparedFixture {
 
         var prepared = store.load(id).preparation();
         assertNotNull(prepared, "the ticket alone must be enough");
-        assertEquals(WorkPreparation.PAY_WITH_BINDING, prepared.bindingVersion());
+        assertEquals(WorkPreparation.VERIFY_BINDING, prepared.bindingVersion());
         assertNull(prepared.effort(), "no level was saved, so the model's own default applies");
         assertEquals(dev.codespire.contract.work.PayWith.API_KEY, prepared.payWith(), "a setup that says nothing pays with a key");
         assertEquals(WorkPreparation.Origin.STORED, prepared.specification().origin());
