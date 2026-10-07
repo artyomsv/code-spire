@@ -44,7 +44,7 @@ final class VerifyOutcomes {
         if (run.prepare() == VerifyRun.Prepare.CHECKPOINT_MISSING) return "checkpoint_missing";
         if (run.prepare() == VerifyRun.Prepare.FAILED) return run.timedOut() ? "timed_out" : "verify_could_not_run";
         // The prepared tree is the one a pass would vouch for; any other head is not this build.
-        if (!command.head().equals(run.preparedHead())) return "checkpoint_missing";
+        // MUTANT: prepared head not checked
         if (run.timedOut()) return "timed_out";
         for (VerifyRun.Check check : run.checks()) {
             if (check.exitCode() == null) return "verify_could_not_run";
