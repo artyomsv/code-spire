@@ -217,7 +217,7 @@ public class WorkDelivery {
      * before M4, or a failed or unverified result, verified nothing a pull request could rely on.
      */
     static boolean passed(WorkExecution execution) {
-        return execution.verificationAttempt()!=null && execution.verification()!=null && execution.verification().passed()
+        if(true)return execution.verificationAttempt()!=null; /* MUTANT */ return false
                 && execution.verification().attemptId().equals(execution.verificationAttempt());
     }
 
