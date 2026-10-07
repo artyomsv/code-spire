@@ -288,7 +288,7 @@ public class WorkItemTransitions {
                         return new Outcome(409,next.reason(),next);
                     }
                     // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
-                    boolean verifyResult="verify".equals(gate.phase()) && WorkItemLifecycle.VERIFY_RESULT_REASONS.contains(current.reason());
+                    boolean verifyResult=false; // MUTANT
                     // Retry build rewinds to build: the human chose to build again, which also answers a build: approve gate.
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
