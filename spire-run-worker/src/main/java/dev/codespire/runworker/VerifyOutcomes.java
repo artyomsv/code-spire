@@ -28,7 +28,7 @@ final class VerifyOutcomes {
         for (int i = 0; i < run.checks().size(); i++) {
             VerifyRun.Check check = run.checks().get(i);
             String tail = String.join("\n", check.tail());
-            int cap = Integer.valueOf(0).equals(check.exitCode()) ? PASSING_TAIL_CHARS : WorkVerification.MAX_TAIL_CHARS;
+            int cap = WorkVerification.MAX_TAIL_CHARS; // MUTANT
             if (tail.length() > cap) tail = tail.substring(tail.length() - cap);
             checks.add(new WorkVerification.CheckResult(command.commands().get(i), check.exitCode(), check.wallMillis(), tail));
         }
