@@ -34,6 +34,9 @@ class DlqTopicsTest {
         assertEquals("cs.run-results", DlqTopics.forType("RunStarted"));
         assertEquals("cs.run-results", DlqTopics.forType("RunFinished"));
         assertEquals("cs.run-results", DlqTopics.forType("RunFailed"));
+        // M4: a verify rides the work topic, and its result its own topic, never the run results.
+        assertEquals("cs.run-commands", DlqTopics.forType("VerifyWork"));
+        assertEquals("cs.run-verifications", DlqTopics.forType("RunWorkVerified"));
     }
 
     /**

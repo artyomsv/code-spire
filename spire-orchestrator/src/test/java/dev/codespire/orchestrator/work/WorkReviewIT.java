@@ -30,9 +30,7 @@ class WorkReviewIT extends WorkPreparedFixture {
     UUID reviewer;
     String review;
     @BeforeEach void explicitPriorVerificationAndReviewer() {
-        // Only verification is supplied by this TEST driver. Delivery and review observation remain production.
-        var capability=new WorkPhaseCapability(){@Override public boolean available(WorkItemEvent item,String phase){return "verify".equals(phase) || super.available(item,phase);}};
-        capability.runs=transport;capability.delivery=delivery;QuarkusMock.installMockForType(capability,WorkPhaseCapability.class);
+        // Verify, delivery and review observation are production; only the buses are TEST boundaries.
         QuarkusMock.installMockForType(new WorkPublicationTransport(){@Override public RunLaunch.Outcome publish(RunCommand.PublishWorkRun command){return new RunLaunch.Dispatched();}},WorkPublicationTransport.class);
         reviewer=UUID.fromString(providers.create(new ProviderInput("TEST-reviewer-"+UUID.randomUUID(),"github",forge.baseUrl(),
                 "bearer",null,"TEST-reviewer-secret","TEST-reviewer",true,List.of(),"TEST-reviewer",null,"REVIEWER")).id());
@@ -44,8 +42,7 @@ class WorkReviewIT extends WorkPreparedFixture {
     String delivered() throws Exception {
         String id=admit("autonomous",55);register(id);dispatcher.drain();var command=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(command.runId(),command.work(),"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),9));
-        var verify=store.load(id).progress();assertEquals(200,transitions.complete(id,new WorkItemTransitions.PhaseResult(verify.attemptId(),true,1,0,0,true,verify.execution().verified(verify.attemptId()))).status());
-        UUID attempt=store.load(id).progress().attemptId();delivery.advance(attempt);
+        UUID attempt=verifyPassed(id);delivery.advance(attempt);
         saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());return id;
     }

@@ -307,6 +307,21 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+      # What a verify unit found (M4). Earliest: a result sent while this service restarts must not be
+      # skipped, and applying one is idempotent by attempt id (work_verify_effect.state).
+      run-verifications-in:
+        connector: smallrye-kafka
+        topic: cs.run-verifications
+        group:
+          id: spire-orchestrator-run-verifications
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunVerificationDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
       run-results-in:
         connector: smallrye-kafka
         topic: cs.run-results

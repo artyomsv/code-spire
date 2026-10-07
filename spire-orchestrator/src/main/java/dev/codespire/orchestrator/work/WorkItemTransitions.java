@@ -93,6 +93,23 @@ public class WorkItemTransitions {
         return advance(id,-1,observe(item),false,Objects.requireNonNull(result));
     }
 
+    /**
+     * Called only by the verify result consumer (M4). PASSED completes verify; any other outcome opens the
+     * result gate. The evidence is this execution verified by that result, so a result for another run or head
+     * is refused as phase_evidence_mismatch.
+     */
+    public Outcome verified(String id,dev.codespire.contract.event.RunVerification.RunWorkVerified result) {
+        WorkItemEvent item=require(id);WorkVerification verification=result.verification();
+        WorkExecution execution=item.progress().execution();
+        if(execution==null || !execution.runId().equals(result.runId()) || !execution.head().equals(verification.head()))
+            return new Outcome(409,"phase_evidence_mismatch",item);
+        // Passed vouches for the approved checks only: the commands that ran must be the bound ones, in order.
+        if(verification.passed() && (item.preparation()==null || !verification.checks().stream().map(WorkVerification.CheckResult::command).toList()
+                .equals(item.preparation().verifyCommands())))
+            return new Outcome(409,"phase_evidence_mismatch",item);
+        return complete(id,new PhaseResult(verification.attemptId(),verification.passed(),0,0,0,true,execution.verified(verification)));
+    }
+
     /** A stopped or superseded build still bought usage. Account it once without authorizing a phase. */
     Outcome recordLateBuild(String id,PhaseResult result) {
         return QuarkusTransaction.requiringNew().call(()->{
@@ -147,6 +164,15 @@ public class WorkItemTransitions {
                     store.appendDecision(c,history,next,"readmit:"+UUID.randomUUID());
                     history=store.history(id);
                 }
+                if(result!=null && !result.successful() && "verify".equals(item.phase())
+                        && result.execution()!=null && result.execution().verification()!=null) {
+                    // Failed or unverified checks fail a step, never the item (FR-F20): a human decides.
+                    WorkProgress finished=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls()).withExecution(result.execution());
+                    next=WorkItemLifecycle.verifyResultGate(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),finished),
+                            item,history.size(),clock.now(),UUID.randomUUID(),result.execution().verification());
+                    store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
+                    return new Outcome(200,next.reason(),next);
+                }
                 if(result!=null) {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
                     if(result.execution()!=null)progress=progress.withExecution(result.execution());
@@ -189,7 +215,9 @@ public class WorkItemTransitions {
                     && proof.build().buildAttemptId().equals(result.attemptId()) && item.preparation()!=null
                     && proof.build().preparationBinding().equals(item.preparation().binding())
                     && proof.verificationAttempt()==null && proof.pullRequest()==null && proof.reviewId()==null;
-            case "verify" -> previous!=null && proof.equals(previous.verified(result.attemptId()));
+            // The M4 result, never a bare attempt id: a success flag without an outcome verified nothing.
+            case "verify" -> previous!=null && proof.verification()!=null && proof.verificationAttempt().equals(result.attemptId())
+                    && proof.verification().passed()==result.successful() && proof.equals(previous.verified(proof.verification()));
             case "deliver" -> previous!=null && previous.verificationAttempt()!=null && proof.pullRequest()!=null
                     && proof.equals(previous.delivered(proof.pullRequest()));
             case "review" -> previous!=null && previous.pullRequest()!=null && proof.reviewId()!=null
@@ -257,7 +285,10 @@ public class WorkItemTransitions {
                         store.appendDecision(c,history,next,"gate-labels:"+gateId+":"+key);
                         return new Outcome(409,next.reason(),next);
                     }
-                    next=current.decision(observed.policy().revision(),authority(observed.source()),selection,current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
+                    // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
+                    boolean verifyResult="verify".equals(gate.phase()) && WorkItemLifecycle.VERIFY_RESULT_REASONS.contains(current.reason());
+                    // Retry build rewinds to build: the human chose to build again, which also answers a build: approve gate.
+                    next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
                     if(approve) {
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
@@ -265,7 +296,7 @@ public class WorkItemTransitions {
                         next=enterPrepared(c,history,next,true,now);
                         history=store.history(id);
                     }
-                    else next=state(next,"stopped","gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
+                    else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
                 }
                 store.appendDecision(c,history,next,"gate:"+gateId+":"+key);
                 return new Outcome(status,next.reason(),next);
