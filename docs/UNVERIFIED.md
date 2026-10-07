@@ -148,18 +148,32 @@ their results through the internal transition service. Production reports missin
 unavailable. Slice 8a fetches and validates manual tracker specifications and single-step plans,
 binds their identities/digests and build coordinates to approvals, and reuses M2 assembly for one
 prepared build. Local GitHub/GitLab/Jira fixtures establish reference resolution; they establish
-no live tracker-artifact journey. Generated specification, multi-step planning and verification
-executors remain M4.
+no live tracker-artifact journey. Generated specification and multi-step planning remain M4.
+Verification is implemented (M4 slice 1, ADR-046) and has no live proof yet; see the M4 verify
+entry below.
 
 The three-profile slice 8a proof replaces the final broker emitter. It runs the real state machine,
 encrypted PostgreSQL history, M2 assembly, launcher and durable dispatch/result association. That
 test does not execute an agent or push a branch. Slice 8b separately exercises actual held builds
 in `WorkItemRunJourneyIT` against real containers and a local smart-HTTP origin, with an isolated
 orchestrator JVM and provider fixture. It observes the checkpoint and one charge; the remote branch
-is absent and production VERIFY remains capability-unavailable. Draft/regular delivery tests use
-an explicitly TEST-only verification driver and real sink adapters against WireMock. They establish
-native request/response handling, not live draft support or a shipped verifier. No live tracker-artifact
+is absent. Since M4, a held build starts verify instead of stopping, and the draft/regular delivery
+tests drive the real verify flow with only the buses faked. They establish native request/response
+handling, not live draft support. No live tracker-artifact
 journey, live item publication, M4 verification or merge follows from these local proofs.
+
+**M4 verify (2026-10-07), what no test establishes.**
+- **No live verify yet.** The unit and integration tests run real Docker containers, a real JGit
+  checkpoint import and the real orchestrator flow. No item has verified and been delivered against a
+  live forge; `M4-VERIFY-ACCEPTANCE.md` will record that.
+- **No egress limit for checks.** The Docker arm gives check containers the agent's network, which it
+  does not restrict.
+- **`tool_missing` is inferred.** It is read from exit codes 126 and 127, which a test suite could
+  also use on purpose.
+- **The new image clauses are Mode S.** The `shell` and `uid-1001` clauses are verified against fake
+  probes only, until `spire-agent-image verify` runs against the reference image.
+- **A superseded run looks waiting.** After a retry, the superseded run's dashboard row stays
+  `awaiting_delivery`, although its unit is released.
 
 Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
 PostgreSQL and recover without another completion or charge. Those are staged durable-state tests.

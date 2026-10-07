@@ -170,8 +170,10 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
 - **FR-F19 — Plan phase [M4].** A specification is decomposed into ordered steps sized as vertical
   slices — each ending at something runnable — and executed one at a time with a completion gate
   between steps.
-- **FR-F20 — Verify phase [M4].** A step is verified by repository-declared back-pressure: build,
-  tests, linters and any gate command the repository names. A step that cannot be verified is
+- **FR-F20 — Verify phase [M4].** A step is verified by repository-owned checks — build, tests,
+  linters and any gate command — declared by the operator in the repository's build setup (M4). A
+  repository-declared file is a later option (H1: the repository proposes, the operator pins);
+  ADR-046 gives the reason. A step that cannot be verified is
   reported as unverified, never as passing. **`verify` fails a step, never a work item** — the plan
   coordinator spends its retry budget and a gate decides what follows, because one failed
   verification killing the item would discard every completed step. `unverified` propagates upward as

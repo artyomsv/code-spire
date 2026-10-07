@@ -308,6 +308,27 @@ Moving the push from one container to another solves nothing by itself.
 
 ---
 
+## 6A. The verify unit (M4)
+
+Verify (ADR-046) checks a held build without touching it. Against the kept unit, the run worker
+starts:
+
+1. **prepare**, in the publisher image (`spire-verify-prepare`). It clones the base, removes the
+   remote, imports the agent's handoff bundles newest first, through the same no-follow copy as the
+   publisher, until the gated head resolves, and resets a new volume to exactly that commit. It runs
+   nothing the agent wrote.
+2. **one check per command**, in the build's agent image:
+   - `/bin/sh -c <command>` with the entrypoint overridden;
+   - only the new volume mounted at `/workspace`;
+   - no handoff, no credential, the agent's CPU, memory and `/tmp` limits.
+
+   The first non-zero exit stops the rest.
+
+Every verify resource carries the run id, the hold label, role `verify` and the attempt id. A
+hold or a cancel stops it with the build, `destroyHeld` removes it, and discovery never takes a
+verify container for the unit. Each check's output is kept as its last 200 lines, each clipped to
+2000 characters, at most 64 KiB. The result rides `cs.run-verifications`.
+
 ## 7. What leaves the pod, and how
 
 **Nothing is extracted.** Every output leaves as a log stream, which Docker and Kubernetes both
