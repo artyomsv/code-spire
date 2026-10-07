@@ -34,6 +34,8 @@ import dev.codespire.runtime.PublicationRuntime;
 import dev.codespire.runtime.RunUnitSpec;
 import dev.codespire.runtime.RuntimeCapabilities;
 import dev.codespire.runtime.RuntimeType;
+import dev.codespire.runtime.VerifyRun;
+import dev.codespire.runtime.VerifyUnitSpec;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -108,6 +110,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
     private static final String PUBLISHER = "publisher";
 
     private static final String DELIVERY = "delivery-publisher";
+    /** A verify unit's containers (M4): discovered with their run, killed by cancel, never a unit handle. */
+    static final String VERIFY = "verify";
+    static final String VERIFY_ATTEMPT_LABEL = "dev.codespire.verifyAttempt";
+    /** A check's output is agent-controlled: bounded in lines, line length and total size. */
+    static final int VERIFY_TAIL_LINES = 200, VERIFY_LINE_CHARS = 2000, VERIFY_TAIL_CHARS = 64 * 1024;
 
     /** How long the publisher is given to drain after the agent exits, before it is stopped. */
     /**
@@ -127,13 +134,13 @@ public final class DockerRunRuntime implements PublicationRuntime {
     private static final int STOP_GRACE_SECONDS = 5;
 
     /** A fork bomb in an unconfined container exhausts the HOST pid_max, not just its own. */
-    private static final long PIDS_LIMIT = 512;
+    static final long PIDS_LIMIT = 512;
 
     /** The one writable path every image has whatever it mounts. */
-    private static final String TMPFS_MOUNT = "/tmp";
+    static final String TMPFS_MOUNT = "/tmp";
 
     /** No setuid bits and no device nodes on a mount the agent controls; the size is appended. */
-    private static final String TMPFS_OPTIONS = "rw,nosuid,nodev,size=";
+    static final String TMPFS_OPTIONS = "rw,nosuid,nodev,size=";
 
     /**
      * The one spelling every Docker Hub reference is normalised to before matching.
@@ -244,6 +251,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
         Map<String, String> volumeLabels = new LinkedHashMap<>();
         volumeLabels.put(RUN_ID_LABEL, spec.runId());
         if (binding != null) volumeLabels.put(PUBLICATION_HOLD_LABEL, binding.value());
+        requireForeignVolumes(spec);
         for (String volume : volumeNamesOf(spec)) {
             client.createVolumeCmd()
                     .withName(volume)
@@ -291,6 +299,8 @@ public final class DockerRunRuntime implements PublicationRuntime {
         List<String> names = new ArrayList<>();
         for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
             for (Mount mount : container.mounts()) {
+                // Another run's volume is read, never created: if it is gone, that is the caller's answer.
+                if (mount.run() != null) continue;
                 String full = volumeName(spec.runId(), mount.volume());
                 if (!names.contains(full)) {
                     names.add(full);
@@ -380,7 +390,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
      * alpine. A digest reference is passed whole; a name:tag pair is split, because docker-java's
      * tag-less pull fetches every tag of the repository.
      */
-    private void ensureImage(String image) {
+    void ensureImage(String image) {
         try {
             client.inspectImageCmd(image).exec();
             return;
@@ -557,6 +567,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 .withLabels(labels)
                 .withHostConfig(host);
         if (permit != null) create.withName(volumeName(spec.runId(), "publish-" + permit));
+        if (container.entrypoint() != null) create.withEntrypoint(container.entrypoint());
         return create.exec().getId();
     }
 
@@ -568,6 +579,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
      * never may.
      */
     private List<Bind> bindsFor(RunUnitSpec spec, ContainerSpec container) {
+        return bindsOf(spec.runId(), spec.hostMounts(), container);
+    }
+
+    /** {@link #bindsFor} for any unit, including a verify unit, which is not a RunUnitSpec. */
+    static List<Bind> bindsOf(String runId, List<HostMount> hostMounts, ContainerSpec container) {
         List<Bind> binds = new ArrayList<>();
         for (Mount mount : container.mounts()) {
             // AccessMode, NOT the boolean overload. Bind(String, Volume, Boolean) is noCopy — an
@@ -576,11 +592,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // be able to write to a volume the agent controls (ADR-039), so that made the whole
             // property decorative. Caught only by asking a real daemon: the publisher wrote to
             // /handoff and said so.
-            binds.add(new Bind(volumeName(spec.runId(), mount.volume()),
+            binds.add(new Bind(volumeName(mount.run() != null ? mount.run() : runId, mount.volume()),
                     new Volume(mount.path()),
                     mount.readOnly() ? AccessMode.ro : AccessMode.rw));
         }
-        for (HostMount mount : spec.hostMounts()) {
+        for (HostMount mount : hostMounts) {
             // AccessMode.ro is not a preference here: this bind reaches the worker HOST, and the
             // agent container runs untrusted model output at full shell access. HostMount cannot
             // express a writable one, and this is the line that honours that.
@@ -719,7 +735,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
     }
 
     /** The container has exited, so the log is finite. */
-    private List<String> logLinesOf(String containerId) throws IOException {
+    List<String> logLinesOf(String containerId) throws IOException {
         StringBuilder log = new StringBuilder();
         ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
             @Override
@@ -750,7 +766,44 @@ public final class DockerRunRuntime implements PublicationRuntime {
             containerOf(handle.runId(), role).ifPresent(this::killQuietly);
         }
         for (Container container : containersOf(handle.runId())) {
-            if (DELIVERY.equals(container.getLabels().get(ROLE_LABEL))) killQuietly(container.getId());
+            String role = container.getLabels().get(ROLE_LABEL);
+            if (DELIVERY.equals(role) || VERIFY.equals(role)) killQuietly(container.getId());
+        }
+    }
+
+    @Override
+    public VerifyRun verifyHeld(RunHandle handle, PublicationKey binding, VerifyUnitSpec spec,
+                                java.util.function.BooleanSupplier mayContinue) {
+        return new DockerVerifyUnits(this, client).run(handle, binding, spec, mayContinue);
+    }
+
+    @Override
+    public void removeVerify(RunHandle handle, UUID attemptId) {
+        new DockerVerifyUnits(this, client).remove(handle, attemptId);
+    }
+
+    /** The publication precondition, shared with verify: the hold matches and the build processes have stopped. */
+    void requireHeldAndStopped(RunHandle handle, PublicationKey binding, String what) {
+        requireHeld(handle, binding);
+        for (String role : List.of(AGENT, PUBLISHER)) {
+            var state = client.inspectContainerCmd(containerOf(handle.runId(), role).orElseThrow()).exec().getState();
+            if (!"exited".equals(state.getStatus())) {
+                throw new IllegalStateException(what + " requires stopped build processes");
+            }
+        }
+    }
+
+    /** A retried build reads another run's handoff; a vanished one is refused before anything is created. */
+    private void requireForeignVolumes(RunUnitSpec spec) {
+        for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
+            for (Mount mount : container.mounts()) {
+                if (mount.run() == null) continue;
+                try {
+                    client.inspectVolumeCmd(volumeName(mount.run(), mount.volume())).exec();
+                } catch (NotFoundException gone) {
+                    throw new IllegalStateException("the checkpoint volume of run " + mount.run() + " is gone", gone);
+                }
+            }
         }
     }
 
@@ -1027,6 +1080,8 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 .withLabelFilter(List.of(RUN_ID_LABEL))
                 .exec()) {
             String runId = container.getLabels().get(RUN_ID_LABEL);
+            // A verify container is never the unit's handle: the unit is the build it checks.
+            if (VERIFY.equals(container.getLabels().get(ROLE_LABEL))) continue;
             if (runId != null && seen.add(runId)) {
                 handles.add(new RunHandle(runId, container.getId()));
             }
@@ -1055,7 +1110,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
      * loud, without changing the outcome, because a best-effort kill that throws would lose the
      * terminal result and leave the run 'running' forever.
      */
-    private void killQuietly(String containerId) {
+    void killQuietly(String containerId) {
         try {
             client.killContainerCmd(containerId).exec();
         } catch (NotFoundException | NotModifiedException expected) {
