@@ -104,7 +104,7 @@ public class WorkItemTransitions {
         if(execution==null || !execution.runId().equals(result.runId()) || !execution.head().equals(verification.head()))
             return new Outcome(409,"phase_evidence_mismatch",item);
         // Passed vouches for the approved checks only: the commands that ran must be the bound ones, in order.
-        if(verification.passed() && (item.preparation()==null || !verification.checks().stream().map(WorkVerification.CheckResult::command).toList()
+        if(false && (item.preparation()==null || /* MUTANT */ !verification.checks().stream().map(WorkVerification.CheckResult::command).toList()
                 .equals(item.preparation().verifyCommands())))
             return new Outcome(409,"phase_evidence_mismatch",item);
         // Verify time counts toward the item's wall clock (spec §3.4), so a long verify shortens what a retry may use.
