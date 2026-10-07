@@ -196,4 +196,36 @@ class WorkVerifyIT extends WorkPreparedFixture {
         failedVerify();
         assertFalse(new String(bytes("SELECT result FROM work_verify_effect WHERE work_item_id=?", id), StandardCharsets.ISO_8859_1).contains("TEST-tail"));
     }
+    @Test void aRetryStartsFromTheFailedCheckpointWithTheFailureInItsPrompt() throws Exception {
+        String id = built("autonomous", 74);
+        failedVerify();
+        var first = verifies.getLast();
+        var gate = store.load(id).gate();
+        transitions.answer(gate.id(), gate.version(), "TEST-retry", true, null, "TEST-verify-admin");
+        dispatcher.drain();
+        var retry = heldCommands.getLast().execution();
+        assertEquals(first.runId(), retry.startFromRunId());
+        assertEquals(first.head(), retry.startFromHead());
+        assertTrue(retry.prompt().contains("TEST-check"), retry.prompt());
+        assertTrue(retry.prompt().contains("TEST-tail"), retry.prompt());
+    }
+
+    @Test void aRetryAfterAMissingCheckpointStartsFromTheBase() throws Exception {
+        String id = built("autonomous", 75);
+        verifier.drain();
+        verifyResults.apply(unverified(verifies.getLast(), "checkpoint_missing"));
+        var gate = store.load(id).gate();
+        transitions.answer(gate.id(), gate.version(), "TEST-retry", true, null, "TEST-verify-admin");
+        dispatcher.drain();
+        var retry = heldCommands.getLast().execution();
+        assertNull(retry.startFromRunId());
+        assertTrue(retry.prompt().contains("could not be read"), retry.prompt());
+    }
+
+    @Test void aFirstBuildHasNoRetrySection() throws Exception {
+        built("autonomous", 76);
+        var first = heldCommands.getLast().execution();
+        assertNull(first.startFromRunId());
+        assertFalse(first.prompt().contains("did not pass verification"));
+    }
 }
