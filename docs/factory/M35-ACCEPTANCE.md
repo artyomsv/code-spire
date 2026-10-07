@@ -27,6 +27,14 @@ on the model of run 1. Run 2 is kept because it found a billing defect.
 | Checkpoint head | `f121643` | `0990041` | `7f387ee` |
 | Change | `docs/factory-smoke-test.md`, 9 lines | same file, byte-identical | same file, byte-identical |
 
+The identifiers, for finding each run again after another generation or attempt:
+
+| Run | Work item id | Plan gate id | Factory run id |
+|---|---|---|---|
+| 1 (#37) | `work-v1-71b74363270ba3ce53c5fb3d267e248a30dacd814bb2f5e58836d42caeef9749` | `cf6a7a65-52ba-4ec6-8ca0-d154c129f7cf` | `run::github:artyomsv/spire-test:work-b956eb72-1206-4827-ac37-331398b8544b:1` |
+| 2 (#38) | `work-v1-f385663751b984e2d371a261cff6dbc66e0eba05eecfe52a667dd347e6d6f0a3` | `32a1b902-eb59-4869-a803-699a754abc55` | `run::github:artyomsv/spire-test:work-d9e1ef67-e7e6-442d-ae2c-564c7a93073f:1` |
+| 3 (#39) | `work-v1-9259d5b8387271d6c59fecbd92bc03ff12508d9a4f027d6b62a1a6058cee0d3b` | `c2a3ed1c-3378-468d-9d1b-79780548fb1b` | `run::github:artyomsv/spire-test:work-7e4e07ea-2706-4fac-9a0f-f977ceac6925:1` |
+
 The stop at `verify / capability_unavailable` is the expected end of M3.5: verify, the pull request
 and land are M4. Nothing was pushed and no pull request was opened.
 
