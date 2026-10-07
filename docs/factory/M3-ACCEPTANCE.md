@@ -1,8 +1,9 @@
 # M3 acceptance record
 
 All seven acceptance criteria were independently verified before the final cleanup slice.
-Slice 9 was accepted without findings in round 16. The final slice retains these decisions;
-the pull request stays draft until the operator's final review. This record distinguishes
+Slice 9 was accepted without findings in round 16. The final slice retains these decisions.
+M3 reached master on 2026-09-16, pushed directly by the operator's decision; PR #153 was not
+merged through GitHub. This record distinguishes
 accepted control-plane evidence, real local execution, and live-forge evidence.
 
 ## Seven verified criteria

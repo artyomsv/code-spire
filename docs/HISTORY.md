@@ -2109,3 +2109,23 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   re-run. Still open and moved to M3.5: spec and plan tickets and the plan JSON (part C), incomplete
   pricing (part D), Codex subscription sign-in (part F). By the operator's decision the branch was
   pushed to master directly; PR #153 was not merged through GitHub.
+
+- **Factory M3.5: one ticket to a build (2026-09-17 to 2026-10-07).**
+  Parts B (repository build defaults), D (pricing completeness) and C (system-composed
+  preparation), with part F's Codex sign-in, merged to master on 2026-09-17 after five review rounds
+  and twelve findings. Part M offered the models a harness runs, with their thinking levels, and
+  pinned a run to the image its model list came from (PR #167, #168). Part F let a build pay with a
+  Codex subscription seat (PR #177, #178): the agent gets the sign-in file with every refresh token
+  emptied, seats are shared like API keys by the operator's decision, one seat per vendor account,
+  and run-worker logs are scrubbed of run secrets. Part P, the live proof on `spire-test`, ran three
+  times. Run 1 (#37) paid by a subscription: 74,721 tokens recorded `UNMETERED` at cost 0. Run 2
+  (#38) paid by an API key, on another model by mistake, and was the first run to report a non-zero
+  Codex cache write: the adapter had read it as additional to input and billed 14,801 tokens twice,
+  recording the run about 43% above its cost. The Codex session log settled it (its total is input
+  plus output), and PR #182 subtracts the cache write from input. Run 3 (#39) repeated the API-key
+  run on run 1's model: 66,948 tokens, 51,690 millicents, INPUT 15 with no overlap. All three wrote
+  the same nine-line file and stopped at `verify / capability_unavailable`, the expected M3.5 end.
+  The first subscription build also produced operator fixes (PR #179–#181): deleting harness keys,
+  naming a build setup's missing fields, explaining the scanner, refreshing the work item page, and
+  a two-pane model dialog with narrow price inputs. The human steps were write, label and approve.
+  Record: [M3.5 acceptance](factory/M35-ACCEPTANCE.md). Next: M4, with verify as its first slice.

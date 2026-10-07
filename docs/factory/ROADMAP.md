@@ -365,11 +365,12 @@ is in the table above.
 
 **Goal:** work starts from a ticket, and autonomy is chosen per ticket.
 
-**Implementation complete; final review pending (2026-09-14, PR #153).** All seven criteria are
-independently verified; [M3-ACCEPTANCE](M3-ACCEPTANCE.md) maps each to its proving slice and evidence.
+**Delivered; on master since 2026-09-16** (pushed directly by the operator's decision, not merged
+through PR #153). All seven criteria are independently verified; [M3-ACCEPTANCE](M3-ACCEPTANCE.md)
+maps each to its proving slice and evidence.
 Real local-origin tests prove item execution and held-publication recovery; TEST PR #32 separately
 proves live standalone /fix. **Production VERIFY and LAND remain unavailable; M4 owns the verifier.**
-**No live item-build proof is claimed.** The automated GitLab run-unit network gap remains open
+**No live item-build proof is claimed here;** M3.5 below supplies one. The automated GitLab run-unit network gap remains open
 because RunUnitSpec has no network field, and **both factory images remain absent from GHCR**.
 Per-forge identity and permission limits remain separate [UNVERIFIED](../UNVERIFIED.md) entries.
 
@@ -414,6 +415,21 @@ actor outside the allowlist is ignored, **and so is one whose applier cannot be 
 the ceiling stops an in-flight item at its next phase.
 
 **FRs:** FR-F16, F16a, F17, F22..F25, F30.
+
+---
+
+## M3.5 — One ticket to a build
+
+**Goal:** the operator writes one ticket, applies one label, approves one plan, and gets one build.
+
+**Delivered; accepted 2026-10-07.** Build defaults per repository (part B), pricing completeness
+(part D), system-composed preparation (part C), the models a harness runs with their thinking
+levels (part M), and paying with a Codex subscription seat (part F). The live proof on `spire-test`
+built the same change three times, on a subscription at cost 0 and on an API key at a known cost,
+and found that Codex cache writes were billed twice (fixed in PR #182).
+[M35-ACCEPTANCE](M35-ACCEPTANCE.md) has the runs, the tokens and the cost. Every item build still
+stops held at `verify / capability_unavailable`: nothing is pushed and no pull request is opened.
+The design is [the M3.5 specification](../superpowers/specs/2026-09-16-factory-m35-one-ticket-to-a-build-design.md).
 
 ---
 
