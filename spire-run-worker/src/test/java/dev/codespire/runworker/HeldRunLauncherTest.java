@@ -22,6 +22,9 @@ class HeldRunLauncherTest {
         PublicationKey binding;
         @Override public RunHandle createHeld(RunUnitSpec unit,PublicationKey key){binding=key;lifecycle.add("create-held");return new RunHandle(COMMAND.runId(),"TEST-unit");}
         @Override public boolean publicationHeld(RunHandle run){return binding!=null;}
+        // Builds never verify; a call here would be a launcher bug.
+        @Override public dev.codespire.runtime.VerifyRun verifyHeld(RunHandle run,PublicationKey key,dev.codespire.runtime.VerifyUnitSpec spec,java.util.function.BooleanSupplier mayContinue){throw new AssertionError("a build launch must not verify");}
+        @Override public void removeVerify(RunHandle run,java.util.UUID attempt){throw new AssertionError("a build launch must not verify");}
         @Override public Finalization publishHeld(RunHandle run,PublicationKey key,UUID permit,RunUnitSpec unit,Consumer<String> lines,BooleanSupplier mayStart){throw new UnsupportedOperationException("TEST does not publish");}
         @Override public void destroyHeld(RunHandle run,PublicationKey key){throw new UnsupportedOperationException("TEST must retain");}
     }

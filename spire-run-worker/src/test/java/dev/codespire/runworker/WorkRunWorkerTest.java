@@ -62,6 +62,12 @@ class WorkRunWorkerTest {
     final class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
         @Override public List<RunHandle> discoverUnits(){return present?List.of(new RunHandle(command.runId(),"TEST-unit")):List.of();}
         @Override public boolean publicationHeld(RunHandle run){return present && held;}
+        /** What the next verify observes; set by a verify test. */
+        dev.codespire.runtime.VerifyRun nextVerify;
+        final List<java.util.UUID> removedVerifies=new java.util.ArrayList<>();
+        @Override public dev.codespire.runtime.VerifyRun verifyHeld(RunHandle run,PublicationKey key,dev.codespire.runtime.VerifyUnitSpec spec,java.util.function.BooleanSupplier mayContinue){
+            if(nextVerify==null)throw new AssertionError("TEST verify was not expected");return nextVerify;}
+        @Override public void removeVerify(RunHandle run,java.util.UUID attempt){removedVerifies.add(attempt);}
         @Override public RunHandle createHeld(RunUnitSpec spec,PublicationKey key){throw new AssertionError("TEST publication must not create a build");}
         @Override public Finalization publishHeld(RunHandle run,PublicationKey key,UUID attempt,RunUnitSpec spec,Consumer<String> lines,BooleanSupplier allowed){
             publications++;assertEquals("publishing",state,"The durable claim must precede publisher IO");
