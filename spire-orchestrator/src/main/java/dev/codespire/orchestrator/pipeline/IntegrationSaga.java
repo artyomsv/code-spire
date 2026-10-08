@@ -704,8 +704,10 @@ public class IntegrationSaga {
             return;
         }
 
-        // Allowlist gate (per-provider): unlisted authors never get touched.
-        if (!authorAllowed(provider.get().authors(), e.author())) {
+        // Allowlist gate (per-provider): unlisted authors never get touched — except the repository's own
+        // factory account, whose pull requests the routing gate already admitted (openedByFactory).
+        if (!authorAllowed(provider.get().authors(), e.author())
+                && !projection.repositoryIdOf(reviewId).map(id -> openedByFactory(id, e.author())).orElse(false)) {
             timeline.record("integration", "PullRequestSkipped", reviewId,
                     "author not in the provider's allowlist: @" + username(e));
             LOG.infof("Skipping %s — author @%s not in the provider allowlist", reviewId, username(e));
