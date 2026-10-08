@@ -400,20 +400,21 @@ mp:
 # is ever used) is "observe" in code — safe first contact. The per-provider author
 # allowlist lives in the provider registry, not here.
 spire:
+  # How subscription seats are renewed before their 10-day access token expires (SeatRenewal). The
+  # client and address are the vendor CLI's own: read from the codex-cli 0.156.1 binary on 2026-10-08.
+  # The address answered a placeholder refresh token for this client with 401 token_expired, and a
+  # wrong client with 401 invalid_client. Not secrets: every copy of the CLI carries them.
+  seat-renewal:
+    clients:
+      codex:
+        client-id: ${SPIRE_SEAT_RENEWAL_CODEX_CLIENT_ID:app_EMoamEEZ73f0CkXaXp7hrann}
+        url: ${SPIRE_SEAT_RENEWAL_CODEX_URL:https://auth.openai.com/oauth/token}
   factory:
     # Agent image per harness NAME. Keyed by name so the orchestrator never spells a harness; a
     # harness with no image here is refused at dispatch, before a row is written or a token moves.
     agent-image:
       codex: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:spire-agent-codex:latest}
     wall-clock-seconds: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:1800}
-    # How subscription seats are renewed before their 10-day access token expires (SeatRenewal). The
-    # client and address are the vendor CLI's own: read from the codex-cli 0.156.1 binary on 2026-10-08.
-    # The address answered a placeholder refresh token for this client with 401 token_expired, and a
-    # wrong client with 401 invalid_client. Not secrets: every copy of the CLI carries them.
-    seat-renewal:
-      codex:
-        client-id: ${SPIRE_FACTORY_SEAT_RENEWAL_CODEX_CLIENT_ID:app_EMoamEEZ73f0CkXaXp7hrann}
-        url: ${SPIRE_FACTORY_SEAT_RENEWAL_CODEX_URL:https://auth.openai.com/oauth/token}
     # What a /fix run uses, since nobody types it. NO DEFAULTS on purpose: an operator who has
     # not named both has not turned /fix on, and the command says which key is missing rather
     # than picking a harness and a price on their behalf. Both are refused at dispatch, before a

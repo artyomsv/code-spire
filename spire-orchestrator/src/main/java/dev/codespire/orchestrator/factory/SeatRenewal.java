@@ -29,7 +29,7 @@ import java.util.Optional;
  * that token lives 10 days. Before this, a seat simply stopped working 10 days after sign-in while the
  * settings screen still said "Ready" (item #40, 2026-10-08). The orchestrator holds the whole file, so it
  * renews it here, with the vendor's own token endpoint and client — the request the vendor's CLI makes.
- * Which client and which address are configuration ({@code spire.factory.seat-renewal}), with how they
+ * Which client and which address are configuration ({@code spire.seat-renewal.clients}), with how they
  * were measured written beside them.
  * The refresh token still never leaves the orchestrator, and nothing an agent wrote is ever read back.
  *
@@ -50,7 +50,7 @@ public class SeatRenewal {
 
     @Inject HarnessCredentialPool pool;
     @Inject DataSource dataSource;
-    @Inject FactoryConfig config;
+    @Inject SeatRenewalConfig config;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 
@@ -60,7 +60,7 @@ public class SeatRenewal {
     @Scheduled(every = "${spire.seat-renewal-interval:15m}", delayed = "30s",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void sweep() {
-        config.seatRenewal().forEach((harness, client) ->
+        config.clients().forEach((harness, client) ->
                 renewDue(harness, new Endpoint(client.clientId(), URI.create(client.url())), Instant.now()));
     }
 
