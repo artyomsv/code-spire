@@ -2129,3 +2129,23 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   naming a build setup's missing fields, explaining the scanner, refreshing the work item page, and
   a two-pane model dialog with narrow price inputs. The human steps were write, label and approve.
   Record: [M3.5 acceptance](factory/M35-ACCEPTANCE.md). Next: M4, with verify as its first slice.
+
+- **Factory M4 slice 1: verify (2026-10-07 to 2026-10-08, PR #184).**
+  The operator declares check commands in the build setup; a held build is verified on a clean copy
+  of its checkpoint, in containers with no credentials, and ends PASSED, FAILED or UNVERIFIED
+  (`no_checks_declared`, `tool_missing`, `timed_out`, `checkpoint_missing`, `verify_could_not_run`).
+  Only PASSED delivers; FAILED and UNVERIFIED stop at a gate with Retry build (from the checkpoint,
+  with the failure in the prompt, counted as a run) or Stop (ADR-046). Seventeen plan tasks ran
+  inline; the final review found four Important defects, each fixed with a test, and ten chosen
+  mutations were all killed, one after a test was added. The live proof on `spire-test` first stopped
+  six times, and each stop became a fix with a test: seat renewal before the 10-day access token
+  expires (the agent's copy cannot renew itself, and the screen still said Ready), a seat build's
+  spending counted as 0 rather than unknown, a delivered draft marked ready for review, the factory
+  account's PR admitted past the reviewer allowlist at both of its checks, running and failed reviews
+  named as such, and the repository rules given to the reviewer once instead of twice. Then #43
+  passed and reached the land gate with no human step, #45 failed, was retried from its checkpoint
+  and passed, and #47 was unverified (`cargo`, exit 127) and stopped. All builds were paid by a seat
+  at cost 0. Found and left open: land is not built, readmit after an approved land rebuilds
+  delivered work, the review is a comment rather than a GitHub review (the operator wants a real
+  one next), and a failed review does not name its model. Record:
+  [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md).

@@ -40,17 +40,18 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`); M4–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..ADR-040. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-10-07**. Delivery history is in docs/HISTORY.md; the
+Measured on **2026-10-08**. Delivery history is in docs/HISTORY.md; the
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
 proving slices and reviews, and the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
-the live proof of "one ticket to a build". **M3 and M3.5 are on master.** **M4 is next, with verify
-as its first slice**; until it lands, every item build stops held at `verify / capability_unavailable`.
+the live proof of "one ticket to a build", and the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
+the live proof of verify. **M3 and M3.5 are on master; M4 slice 1 (verify) is accepted on PR #184.**
+An item now builds, verifies, delivers a PR, is reviewed, and stops at the land gate; land is next.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -118,12 +119,19 @@ as its first slice**; until it lands, every item build stops held at `verify / c
   passed 1764 tests in 202 suites; testFast passed. The other testServices modules and packaging
   were not re-run.
 
+- **M4 slice 1: verify is delivered** (accepted 2026-10-08). Check commands in the build setup run
+  on a clean copy of the checkpoint with no credentials; PASSED delivers, FAILED and UNVERIFIED open a
+  gate with Retry build (from the checkpoint) or Stop. Live on `spire-test`: #43 passed and reached
+  land with no human step, #45 failed and passed on retry, #47 was unverified (`tool_missing`). The
+  proof also fixed seat renewal, a seat's unknown spending, draft PRs that the reviewer skipped, the
+  reviewer allowlist for factory PRs, review reasons, and rules given to the reviewer twice.
+
 **Limits that remain:**
 
-- **Production VERIFY and LAND remain unavailable.** M4 owns the verifier; M3 and M3.5 do not
-  ship one.
-- **No live item-linked push or pull request.** M3.5 proves live item builds against a real
-  GitHub ticket, but each stops held before publication; TEST PR #32 proves standalone /fix only.
+- **Production LAND remains unavailable.** Approving land records the answer and merges nothing.
+  Readmit after an approved land rebuilds delivered work, and nothing guards it yet.
+- **Live item publication is GitHub only.** Marking a draft ready is refused on GitLab and
+  Bitbucket. The review is posted as a comment, not as a GitHub review.
 - **The test counts above are from 2026-09-16.** Later PRs were checked per module; the full
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
