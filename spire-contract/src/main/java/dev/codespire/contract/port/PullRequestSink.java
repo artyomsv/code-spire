@@ -28,7 +28,8 @@ import java.util.Optional;
  * reviewer WOULD review its own. The real reasons are narrower and still sufficient: the branch is
  * pushed as the factory account, so a pull request opened as the reviewer misattributes the work;
  * the reviewer's token is not provisioned for that write, and its 403 reads as the factory account
- * failing; and an operator who HAS set an allowlist gets the skip after all.
+ * failing. (An allowlist no longer skips it: the reviewer reviews what the repository's factory account
+ * opened, matched by stable id — item #41, 2026-10-08.)
  */
 public interface PullRequestSink {
 

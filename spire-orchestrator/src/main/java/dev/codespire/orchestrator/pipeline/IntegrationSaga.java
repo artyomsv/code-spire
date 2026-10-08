@@ -116,7 +116,8 @@ public class IntegrationSaga {
         if (event instanceof PullRequestEventReceived e) {
             Optional<ScmProvider> provider = repositoryAccounts.resolve(repositoryId,
                     dev.codespire.orchestrator.provider.ProviderRole.REVIEWER);
-            if (provider.isEmpty() || !authorAllowed(provider.get().authors(), e.author())) {
+            if (provider.isEmpty() || !(authorAllowed(provider.get().authors(), e.author())
+                    || openedByFactory(repositoryId, e.author()))) {
                 timeline.record("integration", "PullRequestSkipped", reviewId,
                         provider.isEmpty() ? "No usable reviewer account selected for repository " + repositoryId
                                 : "Author is not in the selected account's allowlist");
@@ -765,6 +766,19 @@ public class IntegrationSaga {
     }
 
     /** An empty provider allowlist reviews everyone; else match only the stable account id. */
+    /**
+     * A pull request the repository's own factory account opened is always reviewed. The allowlist decides
+     * whose pull requests the review spend covers; a factory pull request was admitted through its work
+     * item's own gates, and the item's review step waits for this very review — skipped, it waited for
+     * ever (item #41, 2026-10-08). Matched on the stable provider id, never on a handle, so a person
+     * named like the bot is still subject to the allowlist.
+     */
+    private boolean openedByFactory(java.util.UUID repositoryId, Author author) {
+        if (author == null || author.providerUserId() == null || author.providerUserId().isBlank()) return false;
+        return repositoryAccounts.resolve(repositoryId, dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
+                .map(ScmProvider::botAccountId).filter(author.providerUserId()::equals).isPresent();
+    }
+
     private static boolean authorAllowed(List<String> allowlist, Author author) {
         if (allowlist == null || allowlist.isEmpty()) {
             return true;
