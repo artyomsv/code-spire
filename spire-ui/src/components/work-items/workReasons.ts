@@ -57,6 +57,8 @@ const REASONS = new Map(Object.entries({
   proposal_outcome_unknown: 'The pull request response was lost. The forge is being checked for an existing request.',
   delivered_pr_required: 'Review is waiting for a delivered pull request.',
   review_result_pending: 'Waiting for a completed review of this build.',
+  review_in_progress: 'The reviewer is reviewing this build now.',
+  review_failed: 'The review of this build failed. Open it under Code reviews to see why, fix the cause and run it again.',
   ready_for_review_pending: 'The draft pull request could not be marked ready for review yet. It is tried again.',
   ready_for_review_unsupported: 'This forge cannot mark a draft pull request ready for review, so the reviewer will not see it. Deliver as a regular pull request instead.',
   ready_for_review_not_observed: 'The forge did not confirm that the pull request is ready for review.',

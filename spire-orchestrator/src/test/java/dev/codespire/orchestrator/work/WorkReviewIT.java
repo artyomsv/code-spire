@@ -107,6 +107,17 @@ class WorkReviewIT extends WorkPreparedFixture {
         waiting(id,"review_head_not_observed");
     }
     @Test void anUnpostedHeadCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);execute("UPDATE review_status SET last_posted_commit=NULL WHERE review_id=?",review);waiting(id,"review_head_not_observed");}
+    /** A running or failed review of this head says what it is doing, rather than that its result is missing (item #41). */
+    @Test void aRunningReviewOfThisHeadSaysItIsInProgress() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='reviewing',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_in_progress");
+    }
+    @Test void aFailedReviewOfThisHeadSaysItFailed() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='failed',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_failed");
+    }
     @Test void aDegradedReviewDoesNotBecomeAPassingPhase() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),true,false);waiting(id,"review_result_pending");}
     @Test void openBlockersKeepLandWaiting() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,true);waiting(id,"review_blockers_open");}
     @Test void aClosedPullRequestCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);reviews.setPrState(review,"DECLINED");waiting(id,"review_pr_not_open");}

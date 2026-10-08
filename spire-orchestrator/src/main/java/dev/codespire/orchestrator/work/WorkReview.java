@@ -86,8 +86,14 @@ public class WorkReview {
             try(ResultSet rs=ps.executeQuery()) {
                 if(!rs.next())return new Observation(null,null,null,"review_result_pending");
                 String review=rs.getString("review_id"),reason=null;
-                if(!execution.head().equals(rs.getString("commit_sha")) || !execution.head().equals(rs.getString("last_posted_commit")))reason="review_head_not_observed";
-                else if(!"completed".equals(rs.getString("status")) || rs.getBoolean("degraded"))reason="review_result_pending";
+                // A review of this head that is still running, or that failed, says so: "the review and its posted
+                // result do not both cover this build" is true then, and told the operator nothing (item #41).
+                String status=rs.getString("status");
+                if(!execution.head().equals(rs.getString("commit_sha")))reason="review_head_not_observed";
+                else if("failed".equals(status))reason="review_failed";
+                else if(!"completed".equals(status))reason="review_in_progress";
+                else if(!execution.head().equals(rs.getString("last_posted_commit")))reason="review_head_not_observed";
+                else if(rs.getBoolean("degraded"))reason="review_result_pending";
                 else if(!"OPEN".equals(rs.getString("pr_state")) || rs.getTimestamp("archived_at")!=null)reason="review_pr_not_open";
                 else if(!readable(rs.getString("findings_json"),review,false) || !readable(rs.getString("open_findings_json"),review,false)
                         || !readable(rs.getString("reconciliation_json"),review,true))reason="review_evidence_unreadable";
