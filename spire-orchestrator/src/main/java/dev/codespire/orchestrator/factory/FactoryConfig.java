@@ -46,6 +46,21 @@ public interface FactoryConfig {
      */
     Fix fix();
 
+    /**
+     * Harness name → how the orchestrator renews that harness's subscription seats: the vendor CLI's own
+     * OAuth client and token address. A harness not listed is never renewed. Keyed by name, like
+     * {@link #agentImage()}, so this module never spells a vendor.
+     */
+    @WithName("seat-renewal")
+    Map<String, SeatRenewalClient> seatRenewal();
+
+    interface SeatRenewalClient {
+        @WithName("client-id")
+        String clientId();
+
+        String url();
+    }
+
     interface Fix {
 
         /** Must be a key of {@link #agentImage()}, or the dispatch refuses before it spends. */

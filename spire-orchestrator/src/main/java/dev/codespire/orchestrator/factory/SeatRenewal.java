@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import javax.sql.DataSource;
@@ -30,6 +29,8 @@ import java.util.Optional;
  * that token lives 10 days. Before this, a seat simply stopped working 10 days after sign-in while the
  * settings screen still said "Ready" (item #40, 2026-10-08). The orchestrator holds the whole file, so it
  * renews it here, with the vendor's own token endpoint and client — the request the vendor's CLI makes.
+ * Which client and which address are configuration ({@code spire.factory.seat-renewal}), with how they
+ * were measured written beside them.
  * The refresh token still never leaves the orchestrator, and nothing an agent wrote is ever read back.
  *
  * <p>One orchestrator renews at a time: the vendor rotates refresh tokens, and two renewals of one token
@@ -41,14 +42,6 @@ public class SeatRenewal {
     private static final Logger LOG = Logger.getLogger(SeatRenewal.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /**
-     * The OAuth client each harness's CLI renews with. Codex's was read from the codex-cli 0.156.1 binary
-     * on 2026-10-08, together with {@code https://auth.openai.com/oauth/token}; the endpoint answered a
-     * placeholder refresh token for this client with 401 {@code token_expired}, and a wrong client with 401
-     * {@code invalid_client}.
-     */
-    static final Map<String, String> CLIENTS = Map.of("codex", "app_EMoamEEZ73f0CkXaXp7hrann");
-
     /** Renew this long before the access token expires: a sweep that fails for a day still has room. */
     static final Duration RENEW_BEFORE = Duration.ofDays(3);
 
@@ -57,9 +50,7 @@ public class SeatRenewal {
 
     @Inject HarnessCredentialPool pool;
     @Inject DataSource dataSource;
-
-    @ConfigProperty(name = "spire.seat-renewal-url", defaultValue = "https://auth.openai.com/oauth/token")
-    String tokenUrl;
+    @Inject FactoryConfig config;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 
@@ -69,7 +60,8 @@ public class SeatRenewal {
     @Scheduled(every = "${spire.seat-renewal-interval:15m}", delayed = "30s",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void sweep() {
-        CLIENTS.forEach((harness, client) -> renewDue(harness, new Endpoint(client, URI.create(tokenUrl)), Instant.now()));
+        config.seatRenewal().forEach((harness, client) ->
+                renewDue(harness, new Endpoint(client.clientId(), URI.create(client.url())), Instant.now()));
     }
 
     /** @return how many seats of this harness were renewed */
