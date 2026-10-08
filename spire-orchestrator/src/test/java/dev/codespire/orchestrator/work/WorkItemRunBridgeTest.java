@@ -191,6 +191,16 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         assertEquals("build",after.phase());assertNull(after.progress().execution());assertEquals(1,after.progress().calls());assertEquals(9,after.progress().wallSeconds());
         assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND ready_processed",id));
     }
+    /** Item #40 (2026-10-08): a seat build that reported no token counts must not block the item for ever. */
+    @Test void aSeatBuildWithoutTokenCountsStillHasKnownSpending() throws Exception {
+        String id=build();var result=priorBuildResult();runs.apply(result);
+        executeWith("UPDATE factory_run SET paid_by=? WHERE run_id=?",dev.codespire.contract.work.PayWith.SUBSCRIPTION,result.runId());
+        assertFalse(runs.find(result.runId()).orElseThrow().cost().isKnown());bridge.accept(result);
+        var usage=store.load(id).progress();
+        assertFalse(usage.usageUnknown(),"a seat is not billed per token, so its spending is 0, not unknown");
+        assertNotEquals("run_usage_unknown",store.load(id).reason());
+        assertEquals(0,usage.costMillicents());assertEquals(1,usage.calls());
+    }
     @Test void unmeasuredLateBuildUsageRemainsUnknown() throws Exception {
         String id=build();var ready=priorBuildResult();stopBuild(id);runs.apply(ready);bridge.accept(ready);
         assertTrue(store.load(id).progress().usageUnknown());assertEquals(1,store.load(id).progress().calls());
