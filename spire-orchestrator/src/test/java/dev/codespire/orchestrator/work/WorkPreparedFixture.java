@@ -67,10 +67,12 @@ abstract class WorkPreparedFixture extends WorkFixture {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("INSERT INTO llm_model(id,type,name,label,pricing_mode) VALUES (?,'openai',?,?,'UNMETERED')")) {
             ps.setObject(1,modelId);ps.setString(2,model);ps.setString(3,model);ps.executeUpdate();
         }
-        for(String name:List.of("suggest","assisted","autonomous")) {
+        for(String name:List.of("suggest","assisted","autonomous","autonomous-draft")) {
             var modes=new EnumMap<WorkPolicy.Phase,String>(WorkPolicy.Phase.class);
             for(var phase:WorkPolicy.Phase.values())modes.put(phase,switch(phase){case DELIVER->"pr";case LAND->"auto_if_green";default->"auto";});
             if(name.equals("suggest"))for(var phase:List.of(WorkPolicy.Phase.BUILD,WorkPolicy.Phase.VERIFY,WorkPolicy.Phase.REVIEW,WorkPolicy.Phase.DELIVER,WorkPolicy.Phase.LAND))modes.put(phase,"off");
+            // Autonomous, but delivered as a draft: the review step must mark it ready (item #41, 2026-10-08).
+            if(name.equals("autonomous-draft"))modes.put(WorkPolicy.Phase.DELIVER,"draft_pr");
             if(name.equals("assisted")){modes.put(WorkPolicy.Phase.PLAN,"approve");modes.put(WorkPolicy.Phase.DELIVER,"draft_pr");modes.put(WorkPolicy.Phase.LAND,"approve");}
             UUID id=UUID.randomUUID();extraProfiles.add(id);
             profiles.put(name,policies.createVersion(new WorkPolicy.Profile(id,"TEST-"+name+"-"+id,1,1_000_000_401+profiles.size(),modes,

@@ -39,8 +39,9 @@ class WorkReviewIT extends WorkPreparedFixture {
         forge.stubFor(get(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("[]")));
         forge.stubFor(post(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":false}")));
     }
-    String delivered() throws Exception {
-        String id=admit("autonomous",55);register(id);dispatcher.drain();var command=heldCommands.getLast();
+    String delivered() throws Exception { return delivered("autonomous"); }
+    String delivered(String profile) throws Exception {
+        String id=admit(profile,55);register(id);dispatcher.drain();var command=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(command.runId(),command.work(),"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),9));
         UUID attempt=verifyPassed(id);delivery.advance(attempt);
         saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
@@ -64,6 +65,33 @@ class WorkReviewIT extends WorkPreparedFixture {
         observer.advance(id);assertEquals("review",store.load(id).phase());assertEquals(reason,store.load(id).reason());
         assertNull(store.load(id).progress().execution().reviewId());
         long revision=store.history(id).size();observer.advance(id);assertEquals(revision,store.history(id).size(),"unchanged waiting evidence must not append forever");
+    }
+    void openedAsDraft() {
+        forge.stubFor(post(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true}")));
+        forge.stubFor(get(urlPathEqualTo("/repos/"+scope+"/pulls/901")).willReturn(okJson(
+                "{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true,\"node_id\":\"TEST-node-901\"}")));
+    }
+    /** The reviewer skips drafts, so a draft delivery is marked ready once, and then reviewed (item #41, 2026-10-08). */
+    @Test void aDraftDeliveryIsMarkedReadyOnceAndThenReviewed() throws Exception {
+        openedAsDraft();
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(okJson("{\"data\":{\"markPullRequestReadyForReview\":{\"pullRequest\":{\"isDraft\":false}}}}")));
+        String id=delivered("autonomous-draft");assertEquals(Boolean.TRUE,store.load(id).progress().execution().pullRequest().draft());
+
+        waiting(id,"review_result_pending");
+        forge.verify(1,postRequestedFor(urlEqualTo("/graphql")).withRequestBody(matchingJsonPath("$.variables.id",equalTo("TEST-node-901"))));
+        reviewResult(id,"b".repeat(40),false,false);observer.advance(id);
+        assertEquals("land",store.load(id).phase());
+        forge.verify(1,postRequestedFor(urlEqualTo("/graphql")));
+    }
+    /** A forge that cannot be asked now leaves the item waiting with a reason, and is asked again. */
+    @Test void aDraftThatCannotBeMarkedReadyWaitsAndIsTriedAgain() throws Exception {
+        openedAsDraft();
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(aResponse().withStatus(502)));
+        String id=delivered("autonomous-draft");
+
+        waiting(id,"ready_for_review_pending");
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(okJson("{\"data\":{\"markPullRequestReadyForReview\":{\"pullRequest\":{\"isDraft\":false}}}}")));
+        observer.advance(id);assertEquals("review_result_pending",store.load(id).reason());
     }
     @Test void anObservedCleanReviewReachesLandWithoutInventingMergeCapability() throws Exception {
         String id=delivered();reviewResult(id,"b".repeat(40),false,false);observer.advance(id);

@@ -23,6 +23,11 @@ public class WorkReview {
     @Inject ReviewProjection reviews;
     @Inject EncryptionService encryption;
     @Inject ObjectMapper mapper;
+    @Inject dev.codespire.orchestrator.factory.MachineAccounts accounts;
+    @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
+    private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(WorkReview.class);
+    /** Pull requests this process has marked ready, so a pending review does not read the forge on every pass. */
+    private final Set<String> markedReady=java.util.concurrent.ConcurrentHashMap.newKeySet();
     record Observation(String review,String workspace,String slug,String reason) {}
 
     @Scheduled(every="${spire.work-delivery-interval:5s}",concurrentExecution=Scheduled.ConcurrentExecution.SKIP)
@@ -37,6 +42,7 @@ public class WorkReview {
         var item=store.load(id);if(item==null || !"review".equals(item.phase()) || !"active".equals(item.workflowStatus()))return;
         WorkExecution execution=item.progress().execution();
         if(execution==null || execution.pullRequest()==null){waiting(item,"delivered_pr_required");return;}
+        if(Boolean.TRUE.equals(execution.pullRequest().draft()) && !markedReady(item,execution))return;
         Observation observed=observe(item,execution);
         if(observed.reason()!=null){waiting(item,observed.reason());return;}
         var detail=reviews.loadDetail(observed.workspace(),observed.slug(),execution.pullRequest().number()).orElse(null);
@@ -45,6 +51,34 @@ public class WorkReview {
         if(detail.openBlockers()>0){waiting(item,"review_blockers_open");return;}
         // Review spend already belongs to the existing reviewer ledger. Merely observing it is not another call.
         transitions.complete(id,new WorkItemTransitions.PhaseResult(item.progress().attemptId(),true,0,0,0,true,execution.reviewed(observed.review())));
+    }
+    /**
+     * Delivery is the end of the factory's work on a pull request, so a draft is marked ready for review
+     * here. The reviewer skips drafts, and without this the review this phase waits for never comes
+     * (item #41, 2026-10-08). Once per process: a pull request already ready is answered with no write, so
+     * a restart costs one read.
+     */
+    private boolean markedReady(WorkItemEvent item,WorkExecution execution) {
+        String key=item.progress().attemptId()+":"+execution.pullRequest().number();
+        if(markedReady.contains(key))return true;
+        var account=accounts.resolve(item.repositoryId());
+        if(account.isEmpty()){waiting(item,"factory_account_unavailable");return false;}
+        try {
+            clients.pullRequestSink(account.get()).markReady(repositoryOf(item),execution.pullRequest());
+            markedReady.add(key);
+            return true;
+        }catch(dev.codespire.contract.port.PullRequestSink.DeliveryUnavailable refusal) {
+            waiting(item,refusal.getMessage());return false;
+        }catch(RuntimeException fault) {
+            LOG.warnf("work item %s: pull request %d could not be marked ready (%s); the next pass tries again",
+                    item.workItemId(),execution.pullRequest().number(),fault.getClass().getSimpleName());
+            waiting(item,"ready_for_review_pending");return false;
+        }
+    }
+    private dev.codespire.contract.scm.RepoRef repositoryOf(WorkItemEvent item) {
+        try(Connection c=dataSource.getConnection()) {
+            return sources.get(c,item.sourceId(),false).orElseThrow(()->new IllegalStateException("Work source "+item.sourceId()+" is missing")).repository();
+        }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
     private Observation observe(WorkItemEvent item,WorkExecution execution) {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("SELECT * FROM review_status WHERE repository_id=? AND pr_id=?")) {

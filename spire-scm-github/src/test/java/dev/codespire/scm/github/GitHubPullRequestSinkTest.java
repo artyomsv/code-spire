@@ -386,4 +386,46 @@ class GitHubPullRequestSinkTest {
         assertThrows(PullRequestSink.DeliveryUnavailable.class,()->sink.open(REPO,draftRequest()));
         wireMock.verify(2,getRequestedFor(urlPathEqualTo(PULLS)));wireMock.verify(1,postRequestedFor(urlEqualTo(PULLS)));
     }
+
+    /** A draft the factory opened is marked ready by GitHub's GraphQL mutation, keyed by its node id. */
+    @Test
+    void aDraftIsMarkedReadyForReview() {
+        wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\"}")));
+        wireMock.stubFor(post(urlEqualTo("/graphql")).willReturn(json(
+                "{\"data\": {\"markPullRequestReadyForReview\": {\"pullRequest\": {\"isDraft\": false}}}}")));
+
+        PullRequestRef ready = sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true));
+
+        assertEquals(Boolean.FALSE, ready.draft());
+        assertEquals(42L, ready.number());
+        wireMock.verify(postRequestedFor(urlEqualTo("/graphql"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath("$.variables.id", equalTo("TEST-node-42")))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock.containing("markPullRequestReadyForReview")));
+    }
+
+    /** Idempotent: a pull request that is already ready is answered with no write. */
+    @Test
+    void aPullRequestAlreadyReadyIsNotWrittenTo() {
+        wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": false, \"node_id\": \"TEST-node-42\"}")));
+
+        PullRequestRef ready = sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true));
+
+        assertEquals(Boolean.FALSE, ready.draft());
+        wireMock.verify(0, postRequestedFor(urlEqualTo("/graphql")));
+    }
+
+    /** A mutation that answers a pull request still in draft did not do its job, and says so. */
+    @Test
+    void aPullRequestStillInDraftAfterTheMutationIsRefused() {
+        wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\"}")));
+        wireMock.stubFor(post(urlEqualTo("/graphql")).willReturn(json(
+                "{\"data\": {\"markPullRequestReadyForReview\": {\"pullRequest\": {\"isDraft\": true}}}}")));
+
+        PullRequestSink.DeliveryUnavailable refused = assertThrows(PullRequestSink.DeliveryUnavailable.class,
+                () -> sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true)));
+        assertEquals("ready_for_review_not_observed", refused.getMessage());
+    }
 }

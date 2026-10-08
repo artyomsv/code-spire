@@ -110,6 +110,35 @@ public class GitHubPullRequestSink implements PullRequestSink {
     }
 
     /**
+     * GitHub has no REST call that takes a pull request out of draft, so this is the GraphQL mutation,
+     * which needs the pull request's node id. The pull request is read first: one already ready is
+     * answered without a write, and the node id comes from the same read.
+     */
+    @Override
+    public PullRequestRef markReady(RepoRef repo, PullRequestRef pullRequest) {
+        String path = pullsPath(repo) + "/" + pullRequest.number();
+        JsonNode current = client.getJson(path);
+        PullRequestRef observed = read(current, "GET", path);
+        if (Boolean.FALSE.equals(observed.draft())) {
+            return observed;
+        }
+        String nodeId = current.path("node_id").asText("");
+        if (nodeId.isBlank()) {
+            throw new GitHubApiException(200, "GET", path, "response carried no node id to mark ready");
+        }
+        JsonNode marked = client.postGraphQl(READY_FOR_REVIEW, Map.of("id", nodeId))
+                .path("markPullRequestReadyForReview").path("pullRequest").path("isDraft");
+        if (!marked.isBoolean() || marked.booleanValue()) {
+            throw new PullRequestSink.DeliveryUnavailable("ready_for_review_not_observed");
+        }
+        return new PullRequestRef(observed.number(), observed.url(), false);
+    }
+
+    private static final String READY_FOR_REVIEW = """
+            mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }
+            """;
+
+    /**
      * What a refused create really meant: an outcome, someone else's pull request, or a fault.
      *
      * <p><b>Only the nothing-to-propose wording is matched.</b> An earlier version also matched

@@ -47,6 +47,20 @@ public interface PullRequestSink {
         return observed;
     }
 
+    /**
+     * Marks an open draft pull request ready for review, once the factory's work on it is finished.
+     *
+     * <p>The reviewer skips drafts by default, so a draft the factory opened and never marked ready waits
+     * for a review that never comes (item #41, 2026-10-08). <b>Idempotent:</b> a pull request that is
+     * already ready is answered as it is, with no write.
+     *
+     * @return the pull request as observed afterwards; its draft state is false
+     * @throws DeliveryUnavailable named {@code ready_for_review_unsupported} when this adapter cannot do it
+     */
+    default PullRequestRef markReady(RepoRef repo, PullRequestRef pullRequest) {
+        throw new DeliveryUnavailable("ready_for_review_unsupported");
+    }
+
     class DeliveryUnavailable extends RuntimeException {
         public DeliveryUnavailable(String reason) { super(reason); }
     }
