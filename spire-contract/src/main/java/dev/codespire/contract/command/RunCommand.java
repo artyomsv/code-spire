@@ -316,17 +316,13 @@ public sealed interface RunCommand {
      */
     record VerifyWork(String runId, dev.codespire.contract.work.WorkRunBinding work, java.util.UUID attemptId, String head,
                       List<String> commands, long timeoutSeconds) implements RunCommand {
-        public static final int MAX_COMMANDS = 20, MAX_COMMAND_CHARS = 1000;
-
         public VerifyWork {
             if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A verify names its held run");
             Objects.requireNonNull(work, "A verify binds the exact build");
             Objects.requireNonNull(attemptId, "A verify names its attempt");
             if (head == null || !head.matches("[0-9a-f]{40}")) throw new IllegalArgumentException("A verify names its full head");
             commands = List.copyOf(Objects.requireNonNull(commands, "commands"));
-            if (commands.size() > MAX_COMMANDS || commands.stream().anyMatch(command -> command == null || command.isBlank()
-                    || command.length() > MAX_COMMAND_CHARS || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0))
-                throw new IllegalArgumentException("Verify commands are 0-20 single lines of at most 1000 characters");
+            dev.codespire.contract.work.VerifyCommands.requireValid(commands);
             if (timeoutSeconds < 1) throw new IllegalArgumentException("A verify needs a time limit");
         }
     }

@@ -83,7 +83,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
     public static final int VERIFY_BINDING = 5;
 
     /** The bounds the run worker applies; refused here so a preparation never carries what a verify refuses. */
-    public static final int MAX_VERIFY_COMMANDS = 20, MAX_VERIFY_COMMAND_CHARS = 1000;
+    public static final int MAX_VERIFY_COMMANDS = VerifyCommands.MAX_COMMANDS, MAX_VERIFY_COMMAND_CHARS = VerifyCommands.MAX_COMMAND_CHARS;
 
     /** Every preparation written before M4 carries no verify commands. */
     public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
@@ -142,10 +142,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         if (bindingVersion >= VERIFY_BINDING) {
             if (verifyTimeoutSeconds < 1)
                 throw new IllegalArgumentException("A version " + VERIFY_BINDING + " preparation carries its verify time limit");
-            if (verifyCommands.size() > MAX_VERIFY_COMMANDS || verifyCommands.stream().anyMatch(command -> command.isBlank()
-                    || command.length() > MAX_VERIFY_COMMAND_CHARS || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0))
-                throw new IllegalArgumentException("Verify commands are 0-" + MAX_VERIFY_COMMANDS
-                        + " single lines of at most " + MAX_VERIFY_COMMAND_CHARS + " characters");
+            VerifyCommands.requireValid(verifyCommands);
         }
     }
 

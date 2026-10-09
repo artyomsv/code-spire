@@ -193,16 +193,15 @@ public class WorkRunWorker {
         }
     }
 
+    /** Corrects a retry prompt that promised the previous build's commits, when they cannot be read here. */
+    static final String BASE_FALLBACK_NOTE="\n\nNote: the previous build's commits are not available, so this build starts again from the base,"
+            +" not from its last commit. Make the whole change, then fix what the checks found.";
+
     /**
      * A retried build reads the previous held run's bundles (M4). When that unit is no longer on this daemon the
      * read would refuse the whole build, and a refused build fails the item; starting from the base instead keeps
-     * the retry the operator asked for.
+     * the retry the operator asked for, and the prompt is corrected to say so.
      */
-    /** Corrects a retry prompt that promised the previous build's commits, when they cannot be read here. */
-    static final String BASE_FALLBACK_NOTE="
-
-Note: the previous build's commits are not available, so this build starts again from the base,"
-            +" not from its last commit. Make the whole change, then fix what the checks found.";
     RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
         String previous=command.execution().startFromRunId();
         if(previous==null || localUnit(previous).isPresent())return command;

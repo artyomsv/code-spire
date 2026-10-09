@@ -60,7 +60,7 @@ final class DockerVerifyUnits {
         Map<String, String> labels = labels(spec, binding);
         createVolume(spec, labels);
 
-        String prepareId = container(spec, spec.prepare(), labels, "prepare", false);
+        String prepareId = prepareContainer(spec, labels);
         Exit prepared = runToExit(prepareId, deadline);
         if (prepared.code() == null) return new VerifyRun(null, VerifyRun.Prepare.FAILED, List.of(), prepared.timedOut());
         if (prepared.code() == PREPARE_CHECKPOINT_MISSING) return new VerifyRun(null, VerifyRun.Prepare.CHECKPOINT_MISSING, List.of(), false);
@@ -75,7 +75,7 @@ final class DockerVerifyUnits {
             long started = System.nanoTime();
             String id;
             try {
-                id = container(spec, spec.checks().get(index), labels, "check-" + index, true);
+                id = checkContainer(spec, index, labels);
             } catch (RuntimeException notCreated) {
                 LOG.log(System.Logger.Level.WARNING, "verify check " + index + " of " + spec.runId() + " could not be created", notCreated);
                 checks.add(new VerifyRun.Check(null, 0, List.of()));
@@ -116,16 +116,20 @@ final class DockerVerifyUnits {
         catch (NotFoundException absent) { client.createVolumeCmd().withName(name).withLabels(labels).exec(); }
     }
 
-    /** Named per attempt and role, so a second observer or a restart finds the same container instead of a twin. */
-    private String container(VerifyUnitSpec spec, ContainerSpec container, Map<String, String> labels, String suffix, boolean check) {
-        String name = DockerRunRuntime.volumeName(spec.runId(), spec.volume() + "-" + suffix);
-        try { return client.inspectContainerCmd(name).exec().getId(); }
-        catch (NotFoundException absent) { /* created below */ }
-        runtime.ensureImage(container.image());
-        List<String> env = new ArrayList<>();
-        container.environment().forEach((key, value) -> env.add(key + "=" + value));
-        spec.enterprise().environment().forEach((key, value) -> env.add(key + "=" + value));
-        HostConfig host = HostConfig.newHostConfig()
+    /** Prepare runs this project's own code, so it gets no agent /tmp. */
+    private String prepareContainer(VerifyUnitSpec spec, Map<String, String> labels) {
+        return createContainer(spec, spec.prepare(), labels, "prepare", hostOf(spec, spec.prepare()));
+    }
+
+    /** A check runs code the agent wrote, so it gets the agent's bounded /tmp. */
+    private String checkContainer(VerifyUnitSpec spec, int index, Map<String, String> labels) {
+        ContainerSpec check = spec.checks().get(index);
+        HostConfig host = hostOf(spec, check).withTmpFs(Map.of(DockerRunRuntime.TMPFS_MOUNT, DockerRunRuntime.TMPFS_OPTIONS + spec.diskBytes()));
+        return createContainer(spec, check, labels, "check-" + index, host);
+    }
+
+    private static HostConfig hostOf(VerifyUnitSpec spec, ContainerSpec container) {
+        return HostConfig.newHostConfig()
                 .withBinds(DockerRunRuntime.bindsOf(spec.runId(), spec.enterprise().mounts(), container))
                 .withMemory(spec.memoryBytes())
                 .withNanoCPUs(spec.nanoCpus())
@@ -133,8 +137,17 @@ final class DockerVerifyUnits {
                 .withSecurityOpts(List.of("no-new-privileges"))
                 .withCapDrop(Capability.ALL)
                 .withAutoRemove(false);
-        // A check runs code the agent wrote, so it gets the agent's bounded /tmp; prepare runs this project's code.
-        if (check) host.withTmpFs(Map.of(DockerRunRuntime.TMPFS_MOUNT, DockerRunRuntime.TMPFS_OPTIONS + spec.diskBytes()));
+    }
+
+    /** Named per attempt and role, so a second observer or a restart finds the same container instead of a twin. */
+    private String createContainer(VerifyUnitSpec spec, ContainerSpec container, Map<String, String> labels, String suffix, HostConfig host) {
+        String name = DockerRunRuntime.volumeName(spec.runId(), spec.volume() + "-" + suffix);
+        try { return client.inspectContainerCmd(name).exec().getId(); }
+        catch (NotFoundException absent) { /* created below */ }
+        runtime.ensureImage(container.image());
+        List<String> env = new ArrayList<>();
+        container.environment().forEach((key, value) -> env.add(key + "=" + value));
+        spec.enterprise().environment().forEach((key, value) -> env.add(key + "=" + value));
         // The verify volume is the working directory, whatever the image's WORKDIR: "./gradlew check" means this tree.
         var create = client.createContainerCmd(container.image()).withName(name).withCmd(container.argv())
                 .withWorkingDir(VerifyUnitSpec.WORKSPACE_PATH)

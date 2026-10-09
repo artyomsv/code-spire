@@ -767,7 +767,6 @@ public class IntegrationSaga {
                 workerCredentials.pack(provider.get(), e.repo().workspace())));
     }
 
-    /** An empty provider allowlist reviews everyone; else match only the stable account id. */
     /**
      * A pull request the repository's own factory account opened is always reviewed. The allowlist decides
      * whose pull requests the review spend covers; a factory pull request was admitted through its work
@@ -781,6 +780,7 @@ public class IntegrationSaga {
                 .map(ScmProvider::botAccountId).filter(author.providerUserId()::equals).isPresent();
     }
 
+    /** An empty provider allowlist reviews everyone; else match only the stable account id. */
     private static boolean authorAllowed(List<String> allowlist, Author author) {
         if (allowlist == null || allowlist.isEmpty()) {
             return true;

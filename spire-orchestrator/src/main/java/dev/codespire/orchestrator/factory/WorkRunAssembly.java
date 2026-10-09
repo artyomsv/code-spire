@@ -84,8 +84,8 @@ public class WorkRunAssembly {
                 // The level the approved binding hashed, so the build runs at what was approved (M3.5 part M).
                 .atEffort(item.preparation().effort());
         if(subscription)command=command.paidBySignIn();
-        if(previous.isPresent() && dev.codespire.orchestrator.work.WorkVerifyHistory.checkpointReadable(previous.get().verification()))
-            command=command.fromCheckpoint(previous.get().runId(),previous.get().head());
+        var resumable=previous.filter(p->dev.codespire.orchestrator.work.WorkVerifyHistory.checkpointReadable(p.verification()));
+        if(resumable.isPresent())command=command.fromCheckpoint(resumable.orElseThrow().runId(),resumable.orElseThrow().head());
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
         var row=new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),member.id());

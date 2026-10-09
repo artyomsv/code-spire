@@ -27,15 +27,14 @@ public class BuildDefaults {
     @Inject HarnessCatalogues catalogues;
     @Inject HarnessCredentialPool pool;
 
+    /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
+    public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
+
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
      *     the setup screen has to render, and a zero-revision row is the same answer a save rejects
-     */
-    /**
      * @param effort the thinking level, or null for the model's own default — a real choice, not a gap
      * @param payWith {@code API_KEY} or {@code SUBSCRIPTION} (M3.5 part F)
-     */
-    /**
      * @param verifyCommands the checks verify runs, in order (M4); empty means builds stop as unverified
      * @param verifyTimeoutSeconds the limit for all of them together
      */
@@ -45,9 +44,6 @@ public class BuildDefaults {
         public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null); }
         public boolean set() { return revision > 0; }
     }
-
-    /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
-    public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
 
     /**
      * @param effort null for the model's own default
@@ -206,10 +202,7 @@ public class BuildDefaults {
     private static List<String> verifyCommands(List<String> typed) {
         List<String> commands = typed == null ? List.of()
                 : typed.stream().filter(command -> command != null && !command.isBlank()).map(String::strip).toList();
-        if (commands.size() > dev.codespire.contract.work.WorkPreparation.MAX_VERIFY_COMMANDS
-                || commands.stream().anyMatch(command -> command.length() > dev.codespire.contract.work.WorkPreparation.MAX_VERIFY_COMMAND_CHARS
-                        || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0))
-            throw new Refused("verify_command_invalid");
+        if (!dev.codespire.contract.work.VerifyCommands.valid(commands)) throw new Refused("verify_command_invalid");
         return commands;
     }
 
