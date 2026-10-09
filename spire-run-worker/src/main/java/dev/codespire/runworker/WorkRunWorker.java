@@ -60,11 +60,12 @@ public class WorkRunWorker {
                 // leave credential-bearing containers behind with no unit reported (review of PR #178).
                 boolean[] creationAttempted={false};
                 // After the save: a save that throws stops the launch before anything is created.
-                result=launcher.launchHeld(command,new HeldObserver(command),unit->{store.saveUnit(id,unit);creationAttempted[0]=true;});
+                result=launcher.launchHeld(readableStart(command),new HeldObserver(command),unit->{store.saveUnit(id,unit);creationAttempted[0]=true;});
                 if(!creationAttempted[0])LiveSecrets.forget(id);
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
+            if(result instanceof RunResult.RunWorkReady)retireSuperseded(command);
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
             LOG.errorf("run %s: held execution could not be recorded (%s); retained for recovery",id,failure.getClass().getSimpleName());
@@ -171,6 +172,41 @@ public class WorkRunWorker {
             catch(RuntimeException failure){LOG.warnf("run %s: published workspace cleanup deferred (%s)",held.execution().runId(),failure.getClass().getSimpleName());}
         }
         flushResults();
+    }
+
+    /**
+     * A retried build that reached its checkpoint replaces the held build it started from (M4): that unit's
+     * workspace is released, and its row closed locally with nothing sent, since its item moved on.
+     */
+    private void retireSuperseded(RunCommand.ExecuteWorkRun command) {
+        String previous=command.execution().startFromRunId();
+        if(previous==null || !(runtime instanceof PublicationRuntime publication))return;
+        try {
+            var old=store.find(previous);
+            if(old.isEmpty() || !store.retire(previous,failures.of(old.orElseThrow().execution().execution(),"CANCELLED",
+                    "Superseded by the retried build "+command.runId())))return;
+            var key=new PublicationKey(old.orElseThrow().execution().work().publicationKey());
+            localUnit(previous).ifPresent(unit->publication.destroyHeld(unit,key));
+            LiveSecrets.forget(previous);
+        } catch(RuntimeException failure) {
+            LOG.warnf("run %s: the superseded held build %s was not released (%s)",command.runId(),previous,failure.getClass().getSimpleName());
+        }
+    }
+
+    /** Corrects a retry prompt that promised the previous build's commits, when they cannot be read here. */
+    static final String BASE_FALLBACK_NOTE="\n\nNote: the previous build's commits are not available, so this build starts again from the base,"
+            +" not from its last commit. Make the whole change, then fix what the checks found.";
+
+    /**
+     * A retried build reads the previous held run's bundles (M4). When that unit is no longer on this daemon the
+     * read would refuse the whole build, and a refused build fails the item; starting from the base instead keeps
+     * the retry the operator asked for, and the prompt is corrected to say so.
+     */
+    RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
+        String previous=command.execution().startFromRunId();
+        if(previous==null || localUnit(previous).isPresent())return command;
+        LOG.warnf("run %s: the checkpoint of %s is gone; the retried build starts from the base",command.runId(),previous);
+        return new RunCommand.ExecuteWorkRun(command.execution().fromBaseInstead(BASE_FALLBACK_NOTE),command.work());
     }
 
     public void flushResults() {

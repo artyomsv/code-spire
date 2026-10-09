@@ -105,8 +105,12 @@ public class WorkItemRunBridge {
         var row=runs.find(result.runId()).orElseThrow(()->new IllegalStateException("Associated run is missing"));
         // Reuse M2's cause-and-usage classification. A proven pre-agent failure bought no call;
         // a missing measurement after execution is unknown, never an invented zero.
+        // A seat is not billed per token, so a seat run's spending is known to be 0 even when it reported no
+        // token counts. Read as unknown, it blocked item #40 for ever after a refused seat (2026-10-08).
+        boolean seat=dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(runs.paidByOf(result.runId()).orElse(null));
         var usage=dev.codespire.orchestrator.factory.RunCharges.nothingWasBought(result)
                 ? new WorkItemTransitions.PhaseResult(attempt,success,wall,0,0,true)
+                : seat ? new WorkItemTransitions.PhaseResult(attempt,success,wall,0,1,true)
                 : new WorkItemTransitions.PhaseResult(attempt,success,wall,
                     row.cost().isKnown()?row.cost().millicents():0,1,row.cost().isKnown());
         if(result instanceof RunResult.RunWorkReady ready)usage=new WorkItemTransitions.PhaseResult(attempt,success,wall,

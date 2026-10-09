@@ -47,7 +47,7 @@ class WorkItemRunJourneyIT extends WorkItemRunFixture {
             assertTrue(child.waitFor(90,TimeUnit.SECONDS),"The control plane must consume readiness and release its services");
             assertEquals(0,child.exitValue(),()->read(log));
             var proof=mapper.readTree(Files.readAllBytes(temporary.resolve("proof.json")));
-            assertEquals("verify",proof.path("phase").asText());assertEquals("verify_capability_unavailable",proof.path("reason").asText());
+            assertEquals("verify",proof.path("phase").asText());assertEquals("phase_started",proof.path("reason").asText());
             assertEquals(ready.head(),proof.path("head").asText());assertEquals(input.runId(),proof.path("runId").asText());assertEquals(1,proof.path("runs").asInt());
             assertFalse(origin.hasBranch(input.branch()));assertNull(store.find(input.runId()).orElseThrow().terminal());
             assertFalse(reports.stream().anyMatch(result->result instanceof RunResult.RunFinished));

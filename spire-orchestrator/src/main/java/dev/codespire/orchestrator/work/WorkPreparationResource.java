@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.work;
 
+import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.orchestrator.security.OidcSubjects;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -23,6 +24,7 @@ public class WorkPreparationResource {
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     @Inject WorkPreparationSweep sweep;
+    @Inject dev.codespire.orchestrator.factory.BuildDefaults buildDefaults;
     public record Input(long expectedRevision,WorkPreparation.Artifact specification,WorkPreparation.Artifact plan,
                         String baseBranch,String baseCommit,String harness,String model) {}
     /**
@@ -128,7 +130,12 @@ public class WorkPreparationResource {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         WorkPreparation preparation;
-        try { preparation=new WorkPreparation(input.specification(),input.plan(),input.baseBranch(),input.baseCommit(),input.harness(),input.model(),actor); }
+        WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();
+        // A hand-registered task verifies with the repository's checks too, copied and bound like the sweep's (M4):
+        // without them it could only ever stop as unverified.
+        var checks=buildDefaults.get(item.repositoryId());
+        try { preparation=new WorkPreparation(input.specification(),input.plan(),input.baseBranch(),input.baseCommit(),input.harness(),input.model(),actor,
+                WorkPreparation.VERIFY_BINDING,null,null,checks.verifyCommands(),checks.verifyTimeoutSeconds()); }
         catch(IllegalArgumentException | NullPointerException invalid) { throw new BadRequestException(invalid.getMessage()); }
         var result=transitions.prepare(id,input.expectedRevision(),preparation);
         // The reason is the contract other code keys on; the detail says which rule refused, so the

@@ -77,6 +77,25 @@ public final class WorkItemLifecycle {
         return state(item,"active","phase_started","PHASE_STARTED",item.gate(),item.progress().start(decisionId,item.phase(),now));
     }
 
+    /** The reasons an open verify gate carries when it asks about a result rather than permission to run. */
+    public static final java.util.Set<String> VERIFY_RESULT_REASONS=java.util.Set.of("verify_failed","verify_unverified");
+
+    /**
+     * Failed or unverified checks open a gate in every verify mode but off, auto included (spec §4.2, ADR-046):
+     * only a human accepts a result that is not passed. It is not PHASE_FAILED, because verify fails a step,
+     * never a work item (FR-F20).
+     */
+    public static WorkItemEvent verifyResultGate(WorkItemEvent item,WorkItemEvent previous,long historySize,java.time.Instant now,UUID decisionId,WorkVerification result) {
+        if(result.passed())throw new IllegalArgumentException("A passed verification completes the phase");
+        if(!"verify".equals(item.phase()))throw new IllegalStateException("A result gate belongs to verify, not "+item.phase());
+        if("off".equals(item.policy().effective().getOrDefault(WorkPolicy.Phase.VERIFY,"off")))throw new IllegalStateException("Verify is off for this item");
+        long eventRevision=historySize+1+(clampChanged(previous,item)?1:0);
+        WorkGate gate=new WorkGate(decisionId,1,"OPEN","verify",item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
+                now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
+        String reason=result.outcome()==WorkVerification.Outcome.FAILED?"verify_failed":"verify_unverified";
+        return state(item,"waiting_approval",reason,"GATE_OPENED",gate,item.progress().reserve(true));
+    }
+
     public static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {
         return item.decision(item.policyRevision(),item.authority(),item.policy(),item.phase(),status,reason,milestone,gate,progress);
     }

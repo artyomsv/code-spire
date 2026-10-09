@@ -19,7 +19,12 @@ import java.util.Set;
  * suffix — see that class for why the difference is a security one.
  */
 public record ContainerSpec(String image, List<String> argv, Map<String, String> environment,
-                            List<Mount> mounts) {
+                            List<Mount> mounts, List<String> entrypoint) {
+
+    /** The image's own entrypoint, which every container before M4 used. */
+    public ContainerSpec(String image, List<String> argv, Map<String, String> environment, List<Mount> mounts) {
+        this(image, argv, environment, mounts, null);
+    }
 
     public ContainerSpec {
         Objects.requireNonNull(image, "image");
@@ -28,6 +33,14 @@ public record ContainerSpec(String image, List<String> argv, Map<String, String>
         mounts = List.copyOf(Objects.requireNonNull(mounts, "mounts"));
         if (image.isBlank()) {
             throw new IllegalArgumentException("a container must name an image");
+        }
+        // A verify check overrides the agent image's entrypoint, which would otherwise wrap the command in
+        // the agent's own script -- one that commits and bundles. Empty would mean "no program at all".
+        if (entrypoint != null) {
+            entrypoint = List.copyOf(entrypoint);
+            if (entrypoint.isEmpty()) {
+                throw new IllegalArgumentException("an entrypoint override names a program; null keeps the image's own");
+            }
         }
 
         // One path, one mount. A List permits duplicates, which re-opens the hole the typed
@@ -46,6 +59,7 @@ public record ContainerSpec(String image, List<String> argv, Map<String, String>
         return "ContainerSpec[image=" + image
                 + ", argv=" + argv
                 + ", environment=" + environment.keySet() + " (values redacted)"
-                + ", mounts=" + mounts + "]";
+                + ", mounts=" + mounts
+                + ", entrypoint=" + entrypoint + "]";
     }
 }

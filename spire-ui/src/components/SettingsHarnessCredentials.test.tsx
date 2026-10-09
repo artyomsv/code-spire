@@ -60,6 +60,19 @@ it('shows a signed-in seat as a ready subscription', async () => {
   expect(within(await row('TEST-seat-free')).getByText('Ready · subscription')).toBeInTheDocument();
 });
 
+// The orchestrator renews a seat; one it could not renew must not read as ready or as a mere refusal.
+it('asks for a new sign-in on a seat whose renewal was refused', async () => {
+  vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
+    member({ id: 'TEST-seat-refused', label: 'TEST-seat-refused', type: 'codex', authMode: 'SUBSCRIPTION', identified: true,
+      rejectedAt: '2026-10-08T12:00:00Z' }),
+  ]);
+  render(<SettingsHarnessCredentials />);
+
+  const refused = await row('TEST-seat-refused');
+  expect(within(refused).getByText('Sign in again')).toBeInTheDocument();
+  expect(within(refused).queryByText('Ready · subscription')).toBeNull();
+});
+
 it('switches a member off and back on, and says which one changed', async () => {
   // The list is read again after the change, so the second answer is the switched-off row.
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValueOnce([member()]).mockResolvedValue([member({ enabled: false })]);

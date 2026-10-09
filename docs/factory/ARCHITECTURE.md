@@ -33,8 +33,9 @@ Delivery supplies the pushed PR required by the existing reviewer (ADR-045). The
 [prepared task handoff](PREPARED-TASKS.md) stores tracker references and digests, then associates
 one durable build attempt with the existing M2 run record. Slice 8a keeps production item execution
 unavailable until slice 8b supplies trusted publication hold; the standalone run plane above retains
-automatic publication. Missing generation, verification and merge executors never become successful
-phase results.
+automatic publication. Missing generation and merge executors never become successful phase results.
+Verify runs the operator's checks on a clean copy of the checkpoint (ADR-046); only a passed result
+for the bound checks completes it.
 
 ## 2. Services
 
@@ -258,10 +259,11 @@ generation, planning and verification remain outside this implementation.
 | Integration events (gateway) | `WorkSourceDelivery`, `RepositoryDelivery` carrying typed `RepositoryActivity` | Implemented signed tracker/SCM ingress; rechecked against source and repository ownership |
 | Commands (orchestrator → run worker) | `ExecuteRun`, `CancelRun`, `SteerRun`, `ExecuteWorkRun`, `PublishWorkRun`, `HoldWorkRun` | Implemented standalone and held execution paths; salvage remains a runtime operation |
 | Results (run worker → orchestrator) | `RunStarted`, `RunWorkReady`, `RunFinished`, `RunFailed` | Implemented durable readiness and terminal publication; transcripts remain separate |
+| Verifications (run worker → orchestrator) | `RunWorkVerified` on `cs.run-verifications` | M4: one per verify attempt, stored before it is sent; never on `cs.run-results`, where the item bridge reads build results |
 | Work-item decisions | `WorkItemEvent` with milestone, policy, preparation, gate, progress and control facts; `ResolveGate` unifies answer channels | Implemented work-item aggregate. Review `DomainEvent` remains separate. `factory_run` and `llm_charge` retain run/execution truth; M3 deliberately adds no run aggregate |
 
 Work-item state carries explicit refusal/wait reasons and never turns a missing executor into
-success. Production VERIFY and LAND remain unavailable. The [acceptance record](M3-ACCEPTANCE.md)
+success. Production LAND remains unavailable; VERIFY runs the operator's checks (ADR-046). The [acceptance record](M3-ACCEPTANCE.md)
 separates supported local journeys from the standalone live /fix proof and remaining live gaps.
 
 ## 7. Data

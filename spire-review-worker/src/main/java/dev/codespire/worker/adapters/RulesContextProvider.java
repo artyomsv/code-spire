@@ -1,6 +1,7 @@
 package dev.codespire.worker.adapters;
 
 import dev.codespire.contract.port.ContextProvider;
+import dev.codespire.contract.port.FirstLevelOnly;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.ContextRequest;
@@ -30,7 +31,9 @@ import java.util.concurrent.CompletionStage;
  * context item. That fence does not make the rules safe to take from the PR head, which is why they
  * are read from the target branch; see {@code DiffSource.fetchTextFileOnBranch}.
  */
-public class RulesContextProvider implements ContextProvider {
+// FirstLevelOnly: the rules ride on the command, never on a discovered reference. Run again at level 2
+// they were added twice, and an item with no uri escapes the dedup (factory PR #42, 2026-10-08).
+public class RulesContextProvider implements ContextProvider, FirstLevelOnly {
 
     public static final String SOURCE = "RULES";
     static final String KIND = "RULE";

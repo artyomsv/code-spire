@@ -61,3 +61,11 @@ it('falls back to every item for an unknown filter', () => {
   expect(filterById(null).statuses).toEqual([]);
   expect(filterById('needs-you').statuses).toEqual(['waiting_approval', 'awaiting_input', 'suspended']);
 });
+
+it('a verify result gate waits on a person and names its decision', () => {
+  expect(filterById('needs-you').statuses).toContain('waiting_approval');
+  const waiting = row({ phase: 'verify', workflowStatus: 'waiting_approval', reason: 'verify_failed',
+    gate: { id: 'TEST-verify-gate', version: 1, state: 'OPEN', phase: 'verify', generation: 1, itemRevision: 9, policyRevision: 1,
+      artifact: 'TEST-digest', openedAt: '2026-10-07T00:00:00Z', expiresAt: '2026-10-08T00:00:00Z', resolver: null, channel: null, note: null } });
+  expect(nextAction(waiting)?.label).toBe('Review the verify decision');
+});

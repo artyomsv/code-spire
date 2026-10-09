@@ -137,13 +137,18 @@ public final class PublishRepo implements AutoCloseable {
      * wall clock, not a disclosure, and NIO cannot express a non-blocking open.
      */
     private Path copyOutOfReach(Path bundle, long maxBytes) throws IOException {
+        return copyOutOfReach(bundle, privateStore, maxBytes);
+    }
+
+    /** The same copy into a caller's private store, so a checkpoint import reads bundles the same way (M4). */
+    static Path copyOutOfReach(Path bundle, Path store, long maxBytes) throws IOException {
         BasicFileAttributes attributes =
                 Files.readAttributes(bundle, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         if (!attributes.isRegularFile()) {
             throw new IOException("handoff bundle is not a regular file: " + bundle.getFileName());
         }
 
-        Path copy = privateStore.resolve("incoming.bundle");
+        Path copy = store.resolve("incoming.bundle");
         long copied = 0;
         byte[] buffer = new byte[8192];
         try (InputStream in = Channels.newInputStream(openWithoutFollowing(bundle));
@@ -191,7 +196,7 @@ public final class PublishRepo implements AutoCloseable {
      * {@code fetch()} then returns NORMALLY with zero tracking updates, leaving an empty ref
      * database and no error to notice.
      */
-    private String soleRefOf(Path bundle) throws GitAPIException, IOException {
+    static String soleRefOf(Path bundle) throws GitAPIException, IOException {
         List<Ref> offered = new ArrayList<>(Git.lsRemoteRepository()
                 .setRemote(bundle.toAbsolutePath().toString())
                 .setHeads(false)

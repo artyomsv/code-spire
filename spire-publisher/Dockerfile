@@ -30,6 +30,7 @@ COPY --chmod=755 docker/spire-clone.sh /usr/local/bin/spire-clone
 COPY --chmod=755 docker/spire-publish.sh /usr/local/bin/spire-publish
 COPY --chmod=755 docker/spire-publish-held.sh /usr/local/bin/spire-publish-held
 COPY --chmod=755 docker/spire-publish-permitted.sh /usr/local/bin/spire-publish-permitted
+COPY --chmod=755 docker/spire-verify-prepare.sh /usr/local/bin/spire-verify-prepare
 
 USER 1001:1001
 ENV HOME=/home/spire

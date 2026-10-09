@@ -18,6 +18,8 @@ const TYPES = ['openai', 'anthropic', 'gemini'] as const;
 
 /** What the row is doing right now, in the order that decides what an operator can act on. */
 function state(member: HarnessCredentialView): { label: string; tone: string } {
+  // A refused seat cannot be renewed: only a new sign-in brings it back (seat renewal, 2026-10-08).
+  if (member.rejectedAt && member.authMode === 'SUBSCRIPTION') return { label: 'Sign in again', tone: 'chip danger' };
   if (member.rejectedAt) return { label: 'Rejected', tone: 'chip danger' };
   if (member.rateLimitedUntil && new Date(member.rateLimitedUntil) > new Date()) return { label: 'Resting', tone: 'chip warn' };
   if (!member.enabled) return { label: 'Switched off', tone: 'chip' };

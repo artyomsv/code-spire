@@ -56,6 +56,8 @@ class IntegrationSagaPolicyTest {
     /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
     private final List<String> appendedEvents = new ArrayList<>();
     private boolean reviewRegistered;
+    /** The repository's factory account, when a test names one; otherwise every role answers the reviewer. */
+    private Optional<ScmProvider> factory;
     /** Set by the archived-notice cases; every other case runs against a live review. */
     private boolean reviewIsArchived;
 
@@ -193,7 +195,7 @@ class IntegrationSagaPolicyTest {
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
             @Override
             public Optional<ScmProvider> resolve(java.util.UUID repositoryId, ProviderRole role) {
-                return provider;
+                return role == ProviderRole.FACTORY && factory != null ? factory : provider;
             }
         };
         // The self-loop guard resolves the review's bot by the review's stored SCM type.
@@ -278,6 +280,29 @@ class IntegrationSagaPolicyTest {
     void authorNotInProviderAllowlist_skipped() {
         var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
         saga.onRepository(pr("acc-9", "bob"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        assertFalse(reviewRegistered);
+        assertTrue(emitted.isEmpty());
+        assertTrue(notes.contains("PullRequestSkipped"));
+    }
+
+    /** The factory's own pull request is reviewed whatever the allowlist says (item #41, 2026-10-08). */
+    @Test
+    void aPullRequestTheFactoryAccountOpenedIsReviewedDespiteTheAllowlist() {
+        factory = Optional.of(new ScmProvider(UUID.randomUUID(), "CF-factory", "bitbucket-cloud", "https://x",
+                "bearer", null, "secret", "TEST-factory-bot", true, List.of(), null, null, ProviderRole.FACTORY));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
+        saga.onRepository(pr("TEST-factory-bot", "TEST-factory-handle"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        assertTrue(reviewRegistered);
+        assertInstanceOf(ActionCommand.FetchDiff.class, emitted.get(0));
+    }
+
+    /** Only the stable id counts: someone using the bot's handle under another id is still skipped. */
+    @Test
+    void theFactoryBotsHandleUnderAnotherIdIsStillSkipped() {
+        factory = Optional.of(new ScmProvider(UUID.randomUUID(), "CF-factory", "bitbucket-cloud", "https://x",
+                "bearer", null, "secret", "TEST-factory-bot", true, List.of(), "TEST-factory-handle", null, ProviderRole.FACTORY));
+        var saga = sagaWith(policyMode(false), provider(List.of("acc-1")));
+        saga.onRepository(pr("acc-9", "TEST-factory-handle"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertFalse(reviewRegistered);
         assertTrue(emitted.isEmpty());
         assertTrue(notes.contains("PullRequestSkipped"));

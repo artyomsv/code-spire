@@ -517,6 +517,69 @@ public class HarnessCredentialPool {
     }
 
     /**
+     * A seat's whole sign-in file as the renewal reads it, with the ciphertext it was read under so the
+     * store can tell whether the seat changed meanwhile. {@code toString} names only the id: the file holds
+     * the refresh token.
+     */
+    record StoredSeat(UUID id, String ciphertext, String file) {
+        @Override
+        public String toString() {
+            return "StoredSeat[" + id + "]";
+        }
+    }
+
+    /**
+     * Every enabled seat of this harness, refused ones included, with its refresh token — for the renewal
+     * only, never for a run. A refused seat is read too: one refused because its access token expired is
+     * exactly the seat a renewal brings back. A file that cannot be decrypted is left out; dispatch
+     * already retires it.
+     */
+    List<StoredSeat> seatsToRenew(String harness) {
+        List<StoredSeat> seats = new ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                SELECT id, api_key FROM harness_credential
+                 WHERE auth_mode = 'SUBSCRIPTION' AND type = ? AND enabled AND erased_at IS NULL AND api_key IS NOT NULL
+                """)) {
+            ps.setString(1, harness);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    UUID id = rs.getObject("id", UUID.class);
+                    String ciphertext = rs.getString("api_key");
+                    try {
+                        seats.add(new StoredSeat(id, ciphertext, encryption.decryptString(ciphertext, aad(id))));
+                    } catch (IllegalStateException undecryptable) {
+                        LOG.warnf("seat %s could not be decrypted, so it is not renewed", id);
+                    }
+                }
+            }
+            return seats;
+        } catch (SQLException e) {
+            throw new IllegalStateException("The seats of " + harness + " could not be read for renewal", e);
+        }
+    }
+
+    /**
+     * Stores a renewed sign-in, unless the seat changed after it was read — signed in again, switched off
+     * or erased. The newer state then wins and the renewal is dropped. A refusal is cleared: the vendor
+     * has just accepted this sign-in.
+     *
+     * @return whether the renewal was stored
+     */
+    boolean storeRenewal(StoredSeat read, String renewedFile) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                UPDATE harness_credential SET api_key = ?, rejected_at = NULL, updated_at = now()
+                 WHERE id = ? AND api_key = ? AND enabled AND erased_at IS NULL
+                """)) {
+            ps.setString(1, encryption.encryptString(renewedFile, aad(read.id())));
+            ps.setObject(2, read.id());
+            ps.setString(3, read.ciphertext());
+            return ps.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new IllegalStateException("The renewal of seat " + read.id() + " could not be stored", e);
+        }
+    }
+
+    /**
      * Fills the account of every seat stored before accounts were recorded, from its own file. The newest
      * seat of an account keeps it; older seats of the same account are switched off, because one account
      * has one seat. A file that names no account, or cannot be read, stays unidentified and is never used.

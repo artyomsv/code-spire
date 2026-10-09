@@ -171,4 +171,59 @@ class WorkPreparationBindingVersionTest {
                 new WorkPreparation.Artifact(ticket("71"), SPEC_SHA), new WorkPreparation.Artifact(ticket("72"), PLAN_SHA),
                 "main", COMMIT, "codex", "TEST-model", "TEST-operator", 99));
     }
+    private static WorkPreparation verifying(java.util.List<String> commands, long timeout) {
+        return new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, new UUID(0, 1)),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, new UUID(0, 2)),
+                "main", COMMIT, "codex", "TEST-model", "TEST-operator", WorkPreparation.VERIFY_BINDING, null, null, commands, timeout);
+    }
+
+    private static WorkPreparation payWith() {
+        return new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, new UUID(0, 1)),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, new UUID(0, 2)),
+                "main", COMMIT, "codex", "TEST-model", "TEST-operator", WorkPreparation.PAY_WITH_BINDING, null, null);
+    }
+
+    @Test
+    void version5HashesTheVerifyCommandsAndTheLimit() {
+        var a = verifying(java.util.List.of("./gradlew check"), 1800);
+        assertNotEquals(a.binding(), verifying(java.util.List.of("./gradlew test"), 1800).binding());
+        assertNotEquals(a.binding(), verifying(java.util.List.of("./gradlew check"), 900).binding());
+        assertNotEquals(verifying(java.util.List.of("a", "b"), 60).binding(), verifying(java.util.List.of("b", "a"), 60).binding(),
+                "order is part of what was approved");
+        assertNotEquals(verifying(java.util.List.of("ab"), 60).binding(), verifying(java.util.List.of("a", "b"), 60).binding());
+    }
+
+    @Test
+    void olderVersionsKeepTheirHashAndCarryNoCommands() {
+        var v4 = payWith();
+        assertEquals(java.util.List.of(), v4.verifyCommands());
+        assertEquals(0, v4.verifyTimeoutSeconds());
+        assertThrows(IllegalArgumentException.class, () -> new WorkPreparation(v4.specification(), v4.plan(), "main", COMMIT, "codex",
+                "TEST-model", "TEST-operator", WorkPreparation.PAY_WITH_BINDING, null, null, java.util.List.of("make"), 60));
+    }
+
+    @Test
+    void version5RefusesCommandsTheWorkerWouldRefuse() {
+        assertThrows(IllegalArgumentException.class, () -> verifying(java.util.List.of("a\nb"), 60));
+        assertThrows(IllegalArgumentException.class, () -> verifying(java.util.List.of(" "), 60));
+        assertThrows(IllegalArgumentException.class, () -> verifying(java.util.Collections.nCopies(21, "make"), 60));
+        assertThrows(IllegalArgumentException.class, () -> verifying(java.util.List.of("make"), 0));
+    }
+
+    @Test
+    void anEmptyListIsAllowedAndVerifiesAsNoChecksDeclared() {
+        assertEquals(java.util.List.of(), verifying(java.util.List.of(), 1800).verifyCommands());
+    }
+
+    @Test
+    void storedJsonWithoutVerifyFieldsReads() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var v4 = payWith();
+        var json = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.valueToTree(v4);
+        json.remove("verifyCommands");
+        json.remove("verifyTimeoutSeconds");
+        assertEquals(v4.binding(), mapper.treeToValue(json, WorkPreparation.class).binding());
+    }
 }

@@ -50,6 +50,9 @@ class OrphanWatchdogTest {
         public Finalization publishHeld(RunHandle handle,dev.codespire.runtime.PublicationKey binding,java.util.UUID permit,
                 RunUnitSpec spec,Consumer<String> lines,java.util.function.BooleanSupplier mayStart){throw new AssertionError("watchdog must not publish");}
         public void destroyHeld(RunHandle handle,dev.codespire.runtime.PublicationKey binding){throw new AssertionError("watchdog must not release a hold");}
+        public dev.codespire.runtime.VerifyRun verifyHeld(RunHandle handle,dev.codespire.runtime.PublicationKey binding,
+                dev.codespire.runtime.VerifyUnitSpec spec,java.util.function.BooleanSupplier mayContinue){throw new AssertionError("watchdog must not verify");}
+        public void removeVerify(RunHandle handle,java.util.UUID attempt){throw new AssertionError("watchdog must not touch a verify");}
         final List<RunHandle> units = new ArrayList<>();
         final List<String> lifecycle = new ArrayList<>();
         final List<RunHandle> destroyed = new ArrayList<>();
