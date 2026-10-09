@@ -81,10 +81,7 @@ public class WorkVerifyDispatcher {
                     head = rs.getString(3);
                 }
             }
-            WorkExecution execution = item.progress().execution();
-            if (generation != item.generation() || !attempt.equals(item.progress().attemptId()) || !"verify".equals(item.phase())
-                    || !"active".equals(item.workflowStatus()) || execution == null || !Objects.equals(head, execution.head())
-                    || item.preparation() == null) {
+            if (!isStillVerifying(item, attempt, generation, head)) {
                 refuse(c, attempt);
                 return null;
             }
@@ -92,11 +89,24 @@ public class WorkVerifyDispatcher {
                 ps.setObject(1, attempt);
                 ps.executeUpdate();
             }
-            long timeout = item.preparation().verifyTimeoutSeconds();
-            // A version 4 preparation carries no checks and no limit: it still verifies, as no_checks_declared.
-            return new RunCommand.VerifyWork(execution.runId(), execution.build(), attempt, execution.head(),
-                    item.preparation().verifyCommands(), timeout > 0 ? timeout : BuildDefaults.DEFAULT_VERIFY_SECONDS);
+            return commandFor(item, attempt);
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    /** The item is still in this verify attempt, of this generation, at this head, with a preparation to read. */
+    private static boolean isStillVerifying(WorkItemEvent item, UUID attempt, long generation, String head) {
+        WorkExecution execution = item.progress().execution();
+        return generation == item.generation() && attempt.equals(item.progress().attemptId()) && "verify".equals(item.phase())
+                && "active".equals(item.workflowStatus()) && execution != null && Objects.equals(head, execution.head())
+                && item.preparation() != null;
+    }
+
+    private static RunCommand.VerifyWork commandFor(WorkItemEvent item, UUID attempt) {
+        WorkExecution execution = item.progress().execution();
+        long timeout = item.preparation().verifyTimeoutSeconds();
+        // A version 4 preparation carries no checks and no limit: it still verifies, as no_checks_declared.
+        return new RunCommand.VerifyWork(execution.runId(), execution.build(), attempt, execution.head(),
+                item.preparation().verifyCommands(), timeout > 0 ? timeout : BuildDefaults.DEFAULT_VERIFY_SECONDS);
     }
 
     private static void refuse(Connection c, UUID attempt) throws SQLException {

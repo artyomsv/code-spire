@@ -131,6 +131,35 @@ class SeatRenewalTest {
         assertTrue(pool.selectSubscription(HARNESS).isEmpty(), "a refused seat must not be handed to a build");
     }
 
+    /** OAuth's invalid_grant is a 400, not a 401: it is a refusal too, or the seat keeps saying Ready (review of PR #184). */
+    @Test
+    void aRenewalRefusedWithA400TakesTheSeatOutOfUse() throws Exception {
+        UUID seat = seatExpiringIn(Duration.ofDays(1));
+        vendorAnswers(400, "{\"error\":\"invalid_grant\"}");
+
+        assertEquals(0, renewal.renewDue(HARNESS, endpoint(), NOW));
+
+        assertNotNull(view(seat).rejectedAt());
+    }
+
+    /** A seat stored with no refresh token can never be renewed, so it is refused without asking the vendor. */
+    @Test
+    void aSeatWithNoRefreshTokenIsRefusedWithoutAskingTheVendor() throws Exception {
+        UUID seat;
+        try (Connection c = dataSource.getConnection()) {
+            seat = pool.addSubscription(c, "TEST-renewal-" + UUID.randomUUID(), HARNESS,
+                    "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"" + SignInFilesTest.jwt(NOW.plus(Duration.ofDays(1)))
+                            + "\",\"refresh_token\":\"\",\"account_id\":\"TEST-account-" + UUID.randomUUID() + "\"}}");
+            seats.add(seat);
+        }
+        vendorAnswers(200, "{\"access_token\":\"TEST-unused\"}");
+
+        assertEquals(0, renewal.renewDue(HARNESS, endpoint(), NOW));
+
+        assertNotNull(view(seat).rejectedAt());
+        vendor.verify(0, postRequestedFor(urlEqualTo("/oauth/token")));
+    }
+
     /** A vendor outage is not a refusal: the seat stays in use and the next sweep tries again. */
     @Test
     void aVendorOutageLeavesTheSeatAsItWas() throws Exception {
