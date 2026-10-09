@@ -240,6 +240,17 @@ public sealed interface RunCommand {
                     existingBranch, protectedBranch, reasoningEffort, harnessSignIn, previousRunId, head);
         }
 
+        /**
+         * The same run from the base after all, with {@code note} added to its prompt. A retry whose checkpoint
+         * cannot be read falls back to the base; its prompt was written to say it continues from the previous
+         * commits, so the agent must be told otherwise (review of PR #184).
+         */
+        public ExecuteRun fromBaseInstead(String note) {
+            return new ExecuteRun(runId, repo, remoteUri, baseBranch, baseCommit, branch, prompt + note, harness, model,
+                    agentImage, protectedPaths, maxWallClockSeconds, scmCredential, harnessCredential,
+                    existingBranch, protectedBranch, reasoningEffort, harnessSignIn, null, null);
+        }
+
         @Override
         public String toString() {
             return "ExecuteRun[runId=" + runId

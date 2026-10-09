@@ -228,6 +228,16 @@ it('a verify result gate offers Retry build and Stop', async () => {
   expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
 });
+// Review of PR #184 (I4): a retry after an unreadable checkpoint starts from the base, and the panel says so.
+it('says a retry starts from the base when the checkpoint could not be read', async () => {
+  const missing = { ...failedItem, reason: 'verify_unverified', progress: { execution: { verification: {
+    attemptId: 'TEST-attempt', head: 'a'.repeat(40), outcome: 'UNVERIFIED', reason: 'checkpoint_missing', checks: [] } } } } as unknown as typeof failedItem;
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(missing);
+  show();
+  expect(await screen.findByText(/starts again from the base/)).toBeInTheDocument();
+  expect(screen.queryByText(/starts from this build's last commit/)).toBeNull();
+});
 it('Retry build answers approve, and Stop answers reject', async () => {
   vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
   vi.mocked(gateway.getWorkItem).mockResolvedValue(failedItem);

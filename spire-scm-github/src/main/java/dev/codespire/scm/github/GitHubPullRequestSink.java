@@ -119,6 +119,10 @@ public class GitHubPullRequestSink implements PullRequestSink {
         String path = pullsPath(repo) + "/" + pullRequest.number();
         JsonNode current = client.getJson(path);
         PullRequestRef observed = read(current, "GET", path);
+        // A closed pull request cannot be marked ready, and the mutation would fail on every attempt.
+        if (!"open".equals(current.path("state").asText(""))) {
+            throw new PullRequestSink.DeliveryUnavailable("review_pr_not_open");
+        }
         if (Boolean.FALSE.equals(observed.draft())) {
             return observed;
         }

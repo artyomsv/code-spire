@@ -129,6 +129,9 @@ class WorkRunWorkerTest {
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
         worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
         assertNull(launched.execution().startFromRunId(),"a vanished checkpoint must not refuse the whole build");
+        // Review of PR #184 (I4): its prompt said it continues from the last commit; it must say otherwise now.
+        assertTrue(launched.execution().prompt().endsWith(WorkRunWorker.BASE_FALLBACK_NOTE));
+        assertTrue(launched.execution().prompt().startsWith(retry.execution().prompt()));
     }
     @Test void aRetryWhoseCheckpointUnitIsHereKeepsIt(){
         alsoPresent="TEST-previous";

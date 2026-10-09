@@ -72,7 +72,9 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
     <section className="decision-sec" aria-label="If you approve">
       <h4>If you approve</h4>
       {isVerifyResultGate(item)
-        ? <p>A new build starts from this build's last commit, with the failure in its prompt. It counts against this item's run limit.</p>
+        ? <p>{item.progress?.execution?.verification?.reason === 'checkpoint_missing'
+            ? "A new build starts again from the base, because this build's commits could not be read. The failure goes in its prompt."
+            : "A new build starts from this build's last commit, with the failure in its prompt."} It counts against this item's run limit.</p>
         : gate.phase === 'plan' && limits
         ? <p>One build starts. It stops at <b>{formatCost(limits.maxCostMillicents)}</b> or after <b>{hours(limits.maxWallClockSeconds)}</b>, and this item may use up to <b>{limits.maxRunsPerItem}</b> runs.</p>
         : <p>The {gate.phase} phase continues within this item's limits.</p>}

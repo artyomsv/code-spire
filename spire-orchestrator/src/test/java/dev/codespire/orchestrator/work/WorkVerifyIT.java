@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class WorkVerifyIT extends WorkPreparedFixture {
     @Inject RunResultSaga saga;
     @Inject WorkItemControl control;
+    @Inject WorkVerifyDeadline deadline;
 
     /** A prepared item whose build reached its checkpoint, so verify has started. */
     String built(String profile, int number) throws Exception {
@@ -62,6 +63,77 @@ class WorkVerifyIT extends WorkPreparedFixture {
             ps.setString(1, value);
             try (ResultSet rs = ps.executeQuery()) { return rs.next() ? rs.getBytes(1) : null; }
         }
+    }
+
+    /** The tracker answers this issue with these labels, or with an outage when labels is null. */
+    void trackerAnswers(int number, String label) {
+        String endpoint = "/repos/" + scope + "/issues/" + number;
+        if (label == null) {
+            forge.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo(endpoint))
+                    .willReturn(com.github.tomakehurst.wiremock.client.WireMock.aResponse().withStatus(503)));
+            return;
+        }
+        var ticket = mapper.createObjectNode().put("id", 50000 + number).put("number", number).put("repository_url", forge.baseUrl() + "/repos/" + scope)
+                .put("html_url", forge.baseUrl() + "/" + scope + "/issues/" + number).put("title", "TEST-prepared-task").put("body", "TEST-identical task").put("state", "open");
+        var labels = ticket.putArray("labels");
+        if (!label.isEmpty()) labels.add(label);
+        forge.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo(endpoint))
+                .willReturn(com.github.tomakehurst.wiremock.client.WireMock.okJson(ticket.toString())));
+    }
+
+    /** Review of PR #184 (C1): a failed result for an item no longer selected ends it, and wedges nothing. */
+    @Test void aFailedResultAfterTheLabelIsRemovedEndsTheItemNotEligible() throws Exception {
+        String id = built("autonomous", 80);
+        trackerAnswers(80, "");
+        failedVerify();
+        var item = store.load(id);
+        assertEquals("not_eligible", item.workflowStatus());
+        assertFalse(item.progress().reserved());
+        assertEquals("applied", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", id));
+    }
+
+    /** A tracker outage is not a decision: the result waits, stored, and the sweep applies it once the tracker answers. */
+    @Test void aFailedResultDuringATrackerOutageIsAppliedOnceTheTrackerAnswers() throws Exception {
+        String id = built("autonomous", 81);
+        trackerAnswers(81, null);
+        failedVerify();
+        assertEquals("active", store.load(id).workflowStatus());
+        assertEquals("reported", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", id));
+        trackerAnswers(81, "TEST-autonomous");
+        verifyResults.recover();
+        assertEquals("waiting_approval", store.load(id).workflowStatus());
+        assertEquals("verify_failed", store.load(id).reason());
+    }
+
+    /** One result the sweep cannot read must not starve the newer ones behind it. */
+    @Test void anUnreadableStoredResultDoesNotStarveTheSweep() throws Exception {
+        String first = built("autonomous", 82);
+        trackerAnswers(82, null);
+        failedVerify();
+        String second = built("autonomous", 83);
+        trackerAnswers(83, null);
+        failedVerify();
+        executeWith("UPDATE work_verify_effect SET result=? WHERE work_item_id=?", new byte[]{0}, first);
+        trackerAnswers(83, "TEST-autonomous");
+        verifyResults.recover();
+        assertEquals("verify_failed", store.load(second).reason());
+        assertEquals("reported", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", first));
+    }
+
+    /** Review of PR #184 (I1): a verify that never answers is given up past its limit, and a person decides. */
+    @Test void aSilentVerifyIsReportedUnverifiedPastItsLimit() throws Exception {
+        String id = built("autonomous", 84);
+        verifier.drain();
+        assertEquals("sent", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", id));
+
+        assertEquals(0, deadline.expire(java.time.Instant.now()), "within its limit a verify is left alone");
+        assertEquals("active", store.load(id).workflowStatus());
+
+        assertEquals(1, deadline.expire(java.time.Instant.now().plus(java.time.Duration.ofHours(2))));
+        var item = store.load(id);
+        assertEquals("waiting_approval", item.workflowStatus());
+        assertEquals("verify_unverified", item.reason());
+        assertEquals("verify_could_not_run", item.progress().execution().verification().reason());
     }
 
     @Test void startingVerifySendsTheBoundChecksOnce() throws Exception {

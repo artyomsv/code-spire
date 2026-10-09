@@ -72,7 +72,14 @@ public class WorkVerifyResults {
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) reported.add(rs.getObject(1, UUID.class));
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
-        for (UUID attempt : reported) stored(attempt).ifPresent(this::apply);
+        // One row at a time: a row that cannot be applied must not starve every newer result behind it.
+        for (UUID attempt : reported) {
+            try {
+                stored(attempt).ifPresent(this::apply);
+            } catch (RuntimeException failure) {
+                LOG.errorf(failure, "verification %s could not be re-applied; the next sweep tries again", attempt);
+            }
+        }
     }
 
     /** Stores the result once, on the attempt whose run and head it names. @return the work item, or null */

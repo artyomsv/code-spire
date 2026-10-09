@@ -66,10 +66,11 @@ class WorkReviewIT extends WorkPreparedFixture {
         assertNull(store.load(id).progress().execution().reviewId());
         long revision=store.history(id).size();observer.advance(id);assertEquals(revision,store.history(id).size(),"unchanged waiting evidence must not append forever");
     }
-    void openedAsDraft() {
+    void openedAsDraft() { openedAsDraft("open"); }
+    void openedAsDraft(String state) {
         forge.stubFor(post(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true}")));
         forge.stubFor(get(urlPathEqualTo("/repos/"+scope+"/pulls/901")).willReturn(okJson(
-                "{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true,\"node_id\":\"TEST-node-901\"}")));
+                "{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true,\"node_id\":\"TEST-node-901\",\"state\":\""+state+"\"}")));
     }
     /** The reviewer skips drafts, so a draft delivery is marked ready once, and then reviewed (item #41, 2026-10-08). */
     @Test void aDraftDeliveryIsMarkedReadyOnceAndThenReviewed() throws Exception {
@@ -117,6 +118,21 @@ class WorkReviewIT extends WorkPreparedFixture {
         String id=delivered();reviewResult(id,"b".repeat(40),false,false);
         execute("UPDATE review_status SET status='failed',last_posted_commit=NULL WHERE review_id=?",review);
         waiting(id,"review_failed");
+    }
+    /** Review of PR #184 (I2): a review that is over but not completed names what happened, not "in progress". */
+    @Test void aRefusedReviewOfThisHeadSaysItWasRefused() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='refused',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_refused");
+    }
+    /** Review of PR #184 (I3): a closed draft is refused once, and not asked about again on every pass. */
+    @Test void aClosedDraftIsNotAskedAboutOnEveryPass() throws Exception {
+        openedAsDraft("closed");
+        String id=delivered("autonomous-draft");
+        waiting(id,"review_pr_not_open");
+        observer.advance(id);
+        forge.verify(1,getRequestedFor(urlPathEqualTo("/repos/"+scope+"/pulls/901")));
+        forge.verify(0,postRequestedFor(urlEqualTo("/graphql")));
     }
     @Test void aDegradedReviewDoesNotBecomeAPassingPhase() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),true,false);waiting(id,"review_result_pending");}
     @Test void openBlockersKeepLandWaiting() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,true);waiting(id,"review_blockers_open");}

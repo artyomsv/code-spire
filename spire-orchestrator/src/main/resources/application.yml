@@ -511,6 +511,7 @@ spire:
     harness-catalogue-interval: "off"
     harness-sign-in-retry-interval: "off"
     seat-renewal-interval: "off"
+    work-verify-deadline-interval: "off"
     work-run-interval: "off"
     work-delivery-interval: "off"
     work-activity-interval: "off"

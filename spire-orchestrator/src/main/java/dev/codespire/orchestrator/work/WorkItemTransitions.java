@@ -170,6 +170,17 @@ public class WorkItemTransitions {
                         && result.execution()!=null && result.execution().verification()!=null) {
                     // Failed or unverified checks fail a step, never the item (FR-F20): a human decides.
                     WorkProgress finished=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls()).withExecution(result.execution());
+                    // Eligibility first, as the passed path decides it in enter(). A tracker that cannot be read
+                    // now is retried by the result sweep (503); an item no longer selected, or whose verify is now
+                    // off, ends not eligible. Opening the gate regardless threw "Verify is off" and wedged the item
+                    // with its attempt started (review of PR #184).
+                    if(observed.evidence().failure()!=null)return new Outcome(503,observed.evidence().failure(),item);
+                    if(next.policy().selected()==null || "off".equals(next.policy().effective().getOrDefault(WorkPolicy.Phase.VERIFY,"off"))) {
+                        next=state(next,"not_eligible",next.policy().selected()==null?next.policy().reason():"verify_off","WORK_ITEM_REFUSED",
+                                next.gate(),finished.reserve(false));
+                        store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
+                        return new Outcome(200,next.reason(),next);
+                    }
                     next=WorkItemLifecycle.verifyResultGate(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),finished),
                             item,history.size(),clock.now(),UUID.randomUUID(),result.execution().verification());
                     store.appendDecision(c,history,next,"phase-result:"+result.attemptId());

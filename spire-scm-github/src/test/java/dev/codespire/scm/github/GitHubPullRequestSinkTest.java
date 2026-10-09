@@ -391,7 +391,7 @@ class GitHubPullRequestSinkTest {
     @Test
     void aDraftIsMarkedReadyForReview() {
         wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
-                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\"}")));
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\", \"state\": \"open\"}")));
         wireMock.stubFor(post(urlEqualTo("/graphql")).willReturn(json(
                 "{\"data\": {\"markPullRequestReadyForReview\": {\"pullRequest\": {\"isDraft\": false}}}}")));
 
@@ -408,7 +408,7 @@ class GitHubPullRequestSinkTest {
     @Test
     void aPullRequestAlreadyReadyIsNotWrittenTo() {
         wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
-                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": false, \"node_id\": \"TEST-node-42\"}")));
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": false, \"node_id\": \"TEST-node-42\", \"state\": \"open\"}")));
 
         PullRequestRef ready = sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true));
 
@@ -420,12 +420,25 @@ class GitHubPullRequestSinkTest {
     @Test
     void aPullRequestStillInDraftAfterTheMutationIsRefused() {
         wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
-                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\"}")));
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\", \"state\": \"open\"}")));
         wireMock.stubFor(post(urlEqualTo("/graphql")).willReturn(json(
                 "{\"data\": {\"markPullRequestReadyForReview\": {\"pullRequest\": {\"isDraft\": true}}}}")));
 
         PullRequestSink.DeliveryUnavailable refused = assertThrows(PullRequestSink.DeliveryUnavailable.class,
                 () -> sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true)));
         assertEquals("ready_for_review_not_observed", refused.getMessage());
+    }
+
+    /** A closed pull request is refused before any write: the mutation would fail on every attempt. */
+    @Test
+    void aClosedPullRequestIsRefusedWithoutAWrite() {
+        wireMock.stubFor(get(urlEqualTo(PULLS + "/42")).willReturn(json(
+                "{\"number\": 42, \"html_url\": \"https://github.com/acme/app/pull/42\", \"draft\": true, \"node_id\": \"TEST-node-42\", \"state\": \"closed\"}")));
+
+        PullRequestSink.DeliveryUnavailable refused = assertThrows(PullRequestSink.DeliveryUnavailable.class,
+                () -> sink.markReady(REPO, new PullRequestRef(42, "https://github.com/acme/app/pull/42", true)));
+
+        assertEquals("review_pr_not_open", refused.getMessage());
+        wireMock.verify(0, postRequestedFor(urlEqualTo("/graphql")));
     }
 }
