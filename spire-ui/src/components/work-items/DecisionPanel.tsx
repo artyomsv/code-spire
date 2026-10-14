@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getWorkItem, type WorkItemDetail } from '../../api';
+import VerifyResult, { isVerifyResultGate } from './VerifyResult';
 import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import SidePanel from '../SidePanel';
@@ -23,6 +24,22 @@ interface Loaded { approval: approvalsApi.Approval | null; item: WorkItemDetail 
  * the step, the tree it starts from, the agent and the limits — before it offers Approve, because an
  * approval is a promise to spend within those limits and the old card showed none of it.
  */
+/** What the two answer buttons say, and what is reported after each: a verify result gate asks about a result, not permission. */
+interface AnswerWords { yes: string; yesBusy: string; no: string; noBusy: string; done: (approve: boolean, phase: string) => string }
+const RESULT_WORDS: AnswerWords = {
+  yes: 'Retry build', yesBusy: 'Retrying…', no: 'Stop', noBusy: 'Stopping…',
+  done: (approve) => (approve ? 'Retrying the build.' : 'Stopped after verification.'),
+};
+const PERMISSION_WORDS: AnswerWords = {
+  yes: 'Approve', yesBusy: 'Approving…', no: 'Reject', noBusy: 'Rejecting…',
+  done: (approve, phase) => (approve ? `Approved the ${phase} decision. The item continues.` : `Rejected the ${phase} decision. The item stops here.`),
+};
+
+function headingFor(resultGate: boolean, phase: string | undefined): string {
+  if (resultGate) return 'Verification did not pass';
+  return phase ? `Approve the ${phase}` : 'Decision';
+}
+
 export default function DecisionPanel({ itemId, title, onClose, onDecided }: Props) {
   const { me } = useMe();
   const admin = canAdminister(me);
@@ -66,12 +83,15 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     attempt.current = decision; setAnswering(approve); setError('');
     try {
       await approvalsApi.answer(gate, decision.key, approve, note);
-      if (live.current) onDecided(approve ? `Approved the ${gate.phase} decision. The item continues.` : `Rejected the ${gate.phase} decision. The item stops here.`);
+      if (live.current) onDecided(words.done(approve, gate.phase));
     } catch (failure) { if (live.current) setError(String(failure)); }
     finally { if (live.current) setAnswering(null); }
   }
 
   const gate = loaded?.approval?.gate;
+  // A verify result gate asks what to do about a result, so its answers are named for what they do (M4).
+  const resultGate = !!loaded && isVerifyResultGate(loaded.item);
+  const words = resultGate ? RESULT_WORDS : PERMISSION_WORDS;
   const answeringNow = answering !== null;
   // Approving a plan is a promise to build what the panel shows, so Approve waits until the texts on
   // screen were read against the very binding the decision stores. A land decision binds a commit,
@@ -85,18 +105,21 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const unreported = needsTexts && readable && reported === undefined;
   const mismatched = needsTexts && readable && reported !== undefined && reported !== gate?.artifact;
   const bound = !orphaned && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
-  const heading = gate ? `Approve the ${gate.phase}` : 'Decision';
+  const heading = headingFor(resultGate, gate?.phase);
+  const verification = loaded?.item.progress?.execution?.verification;
   const subtitle = !loaded ? undefined : title ? `${title} · ${loaded.item.issueKey} · ${loaded.item.repository}` : `${loaded.item.issueKey} · ${loaded.item.repository}`;
   return <SidePanel title={heading} subtitle={subtitle} busy={answering !== null} onClose={onClose} wide
     actions={<>
       {/* The footer sits outside the panel's fieldset, so the lock is repeated here. */}
-      {admin && gate && <button className="btn" type="button" disabled={answeringNow || !bound} onClick={() => void decide(true)}>{answering === true ? 'Approving…' : 'Approve'}</button>}
-      {admin && gate && <button className="btn-ghost danger" type="button" disabled={answeringNow} onClick={() => void decide(false)}>{answering === false ? 'Rejecting…' : 'Reject'}</button>}
+      {admin && gate && <button className="btn" type="button" disabled={answeringNow || !bound} onClick={() => void decide(true)}>{answering === true ? words.yesBusy : words.yes}</button>}
+      {admin && gate && <button className="btn-ghost danger" type="button" disabled={answeringNow} onClick={() => void decide(false)}>{answering === false ? words.noBusy : words.no}</button>}
       <button className="btn-ghost" type="button" disabled={answeringNow} onClick={onClose}>{gate ? 'Cancel' : 'Close'}</button>
     </>}>
     {!loaded && !error && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
+      {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">
+        <h4>What the checks found</h4><VerifyResult verification={verification} /></section>}
       <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
       {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering only closes this decision. Register the current versions to get a new one.</p>}
       {orphaned && <p className="prov-error" role="alert">This decision binds a prepared task the item no longer has. Approve is not offered; answering only closes this decision.</p>}

@@ -4,11 +4,62 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint
+
+**Status:** implemented in M4 slice 1 (PR #184), 2026-10-07. Live proof pending
+(`docs/factory/M4-VERIFY-ACCEPTANCE.md` when it lands).
+
+**Context.** The three M3.5 builds stopped at `verify / capability_unavailable`: nothing checked a
+held build, so nothing could be pushed. FR-F20 asks for repository checks with three outcomes, and
+for a failed verify to fail a step, never the item. The design is
+[the M4 verify specification](superpowers/specs/2026-10-07-factory-m4-verify-design.md).
+
+**Decision.**
+- **Where the checks are declared.** The operator types them in the repository's build setup, one per
+  line, with a time limit. Preparation copies both and binds them (`WorkPreparation` version 5), so a
+  gate approves the exact commands, in order.
+- **Where they run.** A *verify unit* against the kept build:
+  - a prepare container in the trusted publisher image rebuilds exactly the checkpoint commit from
+    the agent's bundles, in a new volume, with the remote removed;
+  - one container per check in the build's agent image, entrypoint overridden to `/bin/sh -c`,
+    with only that volume mounted and no credential.
+
+  The commit that passed is the commit delivery pushes.
+- **Three outcomes.** `PASSED` when every declared check ran and exited 0. `FAILED` when one exited
+  non-zero. `UNVERIFIED` for no checks, a probable missing tool (126/127), the time limit, a
+  missing checkpoint, or a verify that could not run. Only `PASSED` for the bound commands
+  authorizes delivery.
+- **A result gate.** A failed or unverified result opens a gate in every verify mode but `off`,
+  `auto` included: the one exception to "auto proceeds". It is answered with **Retry build** or
+  **Stop**. Retry rewinds to build, counts a run, and starts from the failed checkpoint with the
+  failure in its prompt.
+
+**Consequences.**
+- A verify holds the run worker's one execution slot. Its time limit (prepare and checks together)
+  is bounded by the run worker's maximum wall clock, which sizes the Kafka ack window.
+- `maxRunsPerItem` ends a retry loop. Automatic retries belong to the plan coordinator (a later M4
+  slice).
+- The Docker arm enforces no egress for checks, as for builds (UNVERIFIED).
+
+**Rejected.**
+- **A repository file (`.codespire` or similar).** A command is control; ADR-036 keeps control out
+  of repository free text. Prior art agrees (retrieved 2026-10-07):
+  - Copilot's setup steps run from the default branch only.
+  - Renovate's `postUpgradeTasks` must match the global-only `allowedCommands`.
+  - Codex cloud, Devin and Jules keep commands in operator settings.
+  - Sweep, which read free text from the repository, is discontinued.
+- **Verifying in the kept workspace.** It can hold files the agent never committed, and cleaning it
+  means running git on agent-controlled config (ADR-039).
+- **Automatic retries now.** They need the plan coordinator's retry budget; building them twice
+  costs more than waiting.
+
+---
+
 ## ADR-045 — Declared profile precedence and bounded phase decisions
 
 **Status:** implemented through slices 7–9, including artifact handoff, held publication,
 external gate answers and takeover. All seven M3 criteria are independently verified.
-Production VERIFY and LAND remain unavailable; M4 owns the verifier.
+Production LAND remains unavailable. M4 slice 1 adds VERIFY (ADR-046).
 
 **Decision.** Operators assign distinct nonnegative precedence numbers to profile identities and
 create immutable profile versions. Names select no code path. The lowest-precedence eligible label
@@ -714,8 +765,11 @@ two together.
 
 **Decision.** Autonomy is a property of the **work item**. An operator defines named **profiles**;
 each profile is a **vector**, assigning every phase (`intake`, `spec`, `plan`, `build`, `verify`,
-`review`, `deliver`, `land`) a mode of `auto`, `approve` or `off`, plus caps for runs, steps, wall
+`deliver`, `review`, `land`) a mode of `auto`, `approve` or `off`, plus caps for runs, steps, wall
 clock, spend, call count and protected paths. A work item selects a profile by tracker label.
+
+(Phase order corrected 2026-10-07: the code and ADR-045 have always run `deliver` before `review`,
+because the reviewer needs a pushed pull request. This record listed them the other way round.)
 
 Three rules make a label safe to obey.
 

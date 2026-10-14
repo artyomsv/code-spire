@@ -24,6 +24,11 @@ abstract class WorkPreparedFixture extends WorkFixture {
     @Inject RunLaunch actualLaunch;
     final List<RunCommand.ExecuteRun> dispatched=new ArrayList<>();
     final List<RunCommand.ExecuteWorkRun> heldCommands=new ArrayList<>();
+    /** Every verify sent to the run worker; the real dispatcher claims, only the bus is a TEST boundary (M4). */
+    final List<RunCommand.VerifyWork> verifies=new ArrayList<>();
+    @Inject WorkVerifyDispatcher verifier;
+    @Inject WorkVerifyResults verifyResults;
+    static final List<String> CHECKS=List.of("TEST-check");
     final Map<String,WorkPolicy.Profile> profiles=new LinkedHashMap<>();
     final String model="TEST-prepared-"+UUID.randomUUID();
     final UUID modelId=UUID.randomUUID();
@@ -51,14 +56,23 @@ abstract class WorkPreparedFixture extends WorkFixture {
                 assertTrue(publicationSupported);return actualLaunch.launch(command);
             }
         },WorkRunTransport.class);
+        QuarkusMock.installMockForType(new WorkVerifyTransport() {
+            @Override public RunLaunch.Outcome dispatch(RunCommand.VerifyWork command) {
+                try { assertEquals(1,count("SELECT count(*) FROM work_verify_effect WHERE attempt_id=? AND state='uncertain'",command.attemptId()),"The verify claim must be committed before dispatch"); }
+                catch(SQLException failure){throw new AssertionError(failure);}
+                verifies.add(command);return new RunLaunch.Dispatched();
+            }
+        },WorkVerifyTransport.class);
         credential=pool.add("TEST-prepared-pool-"+UUID.randomUUID(),"openai","https://api.openai.com","TEST-prepared-key").id();
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("INSERT INTO llm_model(id,type,name,label,pricing_mode) VALUES (?,'openai',?,?,'UNMETERED')")) {
             ps.setObject(1,modelId);ps.setString(2,model);ps.setString(3,model);ps.executeUpdate();
         }
-        for(String name:List.of("suggest","assisted","autonomous")) {
+        for(String name:List.of("suggest","assisted","autonomous","autonomous-draft")) {
             var modes=new EnumMap<WorkPolicy.Phase,String>(WorkPolicy.Phase.class);
             for(var phase:WorkPolicy.Phase.values())modes.put(phase,switch(phase){case DELIVER->"pr";case LAND->"auto_if_green";default->"auto";});
             if(name.equals("suggest"))for(var phase:List.of(WorkPolicy.Phase.BUILD,WorkPolicy.Phase.VERIFY,WorkPolicy.Phase.REVIEW,WorkPolicy.Phase.DELIVER,WorkPolicy.Phase.LAND))modes.put(phase,"off");
+            // Autonomous, but delivered as a draft: the review step must mark it ready (item #41, 2026-10-08).
+            if(name.equals("autonomous-draft"))modes.put(WorkPolicy.Phase.DELIVER,"draft_pr");
             if(name.equals("assisted")){modes.put(WorkPolicy.Phase.PLAN,"approve");modes.put(WorkPolicy.Phase.DELIVER,"draft_pr");modes.put(WorkPolicy.Phase.LAND,"approve");}
             UUID id=UUID.randomUUID();extraProfiles.add(id);
             profiles.put(name,policies.createVersion(new WorkPolicy.Profile(id,"TEST-"+name+"-"+id,1,1_000_000_401+profiles.size(),modes,
@@ -90,7 +104,31 @@ abstract class WorkPreparedFixture extends WorkFixture {
     }
     WorkPreparation preparation(String actor) {
         var row=sources.get(source).orElseThrow();
-        return new WorkPreparation(artifacts.resolve(row,"71").artifact(),artifacts.resolve(row,"72").artifact(),"main",BASE,"codex",model,actor);
+        return new WorkPreparation(artifacts.resolve(row,"71").artifact(),artifacts.resolve(row,"72").artifact(),"main",BASE,"codex",model,actor,
+                WorkPreparation.VERIFY_BINDING,null,null,CHECKS,60);
+    }
+    /** What the run worker reports for a verify: every check exited 0 (M4). */
+    dev.codespire.contract.event.RunVerification.RunWorkVerified passed(RunCommand.VerifyWork command) {
+        var checks=command.commands().stream().map(c->new dev.codespire.contract.work.WorkVerification.CheckResult(c,0,1,"TEST-tail")).toList();
+        return result(command,dev.codespire.contract.work.WorkVerification.Outcome.PASSED,null,checks);
+    }
+    dev.codespire.contract.event.RunVerification.RunWorkVerified failed(RunCommand.VerifyWork command) {
+        return result(command,dev.codespire.contract.work.WorkVerification.Outcome.FAILED,"check_failed",
+                List.of(new dev.codespire.contract.work.WorkVerification.CheckResult(command.commands().getFirst(),1,1,"TEST-tail")));
+    }
+    dev.codespire.contract.event.RunVerification.RunWorkVerified unverified(RunCommand.VerifyWork command,String reason) {
+        return result(command,dev.codespire.contract.work.WorkVerification.Outcome.UNVERIFIED,reason,List.of());
+    }
+    private dev.codespire.contract.event.RunVerification.RunWorkVerified result(RunCommand.VerifyWork command,dev.codespire.contract.work.WorkVerification.Outcome outcome,
+                                                                               String reason,List<dev.codespire.contract.work.WorkVerification.CheckResult> checks) {
+        return new dev.codespire.contract.event.RunVerification.RunWorkVerified(command.runId(),command.work(),
+                new dev.codespire.contract.work.WorkVerification(command.attemptId(),command.head(),outcome,reason,checks));
+    }
+    /** Sends the started verify and reports it passed, as the run worker would. @return the delivery attempt */
+    UUID verifyPassed(String id) {
+        verifier.drain();verifyResults.apply(passed(verifies.getLast()));
+        assertEquals("deliver",store.load(id).phase());
+        return store.load(id).progress().attemptId();
     }
     void register(String id) {
         var outcome=transitions.prepare(id,store.history(id).size(),preparation("TEST-prepared-admin"));assertEquals(200,outcome.status(),outcome.reason());

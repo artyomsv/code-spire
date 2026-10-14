@@ -46,6 +46,66 @@ class SignInFilesTest {
         assertTrue(forAgent.contains("TEST-listed-access"));
     }
 
+    /** A JWT whose payload carries this expiry. Unsigned: only the payload is read, from our own stored file. */
+    static String jwt(java.time.Instant expires) {
+        java.util.Base64.Encoder url = java.util.Base64.getUrlEncoder().withoutPadding();
+        return url.encodeToString("{\"alg\":\"none\"}".getBytes()) + "."
+                + url.encodeToString(("{\"exp\":" + expires.getEpochSecond() + ",\"sub\":\"TEST\"}").getBytes()) + ".TEST-signature";
+    }
+
+    static String stored(String accessToken, String refreshToken) {
+        return "{\"auth_mode\":\"chatgpt\",\"tokens\":{\"access_token\":\"" + accessToken + "\",\"id_token\":\"TEST-id\","
+                + "\"refresh_token\":\"" + refreshToken + "\",\"account_id\":\"TEST-account\"},\"last_refresh\":\"1970-01-01T00:00:00Z\"}";
+    }
+
+    @Test
+    void theAccessTokensExpiryIsReadFromItsPayload() {
+        java.time.Instant expires = java.time.Instant.parse("2026-10-05T10:00:00Z");
+
+        assertEquals(java.util.Optional.of(expires), SignInFiles.accessTokenExpiry(stored(jwt(expires), "TEST-refresh")));
+        assertTrue(SignInFiles.accessTokenExpiry(stored("TEST-not-a-jwt", "TEST-refresh")).isEmpty());
+        assertTrue(SignInFiles.accessTokenExpiry("TEST-not-a-sign-in").isEmpty());
+    }
+
+    @Test
+    void aRenewalReplacesTheTokensAndKeepsTheAccount() throws Exception {
+        java.time.Instant now = java.time.Instant.parse("2026-10-08T12:00:00Z");
+        String answer = "{\"access_token\":\"TEST-access-2\",\"id_token\":\"TEST-id-2\",\"refresh_token\":\"TEST-refresh-2\"}";
+
+        JsonNode renewed = JSON.readTree(SignInFiles.renewed(stored("TEST-access-1", "TEST-refresh-1"), answer, now));
+
+        assertEquals("TEST-access-2", renewed.path("tokens").path("access_token").asText());
+        assertEquals("TEST-id-2", renewed.path("tokens").path("id_token").asText());
+        assertEquals("TEST-refresh-2", renewed.path("tokens").path("refresh_token").asText());
+        assertEquals("TEST-account", renewed.path("tokens").path("account_id").asText());
+        assertEquals("chatgpt", renewed.path("auth_mode").asText());
+        assertEquals(now.toString(), renewed.path("last_refresh").asText());
+    }
+
+    /** The vendor may answer without a new refresh token; the stored one then stays the one to use. */
+    @Test
+    void aRenewalWithoutANewRefreshTokenKeepsTheOldOne() throws Exception {
+        JsonNode renewed = JSON.readTree(SignInFiles.renewed(stored("TEST-access-1", "TEST-refresh-1"),
+                "{\"access_token\":\"TEST-access-2\"}", java.time.Instant.EPOCH));
+
+        assertEquals("TEST-refresh-1", renewed.path("tokens").path("refresh_token").asText());
+        assertEquals("TEST-id", renewed.path("tokens").path("id_token").asText());
+    }
+
+    @Test
+    void aRenewalAnswerWithoutAnAccessTokenIsRefusedWithoutQuotingIt() {
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> SignInFiles.renewed(stored("TEST-access-1", "TEST-refresh-1"), "{\"refresh_token\":\"TEST-quoted\"}",
+                        java.time.Instant.EPOCH));
+        assertEquals("renewal_unreadable", refused.getMessage());
+    }
+
+    @Test
+    void theRefreshTokenIsReadOnlyWhenThereIsOne() {
+        assertEquals(java.util.Optional.of("TEST-refresh"), SignInFiles.refreshTokenOf(stored("TEST-access", "TEST-refresh")));
+        assertTrue(SignInFiles.refreshTokenOf(stored("TEST-access", "")).isEmpty());
+    }
+
     @Test
     void storedBytesThatAreNotAJsonObjectAreRefusedWithoutQuotingThem() {
         IllegalStateException refused = assertThrows(IllegalStateException.class,

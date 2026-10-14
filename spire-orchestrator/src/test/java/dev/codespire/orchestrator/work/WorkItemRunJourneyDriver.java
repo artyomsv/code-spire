@@ -39,11 +39,13 @@ public class WorkItemRunJourneyDriver extends WorkPreparedFixture {
             if(decoded instanceof RunResult.RunWorkReady checkpoint)ready=checkpoint;
         }
         assertNotNull(ready);assertEquals(command.work(),ready.work());assertNotEquals(command.execution().baseCommit(),ready.head());
-        assertEquals("verify",store.load(id).phase());assertEquals("verify_capability_unavailable",store.load(id).reason());
+        // M4: the build's checkpoint starts verify; nothing is pushed until a verify passes.
+        assertEquals("verify",store.load(id).phase());assertEquals("phase_started",store.load(id).reason());
         assertEquals(1,store.load(id).progress().calls());assertEquals(ready.head(),store.load(id).progress().execution().head());
-        assertFalse(store.load(id).progress().reserved());
-        given().get("/api/work-items/"+id).then().statusCode(200).body("phase",is("verify"),"workflowStatus",is("capability_unavailable"),
-                "reason",is("verify_capability_unavailable"),"progress.execution.head",is(ready.head()),"builds.size()",is(1));
+        assertTrue(store.load(id).progress().reserved(),"a running verify holds its slot");
+        assertEquals(1,count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=? AND state='pending'",id));
+        given().get("/api/work-items/"+id).then().statusCode(200).body("phase",is("verify"),"workflowStatus",is("active"),
+                "reason",is("phase_started"),"progress.execution.head",is(ready.head()),"builds.size()",is(1));
         assertEquals(0,count("SELECT count(*) FROM work_delivery_effect WHERE work_item_id=?",id));
         assertEquals(0,count("SELECT count(*) FROM factory_run WHERE work_item_id=? AND pr_number IS NOT NULL",id));
         write("proof.json",mapper.writeValueAsBytes(java.util.Map.of("phase",store.load(id).phase(),"reason",store.load(id).reason(),

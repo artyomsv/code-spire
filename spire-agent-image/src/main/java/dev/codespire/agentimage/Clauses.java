@@ -39,6 +39,12 @@ public final class Clauses {
     /** DONE means "everything I produced is here", so writing it early truncates the run. */
     public static final String HANDOFF_DONE_LAST = "handoff-done-last";
 
+    /** M4 verify runs each check as {@code /bin/sh -c <command>} in this image, overriding its entrypoint. */
+    public static final String SHELL = "shell";
+
+    /** M4 verify volumes are written by the publisher as uid 1001; a check as another uid cannot write its output. */
+    public static final String UID_1001 = "uid-1001";
+
     /** What the image can build. Unverifiable without the repository it would build. */
     public static final String TOOLCHAIN = "toolchain";
 
@@ -76,7 +82,7 @@ public final class Clauses {
 
     /** Every clause this checker proves, in report order. */
     public static final List<String> VERIFIED = List.of(
-            ENTRYPOINT, NON_ROOT, MOUNT_POINTS, GIT, CA_CERTIFICATES,
+            ENTRYPOINT, NON_ROOT, MOUNT_POINTS, GIT, CA_CERTIFICATES, SHELL, UID_1001,
             PROMPT_ON_STDIN, HANDOFF_BUNDLES, HANDOFF_DONE_LAST);
 
     /**

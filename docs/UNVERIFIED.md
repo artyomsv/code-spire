@@ -148,18 +148,39 @@ their results through the internal transition service. Production reports missin
 unavailable. Slice 8a fetches and validates manual tracker specifications and single-step plans,
 binds their identities/digests and build coordinates to approvals, and reuses M2 assembly for one
 prepared build. Local GitHub/GitLab/Jira fixtures establish reference resolution; they establish
-no live tracker-artifact journey. Generated specification, multi-step planning and verification
-executors remain M4.
+no live tracker-artifact journey. Generated specification and multi-step planning remain M4.
+Verification is implemented (M4 slice 1, ADR-046) and has a live proof on 2026-10-08
+([M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md)); see the M4 verify entry below.
 
 The three-profile slice 8a proof replaces the final broker emitter. It runs the real state machine,
 encrypted PostgreSQL history, M2 assembly, launcher and durable dispatch/result association. That
 test does not execute an agent or push a branch. Slice 8b separately exercises actual held builds
 in `WorkItemRunJourneyIT` against real containers and a local smart-HTTP origin, with an isolated
 orchestrator JVM and provider fixture. It observes the checkpoint and one charge; the remote branch
-is absent and production VERIFY remains capability-unavailable. Draft/regular delivery tests use
-an explicitly TEST-only verification driver and real sink adapters against WireMock. They establish
-native request/response handling, not live draft support or a shipped verifier. No live tracker-artifact
-journey, live item publication, M4 verification or merge follows from these local proofs.
+is absent. Since M4, a held build starts verify instead of stopping, and the draft/regular delivery
+tests drive the real verify flow with only the buses faked. They establish native request/response
+handling. Since 2026-10-08 live item publication, verification, a draft marked ready and its review
+are established on GitHub only (M4 verify acceptance); live merge is not, and no live tracker-artifact
+journey follows from these local proofs.
+
+**M4 verify (2026-10-07), what no test establishes.**
+- **Live on GitHub only, with file checks.** Three items on `spire-test` verified passed, failed then
+  retried from the checkpoint, and unverified (`tool_missing`), then delivered and were reviewed
+  (2026-10-08, [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md)). The checks were `test -f`,
+  `grep -q` and `cargo --version`: no real test suite has run as a check. GitLab and Bitbucket items
+  have no live verify, and marking a draft ready is refused there (`ready_for_review_unsupported`).
+- **No egress limit for checks.** The Docker arm gives check containers the agent's network, which it
+  does not restrict.
+- **`tool_missing` is inferred.** It is read from exit codes 126 and 127, which a test suite could
+  also use on purpose.
+- **The new image clauses are Mode S.** The `shell` and `uid-1001` clauses are verified against fake
+  probes only, until `spire-agent-image verify` runs against the reference image.
+- **A superseded run looks waiting.** After a retry, the superseded run's dashboard row stays
+  `awaiting_delivery`, although its unit is released. Seen live on #45 and #47.
+- **Seat renewal runs live once.** The first renewal (2026-10-08) took a seat whose access token had
+  already expired back to working. Refresh-token rotation over many renewals, and a refused renewal, are
+  established by tests against a local token endpoint only.
+- **Readmit after an approved land rebuilds delivered work.** Observed on #43; nothing guards it yet.
 
 Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
 PostgreSQL and recover without another completion or charge. Those are staged durable-state tests.
@@ -473,7 +494,7 @@ Each has a runbook mode. None has been run by an operator.
 | A private-registry pull | Mode S §4 | Nothing pulls from a private registry in any test. `authFor` and the attachment are unit-tested; the *pull* is not |
 | **Codex CLI 0.156.1 in the agent image** (2026-09-23) | none yet | Raised from 0.146.0 so the model list includes the gpt-6 models. Re-checked on 0.156.1: every flag the adapter passes, the API-key login, and the shape of the file it writes (`auth_mode=apikey`). The device sign-in output was then proved by a real sign-in (2026-09-25), and one live `codex exec` on a subscription produced the same `--json` event types and the same five usage buckets. A live API-key build with 11 tool calls (work item 38, 2026-09-27) was parsed end to end, and its usage was the first with a non-zero `cache_write_input_tokens`. The Codex session log's own `total_tokens` equals input plus output, so the cache write is part of input, not extra to it. The adapter had read it as extra and billed those tokens twice (that run recorded about 43% above its cost); it now subtracts both parts from input. Still NOT re-checked: a run whose parts exceed input on a real vendor, which the adapter degrades to an unreconciled total |
 | **Runs pinned to the image their model list came from** (M3.5 part M, 2026-09-23) | none yet | Choosing the pin is unit-tested against given daemon answers, and one real-daemon test pins a LOCAL build by its image id. No test pulls a registry image and pins it by its registry digest, and none runs two workers. So "two workers holding different images under one tag run the same one" is argued from the code, not watched. A local-only image is pinned by an id that exists on one daemon only: on a second worker such a run fails to pull — by design, but unobserved |
-| **A build paid by a Codex subscription** (M3.5 part F, 2026-09-25) | none yet | Tests prove the emptied refresh token, one seat per account, seat rotation, the unmetered charge lines and the file the adapter writes. One live `codex exec` accepted a file with its refresh token emptied, three hours after sign-in with the id token expired. One item build then ran on a seat (work item 37, 2026-09-27, [M3.5 acceptance](factory/M35-ACCEPTANCE.md)): real token counts, recorded `UNMETERED` at cost 0. It reported no cache write, so whether a subscription run reports one is not established. NOT observed: two builds using one seat at the same moment (seats are shared by the operator's decision of 2026-09-26; whether the vendor accepts two sessions of one account at once is unknown), a run that outlives the access token (10 days — the seat then needs a new sign-in), whether the vendor's CLI ever tries to refresh mid-run with an empty refresh token, and whether `tokens.account_id` is stable across sign-ins of one account |
+| **A build paid by a Codex subscription** (M3.5 part F, 2026-09-25) | none yet | Tests prove the emptied refresh token, one seat per account, seat rotation, the unmetered charge lines and the file the adapter writes. One live `codex exec` accepted a file with its refresh token emptied, three hours after sign-in with the id token expired. One item build then ran on a seat (work item 37, 2026-09-27, [M3.5 acceptance](factory/M35-ACCEPTANCE.md)): real token counts, recorded `UNMETERED` at cost 0. It reported no cache write, so whether a subscription run reports one is not established. NOT observed: two builds using one seat at the same moment (seats are shared by the operator's decision of 2026-09-26; whether the vendor accepts two sessions of one account at once is unknown), a run that outlives the access token (10 days; the orchestrator now renews a seat 3 days before expiry — tests use a local token endpoint, and the first live renewal is recorded in the M4 verify acceptance), whether the vendor's CLI ever tries to refresh mid-run with an empty refresh token, and whether `tokens.account_id` is stable across sign-ins of one account |
 | **Run-worker log lines are scrubbed of run secrets** (review of PR #178, 2026-09-25) | none yet | `SecretLogFilter` is unit-tested on a JBoss log record and its console configuration is asserted. Not observed: the filter on the JSON console handler of a running worker. And by design it cannot scrub a unit this process did not start: after a worker restart, the watchdog's log lines about an older unit carry that unit's secrets unscrubbed, as `RunFailures` already states for failure details |
 | **OIDC sessions actually renew instead of re-authenticating** | **Mode J check 11** (2026-09-10) | The bug it fixes needs a real browser, a real Keycloak and **fifteen elapsed minutes**. No suite here has any of the three: there are zero WebSocket client tests, and nothing observes a token reaching its `exp`. `OidcSessionsAreRenewedTest` asserts the four `application.yml` files *say* renewal is on — it cannot assert Quarkus *does* it |
 

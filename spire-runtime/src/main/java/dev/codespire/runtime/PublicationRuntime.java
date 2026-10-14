@@ -27,4 +27,17 @@ public interface PublicationRuntime extends RunRuntime {
 
     /** Explicit release by the owning control plane; ordinary destroy must refuse held resources. */
     void destroyHeld(RunHandle handle,PublicationKey binding);
+
+    /**
+     * Checks a held build with a verify unit (M4): a prepare container rebuilds the checkpoint in a new volume,
+     * then each check runs in turn until one fails or the time limit passes. It reads the kept unit and changes
+     * nothing in it. Every verify resource carries the run id, the hold label, role {@code verify} and the
+     * attempt id, so a hold, a cancel and a takeover reach it with the build.
+     *
+     * @param mayContinue asked before each check; false stops the sequence (a revoked hold)
+     */
+    VerifyRun verifyHeld(RunHandle handle,PublicationKey binding,VerifyUnitSpec spec,java.util.function.BooleanSupplier mayContinue);
+
+    /** Removes one verify attempt's containers and volume. Idempotent: an absent resource is already removed. */
+    void removeVerify(RunHandle handle,UUID attemptId);
 }

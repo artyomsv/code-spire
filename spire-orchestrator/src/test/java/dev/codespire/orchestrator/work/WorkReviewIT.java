@@ -30,9 +30,7 @@ class WorkReviewIT extends WorkPreparedFixture {
     UUID reviewer;
     String review;
     @BeforeEach void explicitPriorVerificationAndReviewer() {
-        // Only verification is supplied by this TEST driver. Delivery and review observation remain production.
-        var capability=new WorkPhaseCapability(){@Override public boolean available(WorkItemEvent item,String phase){return "verify".equals(phase) || super.available(item,phase);}};
-        capability.runs=transport;capability.delivery=delivery;QuarkusMock.installMockForType(capability,WorkPhaseCapability.class);
+        // Verify, delivery and review observation are production; only the buses are TEST boundaries.
         QuarkusMock.installMockForType(new WorkPublicationTransport(){@Override public RunLaunch.Outcome publish(RunCommand.PublishWorkRun command){return new RunLaunch.Dispatched();}},WorkPublicationTransport.class);
         reviewer=UUID.fromString(providers.create(new ProviderInput("TEST-reviewer-"+UUID.randomUUID(),"github",forge.baseUrl(),
                 "bearer",null,"TEST-reviewer-secret","TEST-reviewer",true,List.of(),"TEST-reviewer",null,"REVIEWER")).id());
@@ -41,11 +39,11 @@ class WorkReviewIT extends WorkPreparedFixture {
         forge.stubFor(get(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("[]")));
         forge.stubFor(post(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":false}")));
     }
-    String delivered() throws Exception {
-        String id=admit("autonomous",55);register(id);dispatcher.drain();var command=heldCommands.getLast();
+    String delivered() throws Exception { return delivered("autonomous"); }
+    String delivered(String profile) throws Exception {
+        String id=admit(profile,55);register(id);dispatcher.drain();var command=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(command.runId(),command.work(),"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),9));
-        var verify=store.load(id).progress();assertEquals(200,transitions.complete(id,new WorkItemTransitions.PhaseResult(verify.attemptId(),true,1,0,0,true,verify.execution().verified(verify.attemptId()))).status());
-        UUID attempt=store.load(id).progress().attemptId();delivery.advance(attempt);
+        UUID attempt=verifyPassed(id);delivery.advance(attempt);
         saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());return id;
     }
@@ -68,6 +66,34 @@ class WorkReviewIT extends WorkPreparedFixture {
         assertNull(store.load(id).progress().execution().reviewId());
         long revision=store.history(id).size();observer.advance(id);assertEquals(revision,store.history(id).size(),"unchanged waiting evidence must not append forever");
     }
+    void openedAsDraft() { openedAsDraft("open"); }
+    void openedAsDraft(String state) {
+        forge.stubFor(post(urlPathEqualTo("/repos/"+scope+"/pulls")).willReturn(okJson("{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true}")));
+        forge.stubFor(get(urlPathEqualTo("/repos/"+scope+"/pulls/901")).willReturn(okJson(
+                "{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":true,\"node_id\":\"TEST-node-901\",\"state\":\""+state+"\"}")));
+    }
+    /** The reviewer skips drafts, so a draft delivery is marked ready once, and then reviewed (item #41, 2026-10-08). */
+    @Test void aDraftDeliveryIsMarkedReadyOnceAndThenReviewed() throws Exception {
+        openedAsDraft();
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(okJson("{\"data\":{\"markPullRequestReadyForReview\":{\"pullRequest\":{\"isDraft\":false}}}}")));
+        String id=delivered("autonomous-draft");assertEquals(Boolean.TRUE,store.load(id).progress().execution().pullRequest().draft());
+
+        waiting(id,"review_result_pending");
+        forge.verify(1,postRequestedFor(urlEqualTo("/graphql")).withRequestBody(matchingJsonPath("$.variables.id",equalTo("TEST-node-901"))));
+        reviewResult(id,"b".repeat(40),false,false);observer.advance(id);
+        assertEquals("land",store.load(id).phase());
+        forge.verify(1,postRequestedFor(urlEqualTo("/graphql")));
+    }
+    /** A forge that cannot be asked now leaves the item waiting with a reason, and is asked again. */
+    @Test void aDraftThatCannotBeMarkedReadyWaitsAndIsTriedAgain() throws Exception {
+        openedAsDraft();
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(aResponse().withStatus(502)));
+        String id=delivered("autonomous-draft");
+
+        waiting(id,"ready_for_review_pending");
+        forge.stubFor(post(urlEqualTo("/graphql")).willReturn(okJson("{\"data\":{\"markPullRequestReadyForReview\":{\"pullRequest\":{\"isDraft\":false}}}}")));
+        observer.advance(id);assertEquals("review_result_pending",store.load(id).reason());
+    }
     @Test void anObservedCleanReviewReachesLandWithoutInventingMergeCapability() throws Exception {
         String id=delivered();reviewResult(id,"b".repeat(40),false,false);observer.advance(id);
         var item=store.load(id);assertEquals("land",item.phase());assertEquals("capability_unavailable",item.workflowStatus());assertEquals("land_capability_unavailable",item.reason());
@@ -82,6 +108,32 @@ class WorkReviewIT extends WorkPreparedFixture {
         waiting(id,"review_head_not_observed");
     }
     @Test void anUnpostedHeadCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);execute("UPDATE review_status SET last_posted_commit=NULL WHERE review_id=?",review);waiting(id,"review_head_not_observed");}
+    /** A running or failed review of this head says what it is doing, rather than that its result is missing (item #41). */
+    @Test void aRunningReviewOfThisHeadSaysItIsInProgress() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='reviewing',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_in_progress");
+    }
+    @Test void aFailedReviewOfThisHeadSaysItFailed() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='failed',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_failed");
+    }
+    /** Review of PR #184 (I2): a review that is over but not completed names what happened, not "in progress". */
+    @Test void aRefusedReviewOfThisHeadSaysItWasRefused() throws Exception {
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='refused',last_posted_commit=NULL WHERE review_id=?",review);
+        waiting(id,"review_refused");
+    }
+    /** Review of PR #184 (I3): a closed draft is refused once, and not asked about again on every pass. */
+    @Test void aClosedDraftIsNotAskedAboutOnEveryPass() throws Exception {
+        openedAsDraft("closed");
+        String id=delivered("autonomous-draft");
+        waiting(id,"review_pr_not_open");
+        observer.advance(id);
+        forge.verify(1,getRequestedFor(urlPathEqualTo("/repos/"+scope+"/pulls/901")));
+        forge.verify(0,postRequestedFor(urlEqualTo("/graphql")));
+    }
     @Test void aDegradedReviewDoesNotBecomeAPassingPhase() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),true,false);waiting(id,"review_result_pending");}
     @Test void openBlockersKeepLandWaiting() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,true);waiting(id,"review_blockers_open");}
     @Test void aClosedPullRequestCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);reviews.setPrState(review,"DECLINED");waiting(id,"review_pr_not_open");}

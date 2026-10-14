@@ -96,6 +96,22 @@ this store at run time (FR-F14), but an image with none at all fails before that
 
 *Verified by:* running the image.
 
+### `shell` — the image has `/bin/sh`
+
+Verify (M4) runs each of the repository's check commands in this image as `/bin/sh -c <command>`, with
+your entrypoint overridden, so a check is the operator's command line and nothing else. Without a shell
+every check fails to start, and the build is reported as unverified, never as passed.
+
+*Verified by:* running the image.
+
+### `uid-1001` — the image runs as uid 1001
+
+The verify workspace is a clean copy of the build's checkpoint, written by the publisher image as uid
+1001. A check that runs as another uid cannot write its build output there. The contract asks for 1001
+exactly, not merely "not root".
+
+*Verified by:* running the image.
+
 ### `prompt-on-stdin` — the harness receives the prompt on stdin
 
 The work item reaches the harness on standard input, never on argv. A prompt on argv is visible in the host's process list to every user on the machine, can be swept

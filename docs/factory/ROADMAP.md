@@ -437,6 +437,11 @@ The design is [the M3.5 specification](../superpowers/specs/2026-09-16-factory-m
 
 **Goal:** the factory handles work that is bigger than one prompt.
 
+**Slice 1, verify: implemented (PR #184); live proof pending.** The operator's checks run on a clean
+copy of the checkpoint, with passed, failed and unverified outcomes, a result gate (Retry build or
+Stop), and a retry that starts from the failed checkpoint (ADR-046). The plan coordinator, with
+automatic retries, specifications and multi-step plans, comes in later slices.
+
 **Delivers.** The `spec` phase — a vague ticket refined into outcome, context and acceptance
 criteria, written back to the tracker. The `plan` phase — decomposition into ordered vertical slices,
 one run per step, with a completion gate between steps and an empty-step rule so a step with nothing

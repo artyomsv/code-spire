@@ -122,6 +122,9 @@ public class WorkItemStore {
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_verify_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
         }
         if(Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
             try(var ps=c.prepareStatement("UPDATE work_delivery_effect SET state='refused',reason='publication_held_by_human' WHERE work_item_id=? AND state IN ('pending','publishing','pushed')")) {
@@ -162,6 +165,11 @@ public class WorkItemStore {
         if(item.preparation()!=null && "build".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()))
             try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_run_effect(attempt_id,work_item_id,generation,state) VALUES (?,?,?,'pending') ON CONFLICT DO NOTHING")) {
                 ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());ps.executeUpdate();
+            }
+        if("verify".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()) && progress.execution()!=null)
+            try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_verify_effect(attempt_id,work_item_id,generation,run_id,head,state) VALUES (?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {
+                ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());
+                ps.setString(4,progress.execution().runId());ps.setString(5,progress.execution().head());ps.executeUpdate();
             }
         if("deliver".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()) && progress.execution()!=null)
             try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_delivery_effect(attempt_id,work_item_id,generation,run_id,state) VALUES (?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {

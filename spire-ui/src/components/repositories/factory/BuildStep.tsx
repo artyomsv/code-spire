@@ -25,6 +25,9 @@ interface Props {
  */
 /** How a build pays, in the words the setup shows. */
 const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
+/** The verify limit a setup takes when none was saved; the server bounds it by the deployment's wall clock. */
+const DEFAULT_VERIFY_SECONDS = 1800;
+const verifyLines = (text: string) => text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
 export default function BuildStep({ repositoryId, defaults, open, setOpen, changed, reload }: Props) {
   const live = useRef(true);
@@ -32,9 +35,11 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   const [form, setForm] = useState({
     baseBranch: defaults.baseBranch ?? '', harness: defaults.harness ?? '', model: defaults.model ?? '',
     effort: defaults.effort ?? '', payWith: (defaults.payWith ?? 'API_KEY') as PayWith,
+    // One command per line on screen; a list on the wire (M4).
+    verifyCommands: (defaults.verifyCommands ?? []).join('\n'), verifyTimeoutSeconds: String(defaults.verifyTimeoutSeconds ?? DEFAULT_VERIFY_SECONDS),
   });
   const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
-    harnessModels: Record<string, HarnessModels> }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {} });
+    harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {} });
   const [busy, setBusy] = useState<'saving' | 'head' | null>(null);
   const [error, setError] = useState(''), [head, setHead] = useState<{ commit: string; account: string } | null>(null);
   const editing = open === 'build';
@@ -46,7 +51,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       // A wire answer of the wrong shape offers nothing rather than blanking the step.
       .then(([options, models]) => { if (active) setChoices({ harnesses: options.harnesses ?? [],
         models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
-        harnessModels: options.models ?? {} }); })
+        harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds }); })
       .catch(() => { /* the selects fall back to what is already saved; the save still refuses an unrunnable pair */ });
     return () => { active = false; };
   }, [repositoryId, editing]);
@@ -64,7 +69,9 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     setBusy('saving'); setError('');
     try {
       // An empty level is the model's own default, sent as null rather than as a level called "".
-      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...form, effort: form.effort || null });
+      // Blank lines are dropped here as the server drops them: a blank command would run, exit 0 and pass.
+      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...form, effort: form.effort || null,
+        verifyCommands: verifyLines(form.verifyCommands), verifyTimeoutSeconds: Number(form.verifyTimeoutSeconds) });
       if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }
@@ -89,7 +96,8 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
     {defaults.revision > 0
-      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch} · paid with {PAY_WITH_LABEL[(defaults.payWith ?? 'API_KEY') as PayWith]}</span></div>
+      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch} · paid with {PAY_WITH_LABEL[(defaults.payWith ?? 'API_KEY') as PayWith]}
+        {defaults.verifyCommands?.length ? ` · checks: ${defaults.verifyCommands.join(', ')}` : ' · no checks'}</span></div>
       : <p className="factory-note">Not set, so every ticket has to be given a branch, a harness and a model by hand.</p>}
     <p className="factory-note">A prepared task copies these. Changing them here never changes a decision that is already open.</p>
     {editing && <fieldset className="form-lock factory-form" aria-label="Set up the build" disabled={busy !== null}>
@@ -117,6 +125,13 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}
         setEffort={effort => setForm(previous => ({ ...previous, effort }))} />
+      <SettingField label="Check commands" scope="build setup" hint="One command per line, run in order on a clean copy of the build. The first failure stops the rest; only a build whose checks all pass is pushed.">
+        <textarea aria-label="Check commands" rows={4} value={form.verifyCommands} placeholder="./gradlew check"
+          onChange={event => setForm(previous => ({ ...previous, verifyCommands: event.target.value }))} /></SettingField>
+      {verifyLines(form.verifyCommands).length === 0 && <p className="factory-note" role="status">No checks: builds will stop as unverified.</p>}
+      <SettingField label="Verify time limit (seconds)" scope="build setup" hint={`For all checks together. At most ${choices.verifyMaxSeconds ?? DEFAULT_VERIFY_SECONDS}.`}>
+        <input aria-label="Verify time limit (seconds)" type="number" min={60} max={choices.verifyMaxSeconds ?? DEFAULT_VERIFY_SECONDS}
+          value={form.verifyTimeoutSeconds} onChange={event => setForm(previous => ({ ...previous, verifyTimeoutSeconds: event.target.value }))} /></SettingField>
       {/* A select whose every option is disabled ignores clicks and keys alike, and looked broken (operator,
           2026-09-23). Say why nothing can be chosen, and where to fix it. */}
       {form.harness && offered.length > 0 && offered.every(choice => choice.blocked !== null) && <p className="prov-error">

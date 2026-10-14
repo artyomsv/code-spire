@@ -275,6 +275,25 @@ class ContextWorkerTest {
         assertEquals(List.of("AB-1", "CD-2"), jira.fetched, "level 2 still runs for the ticket-based provider");
     }
 
+    /** A ticket that triggers level 2 must not add the repository rules a second time (factory PR #42, 2026-10-08). */
+    @Test
+    void repoRulesAreAddedOnceWhenATicketTriggersLevelTwo() {
+        KeyProvider jira = new KeyProvider("JIRA", Map.of(
+                "AB-1", "see CD-2 for the design", "CD-2", "no further reference in here"));
+        clients.providers = List.of(new RulesContextProvider(), jira);
+        GatherContext command = new GatherContext("review::sandbox/demo-repo#7", REPO, 7, "abc123",
+                Set.of("AB-1"), null, null, "use 4-space indent");
+
+        worker.gatherContext(command);
+
+        assertEquals(List.of("AB-1", "CD-2"), jira.fetched, "level 2 still runs for the ticket");
+        long rules = emitted.stream().filter(e -> e instanceof ContextContributed)
+                .map(e -> ((ContextContributed) e).contribution())
+                .filter(c -> "RULES".equals(c.source()))
+                .mapToLong(c -> c.items().size()).sum();
+        assertEquals(1, rules, "the rules item is given to the model once");
+    }
+
     @Test
     void repoRulesAloneFanOutWithNoTicketReference() {
         // Pins the shipped repo-rules feature (a real defect this same fix closes, not a new one):

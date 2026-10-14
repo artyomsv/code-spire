@@ -5,13 +5,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 /** Pinned references and execution coordinates only; tracker artifact text never enters aggregate history. */
 public record WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                               String harness, String model, String registeredBy, int bindingVersion,
-                              String effort, String payWith) {
+                              String effort, String payWith, List<String> verifyCommands, long verifyTimeoutSeconds) {
 
     /** Where an artifact's approved bytes live. Absent in stored history means {@link Origin#TRACKER}. */
     public enum Origin {
@@ -75,6 +76,21 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
      */
     public static final int PAY_WITH_BINDING = 4;
 
+    /**
+     * Adds the verify commands and their time limit (M4). They decide what "passed" means for this build,
+     * so a gate approves the exact list, in its order. Its own version for the reason the others have one.
+     */
+    public static final int VERIFY_BINDING = 5;
+
+    /** The bounds the run worker applies; refused here so a preparation never carries what a verify refuses. */
+    public static final int MAX_VERIFY_COMMANDS = VerifyCommands.MAX_COMMANDS, MAX_VERIFY_COMMAND_CHARS = VerifyCommands.MAX_COMMAND_CHARS;
+
+    /** Every preparation written before M4 carries no verify commands. */
+    public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
+                           String harness, String model, String registeredBy, int bindingVersion, String effort, String payWith) {
+        this(specification, plan, baseBranch, baseCommit, harness, model, registeredBy, bindingVersion, effort, payWith, List.of(), 0);
+    }
+
     /** Every preparation written before payment modes existed pays with an API key. */
     public WorkPreparation(Artifact specification, Artifact plan, String baseBranch, String baseCommit,
                            String harness, String model, String registeredBy, int bindingVersion, String effort) {
@@ -103,7 +119,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         baseCommit = baseCommit.toLowerCase(java.util.Locale.ROOT);
         // Absent in older stored JSON, where every artifact was a tracker ticket.
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
-        if (bindingVersion < TRACKER_BINDING || bindingVersion > PAY_WITH_BINDING)
+        if (bindingVersion < TRACKER_BINDING || bindingVersion > VERIFY_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
         effort = ThinkingLevel.normalise(effort);
         // A level under a version that does not hash it would be carried to the build without being part
@@ -118,6 +134,16 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         if (bindingVersion == TRACKER_BINDING
                 && (specification.origin() != Origin.TRACKER || plan.origin() != Origin.TRACKER))
             throw new IllegalArgumentException("A version 1 binding describes tracker artifacts only");
+        // Absent in older stored JSON, where no preparation carried checks.
+        verifyCommands = verifyCommands == null ? List.of() : List.copyOf(verifyCommands);
+        // Commands under a version that does not hash them would decide "passed" without being approved.
+        if (bindingVersion < VERIFY_BINDING && (!verifyCommands.isEmpty() || verifyTimeoutSeconds != 0))
+            throw new IllegalArgumentException("Verify commands need binding version " + VERIFY_BINDING);
+        if (bindingVersion >= VERIFY_BINDING) {
+            if (verifyTimeoutSeconds < 1)
+                throw new IllegalArgumentException("A version " + VERIFY_BINDING + " preparation carries its verify time limit");
+            VerifyCommands.requireValid(verifyCommands);
+        }
     }
 
     /** Length-delimited fields keep distinct references and build coordinates distinct. */
@@ -142,6 +168,13 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
             value.append(level.length()).append(':').append(level);
         }
         if (bindingVersion >= PAY_WITH_BINDING) value.append(payWith.length()).append(':').append(payWith);
+        // The count first, so ["ab"] and ["a","b"] can never hash alike.
+        if (bindingVersion >= VERIFY_BINDING) {
+            value.append(verifyCommands.size()).append('#');
+            for (String command : verifyCommands) value.append(command.length()).append(':').append(command);
+            String limit = Long.toString(verifyTimeoutSeconds);
+            value.append(limit.length()).append(':').append(limit);
+        }
         return digest(value.toString());
     }
 

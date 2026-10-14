@@ -43,7 +43,10 @@ final class DlqTopics {
      */
     static final String RUN_CONTROL = "cs.run-control";
 
-    private static final Set<String> RUN_COMMAND_TYPES = Set.of("ExecuteRun");
+    private static final Set<String> RUN_COMMAND_TYPES = Set.of("ExecuteRun", "VerifyWork");
+
+    /** What a verify unit found (M4): its own topic, never cs.run-results, where the item bridge reads results. */
+    static final String RUN_VERIFICATIONS = "cs.run-verifications";
 
     private static final Set<String> RUN_CONTROL_TYPES = Set.of("CancelRun", "SteerRun");
 
@@ -87,6 +90,7 @@ final class DlqTopics {
         if (RUN_RESULT_TYPES.contains(type)) {
             return RUN_RESULTS;
         }
+        if ("RunWorkVerified".equals(type)) return RUN_VERIFICATIONS;
         if ("Describe".equals(type)) return HARNESS_IMAGE_COMMANDS;
         if ("Described".equals(type)) return HARNESS_IMAGE_RESULTS;
         if (HARNESS_SIGN_IN_COMMAND_TYPES.contains(type)) return HARNESS_SIGN_IN_COMMANDS;

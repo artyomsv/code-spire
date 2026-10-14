@@ -55,6 +55,13 @@ public final class AgentImageVerifier {
 
     private static final String YES = "yes";
 
+    private static final String SHELL_KEY = "shell";
+
+    private static final String UID_KEY = "uid";
+
+    /** The uid the publisher writes a verify volume as (spire-publisher/Dockerfile). */
+    private static final String VERIFY_UID = "1001";
+
     /** The longest image-controlled string that reaches a report line. */
     private static final int MAX_QUOTED_CHARS = 200;
 
@@ -77,6 +84,10 @@ public final class AgentImageVerifier {
             "a system trust store is present",
             "no system trust store: every TLS call fails with UnknownIssuer, and at least one "
                     + "harness retries silently");
+
+    private static final ClauseText SHELL_CLAUSE = new ClauseText(Clauses.SHELL,
+            "/bin/sh is present, so verify can run a check command",
+            "no /bin/sh: verify runs each check as /bin/sh -c <command>, so every check would fail to start");
 
     private static final ClauseText STDIN_CLAUSE = new ClauseText(Clauses.PROMPT_ON_STDIN,
             "the harness received the work item on stdin",
@@ -164,6 +175,8 @@ public final class AgentImageVerifier {
         verified.add(mountPoints(answers));
         verified.add(booleanClause(GIT_CLAUSE, answers.get(GIT_KEY)));
         verified.add(booleanClause(CA_CLAUSE, answers.get(CA_KEY)));
+        verified.add(booleanClause(SHELL_CLAUSE, answers.get(SHELL_KEY)));
+        verified.add(uid1001(answers.get(UID_KEY)));
         verified.addAll(handoffProtocol(image));
         return verified;
     }
@@ -189,7 +202,17 @@ public final class AgentImageVerifier {
                         + "|| { [ -d /etc/ssl/certs ] && [ -n \"$(ls /etc/ssl/certs 2>/dev/null)\" ]; }; } "
                         + "&& echo " + YES + " || echo no)",
                 ownershipProbe(WORKSPACE_KEY, WORKSPACE),
-                ownershipProbe(HANDOFF_KEY, HANDOFF));
+                ownershipProbe(HANDOFF_KEY, HANDOFF),
+                "echo " + SHELL_KEY + "=$([ -x /bin/sh ] && echo " + YES + " || echo no)",
+                "echo " + UID_KEY + "=$(id -u)");
+    }
+
+    private static ConformanceReport.Verification uid1001(String uid) {
+        if (uid == null) return unknown(Clauses.UID_1001, "the probe returned no answer for this clause");
+        return VERIFY_UID.equals(uid)
+                ? ConformanceReport.Verification.passed(Clauses.UID_1001, "runs as uid " + VERIFY_UID)
+                : ConformanceReport.Verification.failed(Clauses.UID_1001, "runs as uid " + bounded(uid) + ": verify volumes are "
+                        + "written by the publisher as uid " + VERIFY_UID + ", and a check running as another uid cannot write its build output");
     }
 
     private static String ownershipProbe(String key, String path) {

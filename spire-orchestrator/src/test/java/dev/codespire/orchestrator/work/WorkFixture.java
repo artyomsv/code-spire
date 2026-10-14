@@ -119,6 +119,7 @@ abstract class WorkFixture {
             for(String owned:cleanup){
                 execute("DELETE FROM work_activity_receipt WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_hold_outbox WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_verify_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_delivery_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM llm_charge WHERE subject_kind='RUN' AND subject_id IN (SELECT run_id FROM factory_run WHERE work_item_id=?)",owned);

@@ -63,6 +63,16 @@ class MessagingChannelsAreDeclaredTest {
     }
 
     @Test
+    void verificationsRideTheirOwnTopicNotTheRunResults() {
+        String yaml = applicationYaml();
+        int channel = yaml.indexOf("run-verifications-out:");
+        assertTrue(channel > 0, "a verify result needs its outgoing channel");
+        String declared = yaml.substring(channel, yaml.indexOf("serializer: dev.codespire.runworker.RunVerificationSerializer", channel));
+        assertTrue(declared.contains("topic: cs.run-verifications"),
+                "on cs.run-results the orchestrator would store a verification as the build's terminal result");
+    }
+
+    @Test
     void theTwoChannelsResolveToDifferentTopicsAndDifferentGroups() {
         String yaml = applicationYaml();
 

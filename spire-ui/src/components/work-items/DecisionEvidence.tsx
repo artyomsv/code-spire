@@ -5,6 +5,7 @@ import CopyField from '../CopyField';
 import type { Approval } from './approvalsApi';
 import type { Artifact } from './workPreparationApi';
 import { workRefusal } from './workReasons';
+import { isVerifyResultGate } from './VerifyResult';
 import type { PreparationEvidence } from './workPreparationApi';
 
 interface Props {
@@ -59,6 +60,7 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
         <div><dt>Agent</dt><dd className="v">{preparation.harness} · {preparation.model}</dd></div>
         <div><dt>Plan</dt><dd className="v"><ArtifactRef artifact={preparation.plan} /> · one step</dd></div>
         <div><dt>Pays with</dt><dd className="v">{preparation.payWith === 'SUBSCRIPTION' ? 'a Codex subscription' : 'an API key'}</dd></div>
+        <div><dt>Checks</dt><dd className="v mono">{preparation.verifyCommands?.length ? preparation.verifyCommands.join(' → ') : 'none — builds stop as unverified'}</dd></div>
       </dl>
       {evidence?.specification && <>
         <p className="prov-sub">Specification — the ticket text, as it was prepared</p>
@@ -69,7 +71,11 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
     </section>}
     <section className="decision-sec" aria-label="If you approve">
       <h4>If you approve</h4>
-      {gate.phase === 'plan' && limits
+      {isVerifyResultGate(item)
+        ? <p>{item.progress?.execution?.verification?.reason === 'checkpoint_missing'
+            ? "A new build starts again from the base, because this build's commits could not be read. The failure goes in its prompt."
+            : "A new build starts from this build's last commit, with the failure in its prompt."} It counts against this item's run limit.</p>
+        : gate.phase === 'plan' && limits
         ? <p>One build starts. It stops at <b>{formatCost(limits.maxCostMillicents)}</b> or after <b>{hours(limits.maxWallClockSeconds)}</b>, and this item may use up to <b>{limits.maxRunsPerItem}</b> runs.</p>
         : <p>The {gate.phase} phase continues within this item's limits.</p>}
     </section>

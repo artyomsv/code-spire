@@ -260,6 +260,16 @@ mp:
         dead-letter-queue:
           topic: cs.dlq
     outgoing:
+      # What a verify unit found (M4). Its own topic, never cs.run-results: the orchestrator's item bridge
+      # stores any non-ready result there as the build's terminal payload.
+      run-verifications-out:
+        connector: smallrye-kafka
+        topic: cs.run-verifications
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.runworker.RunVerificationSerializer
+        waitForWriteCompletion: true
       harness-image-results-out:
         connector: smallrye-kafka
         topic: cs.harness-image-results

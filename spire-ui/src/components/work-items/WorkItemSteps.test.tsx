@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, expect, it } from 'vitest';
 import type { Gate } from './approvalsApi';
@@ -66,7 +66,7 @@ it('shows build evidence and the observed delivery state', () => {
   const pullRequest = { number: 901, url: 'https://forge.example.test/TEST-pull/901', draft: true };
   const delivered = { ...base, phase: 'land', workflowStatus: 'waiting_approval', progress: { execution: { ...execution, verificationAttempt: 'TEST-verification', pullRequest, reviewId: 'TEST-review' } } };
   rerender(<MemoryRouter><WorkItemSteps item={delivered} current={null} /></MemoryRouter>);
-  expect(step('Verify').getByText('Verification recorded')).toBeInTheDocument();
+  expect(step('Verify').getByText('Verification recorded without a result')).toBeInTheDocument();
   expect(step('Deliver').getByRole('link', { name: 'Draft pull request #901' })).toHaveAttribute('href', pullRequest.url);
   expect(step('Review').getByText('Review recorded for this build.')).toBeInTheDocument();
   expect(step('Build').getByText(/Built commit/)).not.toHaveTextContent('held, not pushed');
@@ -111,4 +111,32 @@ it('keeps a decision that does not name its attempt out of the current proof', (
     events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human' }] }));
   expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
   expect(step('Plan').getByText('1 decision from another attempt, in the history below')).toBeInTheDocument();
+});
+
+const verification = (outcome: 'PASSED' | 'FAILED' | 'UNVERIFIED', reason: string | null, exitCode: number | null) => ({
+  attemptId: 'TEST-verify', head: 'b'.repeat(40), outcome, reason,
+  checks: exitCode === null ? [] : [{ command: 'TEST-check', exitCode, wallMillis: 1200, outputTail: 'TEST-tail' }] });
+const executionWith = (value: ReturnType<typeof verification>): WorkExecution => ({ runId: 'TEST-run',
+  build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
+  head: 'b'.repeat(40), verificationAttempt: 'TEST-verify', verification: value, pullRequest: null, reviewId: null });
+
+it('an unverified result never shows a tick', () => {
+  show(item({ phase: 'verify', workflowStatus: 'waiting_approval', reason: 'verify_unverified', gate: null,
+    progress: { execution: executionWith(verification('UNVERIFIED', 'tool_missing', null)) } }));
+  expect(step('Verify').getByText('Not checked')).toBeInTheDocument();
+  expect(step('Verify').queryByLabelText('Passed')).toBeNull();
+  expect(step('Verify').getByText(/A tool was probably missing/)).toBeInTheDocument();
+});
+it('a failed result names the command, its exit code, and opens its output', () => {
+  show(item({ phase: 'verify', workflowStatus: 'waiting_approval', reason: 'verify_failed', gate: null,
+    progress: { execution: executionWith(verification('FAILED', 'check_failed', 2)) } }));
+  expect(step('Verify').getByLabelText('Failed')).toBeInTheDocument();
+  expect(step('Verify').queryByText('TEST-tail')).toBeNull();
+  fireEvent.click(step('Verify').getByRole('button', { name: /TEST-check/ }));
+  expect(step('Verify').getByText('TEST-tail')).toBeInTheDocument();
+});
+it('a passed result shows the tick', () => {
+  show(item({ phase: 'deliver', workflowStatus: 'active', reason: 'phase_started', gate: null,
+    progress: { execution: executionWith(verification('PASSED', null, 0)) } }));
+  expect(step('Verify').getByLabelText('Passed')).toBeInTheDocument();
 });

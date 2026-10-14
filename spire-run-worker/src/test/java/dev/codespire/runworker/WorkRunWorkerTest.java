@@ -28,6 +28,14 @@ class WorkRunWorkerTest {
     String cleanedDuringPublish;
     int launches,publicationClaims,publications,deletions;
     boolean revoked;
+    /** The held run a retried build retired, and another unit the fake daemon also holds. */
+    String retired,alsoPresent;
+    /** What the store owes a workspace removal for. */
+    List<WorkRunStore.Held> awaiting=List.of();
+    /** A teardown that removed the containers and then stopped: the daemon lists no unit, but holds its volumes. */
+    boolean volumesSurvive;
+    /** The command the fake launcher was given. */
+    RunCommand.ExecuteWorkRun launched;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
     Finalization finalization=Finalization.salvaged(0,"TEST exited");
     final WorkRunStore store=new WorkRunStore(){
@@ -42,13 +50,15 @@ class WorkRunWorkerTest {
         @Override public boolean claimPublication(RunCommand.PublishWorkRun request){publicationClaims++;if(permitAllowed)state="publishing";return permitAllowed;}
         @Override public void released(String id){events.add("released");}
         @Override public List<Held> unfinished(){return List.of(find(command.runId()).orElseThrow());}
-        @Override public List<Held> awaitingRelease(){return List.of();}
+        @Override public List<Held> awaitingRelease(){return awaiting;}
         @Override public boolean claimPublicationRecovery(String id,Instant stale){return permitAllowed;}
         @Override public void abandonBuild(RunResult.RunFailed result){terminal(result);}
         // Answered here: a launch that creates a unit records it, and the parent would open a database.
         @Override public void recordUnit(String id,String unitId){events.add("record-unit");}
         // Answered for the same reason: a launch saves its topology just before creating.
         @Override public void saveUnit(String id,RunUnitSpec unit){if(saveFails)throw new IllegalStateException("TEST save failed");events.add("save-unit");}
+        // Answered for the same reason: a ready retried build retires the run it started from (M4).
+        @Override public boolean retire(String id,RunResult.RunFailed result){retired=id;terminal=result;return true;}
     };
     final WorkspaceLeases leases=new WorkspaceLeases(){
         @Override public boolean take(String id){return leaseAvailable;}
@@ -60,8 +70,19 @@ class WorkRunWorkerTest {
         @Override public void recordUnit(String id,String unitId){events.add("lease-unit");}
     };
     final class Runtime extends RunLauncherTest.FakeRuntime implements PublicationRuntime {
-        @Override public List<RunHandle> discoverUnits(){return present?List.of(new RunHandle(command.runId(),"TEST-unit")):List.of();}
-        @Override public boolean publicationHeld(RunHandle run){return present && held;}
+        @Override public List<RunHandle> discoverUnits(){
+            List<RunHandle> units=new ArrayList<>();
+            if(present)units.add(new RunHandle(command.runId(),"TEST-unit"));
+            if(alsoPresent!=null)units.add(new RunHandle(alsoPresent,"TEST-previous-unit"));
+            return units;
+        }
+        @Override public boolean publicationHeld(RunHandle run){return (present || volumesSurvive) && held;}
+        /** What the next verify observes; set by a verify test. */
+        dev.codespire.runtime.VerifyRun nextVerify;
+        final List<java.util.UUID> removedVerifies=new java.util.ArrayList<>();
+        @Override public dev.codespire.runtime.VerifyRun verifyHeld(RunHandle run,PublicationKey key,dev.codespire.runtime.VerifyUnitSpec spec,java.util.function.BooleanSupplier mayContinue){
+            if(nextVerify==null)throw new AssertionError("TEST verify was not expected");return nextVerify;}
+        @Override public void removeVerify(RunHandle run,java.util.UUID attempt){removedVerifies.add(attempt);}
         @Override public RunHandle createHeld(RunUnitSpec spec,PublicationKey key){throw new AssertionError("TEST publication must not create a build");}
         @Override public Finalization publishHeld(RunHandle run,PublicationKey key,UUID attempt,RunUnitSpec spec,Consumer<String> lines,BooleanSupplier allowed){
             publications++;assertEquals("publishing",state,"The durable claim must precede publisher IO");
@@ -80,7 +101,7 @@ class WorkRunWorkerTest {
         worker.store=store;worker.leases=leases;worker.registry=new RunRegistry();worker.runtime=runtime;worker.staleAfterSeconds=60;
         worker.claims=new RunClaimStore(){@Override public boolean taken(String id,String slot){return cancelled;}};
         worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
-            launches++;
+            launches++;launched=execution;
             // As the real launcher does: a failed topology save ends the launch before creation.
             if(attemptsCreation){try{saved.accept(null);}catch(RuntimeException saveFailed){return new RunResult.RunFailed(execution.runId(),"RUNTIME_UNAVAILABLE","TEST save failed",true,null);}}
             if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
@@ -102,6 +123,47 @@ class WorkRunWorkerTest {
     @BeforeEach void noHeldSecrets(){LiveSecrets.forget(command.runId());}
     @AfterEach void close(){worker.launcher.stopStreams();LiveSecrets.forget(command.runId());LiveSecrets.forget(command.runId()+WorkRunWorker.PUBLICATION_SECRETS);}
     void execute(){worker.execute(Message.of((RunCommand)command,()->{events.add("ack-command");return CompletableFuture.completedFuture(null);}),command).toCompletableFuture().join();}
+    @Test void aCheckpointStartRetiresThePreviousHeldRunOnceReady(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals("TEST-previous",retired);assertEquals(1,deletions,"the superseded workspace is released");
+        assertTrue(events.contains("released"),"the removal is owed until it happened");
+    }
+    /** Review of PR #184 (M-3): a superseded workspace whose removal failed is removed by a later recovery. */
+    @Test void recoveryRemovesARetiredWorkspaceThatWasNotRemoved(){
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
+        worker.recover();
+        assertEquals(1,deletions,"the retired workspace is removed");assertTrue(events.contains("released"));
+    }
+    /** Review of PR #184 (M-3, round 2): volumes that outlived their containers are still removed, and only then is the removal recorded. */
+    @Test void recoveryRemovesARetiredWorkspacesSurvivingVolumes(){
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
+        present=false;volumesSurvive=true;
+        worker.recover();
+        assertEquals(1,deletions,"held volumes with no container are still owed a removal");
+        assertTrue(events.indexOf("destroy")<events.indexOf("released"),"the removal is recorded only after it happened");
+    }
+    @Test void aRetryWhoseCheckpointUnitIsGoneStartsFromTheBase(){
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertNull(launched.execution().startFromRunId(),"a vanished checkpoint must not refuse the whole build");
+        // Review of PR #184 (I4): its prompt said it continues from the last commit; it must say otherwise now.
+        assertTrue(launched.execution().prompt().endsWith(WorkRunWorker.BASE_FALLBACK_NOTE));
+        assertTrue(launched.execution().prompt().startsWith(retry.execution().prompt()));
+    }
+    @Test void aRetryWhoseCheckpointUnitIsHereKeepsIt(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals("TEST-previous",launched.execution().startFromRunId());
+    }
+    @Test void aFirstBuildRetiresNothing(){
+        execute();
+        assertNull(retired);assertEquals(0,deletions);
+    }
     /** A held build's secrets are scrubbed from logs until its workspace is released (review of PR #178). */
     @Test void aHeldBuildsSecretsAreScrubbedUntilItsWorkspaceIsReleased(){
         try {

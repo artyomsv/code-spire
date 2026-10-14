@@ -13,7 +13,7 @@ import java.util.*;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** TEST-only verification driver. Publisher execution is proven separately against the real remote. */
+/** Real verification flow (M4) with TEST buses. Publisher execution is proven separately against the real remote. */
 @QuarkusTest
 @TestSecurity(user="TEST-delivery-admin",roles="spire-admin")
 class WorkDeliveryIT extends WorkPreparedFixture {
@@ -28,9 +28,6 @@ class WorkDeliveryIT extends WorkPreparedFixture {
     String pulls(){return "/repos/"+scope+"/pulls";}
 
     @BeforeEach void priorPhaseDriver() {
-        var capability=new WorkPhaseCapability(){@Override public boolean available(WorkItemEvent item,String phase){return "verify".equals(phase) || super.available(item,phase);}};
-        capability.runs=runTransport;capability.delivery=delivery;
-        QuarkusMock.installMockForType(capability,WorkPhaseCapability.class);
         QuarkusMock.installMockForType(new WorkPublicationTransport(){
             @Override public RunLaunch.Outcome publish(RunCommand.PublishWorkRun command){
                 try {assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE run_id=? AND state='publishing' AND permit IS NOT NULL",command.runId()),"The claim precedes the control write");}
@@ -52,11 +49,9 @@ class WorkDeliveryIT extends WorkPreparedFixture {
         assertEquals("verify",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());return id;
     }
     UUID verify(String id) {
-        var item=store.load(id);var progress=item.progress();
-        assertEquals(200,transitions.complete(id,new WorkItemTransitions.PhaseResult(progress.attemptId(),true,1,0,0,true,
-                progress.execution().verified(progress.attemptId()))).status());
-        assertEquals("deliver",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());
-        return store.load(id).progress().attemptId();
+        UUID attempt=verifyPassed(id);
+        assertEquals("active",store.load(id).workflowStatus());
+        return attempt;
     }
     void publisherFinished(String id) {
         var execution=store.load(id).progress().execution();var run=runs.find(execution.runId()).orElseThrow();
@@ -89,6 +84,13 @@ class WorkDeliveryIT extends WorkPreparedFixture {
         var wrong=new WorkExecution(original.runId(),original.build(),"c".repeat(40),item.progress().attemptId(),null,null);
         var result=transitions.complete(id,new WorkItemTransitions.PhaseResult(item.progress().attemptId(),true,1,0,0,true,wrong));
         assertEquals(409,result.status());assertEquals("phase_evidence_mismatch",result.reason());assertEquals("verify",store.load(id).phase());
+        assertEquals(0,count("SELECT count(*) FROM work_delivery_effect WHERE work_item_id=?",id));
+    }
+    @Test void aVerificationWithoutAPassedOutcomeCannotDeliver() throws Exception {
+        String id=buildForVerification("autonomous");var item=store.load(id);
+        var bare=transitions.complete(id,new WorkItemTransitions.PhaseResult(item.progress().attemptId(),true,1,0,0,true,
+                item.progress().execution().verified(item.progress().attemptId())));
+        assertEquals(409,bare.status());assertEquals("phase_evidence_mismatch",bare.reason());assertEquals("verify",store.load(id).phase());
         assertEquals(0,count("SELECT count(*) FROM work_delivery_effect WHERE work_item_id=?",id));
     }
     @Test void aSuccessfulFlagWithoutVerificationEvidenceCannotAdvance() throws Exception {

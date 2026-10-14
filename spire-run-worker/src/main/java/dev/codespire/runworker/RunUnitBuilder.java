@@ -8,11 +8,13 @@ import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
+import dev.codespire.runtime.VerifyUnitSpec;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.inject.Inject;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
@@ -115,6 +117,44 @@ public class RunUnitBuilder {
         return build(command, adapter, "spire-publish");
     }
 
+    /** Where a retried build's init reads the previous run's handoff. */
+    static final String CHECKPOINT_PATH = "/checkpoint";
+
+    /**
+     * The verify unit for one attempt against a held build (M4, spec §3.1): a prepare container in the publisher
+     * image with the build's own read credential, and one container per check in the build's agent image with
+     * no credential and only the new verify volume mounted.
+     */
+    public VerifyUnitSpec verifyUnit(RunCommand.ExecuteWorkRun held, RunCommand.VerifyWork command) {
+        if (!held.runId().equals(command.runId()) || !held.work().equals(command.work())) {
+            throw new IllegalArgumentException("A verify must name the held build it checks");
+        }
+        if (command.timeoutSeconds() > maxWallClockSeconds) {
+            throw new IllegalArgumentException("the verify time limit of " + command.timeoutSeconds()
+                    + "s is over this worker's spire.run.max-wall-clock-seconds (" + maxWallClockSeconds + ")");
+        }
+        RunCommand.ExecuteRun execution = held.execution();
+        Credentials.Scm scm = credentials.scm(execution.runId(), execution.scmCredential());
+        String volume = VerifyUnitSpec.VOLUME_PREFIX + command.attemptId();
+        Map<String, String> prepareEnv = new LinkedHashMap<>();
+        prepareEnv.put("SPIRE_REMOTE_URI", execution.remoteUri());
+        prepareEnv.put("SPIRE_BASE_COMMIT", execution.baseCommit());
+        prepareEnv.put("SPIRE_CLONE_USERNAME", scm.readUsername());
+        prepareEnv.put("SPIRE_CLONE_SECRET", scm.readSecret());
+        prepareEnv.put("SPIRE_CHECKPOINT_HEAD", command.head());
+        prepareEnv.put("SPIRE_HANDOFF_DIR", "/handoff");
+        prepareEnv.put("SPIRE_WORKSPACE_DIR", VerifyUnitSpec.WORKSPACE_PATH);
+        prepareEnv.put("SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES));
+        ContainerSpec prepare = new ContainerSpec(publisherImage, List.of("spire-verify-prepare"), Map.copyOf(prepareEnv),
+                List.of(Mount.readOnly(HANDOFF, "/handoff"), Mount.writable(volume, VerifyUnitSpec.WORKSPACE_PATH)));
+        List<ContainerSpec> checks = command.commands().stream()
+                .map(line -> new ContainerSpec(execution.agentImage(), List.of(line), Map.of(),
+                        List.of(Mount.writable(volume, VerifyUnitSpec.WORKSPACE_PATH)), List.of("/bin/sh", "-c")))
+                .toList();
+        return new VerifyUnitSpec(command.runId(), command.attemptId(), prepare, checks, enterprise.environment(),
+                MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.timeoutSeconds()));
+    }
+
     public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
         return build(command.execution(), adapter, "spire-publish-held");
     }
@@ -129,15 +169,22 @@ public class RunUnitBuilder {
         Map<String, String> harnessEnv = credentials.harnessEnv(command.runId(), command.harnessCredential(),
                 command.harnessSignIn());
 
-        ContainerSpec init = new ContainerSpec(
-                publisherImage,
-                List.of("spire-clone"),
-                Map.of("SPIRE_REMOTE_URI", command.remoteUri(),
-                        "SPIRE_BRANCH", command.branch(),
-                        "SPIRE_BASE_COMMIT", command.baseCommit(),
-                        "SPIRE_CLONE_USERNAME", scm.readUsername(),
-                        "SPIRE_CLONE_SECRET", scm.readSecret()),
-                List.of(Mount.writable(WORKSPACE, "/workspace")));
+        Map<String, String> initEnv = new LinkedHashMap<>();
+        initEnv.put("SPIRE_REMOTE_URI", command.remoteUri());
+        initEnv.put("SPIRE_BRANCH", command.branch());
+        initEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());
+        initEnv.put("SPIRE_CLONE_USERNAME", scm.readUsername());
+        initEnv.put("SPIRE_CLONE_SECRET", scm.readSecret());
+        List<Mount> initMounts = new ArrayList<>(List.of(Mount.writable(WORKSPACE, "/workspace")));
+        if (command.startFromRunId() != null) {
+            // A retried build continues from the previous held build's checkpoint (M4): the trusted init
+            // reads that run's bundles read-only and resets this run's branch to the gated head.
+            initEnv.put("SPIRE_CHECKPOINT_HEAD", command.startFromHead());
+            initEnv.put("SPIRE_CHECKPOINT_DIR", CHECKPOINT_PATH);
+            initEnv.put("SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES));
+            initMounts.add(Mount.ofRun(command.startFromRunId(), HANDOFF, CHECKPOINT_PATH));
+        }
+        ContainerSpec init = new ContainerSpec(publisherImage, List.of("spire-clone"), Map.copyOf(initEnv), initMounts);
 
         HarnessInvocation invocation = new HarnessInvocation(command.runId(),
                 withCommitInstruction(command.prompt()),

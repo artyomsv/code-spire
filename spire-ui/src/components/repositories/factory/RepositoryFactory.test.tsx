@@ -238,8 +238,35 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
       // No level chosen is the model's own default, sent as null rather than as a level called ''.
-      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY' }));
+      { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY',
+        verifyCommands: [], verifyTimeoutSeconds: 1800 }));
     expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
+  });
+
+  it('saves the check commands one per line and the verify time limit', async () => {
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    fireEvent.change(await screen.findByLabelText('Check commands', field), { target: { value: './gradlew check\n\n  npm test  \n' } });
+    fireEvent.change(await screen.findByLabelText('Verify time limit (seconds)', field), { target: { value: '900' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id, expect.objectContaining({
+      verifyCommands: ['./gradlew check', 'npm test'], verifyTimeoutSeconds: 900 })));
+  });
+
+  it('says that builds stop as unverified when no checks are set', async () => {
+    renderFactory();
+    await open();
+    expect(await screen.findByText('No checks: builds will stop as unverified.')).toBeInTheDocument();
+  });
+
+  it('shows the saved checks in the summary', async () => {
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model',
+      verifyCommands: ['make test'], verifyTimeoutSeconds: 600 }));
+    renderFactory();
+    expect(within(await step(5)).getByText(/checks: make test/)).toBeInTheDocument();
   });
 
   /** A model with no output price is refused at dispatch, so it cannot be chosen here either. */
@@ -387,7 +414,8 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the model default' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY' }));
+      { expectedRevision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY',
+        verifyCommands: [], verifyTimeoutSeconds: 1800 }));
   });
 
   // A level belongs to one harness's list: switching away and back must not bring it back unseen.

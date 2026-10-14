@@ -58,7 +58,7 @@ class ContractSchemaSnapshotTest {
      */
     private static final List<Class<?>> ROOTS =
             List.of(IntegrationEvent.class, DomainEvent.class, ActionCommand.class,
-                    RunCommand.class, RunResult.class);
+                    RunCommand.class, RunResult.class, dev.codespire.contract.event.RunVerification.class);
 
     /**
      * The roots that MUST carry {@code @JsonSubTypes}, named explicitly rather than discovered.
@@ -68,7 +68,7 @@ class ContractSchemaSnapshotTest {
      */
     private static final List<Class<?>> KAFKA_ROOTS =
             List.of(IntegrationEvent.class, ActionCommand.class,
-                    RunCommand.class, RunResult.class);
+                    RunCommand.class, RunResult.class, dev.codespire.contract.event.RunVerification.class);
 
     @Test
     void wireShapeMatchesTheRecordedSnapshot() throws IOException {
@@ -152,7 +152,8 @@ class ContractSchemaSnapshotTest {
         // These nested permit identities cross the bus too; the root renderer does not recurse.
         for(Class<?> nested:List.of(dev.codespire.contract.work.WorkRunBinding.class,dev.codespire.contract.work.WorkPublicationPermit.class,
                 dev.codespire.contract.work.WorkProgress.class,dev.codespire.contract.work.WorkExecution.class,dev.codespire.contract.scm.PullRequestRef.class,
-                dev.codespire.contract.work.WorkControl.class)) {
+                dev.codespire.contract.work.WorkControl.class,dev.codespire.contract.work.WorkVerification.class,
+                dev.codespire.contract.work.WorkVerification.CheckResult.class)) {
             lines.add("# "+nested.getSimpleName());
             lines.add(render(nested,nested.getSimpleName()));
             lines.add("");

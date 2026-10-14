@@ -72,6 +72,11 @@ public final class OutcomeWriter {
         write(entry("event", "checkpoint", "head", head, "changed", describe(changed)));
     }
 
+    /** The verify workspace holds exactly {@code head} (M4, {@code spire-verify-prepare}). */
+    public void prepared(String head) {
+        write(entry("event", "prepared", "head", head));
+    }
+
     /**
      * @param blocked every refused path WITH what happened to it — "ci.yml was blocked" does not
      *                tell an operator whether the factory edited that workflow or deleted it

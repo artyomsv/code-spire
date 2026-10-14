@@ -28,7 +28,8 @@ import java.util.Optional;
  * reviewer WOULD review its own. The real reasons are narrower and still sufficient: the branch is
  * pushed as the factory account, so a pull request opened as the reviewer misattributes the work;
  * the reviewer's token is not provisioned for that write, and its 403 reads as the factory account
- * failing; and an operator who HAS set an allowlist gets the skip after all.
+ * failing. (An allowlist no longer skips it: the reviewer reviews what the repository's factory account
+ * opened, matched by stable id — item #41, 2026-10-08.)
  */
 public interface PullRequestSink {
 
@@ -45,6 +46,20 @@ public interface PullRequestSink {
     static PullRequestRef requireObservedDraft(NewPullRequest request,PullRequestRef observed) {
         if(request.draft() && !Boolean.TRUE.equals(observed.draft()))throw new DeliveryUnavailable("draft_pr_not_observed");
         return observed;
+    }
+
+    /**
+     * Marks an open draft pull request ready for review, once the factory's work on it is finished.
+     *
+     * <p>The reviewer skips drafts by default, so a draft the factory opened and never marked ready waits
+     * for a review that never comes (item #41, 2026-10-08). <b>Idempotent:</b> a pull request that is
+     * already ready is answered as it is, with no write.
+     *
+     * @return the pull request as observed afterwards; its draft state is false
+     * @throws DeliveryUnavailable named {@code ready_for_review_unsupported} when this adapter cannot do it
+     */
+    default PullRequestRef markReady(RepoRef repo, PullRequestRef pullRequest) {
+        throw new DeliveryUnavailable("ready_for_review_unsupported");
     }
 
     class DeliveryUnavailable extends RuntimeException {

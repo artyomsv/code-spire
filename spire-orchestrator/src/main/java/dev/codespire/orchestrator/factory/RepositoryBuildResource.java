@@ -40,9 +40,11 @@ public class RepositoryBuildResource {
      * The harnesses this deployment can actually run, each with the token types it can report. A name
      * without an agent image refuses at dispatch; a model that cannot price one of those types refuses
      * there too, so the screen is told both rather than guessing at either.
+     *
+     * @param verifyMaxSeconds the longest verify time limit a save accepts: this deployment's wall clock (M4)
      */
     public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes,
-                          Map<String, HarnessModels> models) {}
+                          Map<String, HarnessModels> models, long verifyMaxSeconds) {}
 
     /**
      * The models a harness can run, as its image declares them, and why there are none when there are none.
@@ -71,7 +73,8 @@ public class RepositoryBuildResource {
         return new Options(harnesses,
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
-                harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)));
+                harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)),
+                config.wallClockSeconds());
     }
 
     private HarnessModels modelsOf(String harness) {

@@ -86,7 +86,7 @@ class AgentImageVerifierTest {
     }
 
     private static final String ALL_GOOD =
-            "git=yes\nca=yes\nworkspace=yes\nhandoff=yes\n";
+            "git=yes\nca=yes\nworkspace=yes\nhandoff=yes\nshell=yes\nuid=1001\n";
 
     private static ImageProbe.Result conformingAgentRun() {
         return new ImageProbe.Result("stdin=yes\n", true, List.of("1.bundle", "DONE"),
@@ -119,6 +119,23 @@ class AgentImageVerifierTest {
                 "every documented verified clause must appear, in the documented order");
     }
 
+    @Test
+    void anImageWithoutAShellFailsTheShellClause() {
+        ConformanceReport report = verify(configWith("1001:1001", new String[] {"/usr/local/bin/spire-agent-entrypoint"}, Map.of()),
+                ALL_GOOD.replace("shell=yes", "shell=no"), conformingAgentRun());
+        assertFalse(clause(report, Clauses.SHELL).passed());
+        assertTrue(clause(report, Clauses.UID_1001).passed());
+    }
+
+    @Test
+    void anImageNotRunningAsUid1001FailsTheUidClause() {
+        ConformanceReport report = verify(configWith("1000:1000", new String[] {"/usr/local/bin/spire-agent-entrypoint"}, Map.of()),
+                ALL_GOOD.replace("uid=1001", "uid=1000"), conformingAgentRun());
+        assertFalse(clause(report, Clauses.UID_1001).passed());
+        assertTrue(clause(report, Clauses.UID_1001).detail().contains("1000"));
+        assertTrue(clause(report, Clauses.SHELL).passed());
+    }
+
     /** Not "verification failed" — the clause, and what to change. */
     @Test
     void aMissingEntrypointFailsNamingTheClause() {
@@ -140,7 +157,7 @@ class AgentImageVerifierTest {
     void wrongMountOwnershipFailsNamingTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()),
-                "git=yes\nca=yes\nworkspace=no\nhandoff=yes\n", conformingAgentRun());
+                "git=yes\nca=yes\nworkspace=no\nhandoff=yes\nshell=yes\nuid=1001\n", conformingAgentRun());
 
         ConformanceReport.Verification mounts = clause(report, Clauses.MOUNT_POINTS);
         assertFalse(mounts.passed());
@@ -297,7 +314,7 @@ class AgentImageVerifierTest {
     void aMissingGitBinaryFailsTheClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()),
-                "git=no\nca=yes\nworkspace=yes\nhandoff=yes\n", conformingAgentRun());
+                "git=no\nca=yes\nworkspace=yes\nhandoff=yes\nshell=yes\nuid=1001\n", conformingAgentRun());
 
         assertFalse(clause(report, Clauses.GIT).passed());
         assertTrue(clause(report, Clauses.GIT).detail().contains("bundles"));
@@ -308,7 +325,7 @@ class AgentImageVerifierTest {
     void aMissingTrustStoreFailsOnlyThatClause() {
         ConformanceReport report = verify(
                 configWith("1001", new String[] {"/entrypoint"}, Map.of()),
-                "git=yes\nca=no\nworkspace=yes\nhandoff=yes\n", conformingAgentRun());
+                "git=yes\nca=no\nworkspace=yes\nhandoff=yes\nshell=yes\nuid=1001\n", conformingAgentRun());
 
         assertEquals(java.util.List.of(Clauses.CA_CERTIFICATES),
                 report.failures().stream().map(ConformanceReport.Verification::id).toList());

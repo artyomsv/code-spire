@@ -6,8 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.io.IOException;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The copy of a stored sign-in that an agent may hold (M3.5 part F).
@@ -52,6 +56,59 @@ final class SignInFiles {
             return account.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(account);
         } catch (JsonProcessingException unreadable) {
             return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * When the access token expires: the {@code exp} claim of its JWT payload. The signature is not
+     * checked — this is our own stored file, read only to decide when to renew it. Empty when the token
+     * is not a JWT with an expiry; the caller then leaves the seat alone rather than guess.
+     */
+    static Optional<Instant> accessTokenExpiry(String storedFile) {
+        try {
+            String[] parts = JSON.readTree(storedFile).path("tokens").path("access_token").asText("").split("\\.");
+            if (parts.length < 2) return Optional.empty();
+            JsonNode exp = JSON.readTree(Base64.getUrlDecoder().decode(parts[1])).path("exp");
+            return exp.canConvertToLong() ? Optional.of(Instant.ofEpochSecond(exp.asLong())) : Optional.empty();
+        } catch (IOException | IllegalArgumentException unreadable) {
+            return Optional.empty();
+        }
+    }
+
+    /** The stored refresh token, when there is one. Read only by the renewal, never for an agent. */
+    static Optional<String> refreshTokenOf(String storedFile) {
+        try {
+            String token = JSON.readTree(storedFile).path("tokens").path(REFRESH_TOKEN).asText("");
+            return token.isBlank() ? Optional.empty() : Optional.of(token);
+        } catch (JsonProcessingException unreadable) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * The stored file with the vendor's renewal answer in it: the new access token, and the new id and
+     * refresh tokens when the answer has them. Everything else — the account above all — is kept, and
+     * {@code last_refresh} is set to now, so the vendor's CLI in a run does not try to renew it again.
+     *
+     * @throws IllegalStateException named {@code renewal_unreadable} when the answer has no access token,
+     *     never with the answer in the message, which holds credentials
+     */
+    static String renewed(String storedFile, String answer, Instant now) {
+        try {
+            JsonNode tokens = JSON.readTree(answer);
+            String access = tokens.path("access_token").asText("");
+            JsonNode file = JSON.readTree(storedFile);
+            if (access.isBlank() || !(file instanceof ObjectNode object) || !(file.path("tokens") instanceof ObjectNode stored))
+                throw new IllegalStateException("renewal_unreadable");
+            stored.put("access_token", access);
+            for (String kept : new String[]{"id_token", REFRESH_TOKEN}) {
+                String renewed = tokens.path(kept).asText("");
+                if (!renewed.isBlank()) stored.put(kept, renewed);
+            }
+            object.put("last_refresh", now.toString());
+            return JSON.writeValueAsString(object);
+        } catch (JsonProcessingException unreadable) {
+            throw new IllegalStateException("renewal_unreadable");
         }
     }
 

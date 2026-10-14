@@ -178,7 +178,11 @@ public enum RunFailureCause {
             Map.entry("PUBLICATION_PERMIT_EXPIRED", GATE_REFUSED),
             Map.entry("PERMITTED_HEAD_UNAVAILABLE", GATE_REFUSED),
             Map.entry("PUSH_FAILED", PUSH_TRANSPORT_FAILED),
-            Map.entry("PUBLISHER_FAILED", WORKER_FAILED));
+            Map.entry("PUBLISHER_FAILED", WORKER_FAILED),
+            // M4: the trusted init could not rebuild a held checkpoint, for a retried build or a verify.
+            // A clone failure in kind; a verify reports its own outcome and never a RunFailed.
+            Map.entry("CHECKPOINT_MISSING", CLONE_FAILED),
+            Map.entry("VERIFY_PREPARE_FAILED", CLONE_FAILED));
 
     /**
      * Canonical names and aliases in one lookup.

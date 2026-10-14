@@ -99,6 +99,7 @@ public class RunDispatcher {
     RunLauncher launcher;
 
     @Inject WorkRunWorker workRuns;
+    @Inject WorkVerifyWorker verifies;
 
     @Inject
     WorkspaceLeases leases;
@@ -147,6 +148,8 @@ public class RunDispatcher {
 
     private CompletionStage<Void> handle(Message<RunCommand> message, RunCommand command) {
         if (command instanceof RunCommand.ExecuteWorkRun work) return workRuns.execute(message, work);
+        // On the work channel on purpose: a verify takes the one execution slot, like a build (M4).
+        if (command instanceof RunCommand.VerifyWork verify) return verifies.execute(message, verify);
         if (command instanceof RunCommand.CancelRun cancel) {
             // Loud, because this branch cannot cancel anything: control rides cs.run-control into a
             // listener beside this executor, and a cancel read HERE queues behind the very run it

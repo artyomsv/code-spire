@@ -42,7 +42,7 @@ public class WorkDelivery {
         WorkExecution execution=item.progress().execution();
         if(execution==null)return false;
         if("review".equals(phase))return execution.pullRequest()!=null && repositoryAccounts.resolve(item.repositoryId(),ProviderRole.REVIEWER).isPresent();
-        if(!"deliver".equals(phase) || execution.verificationAttempt()==null)return false;
+        if(!"deliver".equals(phase) || !passed(execution))return false;
         var account=accounts.resolve(item.repositoryId());if(account.isEmpty())return false;
         String mode=item.policy().effective().get(WorkPolicy.Phase.DELIVER);
         return "pr".equals(mode) || "draft_pr".equals(mode) && clients.pullRequestSink(account.get()).supportsDrafts();
@@ -196,7 +196,7 @@ public class WorkDelivery {
                 .filter(event->"PHASE_STARTED".equals(event.milestone()) && effect.attempt().equals(event.progress().attemptId())).findFirst().orElseThrow();
         if(!transitions.select(observed,item).equals(admitted.policy()) || observed.policy().revision()!=admitted.policyRevision())return "policy_changed_before_delivery";
         WorkExecution execution=item.progress().execution();
-        if(execution==null || execution.verificationAttempt()==null || !execution.runId().equals(effect.run()) || item.preparation()==null
+        if(execution==null || !passed(execution) || !execution.runId().equals(effect.run()) || item.preparation()==null
                 || !execution.build().preparationBinding().equals(item.preparation().binding()))return "verified_build_required";
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT 1 FROM work_run_effect b JOIN factory_run r ON r.run_id=b.run_id
@@ -210,6 +210,15 @@ public class WorkDelivery {
         }
         String mode=item.policy().effective().get(WorkPolicy.Phase.DELIVER);
         return Set.of("pr","draft_pr").contains(mode)?null:"deliver_off";
+    }
+
+    /**
+     * Only a PASSED result for this exact head authorizes delivery (M4). A bare attempt id from history written
+     * before M4, or a failed or unverified result, verified nothing a pull request could rely on.
+     */
+    static boolean passed(WorkExecution execution) {
+        return execution.verificationAttempt()!=null && execution.verification()!=null && execution.verification().passed()
+                && execution.verification().attemptId().equals(execution.verificationAttempt());
     }
 
     private byte[] encode(Object value,String aad) throws java.io.IOException {return encryption.encrypt(mapper.writeValueAsBytes(value),aad);}

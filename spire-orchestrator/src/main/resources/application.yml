@@ -307,6 +307,21 @@ mp:
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
+      # What a verify unit found (M4). Earliest: a result sent while this service restarts must not be
+      # skipped, and applying one is idempotent by attempt id (work_verify_effect.state).
+      run-verifications-in:
+        connector: smallrye-kafka
+        topic: cs.run-verifications
+        group:
+          id: spire-orchestrator-run-verifications
+        value:
+          deserializer: dev.codespire.orchestrator.factory.RunVerificationDeserializer
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
       run-results-in:
         connector: smallrye-kafka
         topic: cs.run-results
@@ -385,6 +400,15 @@ mp:
 # is ever used) is "observe" in code — safe first contact. The per-provider author
 # allowlist lives in the provider registry, not here.
 spire:
+  # How subscription seats are renewed before their 10-day access token expires (SeatRenewal). The
+  # client and address are the vendor CLI's own: read from the codex-cli 0.156.1 binary on 2026-10-08.
+  # The address answered a placeholder refresh token for this client with 401 token_expired, and a
+  # wrong client with 401 invalid_client. Not secrets: every copy of the CLI carries them.
+  seat-renewal:
+    clients:
+      codex:
+        client-id: ${SPIRE_SEAT_RENEWAL_CODEX_CLIENT_ID:app_EMoamEEZ73f0CkXaXp7hrann}
+        url: ${SPIRE_SEAT_RENEWAL_CODEX_URL:https://auth.openai.com/oauth/token}
   factory:
     # Agent image per harness NAME. Keyed by name so the orchestrator never spells a harness; a
     # harness with no image here is refused at dispatch, before a row is written or a token moves.
@@ -486,6 +510,8 @@ spire:
     work-preparation-interval: "off"
     harness-catalogue-interval: "off"
     harness-sign-in-retry-interval: "off"
+    seat-renewal-interval: "off"
+    work-verify-deadline-interval: "off"
     work-run-interval: "off"
     work-delivery-interval: "off"
     work-activity-interval: "off"

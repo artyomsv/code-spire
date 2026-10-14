@@ -23,6 +23,7 @@ public class WorkRunAssembly {
     @Inject dev.codespire.orchestrator.llm.LlmModelRegistry models;
     @Inject RunCredentials credentials;
     @Inject HarnessCatalogues catalogues;
+    @Inject dev.codespire.orchestrator.work.WorkVerifyHistory verifyHistory;
     public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
     public void validate(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,WorkArtifacts.Evidence evidence) {
@@ -68,17 +69,23 @@ public class WorkRunAssembly {
         if(spend.decide().refused())throw new IllegalStateException("deployment_spend_cap_reached");
         String id=RunIds.of(source.scm(),in.workspace(),in.slug(),subject,1),branch=DispatchRequestParser.RUN_BRANCH_PREFIX+subject;
         long wall=Math.min(config.wallClockSeconds(),Math.subtractExact(item.policy().limits().maxWallClockSeconds(),item.progress().wallSeconds()));
+        // A retried build (M4): the failure goes in its prompt, and it continues from the failed checkpoint
+        // unless that could not be read.
+        var previous=verifyHistory.lastNotPassed(c,item.workItemId(),item.generation());
+        String prompt=in.prompt()+previous.map(p->dev.codespire.orchestrator.work.WorkVerifyHistory.promptSection(p.verification())).orElse("");
         HarnessCredentialPool.PoolMember member=subscription ? pickSeat(in.harness()) : pickKey();
         // The agent gets the sign-in with its refresh token emptied; the whole file stays here, encrypted.
         String handedOver=subscription ? SignInFiles.forAgent(member.apiKey()) : member.apiKey();
         RunCommand.ExecuteRun command=new RunCommand.ExecuteRun(id,source.repository(),FactoryCloneUrls.cloneUrl(source.scm(),account.baseUrl(),source.repository()),
                 // The image the checked list was read from, not the tag, which may name another by now.
-                in.baseBranch(),in.baseCommit(),branch,in.prompt(),in.harness(),in.model(),admission.image(),
+                in.baseBranch(),in.baseCommit(),branch,prompt,in.harness(),in.model(),admission.image(),
                 item.policy().limits().protectedPaths().stream().sorted().toList(),wall,
                 credentials.packScm(id,account.botUsername(),account.secret()),credentials.packHarness(id,handedOver))
                 // The level the approved binding hashed, so the build runs at what was approved (M3.5 part M).
                 .atEffort(item.preparation().effort());
         if(subscription)command=command.paidBySignIn();
+        var resumable=previous.filter(p->dev.codespire.orchestrator.work.WorkVerifyHistory.checkpointReadable(p.verification()));
+        if(resumable.isPresent())command=command.fromCheckpoint(resumable.orElseThrow().runId(),resumable.orElseThrow().head());
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
         var row=new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),in.baseBranch(),in.baseCommit(),branch,account.botUsername(),member.id());

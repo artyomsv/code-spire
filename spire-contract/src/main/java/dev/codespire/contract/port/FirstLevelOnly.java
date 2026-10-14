@@ -8,7 +8,7 @@ package dev.codespire.contract.port;
  * {@link ThreadSource} already use: a plain {@code instanceof} check, gated on the capability
  * interface rather than a concrete provider class.
  *
- * <p>Only the code provider implements this today. {@code codeReferences} rides unchanged on every
+ * <p>The code provider and the repository-rules provider implement this. {@code codeReferences} rides unchanged on every
  * level's {@link dev.codespire.contract.review.ContextRequest} — level 2 mines the PREVIOUS level's
  * retrieved text for fresh references, and the diff's own changed paths and identifiers are not that
  * kind of reference — so without this marker {@code supports(request)} would report {@code true}

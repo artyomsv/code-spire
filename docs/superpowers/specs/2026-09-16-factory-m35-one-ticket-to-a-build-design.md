@@ -316,6 +316,16 @@ lease, dispatch failure before the container exists, and two uploads of the same
 - **Renewal, path (b): none.** If no such command exists, the stored sign-in is used until the vendor
   refuses it. The member then becomes `rejected` with "Sign in again", an attention row appears, and the
   operator uploads a fresh file. F0 answer 2 gives the expected interval.
+- **Renewal, path (c): the orchestrator renews (decided 2026-10-08).** Path (b) shipped, and item #40's
+  build failed 11 days after sign-in: the access token had expired, the agent's copy could not renew it
+  ("refresh_token: empty string", then 401), and the settings screen still said "Ready". The orchestrator
+  already holds the whole file, so `SeatRenewal` renews it: every 15 minutes, a seat whose access token
+  expires within 3 days is renewed at the vendor's token endpoint with the vendor CLI's own client
+  (`https://auth.openai.com/oauth/token`, client read from the codex-cli 0.156.1 binary). The new tokens
+  replace the stored ones under a compare-and-set on the ciphertext, so a sign-in made meanwhile wins. One
+  orchestrator renews at a time (advisory lock), because the vendor rotates refresh tokens. A 400/401
+  answer marks the seat refused, and the screen says "Sign in again"; any other failure is retried at the
+  next sweep. No container and no agent output is involved, so nothing untrusted touches the file.
 - **Secret handling either way.** The sign-in never enters argv, transcripts, run results, the outbox or
   a dead-letter record. `RunFailures` scrubs one neutral credential string today
   (`RunFailures.java:116`); for a sign-in it must scrub each token inside the file, because an echoed

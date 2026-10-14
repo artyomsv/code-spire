@@ -41,8 +41,9 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
     @Test void duplicateResultAdvancesTheItemOnlyOnce() throws Exception {
         String id=build();var result=priorBuildResult();saga.on(result);
         long revision=store.history(id).size(),calls=store.load(id).progress().calls();
-        assertEquals("verify",store.load(id).phase());assertEquals("capability_unavailable",store.load(id).workflowStatus());
-        assertEquals("verify_capability_unavailable",store.load(id).reason());assertEquals(1,calls);
+        // M4: verify is a real phase now, so a finished build starts it.
+        assertEquals("verify",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());
+        assertEquals("phase_started",store.load(id).reason());assertEquals(1,calls);
         assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND ready_processed",id));
         saga.on(result);bridge.recover();
         assertEquals(revision,store.history(id).size());assertEquals(calls,store.load(id).progress().calls());
@@ -105,20 +106,20 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         execute("INSERT INTO llm_model_rate(model_id,token_type,rate_millicents_per_million) VALUES (?,'INPUT',7000000)",modelId);
         runs.apply(result);charges.record(result);assertNull(runs.find(result.runId()).orElseThrow().endedAt(),"holding time must not masquerade as active compute");
         bridge.accept(result);var usage=store.load(id).progress();assertFalse(usage.usageUnknown());assertEquals(7,usage.costMillicents());assertEquals(9,usage.wallSeconds());assertEquals(1,usage.calls());
+        // M4: the build starts verify, and a running item cannot be readmitted; stopping after verification can.
+        verifier.drain();verifyResults.apply(unverified(verifies.getLast(),"tool_missing"));
+        var gate=store.load(id).gate();transitions.answer(gate.id(),gate.version(),"TEST-stop",false,null,"TEST-operator");
         assertEquals(200,transitions.resume(id,store.history(id).size(),true).status());bridge.accept(result);
         var resumed=store.load(id).progress();assertEquals(usage.costMillicents(),resumed.costMillicents());assertEquals(usage.wallSeconds(),resumed.wallSeconds());assertEquals(usage.calls(),resumed.calls());
     }
     @Test void ceilingChangesBeforeDeliveryPreventTheProposal() throws Exception {
-        // Explicit test-only verification driver, independent from the production missing-verifier case above.
-        QuarkusMock.installMockForType(new WorkPhaseCapability(){@Override public boolean available(WorkItemEvent item,String phase){return Set.of("build","verify","deliver").contains(phase);}},WorkPhaseCapability.class);
         String id=build();saga.on(priorBuildResult());var verifying=store.load(id);assertEquals("verify",verifying.phase());assertEquals("active",verifying.workflowStatus());
         var high=profiles.get("autonomous");var modes=new EnumMap<WorkPolicy.Phase,String>(WorkPolicy.Phase.class);modes.putAll(high.modes());modes.put(WorkPolicy.Phase.DELIVER,"off");
         UUID ceiling=UUID.randomUUID();extraProfiles.add(ceiling);policies.createVersion(new WorkPolicy.Profile(ceiling,"TEST-delivery-off-"+ceiling,1,1_000_000_499,modes,high.limits()));
         var policy=policies.get(repository);Map<String,WorkPolicyRegistry.Pin> mapping=new HashMap<>();policy.mappings().forEach((label,p)->mapping.put(label,new WorkPolicyRegistry.Pin(p.id(),p.version())));
         policies.save(repository,new WorkPolicyRegistry.Input(policy.revision(),new WorkPolicyRegistry.Pin(ceiling,1),mapping));
         assertTrue(sources.get(source).orElseThrow().enabled());assertTrue(sources.get(source).orElseThrow().allowedActors().contains("900123"));
-        transitions.complete(id,new WorkItemTransitions.PhaseResult(verifying.progress().attemptId(),true,1,1,1,true,
-                verifying.progress().execution().verified(verifying.progress().attemptId())));
+        verifier.drain();verifyResults.apply(passed(verifies.getLast()));
         given().get("/api/work-items/"+id).then().statusCode(200).body("phase",is("deliver"),"reason",is("deliver_off"),"workflowStatus",is("not_eligible"));
         assertEquals(0,count("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND phase='deliver'",id));
         assertEquals(0,count("SELECT count(*) FROM factory_run WHERE work_item_id=? AND pr_number IS NOT NULL",id));
@@ -131,7 +132,7 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         var finished=new RunResult.RunFinished(ready.runId(),"refs/heads/spire/TEST-held",ready.changedPaths(),List.of(),ready.tokenUsage(),false);
         saga.on(finished);saga.on(ready);bridge.recover();
         assertEquals(before,store.load(id).progress());assertEquals(revision,store.history(id).size());
-        assertEquals("verify",store.load(id).phase());assertEquals("verify_capability_unavailable",store.load(id).reason());
+        assertEquals("verify",store.load(id).phase());assertEquals("phase_started",store.load(id).reason());
         assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND ready_processed AND result_processed",id));
         assertEquals(1,count("SELECT count(DISTINCT call_ref) FROM llm_charge WHERE subject_id=?",ready.runId()));
         assertEquals("succeeded",runs.find(ready.runId()).orElseThrow().status(),"late readiness must not reopen terminal publication");
@@ -189,6 +190,16 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         assertEquals("started",after.progress().attemptState());assertTrue(after.progress().reserved());assertEquals("active",after.workflowStatus());
         assertEquals("build",after.phase());assertNull(after.progress().execution());assertEquals(1,after.progress().calls());assertEquals(9,after.progress().wallSeconds());
         assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE work_item_id=? AND ready_processed",id));
+    }
+    /** Item #40 (2026-10-08): a seat build that reported no token counts must not block the item for ever. */
+    @Test void aSeatBuildWithoutTokenCountsStillHasKnownSpending() throws Exception {
+        String id=build();var result=priorBuildResult();runs.apply(result);
+        executeWith("UPDATE factory_run SET paid_by=? WHERE run_id=?",dev.codespire.contract.work.PayWith.SUBSCRIPTION,result.runId());
+        assertFalse(runs.find(result.runId()).orElseThrow().cost().isKnown());bridge.accept(result);
+        var usage=store.load(id).progress();
+        assertFalse(usage.usageUnknown(),"a seat is not billed per token, so its spending is 0, not unknown");
+        assertNotEquals("run_usage_unknown",store.load(id).reason());
+        assertEquals(0,usage.costMillicents());assertEquals(1,usage.calls());
     }
     @Test void unmeasuredLateBuildUsageRemainsUnknown() throws Exception {
         String id=build();var ready=priorBuildResult();stopBuild(id);runs.apply(ready);bridge.accept(ready);
