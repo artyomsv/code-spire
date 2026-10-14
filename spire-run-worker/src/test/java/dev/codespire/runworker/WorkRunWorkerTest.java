@@ -32,6 +32,8 @@ class WorkRunWorkerTest {
     String retired,alsoPresent;
     /** What the store owes a workspace removal for. */
     List<WorkRunStore.Held> awaiting=List.of();
+    /** A teardown that removed the containers and then stopped: the daemon lists no unit, but holds its volumes. */
+    boolean volumesSurvive;
     /** The command the fake launcher was given. */
     RunCommand.ExecuteWorkRun launched;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
@@ -74,7 +76,7 @@ class WorkRunWorkerTest {
             if(alsoPresent!=null)units.add(new RunHandle(alsoPresent,"TEST-previous-unit"));
             return units;
         }
-        @Override public boolean publicationHeld(RunHandle run){return present && held;}
+        @Override public boolean publicationHeld(RunHandle run){return (present || volumesSurvive) && held;}
         /** What the next verify observes; set by a verify test. */
         dev.codespire.runtime.VerifyRun nextVerify;
         final List<java.util.UUID> removedVerifies=new java.util.ArrayList<>();
@@ -134,6 +136,15 @@ class WorkRunWorkerTest {
         awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
         worker.recover();
         assertEquals(1,deletions,"the retired workspace is removed");assertTrue(events.contains("released"));
+    }
+    /** Review of PR #184 (M-3, round 2): volumes that outlived their containers are still removed, and only then is the removal recorded. */
+    @Test void recoveryRemovesARetiredWorkspacesSurvivingVolumes(){
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
+        present=false;volumesSurvive=true;
+        worker.recover();
+        assertEquals(1,deletions,"held volumes with no container are still owed a removal");
+        assertTrue(events.indexOf("destroy")<events.indexOf("released"),"the removal is recorded only after it happened");
     }
     @Test void aRetryWhoseCheckpointUnitIsGoneStartsFromTheBase(){
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
