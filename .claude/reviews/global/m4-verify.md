@@ -41,3 +41,11 @@ Gradle stopped at the first failed module.
 
 CI on `735599ed`: all 17 checks passed (fast tests, service tests + packaging, dashboard, the four
 service modules, CodeQL, Semgrep, gitleaks, manifests, kind install).
+
+## Round 3 — re-review of `735599ed` (2026-10-14)
+
+Five findings verified fixed. M-3 stayed open: `releaseRetired` skipped the removal when the daemon
+listed no container, then cleared the owed flag, so volumes left by a teardown that stopped after
+removing the containers were never removed. Fixed as `releasePublished` does: the hold is asked by
+run id, and removed when present. Test `recoveryRemovesARetiredWorkspacesSurvivingVolumes` first in
+`f611c97c`, the fix after it.

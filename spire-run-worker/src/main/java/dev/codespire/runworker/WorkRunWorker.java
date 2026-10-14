@@ -218,9 +218,14 @@ public class WorkRunWorker {
         }
     }
 
-    /** Removes a retired build's workspace, then records it removed: a failure leaves the removal owed. */
+    /**
+     * Removes a retired build's workspace, then records it removed: a failure leaves the removal owed. The daemon
+     * lists units by their containers, so a teardown that stopped after removing them leaves volumes no unit names;
+     * the hold is asked by run id, as {@link #releasePublished} does (second review of PR #184, M-3).
+     */
     private void releaseRetired(String id,String publicationKey,PublicationRuntime publication) {
-        localUnit(id).ifPresent(unit->publication.destroyHeld(unit,new PublicationKey(publicationKey)));
+        RunHandle handle=localUnit(id).orElse(new RunHandle(id,id));
+        if(publication.publicationHeld(handle))publication.destroyHeld(handle,new PublicationKey(publicationKey));
         store.released(id);
         leases.release(id);
         LiveSecrets.forget(id);
