@@ -53,12 +53,18 @@ public class WorkVerifyResults {
     public void apply(RunVerification.RunWorkVerified verified) {
         WorkVerification verification = verified.verification();
         String item = report(verified);
-        if (item == null) item = reportedItem(verification.attemptId());
+        RunVerification.RunWorkVerified decided = verified;
+        if (item == null) {
+            item = reportedItem(verification.attemptId());
+            // The result stored first decides: a late delivery of another outcome must not override it (review of
+            // PR #184, M-1). Re-applying the stored one is what the recovery sweep does too.
+            if (item != null) decided = stored(verification.attemptId()).orElse(verified);
+        }
         if (item == null) {
             LOG.warnf("verification %s for %s matches no open verify attempt; ignored", verification.attemptId(), verified.runId());
             return;
         }
-        var outcome = transitions.verified(item, verified);
+        var outcome = transitions.verified(item, decided);
         // An authority outage (503) is retried by the sweep; any other answer is final for this attempt.
         if (outcome.status() != 503) applied(verification.attemptId(), outcome.status() == 200 ? null : outcome.reason());
     }

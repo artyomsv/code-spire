@@ -2147,5 +2147,14 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   and passed, and #47 was unverified (`cargo`, exit 127) and stopped. All builds were paid by a seat
   at cost 0. Found and left open: land is not built, readmit after an approved land rebuilds
   delivered work, the review is a comment rather than a GitHub review (the operator wants a real
-  one next), and a failed review does not name its model. Record:
+  one next), and a failed review does not name its model. A branch review then fixed eight defects
+  with tests, and a second review of `8e75a183` found six more, all confirmed in the code and each
+  fixed with a test. CI showed four of those tests failing first, on the line that names the defect;
+  the run-worker tests did not run in that build, because Gradle stopped at the first failed module. The worst was the orphan watchdog: it stopped a held
+  build nobody executes, and that stop now reached the verify container, so a check running during
+  its five-minute sweep was killed and reported failed. The live checks took 15 seconds and escaped
+  by luck. The others: a late result overrode the stored one, verify ignored the item's remaining
+  time, a retired build's workspace removal was not owed durably, a slow refusal could reject a newer
+  sign-in, and long check output kept its start instead of its end. Item #48 then ran from issue to
+  land gate with only write, label and approve. Record:
   [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md).

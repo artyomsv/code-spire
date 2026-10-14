@@ -210,21 +210,29 @@ final class DockerVerifyUnits {
         return log.lines();
     }
 
-    /** A check's output as it streams, kept within a size budget. */
+    /**
+     * A check's output as it streams, kept within a size budget by dropping its OLDEST text: the end names the
+     * failure (review of PR #184, M-5). A line cut by the drop is left out rather than shown as if whole.
+     */
     static final class RollingTail {
         private final StringBuilder log = new StringBuilder();
         private final int budget;
+        private boolean cut;
 
         RollingTail(int budget) {
             this.budget = budget;
         }
 
         void append(String chunk) {
-            if (log.length() < budget) log.append(chunk);
+            log.append(chunk);
+            if (log.length() <= budget) return;
+            log.delete(0, log.length() - budget);
+            cut = true;
         }
 
         List<String> lines() {
-            return bounded(log.toString());
+            int firstWhole = cut ? log.indexOf("\n") + 1 : 0;
+            return bounded(log.substring(firstWhole));
         }
     }
 

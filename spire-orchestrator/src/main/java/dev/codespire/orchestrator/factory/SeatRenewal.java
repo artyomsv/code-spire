@@ -135,10 +135,10 @@ public class SeatRenewal {
 
     /** The vendor will not renew this sign-in. Only a new sign-in brings the seat back. */
     private void refused(HarnessCredentialPool.StoredSeat seat, String code) {
-        if (pool.markRejected(seat.id())) {
+        if (pool.rejectRenewal(seat)) {
             LOG.errorf("seat %s could not be renewed (%s); it is out of use until it is signed in again", seat.id(), code);
         } else {
-            LOG.debugf("seat %s is still refused (%s)", seat.id(), code);
+            LOG.debugf("seat %s is already refused or was signed in again (%s)", seat.id(), code);
         }
     }
 

@@ -103,10 +103,19 @@ public class WorkVerifyDispatcher {
 
     private static RunCommand.VerifyWork commandFor(WorkItemEvent item, UUID attempt) {
         WorkExecution execution = item.progress().execution();
-        long timeout = item.preparation().verifyTimeoutSeconds();
+        long declared = item.preparation().verifyTimeoutSeconds();
         // A version 4 preparation carries no checks and no limit: it still verifies, as no_checks_declared.
+        long timeout = declared > 0 ? declared : BuildDefaults.DEFAULT_VERIFY_SECONDS;
         return new RunCommand.VerifyWork(execution.runId(), execution.build(), attempt, execution.head(),
-                item.preparation().verifyCommands(), timeout > 0 ? timeout : BuildDefaults.DEFAULT_VERIFY_SECONDS);
+                item.preparation().verifyCommands(), Math.min(timeout, remainingSeconds(item)));
+    }
+
+    /**
+     * The item's wall time left, as a build is clamped to it (review of PR #184, M-2). Verify starts only while
+     * time is left, so this is at least one second; the floor covers a clock read at the exact limit.
+     */
+    private static long remainingSeconds(WorkItemEvent item) {
+        return Math.max(1, item.policy().limits().maxWallClockSeconds() - item.progress().wallSeconds());
     }
 
     private static void refuse(Connection c, UUID attempt) throws SQLException {

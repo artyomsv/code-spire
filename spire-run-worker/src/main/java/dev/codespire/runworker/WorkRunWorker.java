@@ -168,7 +168,12 @@ public class WorkRunWorker {
             } finally {active.remove(id);}
         }
         for(var held:store.awaitingRelease()) {
-            try {releasePublished(held,publication);}
+            // Only a retired build owes a removal with a failed result: every other owed removal is a publication.
+            try {
+                if(held.terminal() instanceof RunResult.RunFailed)
+                    releaseRetired(held.execution().runId(),held.execution().work().publicationKey(),publication);
+                else releasePublished(held,publication);
+            }
             catch(RuntimeException failure){LOG.warnf("run %s: published workspace cleanup deferred (%s)",held.execution().runId(),failure.getClass().getSimpleName());}
         }
         flushResults();
@@ -185,9 +190,7 @@ public class WorkRunWorker {
             var old=store.find(previous);
             if(old.isEmpty() || !store.retire(previous,failures.of(old.orElseThrow().execution().execution(),"CANCELLED",
                     "Superseded by the retried build "+command.runId())))return;
-            var key=new PublicationKey(old.orElseThrow().execution().work().publicationKey());
-            localUnit(previous).ifPresent(unit->publication.destroyHeld(unit,key));
-            LiveSecrets.forget(previous);
+            releaseRetired(previous,old.orElseThrow().execution().work().publicationKey(),publication);
         } catch(RuntimeException failure) {
             LOG.warnf("run %s: the superseded held build %s was not released (%s)",command.runId(),previous,failure.getClass().getSimpleName());
         }
@@ -213,6 +216,14 @@ public class WorkRunWorker {
         for(RunResult result:store.pendingResults()) {
             if(results.report(result))store.acknowledged(result);
         }
+    }
+
+    /** Removes a retired build's workspace, then records it removed: a failure leaves the removal owed. */
+    private void releaseRetired(String id,String publicationKey,PublicationRuntime publication) {
+        localUnit(id).ifPresent(unit->publication.destroyHeld(unit,new PublicationKey(publicationKey)));
+        store.released(id);
+        leases.release(id);
+        LiveSecrets.forget(id);
     }
 
     private void releasePublished(WorkRunStore.Held held,PublicationRuntime publication) {

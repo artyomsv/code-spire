@@ -77,6 +77,9 @@ public class WorkVerifyWorker {
         if (runs.revoked(execution)) return COULD_NOT_RUN;
         Optional<RunHandle> unit = localUnit(command.runId());
         if (unit.isEmpty()) return CHECKPOINT_MISSING;
+        // The held build is executing again while it is checked: the orphan watchdog stops a held build nobody
+        // executes, and that stop reaches the verify container too (review of PR #184, H-1).
+        registry.register(command.runId(), execution.execution().harness(), unit.orElseThrow(), RunNotes.IGNORING);
         try {
             return publication.verifyHeld(unit.orElseThrow(), new PublicationKey(command.work().publicationKey()),
                     builder.verifyUnit(execution, command), () -> !runs.revoked(execution));
@@ -85,6 +88,7 @@ public class WorkVerifyWorker {
             LOG.warnf("verify %s for %s could not run (%s)", command.attemptId(), command.runId(), failure.getClass().getSimpleName());
             return COULD_NOT_RUN;
         } finally {
+            registry.forget(command.runId());
             removeQuietly(publication, unit.orElseThrow(), command.attemptId());
         }
     }

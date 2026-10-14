@@ -565,6 +565,20 @@ public class HarnessCredentialPool {
      *
      * @return whether the renewal was stored
      */
+    /**
+     * Takes a seat out of use because the vendor refused to renew the sign-in that was read — only while the seat
+     * still holds that sign-in. A sign-in stored meanwhile is newer than the refusal (review of PR #184, M-4).
+     *
+     * @return whether the seat was marked refused now
+     */
+    boolean rejectRenewal(StoredSeat read) {
+        return update("""
+                UPDATE harness_credential
+                   SET rejected_at = now(), rate_limited_until = NULL, exhausted_at = now(), updated_at = now()
+                 WHERE api_key = ? AND rejected_at IS NULL AND id = ?
+                """, read.id(), read.ciphertext()) == 1;
+    }
+
     boolean storeRenewal(StoredSeat read, String renewedFile) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 UPDATE harness_credential SET api_key = ?, rejected_at = NULL, updated_at = now()
