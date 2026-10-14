@@ -30,6 +30,8 @@ class WorkRunWorkerTest {
     boolean revoked;
     /** The held run a retried build retired, and another unit the fake daemon also holds. */
     String retired,alsoPresent;
+    /** What the store owes a workspace removal for. */
+    List<WorkRunStore.Held> awaiting=List.of();
     /** The command the fake launcher was given. */
     RunCommand.ExecuteWorkRun launched;
     List<String> publisherLines=List.of("{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/TEST-held\"}");
@@ -46,7 +48,7 @@ class WorkRunWorkerTest {
         @Override public boolean claimPublication(RunCommand.PublishWorkRun request){publicationClaims++;if(permitAllowed)state="publishing";return permitAllowed;}
         @Override public void released(String id){events.add("released");}
         @Override public List<Held> unfinished(){return List.of(find(command.runId()).orElseThrow());}
-        @Override public List<Held> awaitingRelease(){return List.of();}
+        @Override public List<Held> awaitingRelease(){return awaiting;}
         @Override public boolean claimPublicationRecovery(String id,Instant stale){return permitAllowed;}
         @Override public void abandonBuild(RunResult.RunFailed result){terminal(result);}
         // Answered here: a launch that creates a unit records it, and the parent would open a database.
@@ -124,6 +126,14 @@ class WorkRunWorkerTest {
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
         worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
         assertEquals("TEST-previous",retired);assertEquals(1,deletions,"the superseded workspace is released");
+        assertTrue(events.contains("released"),"the removal is owed until it happened");
+    }
+    /** Review of PR #184 (M-3): a superseded workspace whose removal failed is removed by a later recovery. */
+    @Test void recoveryRemovesARetiredWorkspaceThatWasNotRemoved(){
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
+        worker.recover();
+        assertEquals(1,deletions,"the retired workspace is removed");assertTrue(events.contains("released"));
     }
     @Test void aRetryWhoseCheckpointUnitIsGoneStartsFromTheBase(){
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());

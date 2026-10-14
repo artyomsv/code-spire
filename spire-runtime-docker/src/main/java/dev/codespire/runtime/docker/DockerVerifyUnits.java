@@ -193,11 +193,10 @@ final class DockerVerifyUnits {
 
     /** The last lines of a check's output, bounded in lines, line length and total size: the agent controls it. */
     List<String> tailOf(String id) {
-        StringBuilder log = new StringBuilder();
-        int budget = DockerRunRuntime.VERIFY_TAIL_CHARS + DockerRunRuntime.VERIFY_LINE_CHARS;
+        RollingTail log = new RollingTail(DockerRunRuntime.VERIFY_TAIL_CHARS + DockerRunRuntime.VERIFY_LINE_CHARS);
         ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
             @Override public void onNext(Frame frame) {
-                if (log.length() < budget) log.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
+                log.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
             }
         };
         try (ResultCallback.Adapter<Frame> stream = client.logContainerCmd(id).withStdOut(true).withStdErr(true)
@@ -208,7 +207,25 @@ final class DockerVerifyUnits {
         } catch (IOException | RuntimeException unreadable) {
             return List.of("[output could not be read]");
         }
-        return bounded(log.toString());
+        return log.lines();
+    }
+
+    /** A check's output as it streams, kept within a size budget. */
+    static final class RollingTail {
+        private final StringBuilder log = new StringBuilder();
+        private final int budget;
+
+        RollingTail(int budget) {
+            this.budget = budget;
+        }
+
+        void append(String chunk) {
+            if (log.length() < budget) log.append(chunk);
+        }
+
+        List<String> lines() {
+            return bounded(log.toString());
+        }
     }
 
     static List<String> bounded(String log) {

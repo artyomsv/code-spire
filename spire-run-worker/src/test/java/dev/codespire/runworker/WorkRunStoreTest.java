@@ -201,6 +201,15 @@ class WorkRunStoreTest {
         }
     }
 
+    /** Review of PR #184 (M-3): a retired build's workspace stays owed until it is actually removed. */
+    @Test void aRetiredBuildAwaitsReleaseUntilItsWorkspaceIsRemoved() {
+        var command=prepared();store.buildResult(ready(command));
+        assertTrue(store.retire(command.runId(),new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null)));
+        assertTrue(store.awaitingRelease().stream().anyMatch(held->held.execution().runId().equals(command.runId())),"a crash before removal must leave the removal owed");
+        store.released(command.runId());
+        assertTrue(store.awaitingRelease().stream().noneMatch(held->held.execution().runId().equals(command.runId())));
+    }
+
     private List<RunResult> pending(String id){return store.pendingResults().stream().filter(r->r.runId().equals(id)).toList();}
     private RunCommand.ExecuteWorkRun prepared(){var command=command();store.claim(command);store.saveUnit(command.runId(),unit(command.runId()));return command;}
     private RunResult.RunWorkReady ready(RunCommand.ExecuteWorkRun command){return new RunResult.RunWorkReady(command.runId(),command.work(),"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),12);}

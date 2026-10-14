@@ -142,6 +142,31 @@ class SeatRenewalTest {
         assertNotNull(view(seat).rejectedAt());
     }
 
+    /**
+     * Review of PR #184 (M-4): an operator who signs in again while a renewal is in flight keeps the new sign-in,
+     * even when the vendor then refuses the old refresh token.
+     */
+    @Test
+    void aRefusalOfASeatSignedInAgainMeanwhileLeavesTheNewSignInInUse() throws Exception {
+        UUID seat = seatExpiringIn(Duration.ofDays(1));
+        vendor.stubFor(post("/oauth/token").willReturn(aResponse().withStatus(401).withFixedDelay(1500)
+                .withHeader("Content-Type", "application/json").withBody("{\"error\":\"invalid_grant\"}")));
+        HarnessCredentialPool.StoredSeat read = pool.seatsToRenew(HARNESS).stream().filter(s -> s.id().equals(seat))
+                .findFirst().orElseThrow();
+
+        java.util.concurrent.CompletableFuture<Integer> renewing =
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> renewal.renewDue(HARNESS, endpoint(), NOW));
+        long until = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (vendor.findAll(postRequestedFor(urlEqualTo("/oauth/token"))).isEmpty() && System.nanoTime() < until) Thread.sleep(20);
+        try (Connection c = dataSource.getConnection()) {
+            pool.replaceSubscription(c, seat, read.file().replace("TEST-refresh-1", "TEST-refresh-signed-in-again"));
+        }
+
+        assertEquals(0, renewing.get(15, java.util.concurrent.TimeUnit.SECONDS));
+        assertNull(view(seat).rejectedAt(), "the refusal was for the old sign-in");
+        assertEquals("TEST-refresh-signed-in-again", storedTokens(seat).path("refresh_token").asText());
+    }
+
     /** A seat stored with no refresh token can never be renewed, so it is refused without asking the vendor. */
     @Test
     void aSeatWithNoRefreshTokenIsRefusedWithoutAskingTheVendor() throws Exception {

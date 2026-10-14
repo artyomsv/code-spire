@@ -136,6 +136,38 @@ class WorkVerifyIT extends WorkPreparedFixture {
         assertEquals("verify_could_not_run", item.progress().execution().verification().reason());
     }
 
+    /** Review of PR #184 (M-1): a late, different result for an attempt never overrides the one already stored. */
+    @Test void aLateResultCannotOverrideTheStoredOne() throws Exception {
+        String id = built("autonomous", 85);
+        trackerAnswers(85, null);
+        failedVerify();
+        assertEquals("reported", string("SELECT state FROM work_verify_effect WHERE work_item_id=?", id));
+        trackerAnswers(85, "TEST-autonomous");
+
+        verifyResults.apply(passed(verifies.getLast()));
+
+        var item = store.load(id);
+        assertEquals("verify", item.phase(), "the stored FAILED decides, not the late PASSED");
+        assertEquals("verify_failed", item.reason());
+    }
+
+    /** Review of PR #184 (M-2): a verify is given only the time the item has left, as a build is. */
+    @Test void verifyIsGivenOnlyTheItemsRemainingTime() throws Exception {
+        String id = admit("autonomous", 86);
+        register(id);
+        dispatcher.drain();
+        var build = heldCommands.getLast();
+        long cap = store.load(id).policy().limits().maxWallClockSeconds();
+        saga.on(new RunResult.RunWorkReady(build.runId(), build.work(), "b".repeat(40), List.of("TEST-file"), Map.of("INPUT", 7L), cap - 20));
+        assertEquals("verify", store.load(id).phase());
+        long left = cap - store.load(id).progress().wallSeconds();
+        assertTrue(left > 0 && left < 60, "the fixture must leave less than the 60 second verify limit, left " + left);
+
+        verifier.drain();
+
+        assertEquals(left, verifies.getLast().timeoutSeconds());
+    }
+
     @Test void startingVerifySendsTheBoundChecksOnce() throws Exception {
         String id = built("autonomous", 61);
         verifier.drain();

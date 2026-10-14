@@ -38,6 +38,7 @@ public class WorkVerifyWorker {
     @Inject RunUnitBuilder builder;
     @Inject RunRuntime runtime;
     @Inject RunVerificationReporter reporter;
+    @Inject RunRegistry registry;
     private final Set<UUID> active = ConcurrentHashMap.newKeySet();
 
     public CompletionStage<Void> execute(Message<RunCommand> message, RunCommand.VerifyWork command) {

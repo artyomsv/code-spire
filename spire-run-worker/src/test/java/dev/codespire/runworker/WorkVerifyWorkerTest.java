@@ -66,6 +66,7 @@ class WorkVerifyWorkerTest {
         worker.store = store;
         worker.runs = runs;
         worker.runtime = new Runtime();
+        worker.registry = new RunRegistry();
         worker.builder = new RunUnitBuilder() {
             @Override public VerifyUnitSpec verifyUnit(RunCommand.ExecuteWorkRun execution, RunCommand.VerifyWork verify) { return null; /* the fake runtime reads no topology */ }
         };
@@ -136,6 +137,22 @@ class WorkVerifyWorkerTest {
         };
         execute(command);
         assertTrue(only().passed(), "the live verify's own result stands");
+    }
+    /**
+     * Review of PR #184 (H-1): the orphan watchdog stops a held build nobody executes, and its stop reaches the
+     * verify container. The one exemption it never questions is a run this process executes.
+     */
+    @Test void aLiveVerifyIsExecutingUntilItEnds() {
+        List<Boolean> executingDuringCheck = new ArrayList<>();
+        worker.runtime = new Runtime() {
+            @Override public VerifyRun verifyHeld(RunHandle run, PublicationKey key, VerifyUnitSpec spec, BooleanSupplier mayContinue) {
+                executingDuringCheck.add(worker.registry.isExecuting(held.runId()));
+                return observation;
+            }
+        };
+        execute(command);
+        assertEquals(List.of(true), executingDuringCheck, "the watchdog must see the checked build as executing");
+        assertFalse(worker.registry.isExecuting(held.runId()), "a finished verify leaves no live run behind");
     }
     @Test void anUnacknowledgedResultStaysUnsentAndIsResent() {
         reportAccepted = false;
