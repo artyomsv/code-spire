@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { AlertTriangle, ListTodo } from 'lucide-react';
 import { getWorkItems, type WorkItemPage, type WorkWorkflowStatus } from '../../api';
+import { canAdminister } from '../../auth';
 import { formatEventTime } from '../../format';
+import { useMe } from '../../hooks/useMe';
+import { fetchWorkSources, rescanWorkSource } from './workSourcesApi';
 import { workReason } from './workReasons';
 import { FILTERS, filterById, nextAction } from './workJourney';
 import { useTicketTitles } from './useTicketTitles';
@@ -48,7 +51,8 @@ export default function WorkItems() {
   // A page remembers which filter and offset it answers, so a new filter never shows the old rows.
   const [loaded, setLoaded] = useState<{ key: string; page: WorkItemPage } | null>(null), [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true), [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(''), [scanning, setScanning] = useState(false);
+  const admin = canAdminister(useMe().me);
   const sequence = useRef(0);
   const inFlight = useRef(false);
   const viewKey = `${filter.id}:${offset}`;
@@ -85,6 +89,24 @@ export default function WorkItems() {
   const deciding = params.get('decide');
   function choose(id: string) { setOffset(0); setParams(id === 'all' ? {} : { filter: id }); }
   function without(key: string) { const next = new URLSearchParams(params); next.delete(key); setParams(next); }
+  // A source is re-read every 5 minutes unless a scan is requested, so Refresh asks for one first.
+  // The request only sets a flag; the scanner reads the tracker on its next sweep, about 30 seconds
+  // later, and the poll shows what it admitted. A failed request never stops the list re-reading.
+  // Only an admin may request a scan, so for a viewer Refresh re-reads the list alone.
+  async function refreshNow() {
+    if (admin) {
+      setScanning(true);
+      try {
+        const sources = (await fetchWorkSources()).filter(source => source.enabled);
+        const results = await Promise.allSettled(sources.map(source => rescanWorkSource(source.id)));
+        const failed = sources.filter((_source, index) => results[index].status === 'rejected').map(source => source.name);
+        setNotice(failed.length ? `Could not request a tracker scan of ${failed.join(', ')}. The list was re-read anyway.`
+          : sources.length ? 'Tracker scan requested. New tickets appear within about a minute.' : 'No enabled work source to scan.');
+      } catch (failure) { setNotice(`Could not request a tracker scan: ${String(failure)}. The list was re-read anyway.`); }
+      finally { setScanning(false); }
+    }
+    setRefresh(value => value + 1);
+  }
 
   return <section className="content"><div className="card">
     <div className="prov-head">
@@ -92,12 +114,13 @@ export default function WorkItems() {
       {updatedAt && <span className={error ? 'chip warn' : 'prov-sub'}>{error ? `Not updated since ${formatEventTime(updatedAt)}` : `Updated ${formatEventTime(updatedAt)}`}</span>}
       <div className="prov-actions">
         <button className="btn-ghost" type="button" onClick={() => setParams({ ...Object.fromEntries(params), history: '1' })}>Past decisions</button>
-        <button className="btn" type="button" disabled={loading} onClick={() => setRefresh(value => value + 1)}>{loading ? 'Refreshing…' : 'Refresh work items'}</button>
+        <button className="btn" type="button" disabled={loading || scanning} onClick={() => void refreshNow()}>{loading || scanning ? 'Refreshing…' : 'Refresh work items'}</button>
       </div>
     </div>
     {notice && <p className="prov-note" role="status">{notice}</p>}
-    <p className="prov-note">A labelled ticket is found by a scan that runs on a schedule (every 30 seconds by
-      default), then prepared. It can take a minute or two to appear here. This list refreshes by itself.</p>
+    <p className="prov-note">{admin
+      ? 'A labelled ticket is read from the tracker every 5 minutes, or within about 30 seconds when you press Refresh, then prepared. It can take a minute to appear here.'
+      : 'A labelled ticket is read from the tracker every 5 minutes, then prepared. It can take a few minutes to appear here.'} This list refreshes by itself.</p>
     {needs !== null && needs > 0 && <div className="attn" role="region" aria-label="Needs you">
       <AlertTriangle size={17} aria-hidden="true" />
       <span className="grow"><b>{needs === 1 ? '1 item needs you' : `${needs} items need you`}</b>

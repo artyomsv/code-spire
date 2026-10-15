@@ -7,6 +7,7 @@ import * as auth from '../../auth';
 import type { WorkItemDetail as Detail, WorkItemSummary } from '../../api';
 import * as approvalsApi from './approvalsApi';
 import * as preparationApi from './workPreparationApi';
+import * as sourcesApi from './workSourcesApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
 
@@ -237,6 +238,55 @@ it('shows a list failure and recovers when refreshed', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
   await screen.findByText('TEST-0');
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
+function source(id: string, enabled = true): sourcesApi.WorkSource {
+  return { id, name: `${id} name`, type: 'GITHUB', origin: 'https://github.example.test', projectId: 'TEST-project', scope: 'TEST-owner/TEST-repo',
+    repositoryId: 'TEST-repository', accountId: 'TEST-account', enabled, configuredEnabled: enabled, version: { source: 1, account: 1, repository: 1 },
+    cursor: null, health: 'healthy', allowedPeople: [], repository: { workspace: 'TEST-owner', slug: 'TEST-repo' } };
+}
+async function showAsAdmin() {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  await screen.findByText(/when you press Refresh/);
+  await screen.findByText('TEST-0');
+}
+
+// A source is re-read every 5 minutes; without a requested scan a new ticket waits that long.
+it('requests a scan of each enabled source and re-reads the list when refreshed', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+  vi.spyOn(sourcesApi, 'fetchWorkSources').mockResolvedValue([source('TEST-source-a'), source('TEST-source-off', false), source('TEST-source-b')]);
+  vi.spyOn(sourcesApi, 'rescanWorkSource').mockResolvedValue(undefined);
+  await showAsAdmin();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+  expect(sourcesApi.rescanWorkSource).toHaveBeenCalledTimes(2);
+  expect(sourcesApi.rescanWorkSource).toHaveBeenCalledWith('TEST-source-a');
+  expect(sourcesApi.rescanWorkSource).toHaveBeenCalledWith('TEST-source-b');
+  expect(screen.getByRole('status')).toHaveTextContent('Tracker scan requested.');
+});
+
+it('re-reads the list and says so when a scan request fails', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+  vi.spyOn(sourcesApi, 'fetchWorkSources').mockResolvedValue([source('TEST-source-a'), source('TEST-source-b')]);
+  vi.spyOn(sourcesApi, 'rescanWorkSource').mockImplementation(async id => { if (id === 'TEST-source-a') throw new Error('TEST-scan refused'); });
+  await showAsAdmin();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+  expect(sourcesApi.rescanWorkSource).toHaveBeenCalledWith('TEST-source-b');
+  expect(await screen.findByRole('status')).toHaveTextContent('Could not request a tracker scan of TEST-source-a name.');
+  expect(screen.getByText('TEST-0')).toBeInTheDocument();
+});
+
+// A viewer may not request a scan, so Refresh re-reads the list without asking for one.
+it('only re-reads the list for a viewer', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
+  vi.spyOn(sourcesApi, 'fetchWorkSources').mockResolvedValue([source('TEST-source-a')]);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+  expect(sourcesApi.fetchWorkSources).not.toHaveBeenCalled();
 });
 
 // A read with no visible progress reads as a dead button; the label carries the state.
