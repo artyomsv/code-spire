@@ -8,7 +8,9 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.InlineAnchor;
+import dev.codespire.contract.scm.PostedReview;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ReviewSubmission;
 import dev.codespire.contract.scm.Side;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
@@ -18,10 +20,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * GitHub write adapter (SCM-MAPPING §4-§6). The PR summary is an ISSUE comment;
- * inline review comments go on the pulls endpoint and require {@code commit_id}
+ * GitHub write adapter (SCM-MAPPING §4-§6). On the legacy path the PR summary is an ISSUE comment; on
+ * the native path it is the body of a pull request review (ADR-047, {@link GitHubReviewApi}).
+ * Inline review comments go on the pulls endpoint and require {@code commit_id}
  * (the head SHA), {@code path}, {@code line} and {@code side} (RIGHT = NEW,
  * LEFT = OLD). {@link ThreadRef} carries the review-comment id — replies POST to
  * {@code .../comments/{id}/replies}.
@@ -48,6 +52,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
 
     private final GitHubClient client;
     private final String brokeredBotLogin;
+    private final GitHubReviewApi reviews;
 
     public GitHubCommentSink(GitHubClient client) {
         this(client, null);
@@ -61,6 +66,27 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     public GitHubCommentSink(GitHubClient client, String botLogin) {
         this.client = client;
         this.brokeredBotLogin = botLogin;
+        this.reviews = new GitHubReviewApi(client);
+    }
+
+    @Override
+    public Optional<PostedReview> findReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return reviews.find(repo, prId, headCommit, review, botLogin());
+    }
+
+    @Override
+    public Optional<PostedReview> postReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return Optional.of(reviews.post(repo, prId, headCommit, review));
+    }
+
+    @Override
+    public void updateReviewBody(RepoRef repo, long prId, String reviewRef, String bodyMd) {
+        reviews.updateBody(repo, prId, reviewRef, bodyMd);
+    }
+
+    @Override
+    public Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
+        return reviews.dismissChangesRequested(repo, prId, botLogin(), message);
     }
 
     @Override
