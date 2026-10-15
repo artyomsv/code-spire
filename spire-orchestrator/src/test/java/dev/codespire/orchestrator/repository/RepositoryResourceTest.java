@@ -41,6 +41,18 @@ class RepositoryResourceTest extends RepositoryFixture {
         assertNull(repositories.get(repo.id()).orElseThrow().reviewer());
     }
 
+    /** ADR-047: on by default, stored through update, read back by the saga; a missing row is empty. */
+    @Test void reviewerMayApproveDefaultsOnAndRoundTripsThroughUpdate() {
+        String id = given().contentType("application/json").body(repository(null, null)).post("/api/repositories")
+                .then().statusCode(201).body("reviewerMayApprove", equalTo(true)).extract().path("id");
+        given().contentType("application/json")
+                .body(new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, false))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200).body("reviewerMayApprove", equalTo(false));
+        given().get("/api/repositories/" + id).then().statusCode(200).body("reviewerMayApprove", equalTo(false));
+        assertEquals(java.util.Optional.of(false), repositories.reviewerMayApprove(UUID.fromString(id)));
+        assertTrue(repositories.reviewerMayApprove(UUID.randomUUID()).isEmpty(), "a missing row is empty, never a default");
+    }
+
     @Test void duplicateCoordinatesCannotCreateSecondRepository() {
         repositories.create(repository(null, null));
         given().contentType("application/json").body(repository(null, null)).post("/api/repositories").then().statusCode(409);
