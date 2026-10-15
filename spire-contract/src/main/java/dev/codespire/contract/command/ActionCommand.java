@@ -200,7 +200,7 @@ public sealed interface ActionCommand {
          */
         public PostComments withSuppressedCount(int replacement) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove);
+                    priorSummaryRef, replacement, null, verdict, reviewerMayApprove);
         }
 
         /** The orchestrator's decision (ADR-047 D4), enumerated once, next to the record. */
