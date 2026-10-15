@@ -3,9 +3,12 @@ package dev.codespire.orchestrator.readmodel;
 import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -44,7 +47,76 @@ class ReviewProjectionTest {
     @Inject
     ReviewThreadView threads;
 
+    @Inject
+    com.fasterxml.jackson.databind.ObjectMapper mapper;
+
     private static final RepoRef REPO = new RepoRef("acme", "web");
+
+    // --- the posted verdict and the open-blocker count (ADR-047) ---
+
+    private String completedReview(long pr, List<Finding> findings) {
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "cafe123", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        ReviewResult result = new ReviewResult(findings, "TEST summary", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOutcome(id, result, ReviewProjection.STAGE_DONE);
+        return id;
+    }
+
+    @Test
+    void openBlockersMatchesDetailOpenBlockers() {
+        // No BLOCKER in this run's findings_json: the only open blocker is a prior-round one still open in
+        // reconciliation_json. A count that reads findings_json alone answers 0 and fails here.
+        long pr = 4201L;
+        String id = completedReview(pr, List.of(
+                new Finding("src/A.java", new LineRange(3, 3), Severity.MINOR, "TEST minor", null)));
+        PriorFinding priorBlocker = new PriorFinding("src/B.java", 8, Severity.BLOCKER, "TEST prior blocker", "t-prior");
+        projection.recordReconciliation(id,
+                List.of(new FindingVerdict("t-prior", "src/B.java", 8, FindingVerdict.Status.STILL_OPEN, "TEST still open")),
+                List.of(priorBlocker));
+
+        int fromDetail = projection.loadDetail("acme", "web", pr).orElseThrow().openBlockers();
+        assertEquals(1, fromDetail, "the still-open prior blocker is open");
+        assertEquals(fromDetail, projection.openBlockers(id), "one rule for GitHub and the land gate (D1)");
+        assertEquals(0, projection.openBlockers("review::acme/web#0"), "a missing row has no blockers");
+    }
+
+    @Test
+    void recordPostedVerdictIsReadBackBySummaryAndDetail() {
+        long pr = 4202L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.REQUEST_CHANGES, "501");
+
+        ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertEquals("changes_requested", detail.postedVerdict());
+        assertEquals("https://x/pr/" + pr + "#pullrequestreview-501", detail.reviewUrl());
+        ReviewSummary summary = projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow();
+        assertEquals("changes_requested", summary.postedVerdict());
+        assertEquals(detail.reviewUrl(), summary.reviewUrl());
+    }
+
+    @Test
+    void aSupersededRunsVerdictIsNotRecorded() {
+        long pr = 4203L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "0ld0ld", ReviewVerdict.APPROVE, "777");
+        assertNull(projection.loadDetail("acme", "web", pr).orElseThrow().postedVerdict(),
+                "a CommentsPosted for an older commit cannot stamp the current head (same guard as recordPosted)");
+    }
+
+    @Test
+    void postedVerdictAndReviewUrlSerializeOnBothRecords() throws Exception {
+        long pr = 4204L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9");
+        var detail = mapper.readTree(mapper.writeValueAsString(projection.loadDetail("acme", "web", pr).orElseThrow()));
+        var summary = mapper.readTree(mapper.writeValueAsString(
+                projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow()));
+        for (var record : List.of(detail, summary)) {
+            assertEquals("approved", record.path("postedVerdict").asText(), record.toString());
+            assertTrue(record.path("reviewUrl").asText().endsWith("#pullrequestreview-9"), record.toString());
+        }
+    }
 
     @Test
     void registersAndListsAReview() {
