@@ -263,7 +263,7 @@ public class ResultSaga {
                 // snapshot inconsistent with findings_json, which may already hold the
                 // newer run's findings.
                 projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
-                if (e.postedVerdict() != null) {
+                if (true) {
                     projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef(), e.reviewUrl());
                 }
             }
