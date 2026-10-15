@@ -135,6 +135,20 @@ class GitHubReviewSinkTest {
     }
 
     @Test
+    void aCommentWhoseLineMovedIsMatchedOnItsOriginalLine() {
+        // GitHub nulls `line` once the head moves past the comment and keeps `original_line`; the
+        // anchor was resolved against the reviewed head, so the original is the one to match.
+        stubCreated(505);
+        stubComments(505, """
+                [ {"id":9006,"path":"src/A.java","line":null,"original_line":12,"side":"RIGHT","start_line":null,"original_start_line":null},
+                  {"id":9007,"path":"src/B.java","line":null,"original_line":8,"side":"RIGHT","start_line":null,"original_start_line":5} ]
+                """);
+        PostedReview posted = sink.postReview(REPO, 42, HEAD, new ReviewSubmission(ReviewVerdict.APPROVE, BODY,
+                List.of(single("src/A.java", 12), ranged("src/B.java", 5, 8)))).orElseThrow();
+        assertEquals(Map.of("src/A.java:12:NEW", "9006", "src/B.java:5:NEW", "9007"), posted.inlineThreads());
+    }
+
+    @Test
     void aSelfAuthoredRefusalRaisesVerdictRefused() {
         server.stubFor(post(urlEqualTo(REVIEWS)).willReturn(aResponse().withStatus(422)
                 .withBody("{\"message\":\"Can not approve your own pull request\"}")));

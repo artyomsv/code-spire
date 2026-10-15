@@ -391,6 +391,23 @@ class ReviewWorkerTest {
     }
 
     @Test
+    void aCrashAfterABodyOnlyPostFallsBackToInline() {
+        // The first attempt took the D7 ladder (a body-only review) and died before the mark. The
+        // redelivery finds that review with no inline comment for the finding: the finding is posted
+        // one by one, not reported as failed, and the body is updated as the ladder would have done.
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(), "https://forge.example.test/TEST/rv-9"));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the found review is reused");
+        assertEquals(List.of("inline", "body"), sink.calls);
+        assertEquals(1, lastCommentsPosted().inline().size());
+        assertEquals("c-100", lastCommentsPosted().inline().getFirst().threadRef());
+        assertFalse(sink.updatedReviewBodies.getFirst().contains("Could not be posted inline"), "nothing failed");
+    }
+
+    @Test
     void theSettingOffVerdictLineIsInTheBody() {
         sink.nativeReviews = true;
         worker.postComments(nativeCommand(List.of(), ReviewVerdict.APPROVE, false));

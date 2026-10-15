@@ -105,6 +105,20 @@ class ReviewProjectionTest {
     }
 
     @Test
+    void aNewHeadClearsThePostedVerdict() {
+        // The commit guard protects the write; the read needs the same care. A second push registers a
+        // new run on the same row, and "Posted as Approved" under "reviewing" would read as this head's.
+        long pr = 4205L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9", "https://x/TEST-review-9");
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "d0d0d0", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertNull(detail.postedVerdict(), "a new head has no posted verdict yet");
+        assertNull(detail.reviewUrl());
+    }
+
+    @Test
     void postedVerdictAndReviewUrlSerializeOnBothRecords() throws Exception {
         long pr = 4204L;
         String id = completedReview(pr, List.of());
