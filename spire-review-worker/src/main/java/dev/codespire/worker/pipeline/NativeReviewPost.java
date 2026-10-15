@@ -200,7 +200,6 @@ final class NativeReviewPost {
                 }
                 LOG.infof("review %s: the forge refused %s — posting as COMMENT with the verdict in words",
                         command.reviewId(), posting);
-                refused = true;
                 posting = ReviewVerdict.COMMENT;
             } catch (CommentSink.ReviewAnchorRejected e) {
                 if (bodyOnly) {
