@@ -618,7 +618,7 @@ public class ReviewWorker {
      */
     private static void recoverPreviouslyPosted(Map<String, String> previouslyPosted, List<CommentsPosted.PostedInline> posted) {
         previouslyPosted.forEach((key, ref) -> {
-            if (!SUMMARY_KEY.equals(key) && !NativeReviewPost.REVIEW_KEY.equals(key) && !LLM_KEY.equals(key)
+            if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key)
                     && !RECONCILE_KEY.equals(key) && !key.startsWith("reply:") && !key.startsWith("resolve:")
                     && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
                 posted.add(new CommentsPosted.PostedInline(ref, key, 0));
