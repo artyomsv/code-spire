@@ -45,5 +45,10 @@ public record ReviewSummary(
          *  symptom was observed: a run that reviewed nothing rendered as done with no findings,
          *  byte-identical to a clean pass. An attention row and a detail note do not fix the
          *  surface the operator was actually looking at. */
-        boolean degraded) {
+        boolean degraded,
+        /** How the last posted run's verdict was posted on the forge (ADR-047): {@code approved},
+         *  {@code changes_requested}, {@code commented}, or null on the legacy path and other forges. */
+        String postedVerdict,
+        /** The forge's link to that review, or null. */
+        String reviewUrl) {
 }
