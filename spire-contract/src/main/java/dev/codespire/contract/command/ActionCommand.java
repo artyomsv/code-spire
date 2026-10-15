@@ -9,6 +9,7 @@ import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -146,11 +147,17 @@ public sealed interface ActionCommand {
      * Findings inline — same ReviewResult as ReviewGenerated (ADR-011). On a follow-up review the
      * verdicts drive thread replies/resolves (ADR-019) and priorSummaryRef is the summary comment
      * to update in place; both empty/null on a first review.
+     *
+     * <p>{@code assessment} is what the findings say (ADR-047 D4), {@code verdict} what the worker posts,
+     * {@code reviewerMayApprove} the repository setting the orchestrator applied: {@code verdict} is
+     * always {@code reviewerMayApprove ? assessment : COMMENT}. All three null means "post as before"
+     * (D10) — a command recorded before the fields existed, or a forge with no native review.
      */
     record PostComments(String reviewId, RepoRef repo, long prId, String commit,
                         ReviewResult findings, String scmCredential,
                         List<FindingVerdict> verdicts, String priorSummaryRef,
-                        int suppressedCount) implements ActionCommand {
+                        int suppressedCount, ReviewVerdict assessment, ReviewVerdict verdict,
+                        Boolean reviewerMayApprove) implements ActionCommand {
 
         public PostComments {
             verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
@@ -158,13 +165,21 @@ public sealed interface ActionCommand {
 
         public PostComments(String reviewId, RepoRef repo, long prId, String commit,
                             ReviewResult findings, String scmCredential) {
-            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null, 0);
+            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null, 0, null, null, null);
         }
 
         public PostComments(String reviewId, RepoRef repo, long prId, String commit,
                             ReviewResult findings, String scmCredential,
                             List<FindingVerdict> verdicts, String priorSummaryRef) {
-            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef, 0);
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef, 0, null, null, null);
+        }
+
+        /** Call sites and in-flight records from before the verdict fields existed (D10). */
+        public PostComments(String reviewId, RepoRef repo, long prId, String commit,
+                            ReviewResult findings, String scmCredential,
+                            List<FindingVerdict> verdicts, String priorSummaryRef, int suppressedCount) {
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef,
+                    suppressedCount, null, null, null);
         }
 
         /**
@@ -185,7 +200,13 @@ public sealed interface ActionCommand {
          */
         public PostComments withSuppressedCount(int replacement) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, replacement);
+                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove);
+        }
+
+        /** The orchestrator's decision (ADR-047 D4), enumerated once, next to the record. */
+        public PostComments withVerdict(ReviewVerdict assessment, ReviewVerdict verdict, boolean reviewerMayApprove) {
+            return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove);
         }
     }
 
