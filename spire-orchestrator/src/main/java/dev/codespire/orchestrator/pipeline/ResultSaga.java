@@ -70,6 +70,13 @@ public class ResultSaga {
     @Inject
     ReviewProjection projection;
 
+    /** The "reviewer may approve" setting and the reviewer identity the verdict decision reads (ADR-047). */
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+
     @Inject
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
 
@@ -256,6 +263,9 @@ public class ResultSaga {
                 // snapshot inconsistent with findings_json, which may already hold the
                 // newer run's findings.
                 projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
+                if (e.postedVerdict() != null) {
+                    projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef());
+                }
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
@@ -393,9 +403,23 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), visible.findings().size(),
                 Integer.toHexString(visible.summary().hashCode())));
+        ReviewVerdictDecision.Decision decision = decideVerdict(e.reviewId(), visible);
+        projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
                 e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
-                e.verdicts(), priorSummaryRef, filtered.suppressedCount()));
+                e.verdicts(), priorSummaryRef, filtered.suppressedCount())
+                .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove()));
+    }
+
+    /**
+     * ADR-047 D4: decided here because the projection's open-blocker count is what the land gate reads,
+     * and it is already right at this point (recordOpenFindings ran above).
+     */
+    private ReviewVerdictDecision.Decision decideVerdict(String reviewId, ReviewResult visible) {
+        java.util.Optional<java.util.UUID> repositoryId = projection.repositoryIdOf(reviewId);
+        java.util.Optional<Boolean> setting = repositoryId.flatMap(repositories::reviewerMayApprove);
+        boolean identityKnown = repositoryId.map(repositoryAccounts::reviewerIdentityKnown).orElse(false);
+        return ReviewVerdictDecision.decide(visible.degraded(), projection.openBlockers(reviewId), setting, identityKnown);
     }
 
     /**
