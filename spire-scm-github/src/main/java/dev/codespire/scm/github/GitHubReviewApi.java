@@ -183,7 +183,7 @@ final class GitHubReviewApi {
         JsonNode latest = null;
         for (JsonNode row : walkReviews(repo, prId)) {
             if (botLogin.equals(row.path("user").path("login").asText(""))
-                    && STATE_REVIEWS.contains(row.path("state").asText(""))) {
+                    ) {
                 latest = row;
             }
         }
