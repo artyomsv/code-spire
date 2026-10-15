@@ -37,10 +37,7 @@ public final class ReviewVerdictDecision {
                 : openBlockers > 0 ? ReviewVerdict.REQUEST_CHANGES : ReviewVerdict.APPROVE;
         String reason = degraded ? REASON_DEGRADED : openBlockers > 0 ? "open_blockers=" + openBlockers : REASON_NO_BLOCKERS;
         boolean mayApprove = true;
-        if (setting.isEmpty()) {
-            mayApprove = false;
-            reason = REASON_REPOSITORY_UNKNOWN;
-        } else if (!setting.get()) {
+        if (!setting.orElse(true)) {
             mayApprove = false;
             reason = REASON_SETTING_OFF;
         } else if (!reviewerIdentityKnown) {
