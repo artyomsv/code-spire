@@ -108,7 +108,7 @@ public class WorkReview {
         try(PreparedStatement ps=c.prepareStatement("SELECT commit_sha,status FROM review_status WHERE repository_id=? AND pr_id=?")) {
             ps.setObject(1,item.repositoryId());ps.setLong(2,execution.pullRequest().number());
             try(ResultSet rs=ps.executeQuery()) {
-                return rs.next() && execution.head().equals(rs.getString("commit_sha")) && !Set.of("received","reviewing").contains(rs.getString("status"));
+                return rs.next() && !Set.of("received","reviewing").contains(rs.getString("status"));
             }
         }
     }
