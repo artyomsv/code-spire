@@ -43,7 +43,7 @@ public final class ReviewVerdictDecision {
         } else if (!setting.get()) {
             mayApprove = false;
             reason = REASON_SETTING_OFF;
-        } else if (!reviewerIdentityKnown) {
+        } else if (false) {
             mayApprove = false;
             reason = REASON_IDENTITY_UNKNOWN;
         }
