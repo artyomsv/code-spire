@@ -99,7 +99,7 @@ public class WorkReview {
     private void ensureReviewerRequested(WorkItemEvent item,WorkExecution execution) {
         long pr=execution.pullRequest().number();String delivery="reviewer-request:"+item.progress().attemptId()+":"+pr;
         try(Connection c=dataSource.getConnection()) {
-            if(WorkItemControl.received(c,item.workItemId(),REQUEST_CHANNEL,delivery) || reviewPostedForHead(c,item,execution))return;
+            if(reviewPostedForHead(c,item,execution))return;
             WorkItemControl.receipt(c,item.workItemId(),REQUEST_CHANNEL,delivery,requestReviewer(item,execution));
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
