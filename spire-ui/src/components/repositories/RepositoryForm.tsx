@@ -23,7 +23,7 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
     scmType: initial?.scmType ?? prefill.get('scmType') ?? '', forgeOrigin: initial?.forgeOrigin ?? prefill.get('forgeOrigin') ?? '',
     workspace: initial?.workspace ?? prefill.get('workspace') ?? '', slug: initial?.slug ?? prefill.get('slug') ?? '', enabled: initial?.enabled ?? true,
     reviewerAccountId: initial?.reviewer?.id ?? null, factoryAccountId: initial?.factory?.id ?? null,
-    reviewerMayApprove: initial?.reviewerMayApprove ?? true,
+    reviewerMayApprove: initial?.reviewerMayApprove ?? false,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
