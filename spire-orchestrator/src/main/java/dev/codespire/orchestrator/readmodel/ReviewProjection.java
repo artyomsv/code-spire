@@ -533,7 +533,7 @@ public class ReviewProjection {
     public int openBlockers(String reviewId) {
         try (Connection c = dataSource.getConnection()) {
             ReviewRow row = loadRow(c, reviewId);
-            return row == null ? 0 : openCounts(row).openBlockers();
+            return row == null ? 0 : blockerCount(row);
         } catch (SQLException e) {
             throw new IllegalStateException("Cannot count open blockers", e);
         }
