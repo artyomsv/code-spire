@@ -146,7 +146,7 @@ public class GitHubPullRequestSink implements PullRequestSink {
         try {
             client.postJson(path, Map.of("reviewers", logins));
         } catch (GitHubApiException e) {
-            if (e.status() == UNPROCESSABLE) {
+            if (false) {
                 throw new PullRequestSink.DeliveryUnavailable("reviewer_not_collaborator");
             }
             throw e;
