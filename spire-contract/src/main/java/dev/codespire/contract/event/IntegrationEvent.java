@@ -288,13 +288,13 @@ public sealed interface IntegrationEvent {
     }
 
     /**
-     * {@code postedVerdict} and {@code reviewRef} are set only when a forge-native review was posted
-     * (ADR-047): the verdict the forge holds and its review id. Null on the legacy path and on every
-     * record from before the fields existed.
+     * {@code postedVerdict}, {@code reviewRef} and {@code reviewUrl} are set only when a forge-native
+     * review was posted (ADR-047): the verdict the forge holds, its review id, and the forge's own link
+     * to it. Null on the legacy path and on every record from before the fields existed.
      */
     record CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
                           List<PostedInline> inline, List<ThreadOutcome> threadOutcomes,
-                          ReviewVerdict postedVerdict, String reviewRef) implements IntegrationEvent {
+                          ReviewVerdict postedVerdict, String reviewRef, String reviewUrl) implements IntegrationEvent {
 
         public CommentsPosted {
             inline = inline == null ? null : List.copyOf(inline);
@@ -326,13 +326,13 @@ public sealed interface IntegrationEvent {
         /** Call sites and records from before the posted-review fields existed. */
         public CommentsPosted(String reviewId, long prId, String commit, String summaryThreadRef,
                               List<PostedInline> inline, List<ThreadOutcome> threadOutcomes) {
-            this(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes, null, null);
+            this(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes, null, null, null);
         }
 
         /** What the forge now holds, enumerated once, next to the record. */
-        public CommentsPosted withPostedReview(ReviewVerdict postedVerdict, String reviewRef) {
+        public CommentsPosted withPostedReview(ReviewVerdict postedVerdict, String reviewRef, String reviewUrl) {
             return new CommentsPosted(reviewId, prId, commit, summaryThreadRef, inline, threadOutcomes,
-                    postedVerdict, reviewRef);
+                    postedVerdict, reviewRef, reviewUrl);
         }
     }
 

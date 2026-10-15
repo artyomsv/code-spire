@@ -264,7 +264,7 @@ public class ResultSaga {
                 // newer run's findings.
                 projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
                 if (e.postedVerdict() != null) {
-                    projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef());
+                    projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef(), e.reviewUrl());
                 }
             }
             case FollowUpGenerated e -> {
@@ -417,8 +417,11 @@ public class ResultSaga {
      */
     private ReviewVerdictDecision.Decision decideVerdict(String reviewId, ReviewResult visible) {
         java.util.Optional<java.util.UUID> repositoryId = projection.repositoryIdOf(reviewId);
-        java.util.Optional<Boolean> setting = repositoryId.flatMap(repositories::reviewerMayApprove);
-        boolean identityKnown = repositoryId.map(repositoryAccounts::reviewerIdentityKnown).orElse(false);
+        // Lambdas, not method references: a method reference dereferences its receiver when it is
+        // built, so an empty repository id would still touch the registries (and a test fake that
+        // never set them would throw before the decision ran).
+        java.util.Optional<Boolean> setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id));
+        boolean identityKnown = repositoryId.map(id -> repositoryAccounts.reviewerIdentityKnown(id)).orElse(false);
         return ReviewVerdictDecision.decide(visible.degraded(), projection.openBlockers(reviewId), setting, identityKnown);
     }
 

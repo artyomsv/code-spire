@@ -584,7 +584,7 @@ public class ReviewWorker {
                     recoverPreviouslyPosted(previouslyPosted, posted);
                     results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                             NativeReviewPost.REF_PREFIX + outcome.reviewRef(), posted, outcomes)
-                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef()));
+                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl()));
                     return;
                 }
             }

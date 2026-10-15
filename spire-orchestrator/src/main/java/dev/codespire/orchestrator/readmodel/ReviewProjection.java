@@ -516,15 +516,16 @@ public class ReviewProjection {
     }
 
     /** Same commit guard as {@link #recordPosted}: a superseded run's event cannot stamp the newer head (ADR-047). */
-    public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef) {
+    public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
         update("""
-                UPDATE review_status SET posted_verdict = ?, posted_review_ref = ?, updated_at = now()
+                UPDATE review_status SET posted_verdict = ?, posted_review_ref = ?, posted_review_url = ?, updated_at = now()
                  WHERE review_id = ? AND commit_sha = ?
                 """, ps -> {
             ps.setString(1, verdict.name());
             ps.setString(2, reviewRef);
-            ps.setString(3, reviewId);
-            ps.setString(4, commit);
+            ps.setString(3, reviewUrl);
+            ps.setString(4, reviewId);
+            ps.setString(5, commit);
         });
     }
 
@@ -2085,7 +2086,7 @@ public class ReviewProjection {
                              String findingsJson, String openFindingsJson, String reconciliationJson,
                              String note, String errorDetail, int attempt, Instant createdAt,
                              Instant updatedAt, String prState, Instant archivedAt,
-                             boolean degraded, String postedVerdict, String postedReviewRef) {
+                             boolean degraded, String postedVerdict, String postedReviewRef, String postedReviewUrl) {
         ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
@@ -2108,12 +2109,9 @@ public class ReviewProjection {
         };
     }
 
-    /** GitHub links a review as a fragment of the pull request page. Other forges have no link yet. */
+    /** The forge's own link to the posted review, as the adapter reported it; null when none was posted. */
     static String reviewUrl(ReviewRow row) {
-        if (row.postedReviewRef() == null || row.htmlUrl() == null || !"github".equals(row.providerType())) {
-            return null;
-        }
-        return row.htmlUrl() + "#pullrequestreview-" + row.postedReviewRef();
+        return row.postedReviewRef() == null ? null : row.postedReviewUrl();
     }
 
     private ReviewRow loadRow(Connection c, String reviewId) throws SQLException {
@@ -2321,7 +2319,8 @@ public class ReviewProjection {
                 rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
                 rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")),
-                rs.getBoolean("degraded"), rs.getString("posted_verdict"), rs.getString("posted_review_ref"));
+                rs.getBoolean("degraded"), rs.getString("posted_verdict"), rs.getString("posted_review_ref"),
+                rs.getString("posted_review_url"));
     }
 
     /** NULL means live, so it must stay null — {@code getTimestamp} yields null and only the

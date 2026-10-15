@@ -43,7 +43,7 @@ final class NativeReviewPost {
         String render(List<Finding> unanchored, List<Finding> failed);
     }
 
-    record Outcome(String reviewRef, ReviewVerdict postedVerdict, List<CommentsPosted.PostedInline> inline) {
+    record Outcome(String reviewRef, ReviewVerdict postedVerdict, List<CommentsPosted.PostedInline> inline, String reviewUrl) {
     }
 
     private record Anchored(InlineAnchor anchor, List<Finding> findings) {
@@ -115,7 +115,7 @@ final class NativeReviewPost {
         if (Boolean.FALSE.equals(command.reviewerMayApprove())) {
             dismissQuietly(review.reviewRef());
         }
-        return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline));
+        return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
     }
 
     private Map<String, Anchored> resolveAnchors(List<Finding> unanchored) {

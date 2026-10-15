@@ -62,7 +62,8 @@ final class GitHubReviewApi {
         if (id.isBlank()) {
             throw new GitHubApiException(200, "POST", path, "2xx response carried no review id");
         }
-        return new PostedReview(id, review.verdict(), readBack(repo, prId, id, review.comments()));
+        return new PostedReview(id, review.verdict(), readBack(repo, prId, id, review.comments()),
+                created.path("html_url").asText(null));
     }
 
     /** The per-comment mapping {@code GitHubCommentSink.postInline} uses, without {@code commit_id} (top-level). */
@@ -156,7 +157,7 @@ final class GitHubReviewApi {
         }
         String id = found.path("id").asText();
         return Optional.of(new PostedReview(id, verdictOf(found.path("state").asText("")),
-                readBack(repo, prId, id, review.comments())));
+                readBack(repo, prId, id, review.comments()), found.path("html_url").asText(null)));
     }
 
     static ReviewVerdict verdictOf(String state) {
