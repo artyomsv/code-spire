@@ -88,8 +88,8 @@ class ResultSagaVerdictTest {
     @Test
     void commentsPostedWithAVerdictRecordsIt() {
         saga().on(new CommentsPosted(REVIEW_ID, 412L, COMMIT, "review:501", List.of(), List.of())
-                .withPostedReview(ReviewVerdict.APPROVE, "501"));
-        assertEquals(List.of("APPROVE:501:" + COMMIT), recordedVerdicts);
+                .withPostedReview(ReviewVerdict.APPROVE, "501", "https://forge.example.test/TEST/501"));
+        assertEquals(List.of("APPROVE:501:" + COMMIT + ":https://forge.example.test/TEST/501"), recordedVerdicts);
     }
 
     @Test
@@ -193,8 +193,8 @@ class ResultSagaVerdictTest {
             }
 
             @Override
-            public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef) {
-                recordedVerdicts.add(verdict + ":" + reviewRef + ":" + commit);
+            public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
+                recordedVerdicts.add(verdict + ":" + reviewRef + ":" + commit + ":" + reviewUrl);
             }
         };
         saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {

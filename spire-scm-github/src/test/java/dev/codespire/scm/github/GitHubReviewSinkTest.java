@@ -72,8 +72,13 @@ class GitHubReviewSinkTest {
         return new InlineComment(new InlineAnchor(path, path, oldLine, null, Side.OLD), "TEST removed");
     }
 
+    private static String reviewLink(int id) {
+        return "https://forge.example.test/TEST-owner/TEST-repo/pull/42#pullrequestreview-" + id;
+    }
+
     private void stubCreated(int id) {
-        server.stubFor(post(urlEqualTo(REVIEWS)).willReturn(okJson("{\"id\":" + id + ",\"state\":\"APPROVED\"}")));
+        server.stubFor(post(urlEqualTo(REVIEWS)).willReturn(okJson(
+                "{\"id\":" + id + ",\"state\":\"APPROVED\",\"html_url\":\"" + reviewLink(id) + "\"}")));
     }
 
     private void stubComments(int id, String json) {
@@ -104,6 +109,7 @@ class GitHubReviewSinkTest {
                 .withRequestBody(matchingJsonPath("$.comments[1].start_line", equalTo("5")))
                 .withRequestBody(matchingJsonPath("$.comments[1].line", equalTo("8"))));
         assertEquals("501", posted.reviewRef());
+        assertEquals(reviewLink(501), posted.reviewUrl(), "the forge's own link, so the core never composes one");
         assertEquals(ReviewVerdict.APPROVE, posted.verdict());
         assertEquals(Map.of("src/A.java:12:NEW", "9001", "src/B.java:5:NEW", "9002"), posted.inlineThreads(),
                 "a ranged comment is matched on start_line, not line");
@@ -182,12 +188,13 @@ class GitHubReviewSinkTest {
         stubReviews("""
                 [ {"id":61,"state":"APPROVED","commit_id":"%s","body":"%s\\n\\nx","user":{"login":"TEST-human"}},
                   {"id":62,"state":"CHANGES_REQUESTED","commit_id":"%s","body":"%s\\n\\nold","user":{"login":"TEST-bot"}},
-                  {"id":63,"state":"CHANGES_REQUESTED","commit_id":"%s","body":"%s\\n\\nnew","user":{"login":"TEST-bot"}} ]
-                """.formatted(HEAD, HEADER, OLD_HEAD, olderHeader, HEAD, HEADER));
+                  {"id":63,"state":"CHANGES_REQUESTED","commit_id":"%s","body":"%s\\n\\nnew","user":{"login":"TEST-bot"},"html_url":"%s"} ]
+                """.formatted(HEAD, HEADER, OLD_HEAD, olderHeader, HEAD, HEADER, reviewLink(63)));
         stubComments(63, "[ {\"id\":9005,\"path\":\"src/A.java\",\"line\":12,\"side\":\"RIGHT\"} ]");
         PostedReview found = sink.findReview(REPO, 42, HEAD,
                 new ReviewSubmission(ReviewVerdict.APPROVE, BODY, List.of(single("src/A.java", 12)))).orElseThrow();
         assertEquals("63", found.reviewRef(), "another user's review and the bot's review of an older head are not it");
+        assertEquals(reviewLink(63), found.reviewUrl());
         assertEquals(ReviewVerdict.REQUEST_CHANGES, found.verdict(), "the verdict is what the forge holds");
         assertEquals(Map.of("src/A.java:12:NEW", "9005"), found.inlineThreads());
     }

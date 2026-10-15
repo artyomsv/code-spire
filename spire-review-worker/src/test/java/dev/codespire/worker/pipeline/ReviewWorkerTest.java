@@ -299,6 +299,7 @@ class ReviewWorkerTest {
         CommentsPosted posted = lastCommentsPosted();
         assertEquals("review:rv-100", posted.summaryThreadRef());
         assertEquals("rv-100", posted.reviewRef());
+        assertEquals("https://forge.example.test/TEST/rv-100", posted.reviewUrl(), "the forge's link rides the event");
         assertEquals(ReviewVerdict.APPROVE, posted.postedVerdict());
         assertEquals(1, posted.inline().size());
         assertEquals("src/A.java", posted.inline().getFirst().path());
@@ -1284,7 +1285,7 @@ class ReviewWorkerTest {
             for (ReviewSubmission.InlineComment comment : review.comments()) {
                 threads.putIfAbsent(comment.anchor().anchorKey(), "c-" + ids++);
             }
-            return Optional.of(new PostedReview(id, review.verdict(), threads));
+            return Optional.of(new PostedReview(id, review.verdict(), threads, "https://forge.example.test/TEST/" + id));
         }
 
         @Override

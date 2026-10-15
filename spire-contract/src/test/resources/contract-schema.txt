@@ -1,7 +1,7 @@
 # IntegrationEvent
 ArchivedNotified(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 AuthorReplied(repo: dev.codespire.contract.scm.RepoRef, prId: long, reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String, text: java.lang.String, author: dev.codespire.contract.scm.Author, topLevel: boolean, mentions: java.util.List<java.lang.String>, location: dev.codespire.contract.scm.ThreadLocation)
-CommentsPosted(reviewId: java.lang.String, prId: long, commit: java.lang.String, summaryThreadRef: java.lang.String, inline: java.util.List<dev.codespire.contract.event.IntegrationEvent$CommentsPosted$PostedInline>, threadOutcomes: java.util.List<dev.codespire.contract.event.IntegrationEvent$CommentsPosted$ThreadOutcome>, postedVerdict: dev.codespire.contract.review.ReviewVerdict, reviewRef: java.lang.String)
+CommentsPosted(reviewId: java.lang.String, prId: long, commit: java.lang.String, summaryThreadRef: java.lang.String, inline: java.util.List<dev.codespire.contract.event.IntegrationEvent$CommentsPosted$PostedInline>, threadOutcomes: java.util.List<dev.codespire.contract.event.IntegrationEvent$CommentsPosted$ThreadOutcome>, postedVerdict: dev.codespire.contract.review.ReviewVerdict, reviewRef: java.lang.String, reviewUrl: java.lang.String)
 ContextAssembled(reviewId: java.lang.String, prId: long, commit: java.lang.String, contextRef: java.lang.String, contributingSources: java.util.Set<java.lang.String>, missingSources: java.util.Set<java.lang.String>)
 ContextContributed(reviewId: java.lang.String, contribution: dev.codespire.contract.review.ContextContribution)
 ContextRequested(request: dev.codespire.contract.review.ContextRequest)

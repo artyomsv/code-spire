@@ -60,11 +60,13 @@ class PostCommentsWireCompatibilityTest {
         ObjectNode old = MAPPER.valueToTree(current);
         old.remove("postedVerdict");
         old.remove("reviewRef");
+        old.remove("reviewUrl");
 
         CommentsPosted back = assertInstanceOf(CommentsPosted.class,
                 MAPPER.treeToValue(old, IntegrationEvent.class));
         assertNull(back.postedVerdict());
         assertNull(back.reviewRef());
+        assertNull(back.reviewUrl());
         assertEquals("review:TEST-ref", back.summaryThreadRef());
     }
 }

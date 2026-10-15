@@ -85,11 +85,11 @@ class ReviewProjectionTest {
     void recordPostedVerdictIsReadBackBySummaryAndDetail() {
         long pr = 4202L;
         String id = completedReview(pr, List.of());
-        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.REQUEST_CHANGES, "501");
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.REQUEST_CHANGES, "501", "https://x/pr/" + pr + "#TEST-review-501");
 
         ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
         assertEquals("changes_requested", detail.postedVerdict());
-        assertEquals("https://x/pr/" + pr + "#pullrequestreview-501", detail.reviewUrl());
+        assertEquals("https://x/pr/" + pr + "#TEST-review-501", detail.reviewUrl(), "the forge's link, stored as given");
         ReviewSummary summary = projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow();
         assertEquals("changes_requested", summary.postedVerdict());
         assertEquals(detail.reviewUrl(), summary.reviewUrl());
@@ -99,7 +99,7 @@ class ReviewProjectionTest {
     void aSupersededRunsVerdictIsNotRecorded() {
         long pr = 4203L;
         String id = completedReview(pr, List.of());
-        projection.recordPostedVerdict(id, "0ld0ld", ReviewVerdict.APPROVE, "777");
+        projection.recordPostedVerdict(id, "0ld0ld", ReviewVerdict.APPROVE, "777", "https://x/TEST-stale");
         assertNull(projection.loadDetail("acme", "web", pr).orElseThrow().postedVerdict(),
                 "a CommentsPosted for an older commit cannot stamp the current head (same guard as recordPosted)");
     }
@@ -108,13 +108,13 @@ class ReviewProjectionTest {
     void postedVerdictAndReviewUrlSerializeOnBothRecords() throws Exception {
         long pr = 4204L;
         String id = completedReview(pr, List.of());
-        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9");
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9", "https://x/TEST-review-9");
         var detail = mapper.readTree(mapper.writeValueAsString(projection.loadDetail("acme", "web", pr).orElseThrow()));
         var summary = mapper.readTree(mapper.writeValueAsString(
                 projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow()));
         for (var record : List.of(detail, summary)) {
             assertEquals("approved", record.path("postedVerdict").asText(), record.toString());
-            assertTrue(record.path("reviewUrl").asText().endsWith("#pullrequestreview-9"), record.toString());
+            assertEquals("https://x/TEST-review-9", record.path("reviewUrl").asText(), record.toString());
         }
     }
 
