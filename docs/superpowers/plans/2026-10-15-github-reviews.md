@@ -53,8 +53,11 @@ state.
   - Receipt channel `factory`, delivery `reviewer-request:<attemptId>:<pr>`, outcomes `reviewer_requested`,
     `reviewer_login_unknown`, `reviewer_request_refused:<reason>`.
   - `DeliveryUnavailable` reasons `request_reviewers_unsupported`, `reviewer_not_collaborator`.
-  - Posted verdict slugs `approved`, `changes_requested`, `commented`; review URL
-    `htmlUrl + "#pullrequestreview-" + ref`.
+  - Posted verdict slugs `approved`, `changes_requested`, `commented`; review URL = the link the forge
+    reported (`PostedReview.reviewUrl` → `CommentsPosted.reviewUrl` → `review_status.posted_review_url`).
+    *Ruling during execution:* never composed in the core; `CoreIsProviderNeutralTest` forbids the
+    provider name the composition needed. Tasks 1, 2, 4, 6 and 7 below predate this and are superseded
+    where they show `htmlUrl + "#pullrequestreview-"`.
 - **Migration.** Orchestrator `V88__reviewer_may_approve.sql`. If V88 is taken on master when you start, take
   the next free number and keep the name.
 - **Refinement of §3 (ruling, recorded here).** `PostedReview.inline` is `Map<String, String>` from

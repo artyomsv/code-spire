@@ -35,7 +35,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..046 cover the software factory; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..047 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
@@ -131,7 +131,8 @@ An item now builds, verifies, delivers a PR, is reviewed, and stops at the land 
 - **Production LAND remains unavailable.** Approving land records the answer and merges nothing.
   Readmit after an approved land rebuilds delivered work, and nothing guards it yet.
 - **Live item publication is GitHub only.** Marking a draft ready is refused on GitLab and
-  Bitbucket. The review is posted as a comment, not as a GitHub review.
+  Bitbucket. GitLab and Bitbucket reviews are posted as comments; GitHub gets a pull request review
+  (ADR-047).
 - **The test counts above are from 2026-09-16.** Later PRs were checked per module; the full
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a

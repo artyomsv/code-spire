@@ -70,16 +70,20 @@ constructor that passes three nulls. Every rebuild site is enumerated in the pla
 `ContractSchemaSnapshotTest`'s golden file (`contract-schema.txt`, L4) changes. The snapshot does not
 recurse into nested types (L152–160), which is why the three are flat components and not one record.
 
-**`IntegrationEvent.CommentsPosted`** gains two trailing components: `ReviewVerdict postedVerdict`
-(nullable) and `String reviewRef` (nullable; the forge's review id as a string). Same wither and
-constructor rules; golden file L41. `summaryThreadRef` keeps its meaning and holds `review:<id>` on
-GitHub (D8).
+**`IntegrationEvent.CommentsPosted`** gains three trailing components: `ReviewVerdict postedVerdict`
+(nullable), `String reviewRef` (nullable; the forge's review id as a string) and `String reviewUrl`
+(nullable; the forge's own link to the review — *amended 2026-10-15 during execution:* the core never
+composes a forge's URL, `CoreIsProviderNeutralTest` forbids the provider name it would need). Same
+wither and constructor rules; golden file L41. `summaryThreadRef` keeps its meaning and holds
+`review:<id>` on GitHub (D8).
 
 **New record** `dev.codespire.contract.scm.ReviewSubmission(ReviewVerdict verdict, String bodyMd,
 List<InlineComment> comments)` with `record InlineComment(InlineAnchor anchor, String bodyMd)`.
 
 **New result record** `dev.codespire.contract.scm.PostedReview(String reviewRef, ReviewVerdict verdict,
-List<CommentRef> inline)`. `verdict` is what was actually posted: COMMENT when GitHub refused the asked
+Map<String, String> inlineThreads, String reviewUrl)` (*as built:* the inline refs are keyed by
+`InlineAnchor.anchorKey()`, which is what the worker's idempotency map needs, and the link is the
+forge's `html_url`). `verdict` is what was actually posted: COMMENT when GitHub refused the asked
 verdict (D6).
 
 **`CommentSink`** gains four defaults; a forge that overrides `postReview` overrides all four:
@@ -182,8 +186,9 @@ superseded run cannot stamp a newer head. It additionally calls
 `projection.recordPostedVerdict(reviewId, commit, postedVerdict, reviewRef)` when `postedVerdict` is
 non-null, with the **same commit guard**. `ReviewSummary` and `ReviewDetail` (two independent Java
 records, L2065–2071 and L2309–2315) gain `postedVerdict` (string slug: `approved` / `changes_requested`
-/ `commented`, or null) and `reviewUrl` (`htmlUrl + "#pullrequestreview-" + reviewRef` on GitHub, else
-null). A Java test asserts both keys serialize on both records; the TS `ReviewSummary` gains both
+/ `commented`, or null) and `reviewUrl` (the link the forge reported, stored in
+`review_status.posted_review_url`; null when nothing native was posted — *amended 2026-10-15:* not
+composed from `htmlUrl`, see §3). A Java test asserts both keys serialize on both records; the TS `ReviewSummary` gains both
 fields in the same change (CLAUDE.md gotcha: a field added to one side arrives `undefined`).
 
 ### 4.4 What the screens show
