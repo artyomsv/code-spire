@@ -132,7 +132,12 @@ final class GitHubReviewApi {
     static boolean matches(JsonNode row, InlineAnchor anchor) {
         boolean old = anchor.side() == Side.OLD;
         Integer line = old ? anchor.oldLine() : anchor.newLine();
-        int start = row.hasNonNull("start_line") ? row.path("start_line").asInt() : row.path("line").asInt(-1);
+        // GitHub nulls line/start_line once the head moves past the comment and keeps the original
+        // pair; the anchor was resolved against the reviewed head, so the original is the match.
+        int start = row.hasNonNull("start_line") ? row.path("start_line").asInt()
+                : row.hasNonNull("original_start_line") ? row.path("original_start_line").asInt()
+                : row.hasNonNull("line") ? row.path("line").asInt()
+                : row.path("original_line").asInt(-1);
         return line != null && line == start
                 && anchor.path().equals(row.path("path").asText(""))
                 && (old ? "LEFT" : "RIGHT").equals(row.path("side").asText(""));

@@ -87,13 +87,15 @@ final class NativeReviewPost {
             review = sink.findReview(command.repo(), command.prId(), command.commit(),
                             submission(command.verdict(), unanchored, failed, comments))
                     .orElse(new PostedReview(ref, null, Map.of()));
+            inlineFallback = postedWithoutItsComments(review, comments);
         } else {
             // The claim does not say whether it was fresh or reclaimed, so look first: an attempt that
-            // died between the POST and the mark left a review GitHub still holds (spec §5.1 step 3).
+            // died between the POST and the mark left a review the forge still holds (spec §5.1 step 3).
             Optional<PostedReview> found = sink.findReview(command.repo(), command.prId(), command.commit(),
                     submission(command.verdict(), unanchored, failed, comments));
             if (found.isPresent()) {
                 review = found.get();
+                inlineFallback = postedWithoutItsComments(review, comments);
             } else {
                 Attempt attempt = postWithFallbacks(unanchored, failed, comments);
                 if (attempt == null) {
@@ -116,6 +118,15 @@ final class NativeReviewPost {
             dismissQuietly(review.reviewRef());
         }
         return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
+    }
+
+    /**
+     * A review found on the forge that carries none of the comments this run would post was left by an
+     * attempt that took the body-only ladder (D7) and died before finishing it: the findings still go
+     * one by one, as that ladder would have posted them.
+     */
+    private static boolean postedWithoutItsComments(PostedReview review, List<InlineComment> comments) {
+        return !comments.isEmpty() && review.inlineThreads().isEmpty();
     }
 
     private Map<String, Anchored> resolveAnchors(List<Finding> unanchored) {

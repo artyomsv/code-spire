@@ -151,9 +151,13 @@ public class ReviewProjection {
                               String authorId, String sourceBranch, String destBranch, String sha,
                               String htmlUrl, String providerType, String status, int stage,
                               boolean claimRun) {
+        // A new run also clears what the forge held for the previous head (ADR-047): the commit guard
+        // on recordPostedVerdict protects the write, and "Posted as Approved" under "reviewing" would
+        // read as this head's verdict.
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
-                        + "error_detail = NULL, answering = FALSE,"
+                        + "error_detail = NULL, answering = FALSE, "
+                        + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL,"
                 : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,

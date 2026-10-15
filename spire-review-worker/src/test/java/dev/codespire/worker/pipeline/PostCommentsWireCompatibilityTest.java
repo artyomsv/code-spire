@@ -54,6 +54,32 @@ class PostCommentsWireCompatibilityTest {
     }
 
     @Test
+    void withSuppressedCountKeepsTheVerdictFields() {
+        // Mutation check t1-a survived the test above: withVerdict ran last and hid a wither that
+        // dropped a component. Order the withers the other way round and assert what the first one set.
+        PostComments current = new PostComments("review::TEST-ws/TEST-repo#1", REPO, 1, "TEST-commit",
+                new ReviewResult(List.of(), "TEST", ModelUsage.of("TEST-MODEL", 1, 1)), null)
+                .withVerdict(ReviewVerdict.REQUEST_CHANGES, ReviewVerdict.COMMENT, false)
+                .withSuppressedCount(3);
+        assertEquals(ReviewVerdict.REQUEST_CHANGES, current.assessment());
+        assertEquals(ReviewVerdict.COMMENT, current.verdict());
+        assertEquals(Boolean.FALSE, current.reviewerMayApprove());
+        assertEquals(3, current.suppressedCount());
+    }
+
+    @Test
+    void theLegacyConstructorLeavesEveryVerdictFieldNull() {
+        // Mutation check t1-b survived: nothing built a command through the 9-argument constructor
+        // (D10's "post as before"). A default smuggled in there would turn every legacy call site native.
+        PostComments legacy = new PostComments("review::TEST-ws/TEST-repo#1", REPO, 1, "TEST-commit",
+                new ReviewResult(List.of(), "TEST", ModelUsage.of("TEST-MODEL", 1, 1)), null, List.of(), null, 4);
+        assertNull(legacy.assessment());
+        assertNull(legacy.verdict());
+        assertNull(legacy.reviewerMayApprove());
+        assertEquals(4, legacy.suppressedCount());
+    }
+
+    @Test
     void anOldCommentsPostedPayloadDeserializesWithNullPostedFields() throws Exception {
         CommentsPosted current = new CommentsPosted("review::TEST-ws/TEST-repo#1", 1, "TEST-commit",
                 "review:TEST-ref", List.of());
