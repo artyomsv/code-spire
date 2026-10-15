@@ -132,7 +132,7 @@ final class GitHubReviewApi {
     static boolean matches(JsonNode row, InlineAnchor anchor) {
         boolean old = anchor.side() == Side.OLD;
         Integer line = old ? anchor.oldLine() : anchor.newLine();
-        int start = row.hasNonNull("start_line") ? row.path("start_line").asInt() : row.path("line").asInt(-1);
+        int start = row.path("line").asInt(-1);
         return line != null && line == start
                 && anchor.path().equals(row.path("path").asText(""))
                 && (old ? "LEFT" : "RIGHT").equals(row.path("side").asText(""));
