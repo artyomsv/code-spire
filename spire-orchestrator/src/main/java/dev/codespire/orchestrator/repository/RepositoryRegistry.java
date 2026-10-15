@@ -123,7 +123,7 @@ public class RepositoryRegistry {
         if (slug.contains("/")) throw new IllegalArgumentException("Repository slug cannot contain a slash");
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
-                input.reviewerMayApprove() == null || input.reviewerMayApprove());
+                input.reviewerMayApprove() != null && input.reviewerMayApprove());
     }
 
     /** The setting for the saga (ADR-047 §4.1); empty when the row is missing, never a default. */
