@@ -165,8 +165,7 @@ final class NativeReviewPost {
     /** The verdict in words when the posted verdict is COMMENT and the assessment is not (D3, D6). */
     private String body(List<Finding> unanchored, List<Finding> failed, ReviewVerdict posting) {
         String rendered = bodies.render(unanchored, failed);
-        return posting == ReviewVerdict.COMMENT && command.assessment() != ReviewVerdict.COMMENT
-                ? withVerdictLine(rendered, command.assessment()) : rendered;
+        return withVerdictLine(rendered, command.assessment());
     }
 
     static String withVerdictLine(String body, ReviewVerdict assessment) {
