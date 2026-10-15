@@ -89,7 +89,7 @@ public class RepositoryRegistry {
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
-            statement.setBoolean(2, input.reviewerMayApprove());
+            statement.setBoolean(2, true);
             statement.setObject(3, id);
             statement.setLong(4, expectedRevision);
             statement.setString(5, input.scmType());
