@@ -2355,7 +2355,7 @@ public class ReviewProjection {
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation,
                 charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r));
+                events, r.prState, r.archivedAt, r.degraded, null, reviewUrl(r));
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
