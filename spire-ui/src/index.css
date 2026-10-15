@@ -486,6 +486,7 @@
   .dhead .meta-line { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .dhead .meta-line .repo { color: var(--iris-ink); font-weight: 600; }
   .dhead .meta-line .sep { color: var(--text-3); }
+  .dhead .posted-as { margin: 4px 0 0; font-size: 12px; color: var(--text-2); }
   .dhead .meta-line .sha { color: var(--text); }
   .dhead .actions { display: flex; gap: 8px; }
   /* `nowrap` is not decoration. In a squeezed last table column "Manage on Context" broke onto three

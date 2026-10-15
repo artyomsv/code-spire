@@ -17,6 +17,8 @@ export interface Repository {
   revision: number;
   reviewer: RepositoryAccount | null;
   factory: RepositoryAccount | null;
+  // The reviewer may post Approve / Request changes here (ADR-047); off means every review is a comment.
+  reviewerMayApprove: boolean;
 }
 export interface RepositoryInput {
   scmType: string;
@@ -26,6 +28,7 @@ export interface RepositoryInput {
   enabled: boolean;
   reviewerAccountId: string | null;
   factoryAccountId: string | null;
+  reviewerMayApprove: boolean;
 }
 export interface PendingMapping {
   registrationId: string; revision: number; scmType: string;

@@ -91,6 +91,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
     <section aria-label="Workspace" className="prov-note"><h4>Workspace</h4><p className="mono">{repository.workspace}</p><p className="prov-sub">{repository.scmType} · {repository.forgeOrigin}</p></section>
     <section aria-label="Selected accounts" className="prov-note"><h4>Selected accounts</h4>
       <RepositoryAccountsCell repository={repository} />
+      <p className="prov-sub">Reviewer may approve: {repository.reviewerMayApprove ? 'on' : 'off'}</p>
       {repository.reviewer && <div className="prov-actions"><button className="btn-ghost" disabled={busy} onClick={() => void verify()}>Verify reviewer access</button></div>}
       {verification && <p role="status">{verification}</p>}
     </section>
