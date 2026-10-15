@@ -388,7 +388,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             int count = 0;
             for (JsonNode c : pageComments) {
                 count++;
-                if (java.time.Instant.parse(c.path("created_at").asText("1970-01-01T00:00:00Z")).isAfter(submitted)) {
+                if (true) {
                     messages.add(toMessage(c, botLogin));
                 }
             }
