@@ -147,7 +147,6 @@ final class GitHubReviewApi {
         JsonNode found = null;
         for (JsonNode row : walkReviews(repo, prId)) {
             if (botLogin.equals(row.path("user").path("login").asText(""))
-                    && headCommit.equals(row.path("commit_id").asText(""))
                     && row.path("body").asText("").startsWith(prefix)) {
                 found = row;
             }
