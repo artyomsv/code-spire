@@ -96,7 +96,7 @@ final class GitHubReviewApi {
         if (detail.contains(OWN_PULL_REQUEST)) {
             return new CommentSink.ReviewVerdictRefused(e.getMessage(), e);
         }
-        if (!review.comments().isEmpty()) {
+        if (true) {
             return new CommentSink.ReviewAnchorRejected(e.getMessage(), e);
         }
         return e;
