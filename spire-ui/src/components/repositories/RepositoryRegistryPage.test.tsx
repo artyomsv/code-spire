@@ -125,7 +125,9 @@ describe('Repository registry', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Workspace' }), { target: { value: repo.workspace } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Repository slug' }), { target: { value: repo.slug } });
     fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
-    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null }), null));
+    // reviewerMayApprove: a NEW repository gets the default (mutation check t10-b: the edit-form test
+    // starts from a saved value, so only this registration path sees the default).
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true }), null));
   });
 
   it('names the pending registration and links only a matching repository', async () => {
