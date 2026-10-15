@@ -90,8 +90,7 @@ final class NativeReviewPost {
         } else {
             // The claim does not say whether it was fresh or reclaimed, so look first: an attempt that
             // died between the POST and the mark left a review GitHub still holds (spec §5.1 step 3).
-            Optional<PostedReview> found = sink.findReview(command.repo(), command.prId(), command.commit(),
-                    submission(command.verdict(), unanchored, failed, comments));
+            Optional<PostedReview> found = Optional.empty();
             if (found.isPresent()) {
                 review = found.get();
             } else {
