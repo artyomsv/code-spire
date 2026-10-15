@@ -112,7 +112,7 @@ final class NativeReviewPost {
             sink.updateReviewBody(command.repo(), command.prId(), review.reviewRef(),
                     body(unanchored, failed, review.verdict() == null ? command.verdict() : review.verdict()));
         }
-        if (Boolean.FALSE.equals(command.reviewerMayApprove())) {
+        if (Boolean.TRUE.equals(command.reviewerMayApprove())) {
             dismissQuietly(review.reviewRef());
         }
         return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
