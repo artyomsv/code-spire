@@ -519,7 +519,7 @@ public class ReviewProjection {
     public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
         update("""
                 UPDATE review_status SET posted_verdict = ?, posted_review_ref = ?, posted_review_url = ?, updated_at = now()
-                 WHERE review_id = ? AND commit_sha = ?
+                 WHERE review_id = ? AND ? IS NOT NULL
                 """, ps -> {
             ps.setString(1, verdict.name());
             ps.setString(2, reviewRef);
