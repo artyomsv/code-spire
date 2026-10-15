@@ -179,7 +179,7 @@ public sealed interface ActionCommand {
                             ReviewResult findings, String scmCredential,
                             List<FindingVerdict> verdicts, String priorSummaryRef, int suppressedCount) {
             this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef,
-                    suppressedCount, null, null, null);
+                    suppressedCount, null, ReviewVerdict.COMMENT, null);
         }
 
         /**
