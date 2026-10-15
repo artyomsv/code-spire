@@ -8,7 +8,7 @@ import type { WebhookRepoView, WebhookEventKind } from '../../api';
 
 const repository: Repository = {
   id: 'TEST-repository', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'service', enabled: true, revision: 1,
+  slug: 'service', enabled: true, revision: 1, reviewerMayApprove: true,
   reviewer: { id: 'TEST-reviewer', name: 'Review account', role: 'REVIEWER', handle: 'review-bot', state: 'ok' },
   factory: { id: 'TEST-factory', name: 'Push account', role: 'FACTORY', handle: 'push-bot', state: 'disabled' },
 };
@@ -28,6 +28,7 @@ describe('RepositoryDetail', () => {
     const accounts = screen.getByRole('region', { name: 'Selected accounts' });
     expect(accounts.querySelector('.serving-pair')).toContainElement(within(accounts).getByText('Reviewer: Review account (@review-bot) · ok'));
     expect(accounts.querySelector('.serving-pair')).toContainElement(within(accounts).getByText('Factory: Push account (@push-bot) · disabled'));
+    expect(within(accounts).getByText('Reviewer may approve: on')).toBeInTheDocument();
   });
 
   it('links a known-origin legacy hook while preserving its key and secret', async () => {

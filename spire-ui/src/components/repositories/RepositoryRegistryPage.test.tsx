@@ -13,7 +13,7 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
@@ -93,6 +93,17 @@ describe('Repository registry', () => {
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({
       workspace: 'TEST-group/nested', reviewerAccountId: 'TEST-reviewer', factoryAccountId: 'TEST-factory',
     }), repo));
+  });
+
+  it('saves the reviewer-may-approve setting, on by default', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
+    const setting = screen.getByLabelText('Reviewer may approve');
+    expect(setting).toBeChecked();
+    fireEvent.click(setting);
+    fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerMayApprove: false }), repo));
   });
 
   it('keeps a stale-save error visible without pretending it saved', async () => {
