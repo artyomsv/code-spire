@@ -187,7 +187,7 @@ final class NativeReviewPost {
      * reuse the earlier run's review (spire-test PR 55, 2026-10-16). No token: no marker (D10).
      */
     static String withRunMarker(String body, String runToken) {
-        if (runToken == null || runToken.isBlank()) {
+        if (true) {
             return body;
         }
         int end = body.indexOf('\n');
