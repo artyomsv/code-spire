@@ -102,15 +102,25 @@ final class GitHubReviewApi {
         return e;
     }
 
-    /** Each submitted anchor's comment id, read back from the review, keyed by {@link InlineAnchor#anchorKey()}. */
+    /**
+     * Each submitted anchor's comment id, keyed by {@link InlineAnchor#anchorKey()}, read back from the
+     * pull request's comment list filtered to this review. Not from {@code /reviews/{id}/comments}: live
+     * on 2026-10-16 that list answered in the legacy shape — {@code path} and {@code position} only,
+     * {@code line}/{@code side}/{@code start_line} null — so nothing matched and a comment that was on
+     * GitHub was reported as not posted. The pull request's list carries {@code line}, {@code side} and
+     * {@code pull_request_review_id}.
+     */
     Map<String, String> readBack(RepoRef repo, long prId, String reviewId, List<InlineComment> comments) {
         Map<String, String> byKey = new LinkedHashMap<>();
         if (comments.isEmpty()) {
             return byKey;
         }
         for (int page = 1; page <= MAX_PAGES; page++) {
-            JsonNode rows = client.getJson(reviewsPath(repo, prId) + "/" + reviewId + "/comments?per_page=" + PAGE + "&page=" + page);
+            JsonNode rows = client.getJson(commentsPath(repo, prId) + "?per_page=" + PAGE + "&page=" + page);
             for (JsonNode row : rows) {
+                if (!reviewId.equals(row.path("pull_request_review_id").asText(""))) {
+                    continue;
+                }
                 for (InlineComment comment : comments) {
                     if (matches(row, comment.anchor())) {
                         byKey.putIfAbsent(comment.anchor().anchorKey(), row.path("id").asText());
@@ -214,5 +224,9 @@ final class GitHubReviewApi {
 
     private static String reviewsPath(RepoRef repo, long prId) {
         return "/repos/" + repo.full() + "/pulls/" + prId + "/reviews";
+    }
+
+    private static String commentsPath(RepoRef repo, long prId) {
+        return "/repos/" + repo.full() + "/pulls/" + prId + "/comments";
     }
 }

@@ -23,6 +23,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
@@ -81,8 +82,15 @@ class GitHubReviewSinkTest {
                 "{\"id\":" + id + ",\"state\":\"APPROVED\",\"html_url\":\"" + reviewLink(id) + "\"}")));
     }
 
+    private static final String PR_COMMENTS = "/repos/TEST-owner/TEST-repo/pulls/42/comments";
+
+    /** The pull request's comment list, page 1, with every row belonging to review {@code id}. */
     private void stubComments(int id, String json) {
-        server.stubFor(get(urlEqualTo(REVIEWS + "/" + id + "/comments?per_page=100&page=1")).willReturn(okJson(json)));
+        server.stubFor(get(urlEqualTo(PR_COMMENTS + "?per_page=100&page=1")).willReturn(okJson(ownedBy(id, json))));
+    }
+
+    private static String ownedBy(int reviewId, String json) {
+        return json.replace("{\"id\":", "{\"pull_request_review_id\":" + reviewId + ",\"id\":");
     }
 
     private void stubReviews(String json) {
@@ -187,18 +195,19 @@ class GitHubReviewSinkTest {
         // own comment list carries line/side and pull_request_review_id; the read-back walks that list
         // and keeps this review's rows only.
         stubCreated(506);
-        stubComments(506, """
+        String legacyList = REVIEWS + "/506/comments?per_page=100&page=1";
+        server.stubFor(get(urlEqualTo(legacyList)).willReturn(okJson("""
                 [ {"id":9008,"path":"src/A.java","position":10,"line":null,"side":null,"start_line":null,"original_line":null} ]
-                """);
-        server.stubFor(get(urlEqualTo("/repos/TEST-owner/TEST-repo/pulls/42/comments?per_page=100&page=1"))
-                .willReturn(okJson("""
-                        [ {"id":7000,"pull_request_review_id":77,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null},
-                          {"id":9008,"pull_request_review_id":506,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null} ]
-                        """)));
+                """)));
+        server.stubFor(get(urlEqualTo(PR_COMMENTS + "?per_page=100&page=1")).willReturn(okJson("""
+                [ {"id":7000,"pull_request_review_id":77,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null},
+                  {"id":9008,"pull_request_review_id":506,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null} ]
+                """)));
         PostedReview posted = sink.postReview(REPO, 42, HEAD,
                 new ReviewSubmission(ReviewVerdict.APPROVE, BODY, List.of(single("src/A.java", 12)))).orElseThrow();
         assertEquals(Map.of("src/A.java:12:NEW", "9008"), posted.inlineThreads(),
                 "another review's comment at the same anchor is not this review's thread");
+        server.verify(0, getRequestedFor(urlEqualTo(legacyList)));
     }
 
     @Test
@@ -211,8 +220,8 @@ class GitHubReviewSinkTest {
         }
         page1.append("]");
         stubComments(504, page1.toString());
-        server.stubFor(get(urlEqualTo(REVIEWS + "/504/comments?per_page=100&page=2"))
-                .willReturn(okJson("[ {\"id\":9004,\"path\":\"src/A.java\",\"line\":12,\"side\":\"RIGHT\"} ]")));
+        server.stubFor(get(urlEqualTo(PR_COMMENTS + "?per_page=100&page=2"))
+                .willReturn(okJson(ownedBy(504, "[ {\"id\":9004,\"path\":\"src/A.java\",\"line\":12,\"side\":\"RIGHT\"} ]"))));
         PostedReview posted = sink.postReview(REPO, 42, HEAD,
                 new ReviewSubmission(ReviewVerdict.APPROVE, BODY, List.of(single("src/A.java", 12)))).orElseThrow();
         assertEquals(Map.of("src/A.java:12:NEW", "9004"), posted.inlineThreads());

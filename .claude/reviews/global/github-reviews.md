@@ -24,3 +24,9 @@ plan `docs/superpowers/plans/2026-10-15-github-reviews.md`.
 | M-10 a legacy summary issue comment stays stale after the switch (D2) | Open, Minor (docs) |
 
 CI on `710e31e6`: all checks green (run 38816833062).
+
+## Round 2 — live proof on spire-test (2026-10-16)
+
+| Finding | Outcome |
+|---|---|
+| L-1 `GET /pulls/{n}/reviews/{id}/comments` answers in the legacy shape (`path`, `position`; `line`/`side`/`start_line` null), so the read-back matched nothing: PR 53 carried its inline comment on GitHub while the body said "Could not be posted inline" and `CommentsPosted` had 0 inline | Resolved: read back from `GET /pulls/{n}/comments` filtered by `pull_request_review_id`; `readsBackFromThePullRequestCommentsNotTheReviewComments` RED (run 38957479102) → GREEN |

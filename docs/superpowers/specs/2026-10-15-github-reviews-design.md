@@ -255,8 +255,12 @@ used for an in-place update any more (D2). The `updateOrPost` method stays for t
   start_line?, start_side?, body}]}`. Field mapping per comment is the one `postInline` uses today
   (L79–101), without `commit_id` (it is top-level). Returns `PostedReview("<review id>", verdict,
   inline refs)`.
-- **Inline refs are read back** from `GET /pulls/{n}/reviews/{id}/comments`, walked with
-  `per_page=100` until a short page. A finding's `anchorKey()` is `path:line:side` with `line` the
+- **Inline refs are read back** from the pull request's comment list, `GET /pulls/{n}/comments`,
+  walked with `per_page=100` until a short page and kept where `pull_request_review_id` is this
+  review. (Amended after the live proof of 2026-10-16: `GET /pulls/{n}/reviews/{id}/comments`
+  answers in the legacy shape — `path` and `position` only, `line`/`side`/`start_line` null — so
+  nothing matched and PR 53's inline comment was reported as not posted.) A finding's `anchorKey()`
+  is `path:line:side` with `line` the
   **start** line (`InlineAnchor` L21–24), but GitHub's `line` is the **end** of a range and `start_line`
   the start. Matching rule: same `path`, same `side`, and `start_line` when present else `line` equals
   the anchor's line. An unmatched finding is reported to the worker as unmatched (step 6).
