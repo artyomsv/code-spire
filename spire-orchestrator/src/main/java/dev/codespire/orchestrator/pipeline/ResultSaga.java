@@ -412,7 +412,7 @@ public class ResultSaga {
                 e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount())
                 .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
-                .withRunToken(runToken));
+                .withRunToken(null));
     }
 
     /**
