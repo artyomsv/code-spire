@@ -1486,7 +1486,7 @@ public class ReviewProjection {
         // earlier run's review for its own (spire-test PR 55, 2026-10-16).
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
-                       note = 'Re-run requested.', run_token = %s, updated_at = now()
+                       note = 'Re-run requested.', updated_at = now()
                 WHERE review_id = ?
                 """.formatted(NEW_RUN_TOKEN), ps -> {
             ps.setInt(1, STAGE_DIFF);
