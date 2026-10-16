@@ -3,8 +3,12 @@ package dev.codespire.contract.port;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.InlineAnchor;
+import dev.codespire.contract.scm.PostedReview;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ReviewSubmission;
 import dev.codespire.contract.scm.ThreadRef;
+
+import java.util.Optional;
 
 /**
  * SCM write adapter (CONTRACT §7). Thread-reply and PR-author are FIRST-CLASS
@@ -55,5 +59,52 @@ public interface CommentSink {
      */
     default CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
         throw new UnsupportedOperationException(type() + " cannot update comments");
+    }
+
+    /**
+     * The review this bot already posted for {@code headCommit} whose body starts with
+     * {@code review.firstLine()}, if any — the recovery read before a post (ADR-047 §5.1 step 3).
+     * Its {@code inlineThreads} are read back for {@code review.comments()}.
+     */
+    default Optional<PostedReview> findReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return Optional.empty();
+    }
+
+    /**
+     * Posts one forge-native review. The default is "this forge has none": the caller then uses
+     * {@link #postSummary} and {@link #postInline} as before.
+     *
+     * @throws ReviewVerdictRefused when the forge refuses the verdict on this pull request (D6)
+     * @throws ReviewAnchorRejected when the forge rejects the review because of an inline anchor (D7)
+     */
+    default Optional<PostedReview> postReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return Optional.empty();
+    }
+
+    /** Rewrites a posted review's body. Only a forge that returned a {@link PostedReview} supports it. */
+    default void updateReviewBody(RepoRef repo, long prId, String reviewRef, String bodyMd) {
+        throw new UnsupportedOperationException(type() + " cannot update a review body");
+    }
+
+    /**
+     * Dismisses this bot's own standing "changes requested" review, if one stands (D11), and answers
+     * its ref. Idempotent: a repeat finds no standing hold and answers empty.
+     */
+    default Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
+        return Optional.empty();
+    }
+
+    /** The forge refused the asked verdict on this pull request (GitHub: one's own pull request). */
+    class ReviewVerdictRefused extends RuntimeException {
+        public ReviewVerdictRefused(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    /** The forge rejected the whole review because of an inline comment's anchor. */
+    class ReviewAnchorRejected extends RuntimeException {
+        public ReviewAnchorRejected(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

@@ -70,6 +70,13 @@ public class ResultSaga {
     @Inject
     ReviewProjection projection;
 
+    /** The "reviewer may approve" setting and the reviewer identity the verdict decision reads (ADR-047). */
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+
     @Inject
     dev.codespire.orchestrator.readmodel.FindingProjection findings;
 
@@ -256,6 +263,9 @@ public class ResultSaga {
                 // snapshot inconsistent with findings_json, which may already hold the
                 // newer run's findings.
                 projection.recordPosted(e.reviewId(), e.commit(), e.summaryThreadRef());
+                if (e.postedVerdict() != null) {
+                    projection.recordPostedVerdict(e.reviewId(), e.commit(), e.postedVerdict(), e.reviewRef(), e.reviewUrl());
+                }
             }
             case FollowUpGenerated e -> {
                 projection.appendEvent(e.reviewId(), "result", "FollowUpGenerated",
@@ -393,9 +403,30 @@ public class ResultSaga {
         lifecycle.handle(e.reviewId(), new RecordCommand.RecordReviewOutcome(
                 e.commit(), visible.findings().size(),
                 Integer.toHexString(visible.summary().hashCode())));
+        ReviewVerdictDecision.Decision decision = decideVerdict(e.reviewId(), visible);
+        projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
+        // The run's token travels with the command: the worker marks this run's review with it, so a
+        // re-run on the same head posts beside the earlier run's review instead of reusing it.
+        String runToken = projection.runTokenOf(e.reviewId()).orElse(null);
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
                 e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
-                e.verdicts(), priorSummaryRef, filtered.suppressedCount()));
+                e.verdicts(), priorSummaryRef, filtered.suppressedCount())
+                .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
+                .withRunToken(runToken));
+    }
+
+    /**
+     * ADR-047 D4: decided here because the projection's open-blocker count is what the land gate reads,
+     * and it is already right at this point (recordOpenFindings ran above).
+     */
+    private ReviewVerdictDecision.Decision decideVerdict(String reviewId, ReviewResult visible) {
+        java.util.Optional<java.util.UUID> repositoryId = projection.repositoryIdOf(reviewId);
+        // Lambdas, not method references: a method reference dereferences its receiver when it is
+        // built, so an empty repository id would still touch the registries (and a test fake that
+        // never set them would throw before the decision ran).
+        java.util.Optional<Boolean> setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id));
+        boolean identityKnown = repositoryId.map(id -> repositoryAccounts.reviewerIdentityKnown(id)).orElse(false);
+        return ReviewVerdictDecision.decide(visible.degraded(), projection.openBlockers(reviewId), setting, identityKnown);
     }
 
     /**

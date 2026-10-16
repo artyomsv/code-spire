@@ -117,6 +117,9 @@ export type StageState = 'done' | 'active' | 'pending' | 'failed';
 /** The pull/merge request's own state — distinct from the review-processing `status`. */
 export type PrState = 'OPEN' | 'MERGED' | 'CLOSED';
 
+/** How a review was posted on the forge (ADR-047). */
+export type PostedVerdict = 'approved' | 'changes_requested' | 'commented';
+
 export interface ReviewSummary {
   id: string; // full reviewId, e.g. "review::acme/web#412" (display/metadata only)
   workspace: string; // e.g. "acme"
@@ -156,6 +159,12 @@ export interface ReviewSummary {
   // row and not only the detail page, because the list is where the symptom shows: a run that
   // reviewed nothing renders as done with no findings, byte-identical to a clean pass.
   degraded: boolean;
+  // How the last posted run's verdict reached the forge (ADR-047): a GitHub review's state, or null on
+  // the legacy comment path and on forges without native reviews. Optional on the TS side; the Java
+  // serialization test is the guard that both records carry it.
+  postedVerdict?: PostedVerdict | null;
+  // The forge's link to that review, or null.
+  reviewUrl?: string | null;
 }
 
 export interface Finding {

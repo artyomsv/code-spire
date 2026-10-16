@@ -8,7 +8,9 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.InlineAnchor;
+import dev.codespire.contract.scm.PostedReview;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ReviewSubmission;
 import dev.codespire.contract.scm.Side;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
@@ -18,10 +20,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * GitHub write adapter (SCM-MAPPING §4-§6). The PR summary is an ISSUE comment;
- * inline review comments go on the pulls endpoint and require {@code commit_id}
+ * GitHub write adapter (SCM-MAPPING §4-§6). On the legacy path the PR summary is an ISSUE comment; on
+ * the native path it is the body of a pull request review (ADR-047, {@link GitHubReviewApi}).
+ * Inline review comments go on the pulls endpoint and require {@code commit_id}
  * (the head SHA), {@code path}, {@code line} and {@code side} (RIGHT = NEW,
  * LEFT = OLD). {@link ThreadRef} carries the review-comment id — replies POST to
  * {@code .../comments/{id}/replies}.
@@ -46,8 +50,16 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     private static final String RESOLVE_MUTATION = """
             mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}""";
 
+    /** A summary posted as a review (ADR-047 D8): its thread ref is this prefix plus the review id. */
+    public static final String REVIEW_REF_PREFIX = "review:";
+
     private final GitHubClient client;
     private final String brokeredBotLogin;
+    private final GitHubReviewApi reviews;
+
+    private static boolean isReviewRef(ThreadRef thread) {
+        return thread.value().startsWith(REVIEW_REF_PREFIX);
+    }
 
     public GitHubCommentSink(GitHubClient client) {
         this(client, null);
@@ -61,6 +73,27 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     public GitHubCommentSink(GitHubClient client, String botLogin) {
         this.client = client;
         this.brokeredBotLogin = botLogin;
+        this.reviews = new GitHubReviewApi(client);
+    }
+
+    @Override
+    public Optional<PostedReview> findReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return reviews.find(repo, prId, headCommit, review, botLogin());
+    }
+
+    @Override
+    public Optional<PostedReview> postReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+        return Optional.of(reviews.post(repo, prId, headCommit, review));
+    }
+
+    @Override
+    public void updateReviewBody(RepoRef repo, long prId, String reviewRef, String bodyMd) {
+        reviews.updateBody(repo, prId, reviewRef, bodyMd);
+    }
+
+    @Override
+    public Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
+        return reviews.dismissChangesRequested(repo, prId, botLogin(), message);
     }
 
     @Override
@@ -108,6 +141,13 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
      */
     @Override
     public CommentRef replyInThread(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        if (isReviewRef(thread)) {
+            // A review has no reply thread on GitHub: the reply is the next top-level PR comment, which
+            // is what the 404 fallback below does for a plain root — taken directly, without the failing call.
+            String issuePath = issueCommentsPath(repo, prId);
+            JsonNode created = client.postJson(issuePath, Map.of("body", bodyMd));
+            return new CommentRef(requireCommentId(created, issuePath), thread, CommentKind.REPLY);
+        }
         String path = reviewCommentsPath(repo, prId) + "/" + thread.value() + "/replies";
         try {
             JsonNode created = client.postJson(path, Map.of("body", bodyMd));
@@ -125,6 +165,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     /** In-place summary rewrite on a re-review — the summary is an issue comment (PATCH, not POST). */
     @Override
     public CommentRef updateComment(RepoRef repo, long prId, ThreadRef thread, String bodyMd) {
+        if (isReviewRef(thread)) {
+            throw new UnsupportedOperationException("a GitHub review body is rewritten through updateReviewBody, not as a comment");
+        }
         // A GitHub issue comment IS its own thread root, so the thread ref is the comment to patch.
         String commentId = thread.value();
         client.patchJson(issueCommentByIdPath(repo, commentId), Map.of("body", bodyMd));
@@ -248,6 +291,9 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public ThreadTranscript fetchThread(RepoRef repo, long prId, ThreadRef thread) {
         String botLogin = botLogin();
+        if (isReviewRef(thread)) {
+            return reviewTranscript(repo, prId, thread, botLogin);
+        }
         ReviewWalkResult walk = walkReviewComments(repo, prId, thread, botLogin);
         if (walk.foundRoot()) {
             return new ThreadTranscript(thread, walk.path(), walk.line(), walk.commit(), walk.messages());
@@ -322,6 +368,34 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
                 break;
             }
             warnIfTranscriptTruncated(root, page);
+        }
+        return new ThreadTranscript(thread, null, 0, null, messages);
+    }
+
+    /**
+     * The review body first, then every top-level PR comment created after it was submitted — the same
+     * walk {@link #issueThreadTranscript} does, keyed by time instead of by root id, so a follow-up still
+     * sees the question it answers (spec §5.2).
+     */
+    private ThreadTranscript reviewTranscript(RepoRef repo, long prId, ThreadRef thread, String botLogin) {
+        String reviewId = thread.value().substring(REVIEW_REF_PREFIX.length());
+        JsonNode review = client.getJson(prPath(repo, prId) + "/reviews/" + reviewId);
+        java.time.Instant submitted = java.time.Instant.parse(review.path("submitted_at").asText("1970-01-01T00:00:00Z"));
+        List<ThreadMessage> messages = new ArrayList<>();
+        messages.add(toMessage(review, botLogin));
+        for (int page = 1; page <= MAX_THREAD_PAGES; page++) {
+            JsonNode pageComments = client.getJson(issueCommentsPath(repo, prId) + "?per_page=100&page=" + page);
+            int count = 0;
+            for (JsonNode c : pageComments) {
+                count++;
+                if (java.time.Instant.parse(c.path("created_at").asText("1970-01-01T00:00:00Z")).isAfter(submitted)) {
+                    messages.add(toMessage(c, botLogin));
+                }
+            }
+            if (count < 100) {
+                break;
+            }
+            warnIfTranscriptTruncated(thread.value(), page);
         }
         return new ThreadTranscript(thread, null, 0, null, messages);
     }

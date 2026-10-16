@@ -13,7 +13,7 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
@@ -95,6 +95,17 @@ describe('Repository registry', () => {
     }), repo));
   });
 
+  it('saves the reviewer-may-approve setting, on by default', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
+    const setting = screen.getByLabelText('Reviewer may approve');
+    expect(setting).toBeChecked();
+    fireEvent.click(setting);
+    fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerMayApprove: false }), repo));
+  });
+
   it('keeps a stale-save error visible without pretending it saved', async () => {
     vi.mocked(api.saveRepository).mockRejectedValue(new Error('Repository changed; reload before saving'));
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
@@ -114,7 +125,9 @@ describe('Repository registry', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Workspace' }), { target: { value: repo.workspace } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Repository slug' }), { target: { value: repo.slug } });
     fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
-    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null }), null));
+    // reviewerMayApprove: a NEW repository gets the default (mutation check t10-b: the edit-form test
+    // starts from a saved value, so only this registration path sees the default).
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true }), null));
   });
 
   it('names the pending registration and links only a matching repository', async () => {

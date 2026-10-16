@@ -25,7 +25,11 @@ public class WorkReview {
     @Inject ObjectMapper mapper;
     @Inject dev.codespire.orchestrator.factory.MachineAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
+    /** The REVIEWER registration, for the login the factory asks the forge to request (ADR-047 D9). */
+    @Inject dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
     private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(WorkReview.class);
+    /** The receipt channel of the reviewer request; the delivery is {@code reviewer-request:<attemptId>:<pr>}. */
+    static final String REQUEST_CHANNEL="factory";
     /** Pull requests this process has marked ready, so a pending review does not read the forge on every pass. */
     private final Set<String> markedReady=java.util.concurrent.ConcurrentHashMap.newKeySet();
     /**
@@ -50,6 +54,7 @@ public class WorkReview {
         WorkExecution execution=item.progress().execution();
         if(execution==null || execution.pullRequest()==null){waiting(item,"delivered_pr_required");return;}
         if(Boolean.TRUE.equals(execution.pullRequest().draft()) && !ensureMarkedReady(item,execution))return;
+        ensureReviewerRequested(item,execution);
         Observation observed=observe(item,execution);
         if(observed.reason()!=null){waiting(item,observed.reason());return;}
         var detail=reviews.loadDetail(observed.workspace(),observed.slug(),execution.pullRequest().number()).orElse(null);
@@ -84,6 +89,42 @@ public class WorkReview {
             LOG.warnf("work item %s: pull request %d could not be marked ready (%s); the next pass tries again",
                     item.workItemId(),execution.pullRequest().number(),fault.getClass().getSimpleName());
             waiting(item,"ready_for_review_pending");return false;
+        }
+    }
+    /**
+     * D9: the reviewer bot is asked for the review once per attempt and pull request, with a receipt
+     * (channel {@code factory}) so a restart does not ask twice; a refusal is a receipt, never a wait.
+     * Skipped once the bot has posted for this head: a request then shows as "re-requested" noise.
+     */
+    private void ensureReviewerRequested(WorkItemEvent item,WorkExecution execution) {
+        long pr=execution.pullRequest().number();String delivery="reviewer-request:"+item.progress().attemptId()+":"+pr;
+        try(Connection c=dataSource.getConnection()) {
+            if(WorkItemControl.received(c,item.workItemId(),REQUEST_CHANNEL,delivery) || reviewPostedForHead(c,item,execution))return;
+            WorkItemControl.receipt(c,item.workItemId(),REQUEST_CHANNEL,delivery,requestReviewer(item,execution));
+        }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+    }
+    /** On row absence or a different head, not on observe()'s reason: that string is the same for no row and a degraded one. */
+    private boolean reviewPostedForHead(Connection c,WorkItemEvent item,WorkExecution execution) throws SQLException {
+        try(PreparedStatement ps=c.prepareStatement("SELECT commit_sha,status FROM review_status WHERE repository_id=? AND pr_id=?")) {
+            ps.setObject(1,item.repositoryId());ps.setLong(2,execution.pullRequest().number());
+            try(ResultSet rs=ps.executeQuery()) {
+                return rs.next() && execution.head().equals(rs.getString("commit_sha")) && !Set.of("received","reviewing").contains(rs.getString("status"));
+            }
+        }
+    }
+    private String requestReviewer(WorkItemEvent item,WorkExecution execution) {
+        String login=repositoryAccounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER)
+                .map(dev.codespire.orchestrator.provider.ScmProvider::botUsername).orElse("");
+        if(login==null || login.isBlank())return "reviewer_login_unknown";
+        var sink=accounts.resolve(item.repositoryId()).map(clients::pullRequestSink);
+        if(sink.isEmpty())return "reviewer_request_refused:factory_account_unavailable";
+        try{sink.orElseThrow().requestReviewers(repositoryOf(item),execution.pullRequest(),List.of(login));return "reviewer_requested";}
+        catch(dev.codespire.contract.port.PullRequestSink.DeliveryUnavailable refusal) {
+            LOG.warnf("work item %s: the forge refused to request reviewer %s on pull request %d (%s)",item.workItemId(),login,execution.pullRequest().number(),refusal.getMessage());
+            return "reviewer_request_refused:"+refusal.getMessage();
+        }catch(RuntimeException fault) {
+            LOG.warnf("work item %s: requesting reviewer %s on pull request %d failed (%s)",item.workItemId(),login,execution.pullRequest().number(),fault.getClass().getSimpleName());
+            return "reviewer_request_refused:"+fault.getClass().getSimpleName();
         }
     }
     private dev.codespire.contract.scm.RepoRef repositoryOf(WorkItemEvent item) {

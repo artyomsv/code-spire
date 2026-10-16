@@ -68,6 +68,13 @@ only · **CONTEXT** → both set, `side=NEW` by default.
 |---|---|---|---|
 | `POST …/pullrequests/{id}/comments` `{content:{raw}}` | `POST …/issues/{number}/comments` `{body}` | `POST …/merge_requests/{iid}/notes` `{body}` | `POST …/pull-requests/{id}/comments` `{text}` |
 
+On GitHub the summary is the body of a pull request review (ADR-047), posted with
+`POST …/pulls/{number}/reviews` `{commit_id, event: APPROVE|REQUEST_CHANGES|COMMENT, body, comments[]}`
+with every inline finding in its `comments` array; the issue-comment form above is the legacy path. The
+thread ref of such a summary is `review:<id>`: a reply is the next top-level issue comment, and reading
+the thread gives the review body followed by the issue comments created after `submitted_at`. GitLab and
+Bitbucket post the summary as a comment.
+
 ## 6. Reply in thread → `ThreadRef` (opaque)
 
 | provider | `ThreadRef` value | reply call |
@@ -204,7 +211,7 @@ UNVERIFIED; fixture measurements do not establish live token capability.
 
 | Channel | Implemented evidence | Limit |
 |---|---|---|
-| GitHub native PR review | Re-read named review, complete bounded chronological review history and current open PR/head; stable user ID, human type and measured push permission without DENY | Can answer an open linked LAND gate only; production LAND remains unavailable. Controlled-response tests, no live gate proof |
+| GitHub native PR review | Re-read named review, complete bounded chronological review history and current open PR/head; stable user ID, human type and measured push permission without DENY | Can answer an open linked LAND gate only; production LAND remains unavailable. Controlled-response tests, no live gate proof. The reviewer bot's own review (ADR-047) is machine activity by its recorded identity and cannot answer a gate |
 | GitLab / Bitbucket native PR review | Capability unavailable in the current approval port composition | Visibly disabled; dashboard and tracker remain usable |
 | GitHub / GitLab tracker comment | Authenticated created-comment delivery with stable actor ID, source membership and explicit gate/generation/artifact command | Ordinary approving text is not an approval; system/edited GitLab notes are excluded |
 | Jira Cloud tracker comment | Authenticated REST v2 comment polling using accountId, timestamp and explicit command | Ignore undated/pre-admission comments; bounded pages report a polling failure when incomplete |

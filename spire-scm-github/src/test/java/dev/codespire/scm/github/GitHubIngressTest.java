@@ -257,6 +257,25 @@ class GitHubIngressTest {
         assertTrue(permissive.translate(webhook(pr("ready_for_review", false, false), "pull_request")).isEmpty());
     }
 
+    // --- ADR-047: the bot's own review is never a review trigger, and a reviewer request is not either ---
+
+    @Test
+    void reviewRequestedIsIgnored() {
+        assertTrue(ingress.translate(webhook(pr("review_requested", false, false), "pull_request")).isEmpty(),
+                "requesting the bot must not start a review; ready_for_review does (ADR-047 D9)");
+    }
+
+    @Test
+    void aSubmittedReviewIsNotAReviewTrigger() {
+        byte[] body = """
+                {"action":"submitted","review":{"id":17,"state":"approved","user":{"id":9999,"login":"TEST-bot"}},
+                 "pull_request":{"number":42,"head":{"ref":"TEST-work","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+                 "repository":{"full_name":"TEST-owner/TEST-repo"},"sender":{"id":9999}}
+                """.getBytes(StandardCharsets.UTF_8);
+        assertTrue(ingress.translate(webhook(body, "pull_request_review")).isEmpty(),
+                "the bot's own review must never start a second review");
+    }
+
     // --- fixtures ---
 
     private static byte[] pr(String action, boolean merged) {

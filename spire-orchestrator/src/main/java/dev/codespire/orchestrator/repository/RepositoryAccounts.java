@@ -34,6 +34,24 @@ public class RepositoryAccounts {
         }
     }
 
+    /**
+     * Whether the REVIEWER registration has a bot identity — the value the land gate's machine check relies
+     * on, and so the condition for ever asking the bot to Approve (ADR-047 §4.1).
+     */
+    public boolean reviewerIdentityKnown(UUID repositoryId) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
+                SELECT p.bot_account_id FROM repository_account a JOIN scm_provider p ON p.id = a.account_id
+                WHERE a.repository_id = ? AND a.role = 'REVIEWER'
+                """)) {
+            statement.setObject(1, repositoryId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() && rows.getString(1) != null && !rows.getString(1).isBlank();
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Cannot read the reviewer identity", failure);
+        }
+    }
+
     public Optional<ScmProvider> resolve(UUID repositoryId, ProviderRole role) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 SELECT a.account_id, r.scm_type, r.forge_origin, peer.bot_account_id peer_identity FROM repository r

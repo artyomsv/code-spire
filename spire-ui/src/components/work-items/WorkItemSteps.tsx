@@ -100,7 +100,13 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
   if (phase === 'verify') return execution.verification
     ? <VerifyResult verification={execution.verification} />
     : <p className="factory-note">{execution.verificationAttempt ? 'Verification recorded without a result' : 'Verification not recorded'}</p>;
-  if (phase === 'review') return execution.reviewId ? <p className="factory-note">Review recorded for this build.</p> : null;
+  if (phase === 'review') {
+    if (!execution.reviewId) return null;
+    // "review::<workspace>/<slug>#<pr>" — the review page shows how the review was posted (ADR-047).
+    const review = /^review::(.+)\/([^/#]+)#(\d+)$/.exec(execution.reviewId);
+    const href = review ? `#/r/${review[1]}/${review[2]}/${review[3]}` : null;
+    return <p className="factory-note">Review recorded for this build.{href && <> <a href={href}>Open the review</a> to see how it was posted.</>}</p>;
+  }
   const pr = execution.pullRequest;
   if (!pr) return null;
   const name = pr.draft === true ? 'Draft pull request' : pr.draft === false ? 'Pull request' : 'Pull request · draft state unknown';

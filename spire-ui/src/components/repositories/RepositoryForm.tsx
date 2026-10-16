@@ -23,6 +23,7 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
     scmType: initial?.scmType ?? prefill.get('scmType') ?? '', forgeOrigin: initial?.forgeOrigin ?? prefill.get('forgeOrigin') ?? '',
     workspace: initial?.workspace ?? prefill.get('workspace') ?? '', slug: initial?.slug ?? prefill.get('slug') ?? '', enabled: initial?.enabled ?? true,
     reviewerAccountId: initial?.reviewer?.id ?? null, factoryAccountId: initial?.factory?.id ?? null,
+    reviewerMayApprove: initial?.reviewerMayApprove ?? true,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +79,8 @@ export default function RepositoryForm({ initial, providers, kinds, onSaved, onC
       {fields.scmType && fields.forgeOrigin && compatible.length === 0
         && <p className="prov-note">No accounts on {origin(fields.forgeOrigin) || 'this origin'}. <a href="#/settings/accounts">Add an account</a> to select one.</p>}
       <label className="field-check"><input type="checkbox" checked={fields.enabled} onChange={e => patch({ enabled: e.target.checked })} /><span>Enabled</span></label>
+      <label className="field-check"><input type="checkbox" checked={fields.reviewerMayApprove} onChange={e => patch({ reviewerMayApprove: e.target.checked })} /><span>Reviewer may approve</span></label>
+      <p className="prov-sub">Off: every review is posted as a comment and the bot never changes a pull request's merge state.</p>
       {error && <p className="prov-error" role="alert">{error}</p>}
     </SidePanel>
   );

@@ -89,6 +89,14 @@ public class GitHubClient {
         }
     }
 
+    public JsonNode putJson(String path, Object body) {
+        try {
+            return parse(send("PUT", path, JSON_MEDIA, mapper.writeValueAsString(body)));
+        } catch (JsonProcessingException e) {
+            throw new GitHubApiException(0, "PUT", path, "request serialization failed: " + e.getMessage());
+        }
+    }
+
     /**
      * GraphQL entry point — thread resolution has no REST equivalent. Returns the
      * {@code data} node; throws {@link GitHubApiException} when the response carries

@@ -3,6 +3,7 @@ package dev.codespire.contract.port;
 import dev.codespire.contract.scm.PullRequestRef;
 import dev.codespire.contract.scm.RepoRef;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -64,6 +65,17 @@ public interface PullRequestSink {
 
     class DeliveryUnavailable extends RuntimeException {
         public DeliveryUnavailable(String reason) { super(reason); }
+    }
+
+    /**
+     * Asks the forge to list these accounts as requested reviewers (ADR-047 D9). Requesting an account
+     * already requested is a no-op on every forge that supports it.
+     *
+     * @throws DeliveryUnavailable {@code request_reviewers_unsupported} when this adapter cannot do it;
+     *     {@code reviewer_not_collaborator} when the forge refuses the login
+     */
+    default void requestReviewers(RepoRef repo, PullRequestRef pullRequest, List<String> logins) {
+        throw new DeliveryUnavailable("request_reviewers_unsupported");
     }
 
     /**

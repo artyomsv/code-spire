@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { fetchReviewDetail, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { fetchReviewDetail, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, prStateBadge, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
@@ -9,6 +9,15 @@ import ReviewCostCard from './ReviewCostCard';
 
 interface Props {
   reviews: ReviewSummary[];
+}
+
+const POSTED_LABEL: Record<PostedVerdict, string> = { approved: 'Approved', changes_requested: 'Changes requested', commented: 'Comment' };
+
+/** How the forge holds the last posted run (ADR-047); nothing for the legacy comment path or another forge. */
+function postedAs(r: ReviewDetailData) {
+  if (!r.postedVerdict) return null;
+  return <p className="posted-as">Posted as <strong>{POSTED_LABEL[r.postedVerdict]}</strong>
+    {r.reviewUrl && <> · <a href={r.reviewUrl} target="_blank" rel="noreferrer">open the review</a></>}</p>;
 }
 
 export default function ReviewDetail({ reviews }: Props) {
@@ -118,6 +127,7 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="sep">·</span>
             <span className="sha">{r.sha}</span>
           </div>
+          {postedAs(r)}
         </div>
         <ReviewActions review={r} onChanged={load} />
       </div>

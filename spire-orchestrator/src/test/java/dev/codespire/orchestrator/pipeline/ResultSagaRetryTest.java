@@ -496,6 +496,26 @@ class ResultSagaRetryTest {
             @Override
             public void recordCharges(ChargeCall call) {
             }
+
+            // The verdict decision (ADR-047) counts open blockers on every ReviewGenerated; the real
+            // one opens a connection, so this fake answers for it.
+            @Override
+            public int openBlockers(String reviewId) {
+                return 0;
+            }
+        };
+        // Both read a database the decision reaches through the fixture's repository id.
+        saga.repositories = new dev.codespire.orchestrator.repository.RepositoryRegistry() {
+            @Override
+            public Optional<Boolean> reviewerMayApprove(java.util.UUID id) {
+                return Optional.of(true);
+            }
+        };
+        saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
+            @Override
+            public boolean reviewerIdentityKnown(java.util.UUID repositoryId) {
+                return true;
+            }
         };
         saga.workerCredentials = new WorkerCredentials() {
             @Override

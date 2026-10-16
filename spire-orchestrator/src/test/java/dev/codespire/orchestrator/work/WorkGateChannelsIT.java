@@ -113,6 +113,23 @@ class WorkGateChannelsIT extends WorkPolicyFixture {
     IntegrationEvent.RepositoryActivity event(String kind,String actor) {
         return new IntegrationEvent.RepositoryActivity(sources.get(source).orElseThrow().repository(),kind,actor,"refs/heads/"+BRANCH,HEAD,42,"17",null,false);
     }
+    void reviewerApproval(String state,String head) {
+        String review="{\"id\":17,\"state\":\""+state+"\",\"commit_id\":\""+head+"\",\"user\":{\"id\":900002,\"type\":\"User\"}}";
+        forge.stubFor(get(urlEqualTo("/repos/"+scope+"/pulls/42/reviews/17")).willReturn(okJson(review)));
+        forge.stubFor(get(urlEqualTo("/repos/"+scope+"/pulls/42/reviews?per_page=100&page=1")).willReturn(okJson("["+review+"]")));
+    }
+    /** ADR-047 §1: the real guard is the recorded machine actor, not review.user.type. */
+    @Test void theBotsOwnApproveCannotResolveTheLandGate() throws Exception {
+        landGate();reviewerApproval("APPROVED",HEAD);
+        channels.activity(repository,event("approval","900002"),"TEST-reviewer-own-approve");
+        assertEquals(0,resolved());assertEquals("OPEN",store.load(itemId).gate().state());
+    }
+    @Test void theBotsOwnCommentReviewIsRecordedMachine() throws Exception {
+        landGate();
+        channels.activity(repository,event("comment","900002"),"TEST-reviewer-comment-review");
+        assertNotEquals("suspended",store.load(itemId).workflowStatus(),"the bot's Comment review is not a human takeover");
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='recorded_machine'",itemId));
+    }
     @Test void approvalOnOldHeadCannotResolveGateBoundToCurrentHead() throws Exception {
         var gate=landGate();approval("APPROVED",OLD_HEAD);
         assertTrue(channels.approvalAvailable(repository));assertEquals(HEAD,gate.artifact());

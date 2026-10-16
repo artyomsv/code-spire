@@ -566,12 +566,32 @@ public class ReviewWorker {
             // per-thread, so redelivery reconstructs outcomes from the claim map for free.
             List<CommentsPosted.ThreadOutcome> outcomes = actOnVerdicts(commentSink, command);
 
+            // Fix 1: one budget per message, shared across every finding's retry loop.
+            BackoffBudget backoffBudget = new BackoffBudget(rateLimitBudgetSeconds);
+            if (command.assessment() != null) {
+                Optional<NativeReviewPost.Outcome> nativeOutcome = new NativeReviewPost(idempotency, commentSink, command, diff,
+                        (unanchored, failed) -> renderSummary(review, unanchored, failed, command.commit(), command.suppressedCount())
+                                + renderReconciliationSection(command.verdicts()),
+                        (anchor, body) -> {
+                            CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor, body, backoffBudget);
+                            pace();
+                            return ref;
+                        },
+                        this::renderInline).run();
+                if (nativeOutcome.isPresent()) {
+                    NativeReviewPost.Outcome outcome = nativeOutcome.get();
+                    List<CommentsPosted.PostedInline> posted = new ArrayList<>(outcome.inline());
+                    recoverPreviouslyPosted(previouslyPosted, posted);
+                    results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
+                            NativeReviewPost.REF_PREFIX + outcome.reviewRef(), posted, outcomes)
+                            .withPostedReview(outcome.postedVerdict(), outcome.reviewRef(), outcome.reviewUrl()));
+                    return;
+                }
+            }
+
             List<CommentsPosted.PostedInline> posted = new ArrayList<>();
             List<Finding> unanchored = new ArrayList<>();
             List<Finding> failed = new ArrayList<>();
-
-            // Fix 1: one budget per message, shared across every finding's retry loop.
-            BackoffBudget backoffBudget = new BackoffBudget(rateLimitBudgetSeconds);
             for (Finding finding : review.findings()) {
                 postOneInline(commentSink, command, diff, finding, posted, unanchored, failed, backoffBudget);
             }
@@ -580,16 +600,7 @@ public class ReviewWorker {
             if (summaryThreadRef == null) {
                 return; // summary failure already emitted ReviewFailed
             }
-            // Recover inline comment ids from a previous partially-completed attempt. Skip the
-            // non-inline claims (SUMMARY, LLM[:reconcile], reply:, resolve:) — none of those are
-            // posted inline comments, so they must never leak into the inline list.
-            previouslyPosted.forEach((key, ref) -> {
-                if (!SUMMARY_KEY.equals(key) && !LLM_KEY.equals(key) && !RECONCILE_KEY.equals(key)
-                        && !key.startsWith("reply:") && !key.startsWith("resolve:")
-                        && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
-                    posted.add(new CommentsPosted.PostedInline(ref, key, 0));
-                }
-            });
+            recoverPreviouslyPosted(previouslyPosted, posted);
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                     summaryThreadRef, posted, outcomes));
         } catch (RuntimeException e) {
@@ -598,6 +609,21 @@ public class ReviewWorker {
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
                     cause.getMessage(), isRetryable(cause), 1, isCredentialRejected(cause)));
         }
+    }
+
+    /**
+     * Recover inline comment ids from a previous partially-completed attempt. Skip the non-inline claims
+     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:) — none of those are posted inline comments, so
+     * they must never leak into the inline list.
+     */
+    private static void recoverPreviouslyPosted(Map<String, String> previouslyPosted, List<CommentsPosted.PostedInline> posted) {
+        previouslyPosted.forEach((key, ref) -> {
+            if (!SUMMARY_KEY.equals(key) && !NativeReviewPost.REVIEW_KEY.equals(key) && !LLM_KEY.equals(key)
+                    && !RECONCILE_KEY.equals(key) && !key.startsWith("reply:") && !key.startsWith("resolve:")
+                    && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
+                posted.add(new CommentsPosted.PostedInline(ref, key, 0));
+            }
+        });
     }
 
     // --- reconciliation thread actions (ADR-019) ---

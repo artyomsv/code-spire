@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.RepoRef;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -136,6 +137,20 @@ public class GitHubPullRequestSink implements PullRequestSink {
             throw new PullRequestSink.DeliveryUnavailable("ready_for_review_not_observed");
         }
         return new PullRequestRef(observed.number(), observed.url(), false);
+    }
+
+    /** ADR-047 D9. GitHub answers 422 for a login that is not a collaborator of the repository. */
+    @Override
+    public void requestReviewers(RepoRef repo, PullRequestRef pullRequest, List<String> logins) {
+        String path = pullsPath(repo) + "/" + pullRequest.number() + "/requested_reviewers";
+        try {
+            client.postJson(path, Map.of("reviewers", logins));
+        } catch (GitHubApiException e) {
+            if (e.status() == UNPROCESSABLE) {
+                throw new PullRequestSink.DeliveryUnavailable("reviewer_not_collaborator");
+            }
+            throw e;
+        }
     }
 
     private static final String READY_FOR_REVIEW = """

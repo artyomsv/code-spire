@@ -65,7 +65,13 @@ public record ReviewDetail(
          *  its type for the summary. So omitting it here type-checks on both sides and simply
          *  arrives undefined, which renders the detail page as a clean pass — with the note that
          *  explains the run shown nowhere, because that note lives in the branch this flag selects. */
-        boolean degraded) {
+        boolean degraded,
+        /** How the last posted run's verdict was posted on the forge (ADR-047) — see {@link ReviewSummary}.
+         *  Carried here as well as on the summary for the reason {@code degraded} gives: two independent
+         *  records over one wire, and a field added to one arrives undefined from the other. */
+        String postedVerdict,
+        /** The forge's link to that review, or null. */
+        String reviewUrl) {
 
     /**
      * A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM
