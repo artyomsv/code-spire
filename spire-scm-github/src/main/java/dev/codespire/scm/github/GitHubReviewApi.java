@@ -118,9 +118,7 @@ final class GitHubReviewApi {
         for (int page = 1; page <= MAX_PAGES; page++) {
             JsonNode rows = client.getJson(commentsPath(repo, prId) + "?per_page=" + PAGE + "&page=" + page);
             for (JsonNode row : rows) {
-                if (!reviewId.equals(row.path("pull_request_review_id").asText(""))) {
-                    continue;
-                }
+                
                 for (InlineComment comment : comments) {
                     if (matches(row, comment.anchor())) {
                         byKey.putIfAbsent(comment.anchor().anchorKey(), row.path("id").asText());
