@@ -175,9 +175,24 @@ final class NativeReviewPost {
 
     /** The verdict in words when the posted verdict is COMMENT and the assessment is not (D3, D6). */
     private String body(List<Finding> unanchored, List<Finding> failed, ReviewVerdict posting) {
-        String rendered = bodies.render(unanchored, failed);
+        String rendered = withRunMarker(bodies.render(unanchored, failed), command.runToken());
         return posting == ReviewVerdict.COMMENT && command.assessment() != ReviewVerdict.COMMENT
                 ? withVerdictLine(rendered, command.assessment()) : rendered;
+    }
+
+    /**
+     * The run's token on the header line, as an HTML comment the forge does not render. The look-first
+     * ({@code findReview}) matches on that first line, so a redelivery of this run finds its own
+     * half-posted review and a re-run on the same head — which clears the worker's claims — does not
+     * reuse the earlier run's review (spire-test PR 55, 2026-10-16). No token: no marker (D10).
+     */
+    static String withRunMarker(String body, String runToken) {
+        if (runToken == null || runToken.isBlank()) {
+            return body;
+        }
+        int end = body.indexOf('\n');
+        String marker = " <!-- code-spire-run:" + runToken + " -->";
+        return end < 0 ? body + marker : body.substring(0, end) + marker + body.substring(end);
     }
 
     static String withVerdictLine(String body, ReviewVerdict assessment) {

@@ -157,7 +157,7 @@ public sealed interface ActionCommand {
                         ReviewResult findings, String scmCredential,
                         List<FindingVerdict> verdicts, String priorSummaryRef,
                         int suppressedCount, ReviewVerdict assessment, ReviewVerdict verdict,
-                        Boolean reviewerMayApprove) implements ActionCommand {
+                        Boolean reviewerMayApprove, String runToken) implements ActionCommand {
 
         public PostComments {
             verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
@@ -165,13 +165,13 @@ public sealed interface ActionCommand {
 
         public PostComments(String reviewId, RepoRef repo, long prId, String commit,
                             ReviewResult findings, String scmCredential) {
-            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null, 0, null, null, null);
+            this(reviewId, repo, prId, commit, findings, scmCredential, List.of(), null, 0, null, null, null, null);
         }
 
         public PostComments(String reviewId, RepoRef repo, long prId, String commit,
                             ReviewResult findings, String scmCredential,
                             List<FindingVerdict> verdicts, String priorSummaryRef) {
-            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef, 0, null, null, null);
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef, 0, null, null, null, null);
         }
 
         /** Call sites and in-flight records from before the verdict fields existed (D10). */
@@ -179,7 +179,16 @@ public sealed interface ActionCommand {
                             ReviewResult findings, String scmCredential,
                             List<FindingVerdict> verdicts, String priorSummaryRef, int suppressedCount) {
             this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef,
-                    suppressedCount, null, null, null);
+                    suppressedCount, null, null, null, null);
+        }
+
+        /** Records from before the run token existed: the worker posts without a run marker. */
+        public PostComments(String reviewId, RepoRef repo, long prId, String commit,
+                            ReviewResult findings, String scmCredential,
+                            List<FindingVerdict> verdicts, String priorSummaryRef, int suppressedCount,
+                            ReviewVerdict assessment, ReviewVerdict verdict, Boolean reviewerMayApprove) {
+            this(reviewId, repo, prId, commit, findings, scmCredential, verdicts, priorSummaryRef,
+                    suppressedCount, assessment, verdict, reviewerMayApprove, null);
         }
 
         /**
@@ -200,13 +209,24 @@ public sealed interface ActionCommand {
          */
         public PostComments withSuppressedCount(int replacement) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove);
+                    priorSummaryRef, replacement, assessment, verdict, reviewerMayApprove, runToken);
         }
 
         /** The orchestrator's decision (ADR-047 D4), enumerated once, next to the record. */
         public PostComments withVerdict(ReviewVerdict assessment, ReviewVerdict verdict, boolean reviewerMayApprove) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove);
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken);
+        }
+
+        /**
+         * The run this command belongs to. The worker marks the native review it posts with it, so a
+         * redelivery of the same run finds its own half-posted review and a re-run on the same head
+         * (which clears the worker's claims) does not reuse the earlier run's review. Opaque, not a
+         * number: a retry continues a run, a re-run and a new head start one.
+         */
+        public PostComments withRunToken(String runToken) {
+            return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken);
         }
     }
 

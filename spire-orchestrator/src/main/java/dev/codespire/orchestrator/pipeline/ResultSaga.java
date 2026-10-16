@@ -405,10 +405,14 @@ public class ResultSaga {
                 Integer.toHexString(visible.summary().hashCode())));
         ReviewVerdictDecision.Decision decision = decideVerdict(e.reviewId(), visible);
         projection.appendEvent(e.reviewId(), "result", "ReviewVerdictDecided", decision.detail());
+        // The run's token travels with the command: the worker marks this run's review with it, so a
+        // re-run on the same head posts beside the earlier run's review instead of reusing it.
+        String runToken = projection.runTokenOf(e.reviewId()).orElse(null);
         emitWithCredential(e.reviewId(), "PostComments", cred -> new ActionCommand.PostComments(
                 e.reviewId(), repo, e.prId(), e.commit(), visible, cred,
                 e.verdicts(), priorSummaryRef, filtered.suppressedCount())
-                .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove()));
+                .withVerdict(decision.assessment(), decision.verdict(), decision.mayApprove())
+                .withRunToken(runToken));
     }
 
     /**

@@ -154,23 +154,26 @@ public class ReviewProjection {
         // A new run also clears what the forge held for the previous head (ADR-047): the commit guard
         // on recordPostedVerdict protects the write, and "Posted as Approved" under "reviewing" would
         // read as this head's verdict.
+        // A claimed run is a new run: it gets a fresh run_token (the worker marks this run's review with
+        // it, see runTokenOf); a refresh keeps the row's token as it keeps its outcome.
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
                         + "error_detail = NULL, answering = FALSE, "
-                        + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL,"
+                        + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL, "
+                        + "run_token = EXCLUDED.run_token,"
                 : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
                         source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
-                        attempt, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, now())
+                        attempt, run_token, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, %s, now())
                 ON CONFLICT (review_id) DO UPDATE SET
                         title = EXCLUDED.title, author = EXCLUDED.author, author_id = EXCLUDED.author_id,
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
                         %s updated_at = now()
-                """.formatted(outcomeColumns);
+                """.formatted(NEW_RUN_TOKEN, outcomeColumns);
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -1479,15 +1482,37 @@ public class ReviewProjection {
      * can spend again.
      */
     public void markRerunStarted(String reviewId) {
+        // A re-run is a new run: a fresh run_token, so the worker's look-first does not take the
+        // earlier run's review for its own (spire-test PR 55, 2026-10-16).
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
-                       note = 'Re-run requested.', updated_at = now()
+                       note = 'Re-run requested.', run_token = %s, updated_at = now()
                 WHERE review_id = ?
-                """, ps -> {
+                """.formatted(NEW_RUN_TOKEN), ps -> {
             ps.setInt(1, STAGE_DIFF);
             ps.setString(2, reviewId);
         });
         broadcast(reviewId);
+    }
+
+    /** SQL for a fresh, opaque run token; a retry ({@link #retryPipeline}) and a refresh never write one. */
+    private static final String NEW_RUN_TOKEN = "md5(random()::text || clock_timestamp()::text)";
+
+    /**
+     * The token of the row's current run, for {@code PostComments.runToken}: a claimed run and a re-run
+     * start one, a retry continues one. Empty for a row written before V89 that has not run since.
+     */
+    public Optional<String> runTokenOf(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT run_token FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString("run_token")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "runTokenOf read failed for %s", reviewId);
+            return Optional.empty();
+        }
     }
 
     /**

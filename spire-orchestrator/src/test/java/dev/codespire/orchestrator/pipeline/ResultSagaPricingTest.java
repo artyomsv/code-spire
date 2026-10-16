@@ -510,6 +510,12 @@ class ResultSagaPricingTest {
             return Optional.empty();
         }
 
+        // Read on every ReviewGenerated for PostComments.runToken; the real one opens a database.
+        @Override
+        public Optional<String> runTokenOf(String reviewId) {
+            return Optional.empty();
+        }
+
         @Override
         public void recordOutcome(String reviewId, ReviewResult result, int stage) {
         }

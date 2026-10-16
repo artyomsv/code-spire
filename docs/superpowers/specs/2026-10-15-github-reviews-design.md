@@ -212,12 +212,21 @@ native path first:
    verdict is COMMENT and the assessment is not: `**Verdict:** approve` or `**Verdict:** changes
    requested`. The D6 retry adds the same line from the asked verdict. The header line
    `### Code Spire review (`<commit>`)` is kept: it is one of the six product-name literals, the
-   dashboard's conversation opener, and the prefix `findReview` matches on.
+   dashboard's conversation opener, and the prefix `findReview` matches on. The header line also
+   carries the run's token as an HTML comment the forge does not render,
+   `<!-- code-spire-run:<token> -->` (amended after the live proof of 2026-10-16, below). A command
+   without a token (D10) posts the bare header.
 3. Claim the idempotency key **`REVIEW`** (new) and every anchor key before any call. The claim does
    not say whether it was fresh or reclaimed (`CommentIdempotencyStore.claim` L53–61 returns `Post`
    for both), so a `Post` on `REVIEW` first calls `sink.findReview(repo, pr, head, header)`:
    - found → the review exists from an attempt that died before it was marked; skip to step 6 with it.
    - empty → `sink.postReview(ReviewSubmission(verdict, body, comments))`.
+   The header it matches on includes the run token (step 2), so only a review of **this run** is
+   found. Live on 2026-10-16 (spire-test PR 55) the dashboard re-run cleared the claims, the look-first
+   found the earlier run's Request changes by the bare header, reused it, posted nothing, and then D11
+   dismissed that very review as "superseded by" itself. The orchestrator gives every claimed run and
+   every re-run a fresh `review_status.run_token` (V89) and sends it as `PostComments.runToken`; a C8
+   retry and a metadata refresh keep the token, so a retry still finds its own half-posted review.
 4. Outcomes of `postReview`:
    - `Optional.empty()` → the forge has no native review: run today's path unchanged (inline posts,
      then `updateOrPost` of the summary). `postedVerdict` and `reviewRef` stay null in the event.
@@ -266,8 +275,9 @@ used for an in-place update any more (D2). The `updateOrPost` method stays for t
   the anchor's line. An unmatched finding is reported to the worker as unmatched (step 6).
 - `findReview` → `GET /pulls/{n}/reviews` (paged, `per_page=100`, the walk
   `GitHubPullRequestApprovalSource` already does); the bot's review (`user.login` = the bot username)
-  whose `commit_id` equals the head and whose body starts with the header; its state gives the
-  `verdict`; its comments are read back as above.
+  whose `commit_id` equals the head and whose body starts with the header **including the run
+  marker** (step 2), so an earlier run's review of the same head is never taken for this run's; its
+  state gives the `verdict`; its comments are read back as above.
 - **422 classification.** The message text of anchor errors is not stable across the API's history,
   so the rule is by shape, not by field name: a 422 whose body contains `own pull request` →
   `ReviewVerdictRefused`; any other 422 on a review that **carried comments** → `ReviewAnchorRejected`
