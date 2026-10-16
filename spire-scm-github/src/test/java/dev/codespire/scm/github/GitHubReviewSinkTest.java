@@ -180,6 +180,28 @@ class GitHubReviewSinkTest {
     }
 
     @Test
+    void readsBackFromThePullRequestCommentsNotTheReviewComments() {
+        // Live on 2026-10-16 (spire-test PR 53): GET /pulls/{n}/reviews/{id}/comments answers in the
+        // legacy shape — path and position only, line/side/start_line null — so nothing matched and a
+        // comment that was on GitHub was reported as "could not be posted inline". The pull request's
+        // own comment list carries line/side and pull_request_review_id; the read-back walks that list
+        // and keeps this review's rows only.
+        stubCreated(506);
+        stubComments(506, """
+                [ {"id":9008,"path":"src/A.java","position":10,"line":null,"side":null,"start_line":null,"original_line":null} ]
+                """);
+        server.stubFor(get(urlEqualTo("/repos/TEST-owner/TEST-repo/pulls/42/comments?per_page=100&page=1"))
+                .willReturn(okJson("""
+                        [ {"id":7000,"pull_request_review_id":77,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null},
+                          {"id":9008,"pull_request_review_id":506,"path":"src/A.java","line":12,"side":"RIGHT","start_line":null} ]
+                        """)));
+        PostedReview posted = sink.postReview(REPO, 42, HEAD,
+                new ReviewSubmission(ReviewVerdict.APPROVE, BODY, List.of(single("src/A.java", 12)))).orElseThrow();
+        assertEquals(Map.of("src/A.java:12:NEW", "9008"), posted.inlineThreads(),
+                "another review's comment at the same anchor is not this review's thread");
+    }
+
+    @Test
     void readsBackTheInlineCommentIdsAcrossPages() {
         stubCreated(504);
         StringBuilder page1 = new StringBuilder("[");
