@@ -33,12 +33,29 @@ class PostCommentsWireCompatibilityTest {
         old.remove("assessment");
         old.remove("verdict");
         old.remove("reviewerMayApprove");
+        old.remove("runToken");
         assertFalse(old.has("verdict"), "the payload under test predates the field");
 
         PostComments back = assertInstanceOf(PostComments.class, MAPPER.treeToValue(old, ActionCommand.class));
         assertNull(back.assessment());
         assertNull(back.verdict());
         assertNull(back.reviewerMayApprove());
+        assertNull(back.runToken());
+    }
+
+    @Test
+    void withRunTokenSurvivesTheOtherWithers() {
+        // Live on 2026-10-16 (spire-test PR 55): a re-run on the same head found the earlier run's
+        // review by its header and reused it, so nothing new was posted. The run token tells a
+        // redelivery of this run apart from a re-run; every wither must carry it.
+        PostComments current = new PostComments("review::TEST-ws/TEST-repo#1", REPO, 1, "TEST-commit",
+                new ReviewResult(List.of(), "TEST", ModelUsage.of("TEST-MODEL", 1, 1)), null)
+                .withRunToken("TEST-run-7")
+                .withVerdict(ReviewVerdict.APPROVE, ReviewVerdict.APPROVE, true)
+                .withSuppressedCount(1);
+        assertEquals("TEST-run-7", current.runToken());
+        assertEquals(ReviewVerdict.APPROVE, current.verdict());
+        assertEquals(1, current.suppressedCount());
     }
 
     @Test
@@ -76,6 +93,7 @@ class PostCommentsWireCompatibilityTest {
         assertNull(legacy.assessment());
         assertNull(legacy.verdict());
         assertNull(legacy.reviewerMayApprove());
+        assertNull(legacy.runToken());
         assertEquals(4, legacy.suppressedCount());
     }
 

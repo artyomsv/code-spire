@@ -25,6 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,6 +117,36 @@ class ReviewProjectionTest {
         ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
         assertNull(detail.postedVerdict(), "a new head has no posted verdict yet");
         assertNull(detail.reviewUrl());
+    }
+
+    @Test
+    void aClaimedRunHasARunTokenAndARerunGetsANewOne() {
+        // The worker marks a run's reviews with this token so a re-run on the same head posts a new
+        // review instead of reusing the earlier run's (spire-test PR 55, 2026-10-16).
+        long pr = 4206L;
+        String id = completedReview(pr, List.of());
+        String first = projection.runTokenOf(id).orElseThrow();
+        assertFalse(first.isBlank());
+        projection.markRerunStarted(id);
+        String rerun = projection.runTokenOf(id).orElseThrow();
+        assertNotEquals(first, rerun, "a re-run is a new run");
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "d0d0d0", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        assertNotEquals(rerun, projection.runTokenOf(id).orElseThrow(), "a new head is a new run");
+    }
+
+    @Test
+    void aRetryAndARefreshKeepTheRunToken() {
+        // A C8 retry continues the run whose half-posted review must still be found; a refresh claims
+        // nothing. Neither may hand the worker a token that hides this run's own review.
+        long pr = 4207L;
+        String id = completedReview(pr, List.of());
+        String token = projection.runTokenOf(id).orElseThrow();
+        projection.retryPipeline(id, 2, "retrying (attempt 2/3)");
+        assertEquals(token, projection.runTokenOf(id).orElseThrow());
+        projection.refreshHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "cafe123", "https://x/pr/" + pr, "github");
+        assertEquals(token, projection.runTokenOf(id).orElseThrow());
     }
 
     @Test

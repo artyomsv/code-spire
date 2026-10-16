@@ -390,6 +390,47 @@ class ReviewWorkerTest {
         assertEquals("rv-9", lastCommentsPosted().reviewRef());
     }
 
+    private static final String HEADER = "### Code Spire review (`" + COMMIT + "`)";
+    private static final String RUN_MARKER = " <!-- code-spire-run:run-2 -->";
+
+    @Test
+    void aReRunPostsANewReviewBesideTheEarlierRunsReview() {
+        // Live on 2026-10-16 (spire-test PR 55): the dashboard re-run cleared the claims, the look-first
+        // found the earlier run's Request changes by its header and reused it, posted nothing, and
+        // then dismissed that very review "superseded by" itself. A run's own reviews carry its token
+        // on the header line, so the look-first matches a half-posted review of THIS run only.
+        sink.nativeReviews = true;
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.REQUEST_CHANGES, Map.of()));
+        sink.foundReviewBody = HEADER + "\n\nTEST earlier run\n";
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, false)
+                .withRunToken("run-2"));
+
+        assertEquals(1, sink.reviewPosts.size(), "the earlier run's review is not this run's");
+        assertEquals(HEADER + RUN_MARKER, sink.reviewPosts.getFirst().firstLine());
+        assertEquals("rv-100", lastCommentsPosted().reviewRef());
+        assertEquals("Superseded by review rv-100: the reviewer may not change merge state on this repository",
+                sink.dismissals.getFirst());
+    }
+
+    @Test
+    void aRedeliveryOfTheSameRunStillFindsItsOwnReview() {
+        sink.nativeReviews = true;
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(KEY_A2, "c-9")));
+        sink.foundReviewBody = HEADER + RUN_MARKER + "\n\nTEST this run\n";
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true)
+                .withRunToken("run-2"));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the review this run already posted is reused");
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+    }
+
+    @Test
+    void aCommandWithoutARunTokenCarriesNoMarker() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertEquals(HEADER, sink.reviewPosts.getFirst().firstLine(), "D10: a record from before the field posts as before");
+    }
+
     @Test
     void aCrashAfterABodyOnlyPostFallsBackToInline() {
         // The first attempt took the D7 ladder (a body-only review) and died before the mark. The
@@ -1272,6 +1313,8 @@ class ReviewWorkerTest {
         /** Thrown by successive postReview calls, first in first out; a successful call records instead. */
         final Deque<RuntimeException> reviewFailures = new ArrayDeque<>();
         Optional<PostedReview> foundReview = Optional.empty();
+        /** The body the forge holds for {@link #foundReview}; GitHub matches a find on the submission's first line. */
+        String foundReviewBody;
         final List<String> updatedReviewBodies = new ArrayList<>();
         final List<String> dismissals = new ArrayList<>();
         /** Every native-path call in order: review, inline, body, dismiss. */
@@ -1284,7 +1327,11 @@ class ReviewWorkerTest {
 
         @Override
         public Optional<PostedReview> findReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
-            return nativeReviews ? foundReview : Optional.empty();
+            if (!nativeReviews) {
+                return Optional.empty();
+            }
+            // As the GitHub adapter: the held body must start with the submission's first line.
+            return foundReviewBody == null || foundReviewBody.startsWith(review.firstLine()) ? foundReview : Optional.empty();
         }
 
         @Override

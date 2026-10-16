@@ -57,6 +57,14 @@ class ResultSagaVerdictTest {
     }
 
     @Test
+    void theCommandCarriesTheRunToken() {
+        // The worker marks this run's reviews with it, so a re-run posts beside the earlier run's
+        // review instead of reusing it (spire-test PR 55, 2026-10-16).
+        saga().on(generated());
+        assertEquals("TEST-run-7", assertInstanceOf(ActionCommand.PostComments.class, emitted.getLast()).runToken());
+    }
+
+    @Test
     void theCommandCarriesTheDecision() {
         openBlockers = 1;
         saga().on(generated());
@@ -160,6 +168,11 @@ class ResultSagaVerdictTest {
             @Override
             public Optional<PriorRun> priorRunFor(String reviewId) {
                 return Optional.of(new PriorRun(COMMIT, "sum-prior-1", List.of()));
+            }
+
+            @Override
+            public Optional<String> runTokenOf(String reviewId) {
+                return Optional.of("TEST-run-7");
             }
 
             @Override
