@@ -215,7 +215,7 @@ public sealed interface ActionCommand {
         /** The orchestrator's decision (ADR-047 D4), enumerated once, next to the record. */
         public PostComments withVerdict(ReviewVerdict assessment, ReviewVerdict verdict, boolean reviewerMayApprove) {
             return new PostComments(reviewId, repo, prId, commit, findings, scmCredential, verdicts,
-                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, runToken);
+                    priorSummaryRef, suppressedCount, assessment, verdict, reviewerMayApprove, null);
         }
 
         /**
