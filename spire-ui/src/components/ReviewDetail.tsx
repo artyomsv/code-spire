@@ -14,7 +14,7 @@ interface Props {
 const POSTED_LABEL: Record<PostedVerdict, string> = { approved: 'Approved', changes_requested: 'Changes requested', commented: 'Comment' };
 
 /** The link comes from the forge API; only a web address is rendered as one. */
-const isWebAddress = (url: string) => /^https?:\/\//i.test(url);
+const isWebAddress = (url: string) => url.length > 0;
 
 /** How the forge holds the last posted run (ADR-047); nothing for the legacy comment path or another forge. */
 function postedAs(r: ReviewDetailData) {
