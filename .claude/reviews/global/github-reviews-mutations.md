@@ -51,3 +51,16 @@ test; every extra failure is a named consequence of the same guard in the same m
 | `ResultSaga` sends the run token | sends `null` (#226) | `ResultSagaVerdictTest.theCommandCarriesTheRunToken` | 38978836396 |
 | a claimed run writes a fresh `run_token` | claim keeps the old one (#227) | `ReviewProjectionTest.aClaimedRunHasARunTokenAndARerunGetsANewOne` | 38978842145 |
 | `readBack` keeps this review's rows only | drops the `pull_request_review_id` filter (#228) | `GitHubReviewSinkTest.readsBackFromThePullRequestCommentsNotTheReviewComments` | 38978849386 |
+
+## Round 3 fixes (2026-10-18), mutants #229–#236 off `ab6aa027`
+
+| Guard line | Mutant (PR) | Failing test | Run |
+|---|---|---|---|
+| `WorkGateChannels.currentMachine` rejects the current reviewer bot id | never matches the reviewer (#229) | `WorkGateChannelsIT.aRotatedReviewerIdentityCannotApproveTheLandGate` | 39163322836 |
+| `currentMachine` rejects the current factory bot id | never matches the factory (#230) | `WorkGateChannelsIT.aRotatedFactoryIdentityCannotApproveTheLandGate` | 39163328945 |
+| `NativeReviewPost.inlineBody` joins every finding at the anchor | first finding only (#231) | `ReviewWorkerTest.twoFindingsAtOneAnchorPostOneCombinedComment` and `theInlineFallbackCarriesEveryFindingAtTheAnchor` (same guard, both paths) | 39163336001 |
+| `postedVerdict` falls back to the command's verdict | forge verdict only (#232) | `ReviewWorkerTest.aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict` | 39163340506 |
+| `WorkReview.requestReviewer` writes no receipt on a fault | fault becomes a receipt again (#233) | `WorkReviewIT.aFaultedRequestIsTriedAgainOnTheNextPass` | 39163346842 |
+| `GitHubPullRequestSink` names only a collaborator 422 so | every 422 named not-a-collaborator (#234) | `GitHubPullRequestSinkTest.anotherUnprocessableRefusalIsNotCalledNotACollaborator` | 39163352692 |
+| `ReviewDetail.isWebAddress` requires http(s) | any non-empty string (#235) | `ReviewDetail.posted.test.tsx: does not link a review URL that is not a web address` | 39163358629 |
+| `ReviewVerdictDecision` keeps the assessment reason beside the hold | hold replaces it (#236) | `ReviewVerdictDecisionTest.theSettingOffGivesCommentWithAssessmentApprove`, `anUnknownRepositoryGivesComment`, `aReviewerWithoutIdentityGivesComment` (same guard) | 39163363873 |

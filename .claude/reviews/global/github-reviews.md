@@ -53,3 +53,6 @@ RED commit `35f11bff` (run 39162222729); GREEN follows in the commits after it.
 | M-8 `repository_unknown` / `setting_off` replaced `open_blockers=N` in the timeline reason | Fixed: `<why> · <hold>` (`open_blockers=2 · repository_unknown`); `ReviewVerdictDecisionTest` three assertions RED → GREEN |
 | M-9 fully qualified `java.time.Instant` in `GitHubCommentSink.reviewTranscript` | Fixed: imported |
 | M-10 a legacy summary issue comment stays stale beside the new review | Documented in the UNVERIFIED row and the acceptance record's limits; no code change (editing an old comment the new path does not own was judged riskier than the stale text) |
+
+GREEN commits `1810f7d5` (run 39162723762: one test counted the faulted passes wrongly) and `ab6aa027` (run 39163300252: all
+checks green). Mutants #229–#236 each died on the named test (`github-reviews-mutations.md`, "Round 3 fixes").
