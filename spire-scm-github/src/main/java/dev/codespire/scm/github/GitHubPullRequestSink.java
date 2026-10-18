@@ -148,7 +148,7 @@ public class GitHubPullRequestSink implements PullRequestSink {
         } catch (GitHubApiException e) {
             if (e.status() == UNPROCESSABLE) {
                 throw new PullRequestSink.DeliveryUnavailable(
-                        isAboutCollaborators(e) ? "reviewer_not_collaborator" : "reviewer_request_unprocessable");
+                        "reviewer_not_collaborator");
             }
             throw e;
         }
