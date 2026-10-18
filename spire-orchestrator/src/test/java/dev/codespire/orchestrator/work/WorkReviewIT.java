@@ -169,6 +169,15 @@ class WorkReviewIT extends WorkPreparedFixture {
         assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='reviewer_request_refused:reviewer_not_collaborator'",id));
         forge.verify(1,postRequestedFor(urlEqualTo(requested())));
     }
+    /** Review of PR #196 (M-5): a fault is not an answer. No receipt is written, so the next pass asks again. */
+    @Test void aFaultedRequestIsTriedAgainOnTheNextPass() throws Exception {
+        forge.stubFor(post(urlEqualTo(requested())).willReturn(aResponse().withStatus(503)));
+        String id=delivered();waiting(id,"review_result_pending");
+        assertEquals(0,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND delivery_id LIKE 'reviewer-request:%'",id));
+        reviewerRequestAccepted();observer.advance(id);
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='reviewer_requested'",id));
+        forge.verify(2,postRequestedFor(urlEqualTo(requested())));
+    }
     @Test void noRequestOnceTheBotPostedForThisHead() throws Exception {
         reviewerRequestAccepted();
         String id=delivered();reviewResult(id,"b".repeat(40),false,false);observer.advance(id);

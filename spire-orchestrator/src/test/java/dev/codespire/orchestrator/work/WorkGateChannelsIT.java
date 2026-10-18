@@ -187,6 +187,17 @@ class WorkGateChannelsIT extends WorkPolicyFixture {
         recordedFactory="900123";landGate();assertTrue(permissions.authorizeApproval(repository,"900123").allowed());
         channels.activity(repository,event("approval","900123"),"TEST-machine-user-review");assertEquals(0,resolved());assertEquals("OPEN",store.load(itemId).gate().state());
     }
+    /** Review of PR #196 (security/H-1): the repository's CURRENT machine identities cannot approve either, not only the recorded ones. */
+    @Test void aRotatedReviewerIdentityCannotApproveTheLandGate() throws Exception {
+        landGate();execute("UPDATE scm_provider SET bot_account_id='900123' WHERE id=?",reviewer);
+        channels.activity(repository,event("approval","900123"),"TEST-rotated-reviewer-approve");
+        assertEquals(0,resolved());assertEquals("OPEN",store.load(itemId).gate().state());
+    }
+    @Test void aRotatedFactoryIdentityCannotApproveTheLandGate() throws Exception {
+        landGate();execute("UPDATE scm_provider SET bot_account_id='900123' WHERE id=?",account);
+        channels.activity(repository,event("approval","900123"),"TEST-rotated-factory-approve");
+        assertEquals(0,resolved());assertEquals("OPEN",store.load(itemId).gate().state());
+    }
     @Test void closedPullRequestCannotResolve() throws Exception {
         landGate();forge.stubFor(get(urlEqualTo("/repos/"+scope+"/pulls/42"))
                 .willReturn(okJson("{\"number\":42,\"state\":\"closed\",\"merged\":false,\"head\":{\"ref\":\""+BRANCH+"\",\"sha\":\""+HEAD+"\"},\"base\":{\"ref\":\"main\"}}")));

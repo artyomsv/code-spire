@@ -65,6 +65,15 @@ describe('ReviewDetail posted verdict', () => {
     expect(screen.getByRole('link', { name: 'open the review' })).toHaveAttribute('href', 'https://github.com/acme/web/pull/42#pullrequestreview-501');
   });
 
+  /** Review of PR #196 (M-7): the link comes from the forge API, and only a web address is rendered as one. */
+  it('does not link a review URL that is not a web address', async () => {
+    vi.spyOn(api, 'fetchReviewDetail').mockResolvedValue({ ...review, postedVerdict: 'commented', reviewUrl: 'javascript:alert(1)' });
+    renderPage();
+    const line = await screen.findByText(/Posted as/);
+    expect(line).toHaveTextContent('Posted as Comment');
+    expect(screen.queryByRole('link', { name: 'open the review' })).toBeNull();
+  });
+
   it('shows nothing for a review posted as a comment thread', async () => {
     vi.spyOn(api, 'fetchReviewDetail').mockResolvedValue({ ...review, postedVerdict: null, reviewUrl: null });
     renderPage();

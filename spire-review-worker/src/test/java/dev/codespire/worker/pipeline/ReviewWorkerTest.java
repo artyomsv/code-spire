@@ -501,12 +501,43 @@ class ReviewWorkerTest {
                 "the REVIEW claim must never be rebuilt as an inline finding thread");
     }
 
+    /**
+     * Review of PR #196 (M-1): the claim, the read-back and the thread record are all per anchor key, so a
+     * second comment at the same anchor would be posted and then owned by nobody. Both concerns ride in one.
+     */
     @Test
-    void twoFindingsAtOneAnchorShareOneThread() {
+    void twoFindingsAtOneAnchorPostOneCombinedComment() {
         sink.nativeReviews = true;
-        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2), finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
-        assertEquals(2, sink.reviewPosts.getFirst().comments().size(), "both comments are posted");
+        Finding second = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST-second concern", null);
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2), second), ReviewVerdict.APPROVE, true));
+        List<ReviewSubmission.InlineComment> comments = sink.reviewPosts.getFirst().comments();
+        assertEquals(1, comments.size(), "one anchor, one comment");
+        assertTrue(comments.getFirst().bodyMd().contains("msg 2") && comments.getFirst().bodyMd().contains("TEST-second concern"),
+                "both concerns ride in that comment: " + comments.getFirst().bodyMd());
         assertEquals(1, lastCommentsPosted().inline().size(), "one anchor key, one owned thread");
+    }
+
+    @Test
+    void theInlineFallbackCarriesEveryFindingAtTheAnchor() {
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(), "https://forge.example.test/TEST/rv-9"));
+        Finding second = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST-second concern", null);
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2), second), ReviewVerdict.APPROVE, true));
+        assertEquals(1, sink.inlineBodies.size(), "one inline post for the anchor");
+        assertTrue(sink.inlineBodies.getFirst().contains("TEST-second concern"), "the second concern survives the fallback");
+    }
+
+    /** Review of PR #196 (M-4): a redelivery whose look-up finds nothing still reports the verdict this command posted. */
+    @Test
+    void aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+        assertEquals(ReviewVerdict.APPROVE, lastCommentsPosted().postedVerdict(), "the verdict this command posted, not null");
     }
 
     @Test
@@ -1295,6 +1326,7 @@ class ReviewWorkerTest {
         final List<String> updatedComments = new ArrayList<>();
         final List<String> summaryPosts = new ArrayList<>();
         final List<String> inlinePosts = new ArrayList<>();
+        final List<String> inlineBodies = new ArrayList<>();
 
         int inlineAttempts; // 1-based count of postInline calls, including the one that fails
         int failOnInline; // 1-based index of the inline post that throws; 0 = never
@@ -1389,6 +1421,7 @@ class ReviewWorkerTest {
             calls.add("inline");
             String id = "c-" + ids++;
             inlinePosts.add(id);
+            inlineBodies.add(bodyMd);
             return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
         }
 

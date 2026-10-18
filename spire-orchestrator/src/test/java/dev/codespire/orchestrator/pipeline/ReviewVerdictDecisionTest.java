@@ -43,8 +43,8 @@ class ReviewVerdictDecisionTest {
         assertEquals(ReviewVerdict.APPROVE, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertFalse(decision.mayApprove());
-        assertEquals("setting_off", decision.reason());
-        assertEquals("verdict:COMMENT · assessment:APPROVE · setting_off", decision.detail());
+        assertEquals("no_open_blockers · setting_off", decision.reason(), "why the assessment, then why it is not posted (M-8)");
+        assertEquals("verdict:COMMENT · assessment:APPROVE · no_open_blockers · setting_off", decision.detail());
     }
 
     @Test
@@ -52,7 +52,7 @@ class ReviewVerdictDecisionTest {
         var decision = ReviewVerdictDecision.decide(false, 2, Optional.empty(), true);
         assertEquals(ReviewVerdict.REQUEST_CHANGES, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
-        assertEquals("repository_unknown", decision.reason());
+        assertEquals("open_blockers=2 · repository_unknown", decision.reason(), "the blocker count is not lost (M-8)");
     }
 
     @Test
@@ -60,6 +60,6 @@ class ReviewVerdictDecisionTest {
         var decision = ReviewVerdictDecision.decide(false, 0, ON, false);
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertFalse(decision.mayApprove());
-        assertEquals("reviewer_identity_unknown", decision.reason());
+        assertEquals("no_open_blockers · reviewer_identity_unknown", decision.reason());
     }
 }
