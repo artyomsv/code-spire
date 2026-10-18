@@ -40,3 +40,14 @@ test; every extra failure is a named consequence of the same guard in the same m
 | 8 | a running review still gets the request | status test removed (#220) | `WorkReviewIT.aRunningReviewOfThisHeadStillGetsTheRequest` | 38813162697 |
 | 10 | `postedAs` renders when a verdict is set | always null (#221) | `ReviewDetail.posted.test.tsx: says how the review was posted and links to it` | 38813226009 |
 | 10 | the form defaults the setting to on | defaults to false (#222) | `can register an unbound repository before accounts exist` | 38816844500 |
+
+## Live-proof fixes (2026-10-16/17), mutants #223–#228 off `e7b6f92a`
+
+| Guard line | Mutant (PR) | Failing test | Run |
+|---|---|---|---|
+| `NativeReviewPost.withRunMarker` writes the run token on the header line | never writes it (#223) | `ReviewWorkerTest.aReRunPostsANewReviewBesideTheEarlierRunsReview` | 38978814303 |
+| `PostComments.withVerdict` keeps `runToken` | passes `null` (#224) | `PostCommentsWireCompatibilityTest.withRunTokenSurvivesTheOtherWithers` | 38978820575 |
+| `markRerunStarted` writes a fresh `run_token` | keeps the old one (#225) | `ReviewProjectionTest.aClaimedRunHasARunTokenAndARerunGetsANewOne` | 38978827007 |
+| `ResultSaga` sends the run token | sends `null` (#226) | `ResultSagaVerdictTest.theCommandCarriesTheRunToken` | 38978836396 |
+| a claimed run writes a fresh `run_token` | claim keeps the old one (#227) | `ReviewProjectionTest.aClaimedRunHasARunTokenAndARerunGetsANewOne` | 38978842145 |
+| `readBack` keeps this review's rows only | drops the `pull_request_review_id` filter (#228) | `GitHubReviewSinkTest.readsBackFromThePullRequestCommentsNotTheReviewComments` | 38978849386 |

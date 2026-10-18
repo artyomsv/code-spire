@@ -40,18 +40,20 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..046. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..046. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-10-08**. Delivery history is in docs/HISTORY.md; the
+Measured on **2026-10-18**. Delivery history is in docs/HISTORY.md; the
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
-proving slices and reviews, and the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
-the live proof of "one ticket to a build", and the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
-the live proof of verify. **M3 and M3.5 are on master; M4 slice 1 (verify) is accepted on PR #184.**
-An item now builds, verifies, delivers a PR, is reviewed, and stops at the land gate; land is next.
+proving slices and reviews, the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
+the live proof of "one ticket to a build", the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
+the live proof of verify, and the [GitHub reviews acceptance record](docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md)
+the live proof of forge-native reviews. **M3, M3.5 and M4 slice 1 are on master; GitHub reviews are
+accepted on PR #196.** An item now builds, verifies, delivers a PR, gets a GitHub review with a
+verdict, and stops at the land gate; land is next.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -126,6 +128,16 @@ An item now builds, verifies, delivers a PR, is reviewed, and stops at the land 
   proof also fixed seat renewal, a seat's unknown spending, draft PRs that the reviewer skipped, the
   reviewer allowlist for factory PRs, review reasons, and rules given to the reviewer twice.
 
+- **GitHub reviews are delivered** (accepted 2026-10-18, PR #196). On GitHub the reviewer posts a pull
+  request review: Approve, Request changes, or Comment when the repository's "Reviewer may approve"
+  setting is off, with the verdict in words in the body and every inline finding inside that review
+  (ADR-047). The orchestrator decides and stores the verdict, the worker posts it, and the forge
+  reports the link. The factory requests the bot as a reviewer on its PRs; the bot's own review cannot
+  answer a gate. Every run carries a token on the review header, so a re-run posts a new review and a
+  Comment review dismisses the bot's own standing hold. Live on `spire-test`: #50 approved, #54 held
+  with 3 inline comments, #56 commented with the merge box untouched, and the re-run on PR 55
+  dismissed its hold. The proof fixed the inline read-back endpoint and the re-run review reuse.
+
 **Limits that remain:**
 
 - **Production LAND remains unavailable.** Approving land records the answer and merges nothing.
@@ -133,6 +145,9 @@ An item now builds, verifies, delivers a PR, is reviewed, and stops at the land 
 - **Live item publication is GitHub only.** Marking a draft ready is refused on GitLab and
   Bitbucket. GitLab and Bitbucket reviews are posted as comments; GitHub gets a pull request review
   (ADR-047).
+- **GitHub review fallbacks are proven against fakes only:** the self-authored refusal, a rejected
+  anchor, the crash window between a post and its mark, and a non-collaborator reviewer. A legacy
+  summary comment stays stale beside the new review. The dismissal and the re-run are live.
 - **The test counts above are from 2026-09-16.** Later PRs were checked per module; the full
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
