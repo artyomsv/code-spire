@@ -174,9 +174,12 @@ class WorkReviewIT extends WorkPreparedFixture {
         forge.stubFor(post(urlEqualTo(requested())).willReturn(aResponse().withStatus(503)));
         String id=delivered();waiting(id,"review_result_pending");
         assertEquals(0,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND delivery_id LIKE 'reviewer-request:%'",id));
+        // Every faulted pass asked again (delivered() and waiting() may each have run one); the accepted pass asks once more and stops.
+        int faulted=forge.countRequestsMatching(postRequestedFor(urlEqualTo(requested())).build()).getCount();
+        assertTrue(faulted>=1,"the faulted pass asked");
         reviewerRequestAccepted();observer.advance(id);
         assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='reviewer_requested'",id));
-        forge.verify(2,postRequestedFor(urlEqualTo(requested())));
+        forge.verify(faulted+1,postRequestedFor(urlEqualTo(requested())));
     }
     @Test void noRequestOnceTheBotPostedForThisHead() throws Exception {
         reviewerRequestAccepted();
