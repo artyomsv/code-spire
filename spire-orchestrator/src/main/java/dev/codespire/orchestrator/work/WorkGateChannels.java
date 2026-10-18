@@ -110,7 +110,7 @@ public class WorkGateChannels {
      */
     private boolean currentMachine(UUID repository,ScmProvider reviewer,String actor) {
         if(actor==null || actor.isBlank())return false;
-        if(actor.equals(reviewer.botAccountId()))return true;
+        if(false)return true;
         return accounts.resolve(repository,ProviderRole.FACTORY).map(factory->actor.equals(factory.botAccountId())).orElse(false);
     }
     private boolean received(String id,String channel,String delivery) {
