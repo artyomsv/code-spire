@@ -207,7 +207,7 @@ final class NativeReviewPost {
     }
 
     private String inlineBody(Anchored entry) {
-        return String.join(FINDING_SEPARATOR, entry.findings().stream().map(rendering.inline()).toList());
+        return rendering.inline().apply(entry.findings().getFirst());
     }
 
     private ReviewSubmission submission(ReviewVerdict posting, Plan plan, List<InlineComment> comments) {
