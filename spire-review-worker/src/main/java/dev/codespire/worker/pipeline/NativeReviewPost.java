@@ -152,7 +152,7 @@ final class NativeReviewPost {
 
     /** The forge's verdict when it was read; otherwise the one this command posted (M-4). */
     private ReviewVerdict postedVerdict(PostedReview review) {
-        return review.verdict() == null ? command.verdict() : review.verdict();
+        return review.verdict();
     }
 
     /**
