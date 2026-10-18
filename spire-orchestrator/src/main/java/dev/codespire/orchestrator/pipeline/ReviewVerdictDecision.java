@@ -39,7 +39,7 @@ public final class ReviewVerdictDecision {
         String hold = hold(setting, reviewerIdentityKnown);
         boolean mayApprove = hold == null;
         // Why the assessment, then why it is not posted: the blocker count is not lost to the hold (M-8).
-        String reason = mayApprove ? why : why + " · " + hold;
+        String reason = mayApprove ? why : hold;
         return new Decision(assessment, mayApprove ? assessment : ReviewVerdict.COMMENT, mayApprove, reason);
     }
 
