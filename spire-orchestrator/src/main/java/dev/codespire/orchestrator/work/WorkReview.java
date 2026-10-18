@@ -126,7 +126,7 @@ public class WorkReview {
             return "reviewer_request_refused:"+refusal.getMessage();
         }catch(RuntimeException fault) {
             LOG.warnf("work item %s: requesting reviewer %s on pull request %d failed (%s); it is tried again on the next pass",item.workItemId(),login,execution.pullRequest().number(),fault.getClass().getSimpleName());
-            return null;
+            return "reviewer_request_refused:"+fault.getClass().getSimpleName();
         }
     }
     private dev.codespire.contract.scm.RepoRef repositoryOf(WorkItemEvent item) {
