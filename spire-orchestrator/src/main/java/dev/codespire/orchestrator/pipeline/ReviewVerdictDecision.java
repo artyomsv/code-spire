@@ -35,18 +35,22 @@ public final class ReviewVerdictDecision {
     public static Decision decide(boolean degraded, int openBlockers, Optional<Boolean> setting, boolean reviewerIdentityKnown) {
         ReviewVerdict assessment = degraded ? ReviewVerdict.COMMENT
                 : openBlockers > 0 ? ReviewVerdict.REQUEST_CHANGES : ReviewVerdict.APPROVE;
-        String reason = degraded ? REASON_DEGRADED : openBlockers > 0 ? "open_blockers=" + openBlockers : REASON_NO_BLOCKERS;
-        boolean mayApprove = true;
-        if (setting.isEmpty()) {
-            mayApprove = false;
-            reason = REASON_REPOSITORY_UNKNOWN;
-        } else if (!setting.get()) {
-            mayApprove = false;
-            reason = REASON_SETTING_OFF;
-        } else if (!reviewerIdentityKnown) {
-            mayApprove = false;
-            reason = REASON_IDENTITY_UNKNOWN;
-        }
+        String why = degraded ? REASON_DEGRADED : openBlockers > 0 ? "open_blockers=" + openBlockers : REASON_NO_BLOCKERS;
+        String hold = hold(setting, reviewerIdentityKnown);
+        boolean mayApprove = hold == null;
+        // Why the assessment, then why it is not posted: the blocker count is not lost to the hold (M-8).
+        String reason = mayApprove ? why : why + " · " + hold;
         return new Decision(assessment, mayApprove ? assessment : ReviewVerdict.COMMENT, mayApprove, reason);
+    }
+
+    /** @return why the bot may not change merge state here, or null when it may */
+    private static String hold(Optional<Boolean> setting, boolean reviewerIdentityKnown) {
+        if (setting.isEmpty()) {
+            return REASON_REPOSITORY_UNKNOWN;
+        }
+        if (!setting.orElseThrow()) {
+            return REASON_SETTING_OFF;
+        }
+        return reviewerIdentityKnown ? null : REASON_IDENTITY_UNKNOWN;
     }
 }

@@ -119,12 +119,13 @@ Also from the proof:
   slice keeps it; the new review is posted beside it and nothing edits the old comment.
 - **The review's hold needs write access to dismiss.** With a read-only reviewer account the Comment
   path posts but cannot release its own hold; the WARN log names it (API knowledge, not measured).
-- **Deferred minors from the branch review** (`.claude/reviews/global/github-reviews.md`, M-4 to
-  M-10): a redelivery with an unknown bot login emits a null posted verdict; a transient fault on the
-  reviewer request becomes a permanent receipt; every 422 on `requested_reviewers` is named
-  not-a-collaborator; `reviewUrl` renders without a scheme check; `repository_unknown` replaces
-  `open_blockers=N` in the timeline reason; a fully qualified `java.time.Instant` in the review
-  transcript; the stale legacy comment above.
+- **The branch review's minors M-4 to M-9 were fixed after acceptance**, on the operator's word, in
+  the round the PR's own review opened (`.claude/reviews/global/github-reviews.md`, Round 3): a
+  redelivery that cannot find its review reports the verdict it posted; a faulted reviewer request is
+  tried again on the next pass instead of becoming a receipt; only a 422 that names collaborators is
+  called `reviewer_not_collaborator`; the review link renders only for a web address; the timeline
+  reason keeps the blocker count beside the hold (`open_blockers=1 · setting_off`); the transcript
+  imports `Instant`. M-10, the stale legacy comment, stays a documented limit (above).
 - **Branch protection is not read or changed.** Whether a bot Approve counts toward required approvals
   is the repository's rule.
 - **Production LAND remains unavailable;** the land gate expires unanswered.

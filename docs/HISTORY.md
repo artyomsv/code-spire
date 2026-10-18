@@ -2183,4 +2183,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   setting off dismissed the bot's own hold, naming the new review. Left open: the self-authored
   refusal, the rejected anchor, the crash window and the non-collaborator reviewer are proven against
   fakes only; a legacy summary comment stays stale beside the new review; GitLab and Bitbucket keep
-  the comment. Record: [GitHub reviews acceptance](factory/GITHUB-REVIEWS-ACCEPTANCE.md).
+  the comment. After acceptance the PR's own review found four more, all confirmed in the code: a
+  reviewer or factory identity rotated after the build claim could answer the human land gate (the
+  gate now also rejects the repository's current machine identities), two findings at one anchor
+  left the second comment with no tracked thread (one combined comment per anchor now), and two
+  breaches of the Java rules (`Optional.get` after a guard; a 47-line method, a 5-parameter helper and a
+  7-parameter constructor, now a plan record, a posting ladder class and a ports record). Each fix
+  has a test that failed first, and the branch review's minors M-4 to M-9 were fixed in the same
+  round. Record: [GitHub reviews acceptance](factory/GITHUB-REVIEWS-ACCEPTANCE.md).

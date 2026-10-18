@@ -569,17 +569,19 @@ public class ReviewWorker {
             // Fix 1: one budget per message, shared across every finding's retry loop.
             BackoffBudget backoffBudget = new BackoffBudget(rateLimitBudgetSeconds);
             if (command.assessment() != null) {
-                Optional<NativeReviewPost.Outcome> nativeOutcome = new NativeReviewPost(idempotency, commentSink, command, diff,
+                NativeReviewPost.Rendering rendering = new NativeReviewPost.Rendering(
                         (unanchored, failed) -> renderSummary(review, unanchored, failed, command.commit(), command.suppressedCount())
                                 + renderReconciliationSection(command.verdicts()),
+                        this::renderInline,
                         (anchor, body) -> {
                             CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor, body, backoffBudget);
                             pace();
                             return ref;
-                        },
-                        this::renderInline).run();
+                        });
+                Optional<NativeReviewPost.Outcome> nativeOutcome = new NativeReviewPost(
+                        new NativeReviewPost.Ports(idempotency, commentSink, rendering), command, diff).run();
                 if (nativeOutcome.isPresent()) {
-                    NativeReviewPost.Outcome outcome = nativeOutcome.get();
+                    NativeReviewPost.Outcome outcome = nativeOutcome.orElseThrow();
                     List<CommentsPosted.PostedInline> posted = new ArrayList<>(outcome.inline());
                     recoverPreviouslyPosted(previouslyPosted, posted);
                     results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),

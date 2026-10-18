@@ -85,8 +85,10 @@ task that owns it.
 1. **A finding whose anchor is on the OLD side** (a removed line). GitHub takes `side: LEFT` and `line` =
    the old line; the read-back must match on `LEFT`. Pinned by `anOldSideAnchorIsMatchedOnTheLeftSide`
    (Task 2).
-2. **Two findings at one anchor key.** The submission carries both comments; the read-back maps the key once
-   and both findings report that thread. Pinned by `twoFindingsAtOneAnchorShareOneThread` (Task 4).
+2. **Two findings at one anchor key.** The submission carries ONE comment for the anchor with both findings
+   in it, because the claim, the read-back and the thread record are all keyed by the anchor; a second
+   comment there would be owned by nobody (review of PR #196, M-1). Pinned by
+   `twoFindingsAtOneAnchorPostOneCombinedComment` and `theInlineFallbackCarriesEveryFindingAtTheAnchor`.
 3. **The bot login cannot be resolved** (the `/user` lookup fails and no brokered login). `findReview` must
    answer empty, not throw, and the worker posts. Pinned by `findReviewIsEmptyWhenTheBotLoginIsUnknown`
    (Task 2).

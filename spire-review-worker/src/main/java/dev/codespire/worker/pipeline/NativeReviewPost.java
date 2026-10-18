@@ -24,14 +24,16 @@ import java.util.function.Function;
 /**
  * The forge-native review path of PostComments (ADR-047, spec §5.1): claim, find, post, mark at once,
  * read back, fall back, update the body, dismiss a hold. Package-private; {@link ReviewWorker} owns it
- * and supplies the rendering and the legacy inline poster it already has.
+ * and supplies the rendering and the legacy inline poster it already has. The posting ladder itself is
+ * {@link ReviewPostLadder}.
  */
 final class NativeReviewPost {
 
     static final String REVIEW_KEY = "REVIEW";
     static final String REF_PREFIX = "review:";
+    /** Between two findings that share one anchor and so one comment (M-1). */
+    static final String FINDING_SEPARATOR = "\n\n---\n\n";
     private static final Logger LOG = Logger.getLogger(NativeReviewPost.class);
-    private static final int MAX_POST_ATTEMPTS = 3;
 
     /** Posts one inline comment the legacy way: the worker's backoff and throttle. */
     interface InlinePoster {
@@ -43,81 +45,114 @@ final class NativeReviewPost {
         String render(List<Finding> unanchored, List<Finding> failed);
     }
 
+    /** What the worker renders and posts for this path: the summary, one finding's body, the legacy inline post. */
+    record Rendering(BodyRenderer summary, Function<Finding, String> inline, InlinePoster poster) {
+    }
+
+    /** The stores and the forge this path goes through. */
+    record Ports(CommentIdempotencyStore idempotency, CommentSink sink, Rendering rendering) {
+    }
+
     record Outcome(String reviewRef, ReviewVerdict postedVerdict, List<CommentsPosted.PostedInline> inline, String reviewUrl) {
+    }
+
+    /** The review the forge holds for this run, and whether its findings still have to go one by one (D7). */
+    record Posted(PostedReview review, boolean inlineFallback) {
     }
 
     private record Anchored(InlineAnchor anchor, List<Finding> findings) {
     }
 
-    private record Attempt(PostedReview review, boolean bodyOnly) {
+    /** Everything resolved and claimed before the first call to the forge. */
+    private record Plan(Map<String, Anchored> anchored, Map<String, String> alreadyPosted,
+                        List<Finding> unanchored, List<Finding> failed, List<InlineComment> comments) {
     }
 
     private final CommentIdempotencyStore idempotency;
     private final CommentSink sink;
+    private final Rendering rendering;
     private final PostComments command;
     private final Diff diff;
-    private final BodyRenderer bodies;
-    private final InlinePoster inlinePoster;
-    private final Function<Finding, String> inlineBodies;
 
-    NativeReviewPost(CommentIdempotencyStore idempotency, CommentSink sink, PostComments command, Diff diff,
-                     BodyRenderer bodies, InlinePoster inlinePoster, Function<Finding, String> inlineBodies) {
-        this.idempotency = idempotency;
-        this.sink = sink;
+    NativeReviewPost(Ports ports, PostComments command, Diff diff) {
+        this.idempotency = ports.idempotency();
+        this.sink = ports.sink();
+        this.rendering = ports.rendering();
         this.command = command;
         this.diff = diff;
-        this.bodies = bodies;
-        this.inlinePoster = inlinePoster;
-        this.inlineBodies = inlineBodies;
     }
 
     /** @return empty when the forge has no native review: the caller runs the legacy path. */
     Optional<Outcome> run() {
+        Plan plan = plan();
+        Posted posted = findOrPost(plan);
+        if (posted == null) {
+            return Optional.empty();
+        }
+        List<CommentsPosted.PostedInline> inline = settleInline(plan, posted);
+        finish(plan, posted);
+        PostedReview review = posted.review();
+        return Optional.of(new Outcome(review.reviewRef(), postedVerdict(review), inline, review.reviewUrl()));
+    }
+
+    private Plan plan() {
         List<Finding> unanchored = new ArrayList<>();
-        List<Finding> failed = new ArrayList<>();
         Map<String, Anchored> anchored = resolveAnchors(unanchored);
         Map<String, String> alreadyPosted = claimAnchors(anchored.keySet());
-        List<InlineComment> comments = commentsFor(anchored, alreadyPosted);
+        return new Plan(anchored, alreadyPosted, unanchored, new ArrayList<>(), commentsFor(anchored, alreadyPosted));
+    }
 
-        boolean inlineFallback = false;
-        PostedReview review;
+    /**
+     * The claim does not say whether it was fresh or reclaimed, so look first: an attempt that died between
+     * the POST and the mark left a review the forge still holds (spec §5.1 step 3). The mark is written at
+     * once, before any read-back or fallback: everything after it is a read, a per-anchor claimed post or an
+     * idempotent PUT, so a crash later re-enters here and finds the mark.
+     *
+     * @return null when the forge has no native review
+     */
+    private Posted findOrPost(Plan plan) {
         if (idempotency.claim(command.reviewId(), command.commit(), REVIEW_KEY)
                 instanceof CommentIdempotencyStore.Claim.AlreadyPosted marked) {
-            String ref = marked.postedRef().substring(REF_PREFIX.length());
-            review = sink.findReview(command.repo(), command.prId(), command.commit(),
-                            submission(command.verdict(), unanchored, failed, comments))
-                    .orElse(new PostedReview(ref, null, Map.of()));
-            inlineFallback = postedWithoutItsComments(review, comments);
-        } else {
-            // The claim does not say whether it was fresh or reclaimed, so look first: an attempt that
-            // died between the POST and the mark left a review the forge still holds (spec §5.1 step 3).
-            Optional<PostedReview> found = sink.findReview(command.repo(), command.prId(), command.commit(),
-                    submission(command.verdict(), unanchored, failed, comments));
-            if (found.isPresent()) {
-                review = found.get();
-                inlineFallback = postedWithoutItsComments(review, comments);
-            } else {
-                Attempt attempt = postWithFallbacks(unanchored, failed, comments);
-                if (attempt == null) {
-                    return Optional.empty();
-                }
-                review = attempt.review();
-                inlineFallback = attempt.bodyOnly();
-            }
-            // At once, before any read-back or fallback: everything after this is a read, a per-anchor
-            // claimed post, or an idempotent PUT, so a crash later re-enters here and finds the mark.
-            idempotency.markPosted(command.reviewId(), command.commit(), REVIEW_KEY, REF_PREFIX + review.reviewRef());
+            return marked(marked.postedRef(), plan);
         }
+        Posted posted = find(plan).orElseGet(() -> ladder(plan).post(plan.comments()));
+        if (posted != null) {
+            idempotency.markPosted(command.reviewId(), command.commit(), REVIEW_KEY, REF_PREFIX + posted.review().reviewRef());
+        }
+        return posted;
+    }
 
-        List<CommentsPosted.PostedInline> inline = settleInline(anchored, alreadyPosted, review, inlineFallback, failed);
-        if (inlineFallback || !failed.isEmpty()) {
-            sink.updateReviewBody(command.repo(), command.prId(), review.reviewRef(),
-                    body(unanchored, failed, review.verdict() == null ? command.verdict() : review.verdict()));
+    /** A redelivery after the mark: the forge's copy when it can be found, else the marked ref with no verdict read. */
+    private Posted marked(String postedRef, Plan plan) {
+        return find(plan).orElseGet(() -> {
+            PostedReview held = new PostedReview(postedRef.substring(REF_PREFIX.length()), null, Map.of());
+            return new Posted(held, postedWithoutItsComments(held, plan.comments()));
+        });
+    }
+
+    private Optional<Posted> find(Plan plan) {
+        return sink.findReview(command.repo(), command.prId(), command.commit(), submission(command.verdict(), plan, plan.comments()))
+                .map(review -> new Posted(review, postedWithoutItsComments(review, plan.comments())));
+    }
+
+    private ReviewPostLadder ladder(Plan plan) {
+        return new ReviewPostLadder(sink, command, (posting, comments) -> submission(posting, plan, comments));
+    }
+
+    /** The body update the ladder owes (D7) or a failed inline post needs, then the hold release (D11). */
+    private void finish(Plan plan, Posted posted) {
+        String reviewRef = posted.review().reviewRef();
+        if (posted.inlineFallback() || !plan.failed().isEmpty()) {
+            sink.updateReviewBody(command.repo(), command.prId(), reviewRef, body(plan, postedVerdict(posted.review())));
         }
         if (Boolean.FALSE.equals(command.reviewerMayApprove())) {
-            dismissQuietly(review.reviewRef());
+            dismissQuietly(reviewRef);
         }
-        return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
+    }
+
+    /** The forge's verdict when it was read; otherwise the one this command posted (M-4). */
+    private ReviewVerdict postedVerdict(PostedReview review) {
+        return review.verdict() == null ? command.verdict() : review.verdict();
     }
 
     /**
@@ -132,14 +167,14 @@ final class NativeReviewPost {
     private Map<String, Anchored> resolveAnchors(List<Finding> unanchored) {
         Map<String, Anchored> anchored = new LinkedHashMap<>();
         for (Finding finding : command.findings().findings()) {
-            Optional<InlineAnchor> anchor = Anchors.resolveLine(
+            Optional<InlineAnchor> resolved = Anchors.resolveLine(
                     diff.files(), finding.path(), finding.range().startLine(), finding.range().endLine());
-            if (anchor.isEmpty()) {
+            if (resolved.isEmpty()) {
                 unanchored.add(finding);
                 continue;
             }
-            anchored.computeIfAbsent(anchor.get().anchorKey(), key -> new Anchored(anchor.get(), new ArrayList<>()))
-                    .findings().add(finding);
+            InlineAnchor anchor = resolved.orElseThrow();
+            anchored.computeIfAbsent(anchor.anchorKey(), key -> new Anchored(anchor, new ArrayList<>())).findings().add(finding);
         }
         return anchored;
     }
@@ -156,26 +191,32 @@ final class NativeReviewPost {
         return alreadyPosted;
     }
 
+    /**
+     * One comment per anchor. The claim, the read-back and the thread record are all keyed by the anchor,
+     * so a second comment at the same anchor would be posted and then owned by nobody (M-1); the findings
+     * that share an anchor share its comment.
+     */
     private List<InlineComment> commentsFor(Map<String, Anchored> anchored, Map<String, String> alreadyPosted) {
         List<InlineComment> comments = new ArrayList<>();
         anchored.forEach((key, entry) -> {
             if (!alreadyPosted.containsKey(key)) {
-                for (Finding finding : entry.findings()) {
-                    comments.add(new InlineComment(entry.anchor(), inlineBodies.apply(finding)));
-                }
+                comments.add(new InlineComment(entry.anchor(), inlineBody(entry)));
             }
         });
         return comments;
     }
 
-    private ReviewSubmission submission(ReviewVerdict posting, List<Finding> unanchored, List<Finding> failed,
-                                        List<InlineComment> comments) {
-        return new ReviewSubmission(posting, body(unanchored, failed, posting), comments);
+    private String inlineBody(Anchored entry) {
+        return String.join(FINDING_SEPARATOR, entry.findings().stream().map(rendering.inline()).toList());
+    }
+
+    private ReviewSubmission submission(ReviewVerdict posting, Plan plan, List<InlineComment> comments) {
+        return new ReviewSubmission(posting, body(plan, posting), comments);
     }
 
     /** The verdict in words when the posted verdict is COMMENT and the assessment is not (D3, D6). */
-    private String body(List<Finding> unanchored, List<Finding> failed, ReviewVerdict posting) {
-        String rendered = withRunMarker(bodies.render(unanchored, failed), command.runToken());
+    private String body(Plan plan, ReviewVerdict posting) {
+        String rendered = withRunMarker(rendering.summary().render(plan.unanchored(), plan.failed()), command.runToken());
         return posting == ReviewVerdict.COMMENT && command.assessment() != ReviewVerdict.COMMENT
                 ? withVerdictLine(rendered, command.assessment()) : rendered;
     }
@@ -201,76 +242,36 @@ final class NativeReviewPost {
         return cut < 0 ? body + "\n\n" + line : body.substring(0, cut + 2) + line + body.substring(cut + 2);
     }
 
-    /**
-     * Full review; on a refusal once more as COMMENT with the verdict line (D6); on a rejected anchor
-     * once more with the body only (D7). At most three posts.
-     *
-     * @return null when the forge has no native review
-     */
-    private Attempt postWithFallbacks(List<Finding> unanchored, List<Finding> failed, List<InlineComment> comments) {
-        ReviewVerdict posting = command.verdict();
-        List<InlineComment> current = comments;
-        boolean refused = false;
-        boolean bodyOnly = false;
-        for (int attempt = 1; attempt <= MAX_POST_ATTEMPTS; attempt++) {
-            try {
-                Optional<PostedReview> posted = sink.postReview(command.repo(), command.prId(), command.commit(),
-                        submission(posting, unanchored, failed, current));
-                if (posted.isEmpty()) {
-                    return null;
-                }
-                return new Attempt(posted.get(), bodyOnly);
-            } catch (CommentSink.ReviewVerdictRefused e) {
-                if (refused) {
-                    throw e;
-                }
-                LOG.infof("review %s: the forge refused %s — posting as COMMENT with the verdict in words",
-                        command.reviewId(), posting);
-                refused = true;
-                posting = ReviewVerdict.COMMENT;
-            } catch (CommentSink.ReviewAnchorRejected e) {
-                if (bodyOnly) {
-                    throw e;
-                }
-                LOG.infof("review %s: the forge rejected an anchor — posting the body, then the findings one by one",
-                        command.reviewId());
-                bodyOnly = true;
-                current = List.of();
-            }
-        }
-        throw new IllegalStateException("review post attempts exhausted for " + command.reviewId());
-    }
-
-    private List<CommentsPosted.PostedInline> settleInline(Map<String, Anchored> anchored, Map<String, String> alreadyPosted,
-                                                            PostedReview review, boolean inlineFallback, List<Finding> failed) {
+    /** Every anchor's thread: already posted, inside the review, posted one by one on the fallback, or failed. */
+    private List<CommentsPosted.PostedInline> settleInline(Plan plan, Posted posted) {
         List<CommentsPosted.PostedInline> inline = new ArrayList<>();
-        anchored.forEach((key, entry) -> {
-            Finding first = entry.findings().getFirst();
-            String thread = alreadyPosted.get(key);
+        plan.anchored().forEach((key, entry) -> {
+            String thread = plan.alreadyPosted().get(key);
             if (thread == null) {
-                thread = review.inlineThreads().get(key);
+                thread = posted.review().inlineThreads().get(key);
             }
-            if (thread == null && inlineFallback) {
-                thread = postInlineQuietly(entry.anchor(), first);
+            if (thread == null && posted.inlineFallback()) {
+                thread = postInlineQuietly(entry);
             }
             if (thread == null) {
-                failed.addAll(entry.findings());
+                plan.failed().addAll(entry.findings());
                 return;
             }
-            if (!alreadyPosted.containsKey(key)) {
+            if (!plan.alreadyPosted().containsKey(key)) {
                 idempotency.markPosted(command.reviewId(), command.commit(), key, thread);
             }
+            Finding first = entry.findings().getFirst();
             inline.add(new CommentsPosted.PostedInline(thread, first.path(), first.range().startLine()));
         });
         return inline;
     }
 
-    /** Per-finding isolation, as the legacy path: one failure never aborts the batch; the claim stays reclaimable. */
-    private String postInlineQuietly(InlineAnchor anchor, Finding finding) {
+    /** Per-anchor isolation, as the legacy path: one failure never aborts the batch; the claim stays reclaimable. */
+    private String postInlineQuietly(Anchored entry) {
         try {
-            return inlinePoster.post(anchor, inlineBodies.apply(finding)).thread().value();
+            return rendering.poster().post(entry.anchor(), inlineBody(entry)).thread().value();
         } catch (RuntimeException e) {
-            LOG.warnf(e, "Inline post failed for %s at %s", command.reviewId(), anchor.anchorKey());
+            LOG.warnf(e, "Inline post failed for %s at %s", command.reviewId(), entry.anchor().anchorKey());
             return null;
         }
     }

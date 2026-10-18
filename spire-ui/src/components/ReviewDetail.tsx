@@ -13,11 +13,14 @@ interface Props {
 
 const POSTED_LABEL: Record<PostedVerdict, string> = { approved: 'Approved', changes_requested: 'Changes requested', commented: 'Comment' };
 
+/** The link comes from the forge API; only a web address is rendered as one. */
+const isWebAddress = (url: string) => /^https?:\/\//i.test(url);
+
 /** How the forge holds the last posted run (ADR-047); nothing for the legacy comment path or another forge. */
 function postedAs(r: ReviewDetailData) {
   if (!r.postedVerdict) return null;
   return <p className="posted-as">Posted as <strong>{POSTED_LABEL[r.postedVerdict]}</strong>
-    {r.reviewUrl && <> · <a href={r.reviewUrl} target="_blank" rel="noreferrer">open the review</a></>}</p>;
+    {r.reviewUrl && isWebAddress(r.reviewUrl) && <> · <a href={r.reviewUrl} target="_blank" rel="noreferrer">open the review</a></>}</p>;
 }
 
 export default function ReviewDetail({ reviews }: Props) {

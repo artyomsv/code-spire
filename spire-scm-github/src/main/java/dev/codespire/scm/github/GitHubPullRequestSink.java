@@ -147,10 +147,16 @@ public class GitHubPullRequestSink implements PullRequestSink {
             client.postJson(path, Map.of("reviewers", logins));
         } catch (GitHubApiException e) {
             if (e.status() == UNPROCESSABLE) {
-                throw new PullRequestSink.DeliveryUnavailable("reviewer_not_collaborator");
+                throw new PullRequestSink.DeliveryUnavailable(
+                        isAboutCollaborators(e) ? "reviewer_not_collaborator" : "reviewer_request_unprocessable");
             }
             throw e;
         }
+    }
+
+    /** GitHub's 422 for a login outside the repository says "collaborators"; any other 422 keeps a name of its own (M-6). */
+    private static boolean isAboutCollaborators(GitHubApiException e) {
+        return e.getMessage() != null && e.getMessage().toLowerCase(Locale.ROOT).contains("collaborator");
     }
 
     private static final String READY_FOR_REVIEW = """

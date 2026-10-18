@@ -16,6 +16,7 @@ import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -380,7 +381,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     private ThreadTranscript reviewTranscript(RepoRef repo, long prId, ThreadRef thread, String botLogin) {
         String reviewId = thread.value().substring(REVIEW_REF_PREFIX.length());
         JsonNode review = client.getJson(prPath(repo, prId) + "/reviews/" + reviewId);
-        java.time.Instant submitted = java.time.Instant.parse(review.path("submitted_at").asText("1970-01-01T00:00:00Z"));
+        Instant submitted = Instant.parse(review.path("submitted_at").asText("1970-01-01T00:00:00Z"));
         List<ThreadMessage> messages = new ArrayList<>();
         messages.add(toMessage(review, botLogin));
         for (int page = 1; page <= MAX_THREAD_PAGES; page++) {
@@ -388,7 +389,7 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
             int count = 0;
             for (JsonNode c : pageComments) {
                 count++;
-                if (java.time.Instant.parse(c.path("created_at").asText("1970-01-01T00:00:00Z")).isAfter(submitted)) {
+                if (Instant.parse(c.path("created_at").asText("1970-01-01T00:00:00Z")).isAfter(submitted)) {
                     messages.add(toMessage(c, botLogin));
                 }
             }

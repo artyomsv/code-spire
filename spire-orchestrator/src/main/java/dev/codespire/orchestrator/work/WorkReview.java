@@ -100,7 +100,8 @@ public class WorkReview {
         long pr=execution.pullRequest().number();String delivery="reviewer-request:"+item.progress().attemptId()+":"+pr;
         try(Connection c=dataSource.getConnection()) {
             if(WorkItemControl.received(c,item.workItemId(),REQUEST_CHANNEL,delivery) || reviewPostedForHead(c,item,execution))return;
-            WorkItemControl.receipt(c,item.workItemId(),REQUEST_CHANNEL,delivery,requestReviewer(item,execution));
+            String outcome=requestReviewer(item,execution);
+            if(outcome!=null)WorkItemControl.receipt(c,item.workItemId(),REQUEST_CHANNEL,delivery,outcome);
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
     /** On row absence or a different head, not on observe()'s reason: that string is the same for no row and a degraded one. */
@@ -112,6 +113,7 @@ public class WorkReview {
             }
         }
     }
+    /** @return the receipt outcome, or null on a fault: a fault is not an answer, so the next pass asks again (M-5) */
     private String requestReviewer(WorkItemEvent item,WorkExecution execution) {
         String login=repositoryAccounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER)
                 .map(dev.codespire.orchestrator.provider.ScmProvider::botUsername).orElse("");
@@ -123,8 +125,8 @@ public class WorkReview {
             LOG.warnf("work item %s: the forge refused to request reviewer %s on pull request %d (%s)",item.workItemId(),login,execution.pullRequest().number(),refusal.getMessage());
             return "reviewer_request_refused:"+refusal.getMessage();
         }catch(RuntimeException fault) {
-            LOG.warnf("work item %s: requesting reviewer %s on pull request %d failed (%s)",item.workItemId(),login,execution.pullRequest().number(),fault.getClass().getSimpleName());
-            return "reviewer_request_refused:"+fault.getClass().getSimpleName();
+            LOG.warnf("work item %s: requesting reviewer %s on pull request %d failed (%s); it is tried again on the next pass",item.workItemId(),login,execution.pullRequest().number(),fault.getClass().getSimpleName());
+            return null;
         }
     }
     private dev.codespire.contract.scm.RepoRef repositoryOf(WorkItemEvent item) {
