@@ -303,7 +303,7 @@ class ReviewWorkerTest {
         assertEquals(ReviewVerdict.APPROVE, posted.postedVerdict());
         assertEquals(1, posted.inline().size());
         assertEquals("src/A.java", posted.inline().getFirst().path());
-        assertEquals("review:rv-100", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"));
+        assertEquals("review:rv-100:APPROVE", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"), "the mark keeps the accepted verdict");
     }
 
     @Test
@@ -385,7 +385,7 @@ class ReviewWorkerTest {
         worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
 
         assertTrue(sink.reviewPosts.isEmpty(), "the review GitHub already holds is reused");
-        assertEquals("review:rv-9", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"), "the mark is written now");
+        assertEquals("review:rv-9:APPROVE", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"), "the mark is written now, with the forge's verdict");
         assertEquals("c-9", idempotency.postedFor(REVIEW_ID, COMMIT).get(KEY_A2));
         assertEquals("rv-9", lastCommentsPosted().reviewRef());
     }
@@ -528,16 +528,42 @@ class ReviewWorkerTest {
         assertTrue(sink.inlineBodies.getFirst().contains("TEST-second concern"), "the second concern survives the fallback");
     }
 
-    /** Review of PR #196 (M-4): a redelivery whose look-up finds nothing still reports the verdict this command posted. */
+    /**
+     * Review of PR #196 (M-4, then M-2): a redelivery whose look-up finds nothing reports the verdict the
+     * forge ACCEPTED, which the mark keeps; never the one the command asked for.
+     */
     @Test
     void aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict() {
         sink.nativeReviews = true;
-        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9:APPROVE");
         idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
         worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
         assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
         assertEquals("rv-9", lastCommentsPosted().reviewRef());
-        assertEquals(ReviewVerdict.APPROVE, lastCommentsPosted().postedVerdict(), "the verdict this command posted, not null");
+        assertEquals(ReviewVerdict.APPROVE, lastCommentsPosted().postedVerdict(), "the verdict the mark keeps, not null");
+    }
+
+    @Test
+    void aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict() {
+        // The first attempt asked APPROVE, the forge refused it (own pull request), COMMENT was accepted, and
+        // the attempt died after the mark. The look-up misses: the mark, not the command, says what stands.
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9:COMMENT");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
+        assertEquals(ReviewVerdict.COMMENT, lastCommentsPosted().postedVerdict(), "what GitHub accepted, not what was asked");
+        assertTrue(sink.updatedReviewBodies.getFirst().contains("**Verdict:** approve"),
+                "the body update keeps the verdict line a COMMENT review owes: " + sink.updatedReviewBodies.getFirst());
+    }
+
+    @Test
+    void anOlderMarkWithoutAVerdictReportsNone() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+        assertNull(lastCommentsPosted().postedVerdict(), "unknown stays unknown rather than the command's guess");
     }
 
     @Test
