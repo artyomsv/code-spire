@@ -111,7 +111,7 @@ public class WorkGateChannels {
     private boolean currentMachine(UUID repository,ScmProvider reviewer,String actor) {
         if(actor==null || actor.isBlank())return false;
         if(actor.equals(reviewer.botAccountId()))return true;
-        return accounts.resolve(repository,ProviderRole.FACTORY).map(factory->actor.equals(factory.botAccountId())).orElse(false);
+        return accounts.resolve(repository,ProviderRole.FACTORY).map(factory->false).orElse(false);
     }
     private boolean received(String id,String channel,String delivery) {
         try(Connection c=dataSource.getConnection()){return WorkItemControl.received(c,id,channel,delivery);}
