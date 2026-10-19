@@ -2158,3 +2158,36 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   sign-in, and long check output kept its start instead of its end. Item #48 then ran from issue to
   land gate with only write, label and approve. Record:
   [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md).
+
+- **GitHub reviews (2026-10-15 to 2026-10-18, PR #196).**
+  On GitHub the reviewer posts a pull request review instead of a summary comment: Approve, Request
+  changes, or Comment when the repository's new "Reviewer may approve" setting is off, with the
+  summary as the body, the verdict in words, and every inline finding inside the same review
+  (ADR-047). The orchestrator decides the verdict from the open blockers and the setting and stores
+  it; the worker posts through a fallback ladder (a self-authored refusal becomes a Comment, a
+  rejected anchor falls back to body only, then one comment at a time); the forge reports the review
+  link, because a provider name may not appear in core code. The factory requests the bot as a
+  reviewer on its PRs; the bot's own review neither triggers nor resolves a gate. Thirteen plan tasks
+  ran inline; the branch review found three Important defects (a stale "Posted as" after a new push,
+  a crash after a body-only post losing the inline fallback, a moved comment line left unmatched),
+  each fixed with a test, and 26 chosen mutations were all killed, three after a discriminating test
+  was added. The live proof on `spire-test` found two more. GitHub answers the per-review comment
+  list in its legacy shape, so the inline read-back matched nothing and the body said "Could not be
+  posted inline" while the comment stood on GitHub; the read-back now walks the pull request's
+  comment list filtered by review id. And a re-run on the same head reused the earlier run's review
+  and dismissed it as superseded by itself; every run now gets a token, written as a hidden marker on
+  the review header, so a re-run posts a new review beside the old one. Six more mutations died on
+  the named tests. Then #50 was approved; #51's int cast was graded MAJOR and approved, which made
+  the `.codespire` BLOCKER rule the operator's lever, and #54's double was held with 3 inline
+  comments; #56 got a Comment review with the merge box untouched; and the re-run on PR 55 with the
+  setting off dismissed the bot's own hold, naming the new review. Left open: the self-authored
+  refusal, the rejected anchor, the crash window and the non-collaborator reviewer are proven against
+  fakes only; a legacy summary comment stays stale beside the new review; GitLab and Bitbucket keep
+  the comment. After acceptance the PR's own review found four more, all confirmed in the code: a
+  reviewer or factory identity rotated after the build claim could answer the human land gate (the
+  gate now also rejects the repository's current machine identities), two findings at one anchor
+  left the second comment with no tracked thread (one combined comment per anchor now), and two
+  breaches of the Java rules (`Optional.get` after a guard; a 47-line method, a 5-parameter helper and a
+  7-parameter constructor, now a plan record, a posting ladder class and a ports record). Each fix
+  has a test that failed first, and the branch review's minors M-4 to M-9 were fixed in the same
+  round. Record: [GitHub reviews acceptance](factory/GITHUB-REVIEWS-ACCEPTANCE.md).

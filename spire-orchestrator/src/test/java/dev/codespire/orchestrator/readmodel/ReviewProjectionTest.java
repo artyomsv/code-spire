@@ -3,9 +3,12 @@ package dev.codespire.orchestrator.readmodel;
 import io.quarkus.test.security.TestSecurity;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.review.Finding;
+import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -22,6 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,7 +48,120 @@ class ReviewProjectionTest {
     @Inject
     ReviewThreadView threads;
 
+    @Inject
+    com.fasterxml.jackson.databind.ObjectMapper mapper;
+
     private static final RepoRef REPO = new RepoRef("acme", "web");
+
+    // --- the posted verdict and the open-blocker count (ADR-047) ---
+
+    private String completedReview(long pr, List<Finding> findings) {
+        String id = ReviewIds.reviewId(REPO, pr);
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "cafe123", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        ReviewResult result = new ReviewResult(findings, "TEST summary", ModelUsage.of("TEST-MODEL", 1, 1));
+        projection.recordOutcome(id, result, ReviewProjection.STAGE_DONE);
+        return id;
+    }
+
+    @Test
+    void openBlockersMatchesDetailOpenBlockers() {
+        // No BLOCKER in this run's findings_json: the only open blocker is a prior-round one still open in
+        // reconciliation_json. A count that reads findings_json alone answers 0 and fails here.
+        long pr = 4201L;
+        String id = completedReview(pr, List.of(
+                new Finding("src/A.java", new LineRange(3, 3), Severity.MINOR, "TEST minor", null)));
+        PriorFinding priorBlocker = new PriorFinding("src/B.java", 8, Severity.BLOCKER, "TEST prior blocker", "t-prior");
+        projection.recordReconciliation(id,
+                List.of(new FindingVerdict("t-prior", "src/B.java", 8, FindingVerdict.Status.STILL_OPEN, "TEST still open")),
+                List.of(priorBlocker));
+
+        int fromDetail = projection.loadDetail("acme", "web", pr).orElseThrow().openBlockers();
+        assertEquals(1, fromDetail, "the still-open prior blocker is open");
+        assertEquals(fromDetail, projection.openBlockers(id), "one rule for GitHub and the land gate (D1)");
+        assertEquals(0, projection.openBlockers("review::acme/web#0"), "a missing row has no blockers");
+    }
+
+    @Test
+    void recordPostedVerdictIsReadBackBySummaryAndDetail() {
+        long pr = 4202L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.REQUEST_CHANGES, "501", "https://x/pr/" + pr + "#TEST-review-501");
+
+        ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertEquals("changes_requested", detail.postedVerdict());
+        assertEquals("https://x/pr/" + pr + "#TEST-review-501", detail.reviewUrl(), "the forge's link, stored as given");
+        ReviewSummary summary = projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow();
+        assertEquals("changes_requested", summary.postedVerdict());
+        assertEquals(detail.reviewUrl(), summary.reviewUrl());
+    }
+
+    @Test
+    void aSupersededRunsVerdictIsNotRecorded() {
+        long pr = 4203L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "0ld0ld", ReviewVerdict.APPROVE, "777", "https://x/TEST-stale");
+        assertNull(projection.loadDetail("acme", "web", pr).orElseThrow().postedVerdict(),
+                "a CommentsPosted for an older commit cannot stamp the current head (same guard as recordPosted)");
+    }
+
+    @Test
+    void aNewHeadClearsThePostedVerdict() {
+        // The commit guard protects the write; the read needs the same care. A second push registers a
+        // new run on the same row, and "Posted as Approved" under "reviewing" would read as this head's.
+        long pr = 4205L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9", "https://x/TEST-review-9");
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "d0d0d0", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        ReviewDetail detail = projection.loadDetail("acme", "web", pr).orElseThrow();
+        assertNull(detail.postedVerdict(), "a new head has no posted verdict yet");
+        assertNull(detail.reviewUrl());
+    }
+
+    @Test
+    void aClaimedRunHasARunTokenAndARerunGetsANewOne() {
+        // The worker marks a run's reviews with this token so a re-run on the same head posts a new
+        // review instead of reusing the earlier run's (spire-test PR 55, 2026-10-16).
+        long pr = 4206L;
+        String id = completedReview(pr, List.of());
+        String first = projection.runTokenOf(id).orElseThrow();
+        assertFalse(first.isBlank());
+        projection.markRerunStarted(id);
+        String rerun = projection.runTokenOf(id).orElseThrow();
+        assertNotEquals(first, rerun, "a re-run is a new run");
+        projection.registerHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "d0d0d0", "https://x/pr/" + pr, "github", "reviewing", ReviewProjection.STAGE_DIFF);
+        assertNotEquals(rerun, projection.runTokenOf(id).orElseThrow(), "a new head is a new run");
+    }
+
+    @Test
+    void aRetryAndARefreshKeepTheRunToken() {
+        // A C8 retry continues the run whose half-posted review must still be found; a refresh claims
+        // nothing. Neither may hand the worker a token that hides this run's own review.
+        long pr = 4207L;
+        String id = completedReview(pr, List.of());
+        String token = projection.runTokenOf(id).orElseThrow();
+        projection.retryPipeline(id, 2, "retrying (attempt 2/3)");
+        assertEquals(token, projection.runTokenOf(id).orElseThrow());
+        projection.refreshHeader(id, REPO, pr, "TEST title", "TEST-author", "TEST-acc", "feature", "main",
+                "cafe123", "https://x/pr/" + pr, "github");
+        assertEquals(token, projection.runTokenOf(id).orElseThrow());
+    }
+
+    @Test
+    void postedVerdictAndReviewUrlSerializeOnBothRecords() throws Exception {
+        long pr = 4204L;
+        String id = completedReview(pr, List.of());
+        projection.recordPostedVerdict(id, "cafe123", ReviewVerdict.APPROVE, "9", "https://x/TEST-review-9");
+        var detail = mapper.readTree(mapper.writeValueAsString(projection.loadDetail("acme", "web", pr).orElseThrow()));
+        var summary = mapper.readTree(mapper.writeValueAsString(
+                projection.listSummaries(false).stream().filter(s -> s.id().equals(id)).findFirst().orElseThrow()));
+        for (var record : List.of(detail, summary)) {
+            assertEquals("approved", record.path("postedVerdict").asText(), record.toString());
+            assertEquals("https://x/TEST-review-9", record.path("reviewUrl").asText(), record.toString());
+        }
+    }
 
     @Test
     void registersAndListsAReview() {

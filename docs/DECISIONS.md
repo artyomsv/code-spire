@@ -4,6 +4,40 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-047 — The reviewer posts a forge-native review where the forge has one
+
+**Status:** implemented on `feat/github-reviews` (PR #196), 2026-10-15. Live proof pending
+(`docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md` when it lands).
+
+**Context.** A summary issue comment left GitHub's sidebar at "No reviews": nobody could see from GitHub
+that a PR was reviewed, or approved. The operator asked for real reviews during the M4 verify proof. The
+design is [the GitHub reviews specification](superpowers/specs/2026-10-15-github-reviews-design.md).
+
+**Decision.**
+- **One review per run.** On GitHub the worker posts a pull request review: verdict, the summary as the
+  body, every inline finding inside it. GitLab and Bitbucket keep the summary comment.
+- **The orchestrator decides.** Request changes means at least one open BLOCKER, the same count the land
+  gate waits on; degraded means Comment; otherwise Approve. The command carries the assessment, the verdict
+  to post, and whether the repository lets the bot approve.
+- **Reviewer may approve (per repository, default on).** Off: every review is a Comment with the verdict in
+  words, and the worker dismisses the bot's own standing Request changes after posting, because a Comment
+  review clears nothing on GitHub. A reviewer registration without a bot identity never gets an Approve:
+  the land gate's guard is the recorded machine actor, and a blank one would let the bot's Approve through.
+- **The fallback ladder.** GitHub refuses a verdict on one's own PR: post again as Comment, once. GitHub
+  rejects a review for one bad anchor: post the body, then the findings one by one, then update the body.
+- **Idempotency.** The worker claims `REVIEW` and every anchor before any call, looks for a review an
+  earlier attempt left on the forge, and marks the claim the moment the post returns.
+- **The factory asks.** After a delivered PR is ready, the factory requests the reviewer bot once per
+  attempt and PR, with a receipt; a refusal is a receipt, never a wait.
+
+**Consequences.**
+- `review:<id>` is the summary thread ref on GitHub: a reply to it is a top-level PR comment, and reading
+  it gives the body plus the comments after it.
+- A reviewer account with read access can post reviews but cannot dismiss its own hold; the WARN names it.
+- Branch protection rules decide whether the bot's Approve counts; this design does not read them.
+
+---
+
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint
 
 **Status:** implemented in M4 slice 1 (PR #184), 2026-10-07. Live proof pending

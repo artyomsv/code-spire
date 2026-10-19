@@ -85,16 +85,17 @@ public class RepositoryRegistry {
     public RepositoryView update(UUID id, long expectedRevision, RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
-                UPDATE repository SET enabled=?, revision=revision+1
+                UPDATE repository SET enabled=?, reviewer_may_approve=?, revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
-            statement.setObject(2, id);
-            statement.setLong(3, expectedRevision);
-            statement.setString(4, input.scmType());
-            statement.setString(5, input.forgeOrigin());
-            statement.setString(6, input.workspace());
-            statement.setString(7, input.slug());
+            statement.setBoolean(2, input.reviewerMayApprove());
+            statement.setObject(3, id);
+            statement.setLong(4, expectedRevision);
+            statement.setString(5, input.scmType());
+            statement.setString(6, input.forgeOrigin());
+            statement.setString(7, input.workspace());
+            statement.setString(8, input.slug());
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
         } catch (SQLException failure) { throw database(failure); }
@@ -103,13 +104,14 @@ public class RepositoryRegistry {
 
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
-                "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled) VALUES (?,?,?,?,?,?)")) {
+                "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve) VALUES (?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());
             statement.setString(3, input.forgeOrigin());
             statement.setString(4, input.workspace());
             statement.setString(5, input.slug());
             statement.setBoolean(6, input.enabled());
+            statement.setBoolean(7, input.reviewerMayApprove());
             statement.executeUpdate();
         }
     }
@@ -120,7 +122,17 @@ public class RepositoryRegistry {
         String slug = path(input.slug());
         if (slug.contains("/")) throw new IllegalArgumentException("Repository slug cannot contain a slash");
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
-                input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId());
+                input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
+                input.reviewerMayApprove() == null || input.reviewerMayApprove());
+    }
+
+    /** The setting for the saga (ADR-047 §4.1); empty when the row is missing, never a default. */
+    public Optional<Boolean> reviewerMayApprove(UUID id) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT reviewer_may_approve FROM repository WHERE id=?")) {
+            statement.setObject(1, id);
+            try (ResultSet rows = statement.executeQuery()) { return rows.next() ? Optional.of(rows.getBoolean(1)) : Optional.empty(); }
+        } catch (SQLException failure) { throw database(failure); }
     }
 
     private String path(String value) {
@@ -136,7 +148,7 @@ public class RepositoryRegistry {
     private RepositoryView view(ResultSet rows) throws SQLException {
         return new RepositoryView(rows.getObject("id", UUID.class), rows.getString("scm_type"), rows.getString("forge_origin"),
                 rows.getString("workspace"), rows.getString("slug"), rows.getBoolean("enabled"), rows.getLong("revision"),
-                account(rows, "reviewer"), account(rows, "factory"));
+                account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"));
     }
 
     private RepositoryView.Account account(ResultSet rows, String role) throws SQLException {

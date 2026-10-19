@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import RegisterPrDialog, { parsePrNumber } from './RegisterPrDialog';
 import * as api from '../api';
 import * as repos from './repositories/repositoriesApi';
-const repository: repos.Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.invalid', workspace: 'acme', slug: 'widgets', enabled: true, revision: 1, reviewer: null, factory: null };
+const repository: repos.Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.invalid', workspace: 'acme', slug: 'widgets', enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true };
 beforeEach(() => { vi.spyOn(repos, 'fetchRepositories').mockResolvedValue([repository, {...repository, id: 'TEST-second', slug: 'gadgets', scmType: 'gitlab'}]); });
 
 const noop = () => {};

@@ -92,6 +92,7 @@ public class WorkGateChannels {
         var pr=clients.diffSource(account).fetchPullRequest(source.repository(),activity.prId());
         if(!review.approved() || !review.human() || !Objects.equals(review.actorId(),activity.actorId())
                 || item.control()!=null && item.control().machine(review.actorId()))return;
+        if(currentMachine(item.repositoryId(),account,review.actorId()))return;
         if(!pr.repo().equals(source.repository()) || pr.prId()!=activity.prId()
                 || !Objects.equals(review.head(),pr.headCommit()) || !Objects.equals(gate.artifact(),pr.headCommit())
                 || item.control()==null || !item.control().branch().equals(pr.sourceBranch()))return;
@@ -102,6 +103,16 @@ public class WorkGateChannels {
         receipt(item.workItemId(),"scm",delivery,"gate_answer:"+result.reason());
     }
 
+    /**
+     * The repository's CURRENT reviewer and factory identities, not only the ones recorded at build claim: a
+     * registration rotated after the claim is still the bot, and its Approve is still machine activity
+     * (review of PR #196, security/H-1).
+     */
+    private boolean currentMachine(UUID repository,ScmProvider reviewer,String actor) {
+        if(actor==null || actor.isBlank())return false;
+        if(actor.equals(reviewer.botAccountId()))return true;
+        return accounts.resolve(repository,ProviderRole.FACTORY).map(factory->actor.equals(factory.botAccountId())).orElse(false);
+    }
     private boolean received(String id,String channel,String delivery) {
         try(Connection c=dataSource.getConnection()){return WorkItemControl.received(c,id,channel,delivery);}
         catch(SQLException failure){throw WorkSourceRegistry.database(failure);}

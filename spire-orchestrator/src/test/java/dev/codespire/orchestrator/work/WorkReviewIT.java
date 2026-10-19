@@ -152,6 +152,52 @@ class WorkReviewIT extends WorkPreparedFixture {
         execute("UPDATE review_status SET reconciliation_json='[{\"loc\":\"TEST-file\",\"msg\":\"TEST-finding\",\"sev\":\"nit\",\"status\":\"RESOLVED\"}]' WHERE review_id=?",review);
         observer.advance(id);assertEquals("land",store.load(id).phase());assertEquals(review,store.load(id).progress().execution().reviewId());
     }
+    // --- the factory asks for the reviewer (ADR-047 D9) ---
+    String requested() { return "/repos/"+scope+"/pulls/901/requested_reviewers"; }
+    void reviewerRequestAccepted() { forge.stubFor(post(urlEqualTo(requested())).willReturn(aResponse().withStatus(201).withBody("{}"))); }
+
+    /** Once per attempt and pull request, with a durable receipt, so a restart does not ask twice. */
+    @Test void aReadyPullRequestRequestsTheReviewerOnce() throws Exception {
+        reviewerRequestAccepted();
+        String id=delivered();observer.advance(id);observer.advance(id);
+        forge.verify(1,postRequestedFor(urlEqualTo(requested())).withRequestBody(equalToJson("{\"reviewers\":[\"TEST-reviewer\"]}")));
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND channel='factory' AND outcome='reviewer_requested'",id));
+    }
+    @Test void aRefusedRequestIsAReceiptNotAWait() throws Exception {
+        forge.stubFor(post(urlEqualTo(requested())).willReturn(aResponse().withStatus(422).withBody("{\"message\":\"Reviews may only be requested from collaborators.\"}")));
+        String id=delivered();waiting(id,"review_result_pending");
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='reviewer_request_refused:reviewer_not_collaborator'",id));
+        forge.verify(1,postRequestedFor(urlEqualTo(requested())));
+    }
+    /** Review of PR #196 (M-5): a fault is not an answer. No receipt is written, so the next pass asks again. */
+    @Test void aFaultedRequestIsTriedAgainOnTheNextPass() throws Exception {
+        forge.stubFor(post(urlEqualTo(requested())).willReturn(aResponse().withStatus(503)));
+        String id=delivered();waiting(id,"review_result_pending");
+        assertEquals(0,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND delivery_id LIKE 'reviewer-request:%'",id));
+        // Every faulted pass asked again (delivered() and waiting() may each have run one); the accepted pass asks once more and stops.
+        int faulted=forge.countRequestsMatching(postRequestedFor(urlEqualTo(requested())).build()).getCount();
+        assertTrue(faulted>=1,"the faulted pass asked");
+        reviewerRequestAccepted();observer.advance(id);
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='reviewer_requested'",id));
+        forge.verify(faulted+1,postRequestedFor(urlEqualTo(requested())));
+    }
+    @Test void noRequestOnceTheBotPostedForThisHead() throws Exception {
+        reviewerRequestAccepted();
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);observer.advance(id);
+        forge.verify(0,postRequestedFor(urlEqualTo(requested())));
+    }
+    @Test void aRowAtAnotherHeadDoesNotSuppressTheRequest() throws Exception {
+        reviewerRequestAccepted();
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET commit_sha=repeat('c',40) WHERE review_id=?",review);
+        observer.advance(id);forge.verify(1,postRequestedFor(urlEqualTo(requested())));
+    }
+    @Test void aRunningReviewOfThisHeadStillGetsTheRequest() throws Exception {
+        reviewerRequestAccepted();
+        String id=delivered();reviewResult(id,"b".repeat(40),false,false);
+        execute("UPDATE review_status SET status='reviewing',last_posted_commit=NULL WHERE review_id=?",review);
+        observer.advance(id);forge.verify(1,postRequestedFor(urlEqualTo(requested())));
+    }
     @Override @AfterEach void cleanWork() throws Exception {
         if(review!=null){execute("DELETE FROM review_event WHERE review_id=?",review);execute("DELETE FROM review_status WHERE review_id=?",review);}
         try{super.cleanWork();}finally{if(reviewer!=null)execute("DELETE FROM scm_provider WHERE id=?",reviewer);}

@@ -441,4 +441,39 @@ class GitHubPullRequestSinkTest {
         assertEquals("review_pr_not_open", refused.getMessage());
         wireMock.verify(0, postRequestedFor(urlEqualTo("/graphql")));
     }
+
+    private static final String REQUESTED = PULLS + "/7/requested_reviewers";
+    private static final PullRequestRef PR_7 = new PullRequestRef(7, "https://forge.example.test/TEST-pull/7", false);
+
+    @Test
+    void requestsAReviewer() {
+        wireMock.stubFor(post(urlEqualTo(REQUESTED)).willReturn(aResponse().withStatus(201).withBody("{}")));
+        sink.requestReviewers(REPO, PR_7, java.util.List.of("TEST-reviewer"));
+        wireMock.verify(1, postRequestedFor(urlEqualTo(REQUESTED)).withRequestBody(equalToJson("{\"reviewers\":[\"TEST-reviewer\"]}")));
+    }
+
+    @Test
+    void aNonCollaboratorRequestIsDeliveryUnavailable() {
+        wireMock.stubFor(post(urlEqualTo(REQUESTED)).willReturn(aResponse().withStatus(422)
+                .withBody("{\"message\":\"Reviews may only be requested from collaborators.\"}")));
+        var refusal = assertThrows(PullRequestSink.DeliveryUnavailable.class,
+                () -> sink.requestReviewers(REPO, PR_7, java.util.List.of("TEST-reviewer")));
+        assertEquals("reviewer_not_collaborator", refusal.getMessage());
+    }
+
+    /** Review of PR #196 (M-6): only the collaborator refusal is named so; another 422 keeps a name of its own. */
+    @Test
+    void anotherUnprocessableRefusalIsNotCalledNotACollaborator() {
+        wireMock.stubFor(post(urlEqualTo(REQUESTED)).willReturn(aResponse().withStatus(422)
+                .withBody("{\"message\":\"Review cannot be requested from pull request author.\"}")));
+        var refusal = assertThrows(PullRequestSink.DeliveryUnavailable.class,
+                () -> sink.requestReviewers(REPO, PR_7, java.util.List.of("TEST-reviewer")));
+        assertEquals("reviewer_request_unprocessable", refusal.getMessage());
+    }
+
+    @Test
+    void aServerFaultRequestingAReviewerPropagates() {
+        wireMock.stubFor(post(urlEqualTo(REQUESTED)).willReturn(aResponse().withStatus(503)));
+        assertThrows(GitHubApiException.class, () -> sink.requestReviewers(REPO, PR_7, java.util.List.of("TEST-reviewer")));
+    }
 }

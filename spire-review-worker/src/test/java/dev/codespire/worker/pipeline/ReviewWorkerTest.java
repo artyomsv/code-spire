@@ -28,14 +28,17 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentKind;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.InlineAnchor;
+import dev.codespire.contract.scm.PostedReview;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.scm.ReviewSubmission;
 import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
@@ -46,10 +49,13 @@ import dev.codespire.scm.github.GitHubApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -270,6 +276,294 @@ class ReviewWorkerTest {
 
     private CommentsPosted lastCommentsPosted() {
         return assertInstanceOf(CommentsPosted.class, emitted.getLast());
+    }
+
+    // --- the forge-native review path (ADR-047 §5.1) ---
+
+    private PostComments nativeCommand(List<Finding> findings, ReviewVerdict assessment, boolean mayApprove) {
+        return postCommand(findings).withVerdict(assessment, mayApprove ? assessment : ReviewVerdict.COMMENT, mayApprove);
+    }
+
+    private static final String KEY_A2 = "src/A.java:2:NEW";
+
+    @Test
+    void aVerdictPostsOneNativeReviewAndNoSummaryComment() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertEquals(1, sink.reviewPosts.size());
+        assertEquals(ReviewVerdict.APPROVE, sink.reviewPosts.getFirst().verdict());
+        assertEquals(1, sink.reviewPosts.getFirst().comments().size(), "the inline finding rides inside the review");
+        assertTrue(sink.summaryPosts.isEmpty(), "no summary issue comment on the native path");
+        assertTrue(sink.inlinePosts.isEmpty(), "no separate inline post on the native path");
+        CommentsPosted posted = lastCommentsPosted();
+        assertEquals("review:rv-100", posted.summaryThreadRef());
+        assertEquals("rv-100", posted.reviewRef());
+        assertEquals("https://forge.example.test/TEST/rv-100", posted.reviewUrl(), "the forge's link rides the event");
+        assertEquals(ReviewVerdict.APPROVE, posted.postedVerdict());
+        assertEquals(1, posted.inline().size());
+        assertEquals("src/A.java", posted.inline().getFirst().path());
+        assertEquals("review:rv-100:APPROVE", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"), "the mark keeps the accepted verdict");
+    }
+
+    @Test
+    void aNullAssessmentPostsAsBefore() {
+        sink.nativeReviews = true;
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+        assertTrue(sink.reviewPosts.isEmpty());
+        assertEquals(1, sink.summaryPosts.size());
+        assertEquals(1, sink.inlinePosts.size());
+        assertNull(lastCommentsPosted().postedVerdict());
+    }
+
+    @Test
+    void aForgeWithoutNativeReviewsPostsAsBefore() {
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertEquals(1, sink.summaryPosts.size());
+        assertEquals(1, sink.inlinePosts.size());
+        assertNull(lastCommentsPosted().postedVerdict());
+        assertNull(lastCommentsPosted().reviewRef());
+    }
+
+    @Test
+    void aRefusedVerdictIsPostedAgainAsAComment() {
+        sink.nativeReviews = true;
+        sink.reviewFailures.add(new CommentSink.ReviewVerdictRefused("TEST own pull request", null));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertEquals(1, sink.reviewPosts.size(), "exactly one successful post after the refusal");
+        assertEquals(ReviewVerdict.COMMENT, sink.reviewPosts.getFirst().verdict());
+        assertTrue(sink.reviewPosts.getFirst().bodyMd().contains("**Verdict:** approve"));
+        assertEquals(ReviewVerdict.COMMENT, lastCommentsPosted().postedVerdict());
+    }
+
+    @Test
+    void aSecondRefusalIsAFailure() {
+        sink.nativeReviews = true;
+        sink.reviewFailures.add(new CommentSink.ReviewVerdictRefused("TEST own pull request", null));
+        sink.reviewFailures.add(new CommentSink.ReviewVerdictRefused("TEST own pull request", null));
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.reviewPosts.isEmpty());
+        assertInstanceOf(ReviewFailed.class, emitted.getLast());
+    }
+
+    @Test
+    void aRejectedAnchorFallsBackToBodyThenInlineThenBodyUpdate() {
+        sink.nativeReviews = true;
+        sink.reviewFailures.add(new CommentSink.ReviewAnchorRejected("TEST line must be part of the diff", null));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.REQUEST_CHANGES, true));
+
+        assertEquals(List.of("review", "inline", "body"), sink.calls);
+        assertTrue(sink.reviewPosts.getFirst().comments().isEmpty(), "the retry carries the body only");
+        assertEquals(ReviewVerdict.REQUEST_CHANGES, sink.reviewPosts.getFirst().verdict(), "same verdict");
+        assertEquals(1, sink.inlinePosts.size());
+        CommentsPosted posted = lastCommentsPosted();
+        assertEquals(1, posted.inline().size());
+        assertEquals("c-101", posted.inline().getFirst().threadRef(), "the inline fallback's thread is the finding's");
+    }
+
+    @Test
+    void aRedeliveryAfterTheReviewWasPostedDoesNotPostTwice() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(KEY_A2, "c-9")));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
+        CommentsPosted posted = lastCommentsPosted();
+        assertEquals("rv-9", posted.reviewRef());
+        assertEquals(ReviewVerdict.APPROVE, posted.postedVerdict());
+        assertEquals(List.of("c-9"), posted.inline().stream().map(CommentsPosted.PostedInline::threadRef).toList());
+    }
+
+    @Test
+    void aCrashAfterThePostDoesNotPostASecondReview() {
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW"); // claimed by an attempt that died before marking
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(KEY_A2, "c-9")));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the review GitHub already holds is reused");
+        assertEquals("review:rv-9:APPROVE", idempotency.postedFor(REVIEW_ID, COMMIT).get("REVIEW"), "the mark is written now, with the forge's verdict");
+        assertEquals("c-9", idempotency.postedFor(REVIEW_ID, COMMIT).get(KEY_A2));
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+    }
+
+    private static final String HEADER = "### Code Spire review (`" + COMMIT + "`)";
+    private static final String RUN_MARKER = " <!-- code-spire-run:run-2 -->";
+
+    @Test
+    void aReRunPostsANewReviewBesideTheEarlierRunsReview() {
+        // Live on 2026-10-16 (spire-test PR 55): the dashboard re-run cleared the claims, the look-first
+        // found the earlier run's Request changes by its header and reused it, posted nothing, and
+        // then dismissed that very review "superseded by" itself. A run's own reviews carry its token
+        // on the header line, so the look-first matches a half-posted review of THIS run only.
+        sink.nativeReviews = true;
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.REQUEST_CHANGES, Map.of()));
+        sink.foundReviewBody = HEADER + "\n\nTEST earlier run\n";
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, false)
+                .withRunToken("run-2"));
+
+        assertEquals(1, sink.reviewPosts.size(), "the earlier run's review is not this run's");
+        assertEquals(HEADER + RUN_MARKER, sink.reviewPosts.getFirst().firstLine());
+        assertEquals("rv-100", lastCommentsPosted().reviewRef());
+        assertEquals("Superseded by review rv-100: the reviewer may not change merge state on this repository",
+                sink.dismissals.getFirst());
+    }
+
+    @Test
+    void aRedeliveryOfTheSameRunStillFindsItsOwnReview() {
+        sink.nativeReviews = true;
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(KEY_A2, "c-9")));
+        sink.foundReviewBody = HEADER + RUN_MARKER + "\n\nTEST this run\n";
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true)
+                .withRunToken("run-2"));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the review this run already posted is reused");
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+    }
+
+    @Test
+    void aCommandWithoutARunTokenCarriesNoMarker() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertEquals(HEADER, sink.reviewPosts.getFirst().firstLine(), "D10: a record from before the field posts as before");
+    }
+
+    @Test
+    void aCrashAfterABodyOnlyPostFallsBackToInline() {
+        // The first attempt took the D7 ladder (a body-only review) and died before the mark. The
+        // redelivery finds that review with no inline comment for the finding: the finding is posted
+        // one by one, not reported as failed, and the body is updated as the ladder would have done.
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(), "https://forge.example.test/TEST/rv-9"));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+
+        assertTrue(sink.reviewPosts.isEmpty(), "the found review is reused");
+        assertEquals(List.of("inline", "body"), sink.calls);
+        assertEquals(1, lastCommentsPosted().inline().size());
+        assertEquals("c-100", lastCommentsPosted().inline().getFirst().threadRef());
+        assertFalse(sink.updatedReviewBodies.getFirst().contains("Could not be posted inline"), "nothing failed");
+    }
+
+    @Test
+    void theSettingOffVerdictLineIsInTheBody() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.APPROVE, false));
+        ReviewSubmission review = sink.reviewPosts.getFirst();
+        assertEquals(ReviewVerdict.COMMENT, review.verdict());
+        assertTrue(review.bodyMd().startsWith("### Code Spire review (`" + COMMIT + "`)\n\n**Verdict:** approve\n\n"), review.bodyMd());
+    }
+
+    @Test
+    void theSettingOffRequestChangesLineIsInTheBody() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.REQUEST_CHANGES, false));
+        assertTrue(sink.reviewPosts.getFirst().bodyMd().contains("**Verdict:** changes requested"));
+    }
+
+    @Test
+    void aDegradedRunWithTheSettingOnHasNoVerdictLine() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.COMMENT, true));
+        assertFalse(sink.reviewPosts.getFirst().bodyMd().contains("**Verdict:**"));
+        assertTrue(sink.dismissals.isEmpty(), "a degraded run with the setting on keeps the hold (D5)");
+    }
+
+    @Test
+    void theSettingOffDismissesAStandingHoldAfterThePost() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.APPROVE, false));
+        assertEquals(List.of("review", "dismiss"), sink.calls);
+        assertEquals("Superseded by review rv-100: the reviewer may not change merge state on this repository",
+                sink.dismissals.getFirst());
+    }
+
+    @Test
+    void theSettingOnDoesNotDismiss() {
+        sink.nativeReviews = true;
+        worker.postComments(nativeCommand(List.of(), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.dismissals.isEmpty());
+    }
+
+    @Test
+    void aReviewRefIsNotAFindingThreadOnRedelivery() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of()));
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        CommentsPosted posted = lastCommentsPosted();
+        assertEquals(1, posted.inline().size());
+        assertFalse(posted.inline().stream().anyMatch(i -> i.threadRef().startsWith("review:")),
+                "the REVIEW claim must never be rebuilt as an inline finding thread");
+    }
+
+    /**
+     * Review of PR #196 (M-1): the claim, the read-back and the thread record are all per anchor key, so a
+     * second comment at the same anchor would be posted and then owned by nobody. Both concerns ride in one.
+     */
+    @Test
+    void twoFindingsAtOneAnchorPostOneCombinedComment() {
+        sink.nativeReviews = true;
+        Finding second = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST-second concern", null);
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2), second), ReviewVerdict.APPROVE, true));
+        List<ReviewSubmission.InlineComment> comments = sink.reviewPosts.getFirst().comments();
+        assertEquals(1, comments.size(), "one anchor, one comment");
+        assertTrue(comments.getFirst().bodyMd().contains("msg 2") && comments.getFirst().bodyMd().contains("TEST-second concern"),
+                "both concerns ride in that comment: " + comments.getFirst().bodyMd());
+        assertEquals(1, lastCommentsPosted().inline().size(), "one anchor key, one owned thread");
+    }
+
+    @Test
+    void theInlineFallbackCarriesEveryFindingAtTheAnchor() {
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(), "https://forge.example.test/TEST/rv-9"));
+        Finding second = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST-second concern", null);
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2), second), ReviewVerdict.APPROVE, true));
+        assertEquals(1, sink.inlineBodies.size(), "one inline post for the anchor");
+        assertTrue(sink.inlineBodies.getFirst().contains("TEST-second concern"), "the second concern survives the fallback");
+    }
+
+    /**
+     * Review of PR #196 (M-4, then M-2): a redelivery whose look-up finds nothing reports the verdict the
+     * forge ACCEPTED, which the mark keeps; never the one the command asked for.
+     */
+    @Test
+    void aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9:APPROVE");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+        assertEquals(ReviewVerdict.APPROVE, lastCommentsPosted().postedVerdict(), "the verdict the mark keeps, not null");
+    }
+
+    @Test
+    void aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict() {
+        // The first attempt asked APPROVE, the forge refused it (own pull request), COMMENT was accepted, and
+        // the attempt died after the mark. The look-up misses: the mark, not the command, says what stands.
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9:COMMENT");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertTrue(sink.reviewPosts.isEmpty(), "the REVIEW claim is honoured");
+        assertEquals(ReviewVerdict.COMMENT, lastCommentsPosted().postedVerdict(), "what GitHub accepted, not what was asked");
+        assertTrue(sink.updatedReviewBodies.getFirst().contains("**Verdict:** approve"),
+                "the body update keeps the verdict line a COMMENT review owes: " + sink.updatedReviewBodies.getFirst());
+    }
+
+    @Test
+    void anOlderMarkWithoutAVerdictReportsNone() {
+        sink.nativeReviews = true;
+        idempotency.markPosted(REVIEW_ID, COMMIT, "REVIEW", "review:rv-9");
+        idempotency.markPosted(REVIEW_ID, COMMIT, KEY_A2, "c-9");
+        worker.postComments(nativeCommand(List.of(finding("src/A.java", 2)), ReviewVerdict.APPROVE, true));
+        assertEquals("rv-9", lastCommentsPosted().reviewRef());
+        assertNull(lastCommentsPosted().postedVerdict(), "unknown stays unknown rather than the command's guess");
     }
 
     @Test
@@ -1058,6 +1352,7 @@ class ReviewWorkerTest {
         final List<String> updatedComments = new ArrayList<>();
         final List<String> summaryPosts = new ArrayList<>();
         final List<String> inlinePosts = new ArrayList<>();
+        final List<String> inlineBodies = new ArrayList<>();
 
         int inlineAttempts; // 1-based count of postInline calls, including the one that fails
         int failOnInline; // 1-based index of the inline post that throws; 0 = never
@@ -1070,9 +1365,62 @@ class ReviewWorkerTest {
         String summaryBody = "";
         private int ids = 100;
 
+        /** The native path answers (true) or stays the port default, empty (false). */
+        boolean nativeReviews;
+        final List<ReviewSubmission> reviewPosts = new ArrayList<>();
+        /** Thrown by successive postReview calls, first in first out; a successful call records instead. */
+        final Deque<RuntimeException> reviewFailures = new ArrayDeque<>();
+        Optional<PostedReview> foundReview = Optional.empty();
+        /** The body the forge holds for {@link #foundReview}; GitHub matches a find on the submission's first line. */
+        String foundReviewBody;
+        final List<String> updatedReviewBodies = new ArrayList<>();
+        final List<String> dismissals = new ArrayList<>();
+        /** Every native-path call in order: review, inline, body, dismiss. */
+        final List<String> calls = new ArrayList<>();
+
         @Override
         public ScmType type() {
             return ScmType.BITBUCKET_CLOUD;
+        }
+
+        @Override
+        public Optional<PostedReview> findReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+            if (!nativeReviews) {
+                return Optional.empty();
+            }
+            // As the GitHub adapter: the held body must start with the submission's first line.
+            return foundReviewBody == null || foundReviewBody.startsWith(review.firstLine()) ? foundReview : Optional.empty();
+        }
+
+        @Override
+        public Optional<PostedReview> postReview(RepoRef repo, long prId, String headCommit, ReviewSubmission review) {
+            if (!nativeReviews) {
+                return Optional.empty();
+            }
+            if (!reviewFailures.isEmpty()) {
+                throw reviewFailures.pop();
+            }
+            calls.add("review");
+            reviewPosts.add(review);
+            String id = "rv-" + ids++;
+            Map<String, String> threads = new HashMap<>();
+            for (ReviewSubmission.InlineComment comment : review.comments()) {
+                threads.putIfAbsent(comment.anchor().anchorKey(), "c-" + ids++);
+            }
+            return Optional.of(new PostedReview(id, review.verdict(), threads, "https://forge.example.test/TEST/" + id));
+        }
+
+        @Override
+        public void updateReviewBody(RepoRef repo, long prId, String reviewRef, String bodyMd) {
+            calls.add("body");
+            updatedReviewBodies.add(bodyMd);
+        }
+
+        @Override
+        public Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
+            calls.add("dismiss");
+            dismissals.add(message);
+            return Optional.of("rv-old");
         }
 
         @Override
@@ -1096,8 +1444,10 @@ class ReviewWorkerTest {
             if (inlineAttempts <= failInlineTimes) {
                 throw inlineFailure;
             }
+            calls.add("inline");
             String id = "c-" + ids++;
             inlinePosts.add(id);
+            inlineBodies.add(bodyMd);
             return new CommentRef(id, new ThreadRef(id), CommentKind.INLINE);
         }
 

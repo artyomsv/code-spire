@@ -468,6 +468,18 @@ class ResultSagaPricingTest {
         private String note = "";
         private final List<ChargeCall> recordedCalls = new ArrayList<>();
 
+        // The verdict decision (ADR-047) reads these on every ReviewGenerated; the real ones open a
+        // connection this fake never got — the same trap recorded for setNote and recordCharges.
+        @Override
+        public Optional<java.util.UUID> repositoryIdOf(String reviewId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public int openBlockers(String reviewId) {
+            return 0;
+        }
+
         String note() {
             return note;
         }
@@ -495,6 +507,12 @@ class ResultSagaPricingTest {
 
         @Override
         public Optional<PriorRun> priorRunFor(String reviewId) {
+            return Optional.empty();
+        }
+
+        // Read on every ReviewGenerated for PostComments.runToken; the real one opens a database.
+        @Override
+        public Optional<String> runTokenOf(String reviewId) {
             return Optional.empty();
         }
 

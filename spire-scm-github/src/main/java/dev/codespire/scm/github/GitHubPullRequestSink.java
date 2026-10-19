@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.RepoRef;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -136,6 +137,26 @@ public class GitHubPullRequestSink implements PullRequestSink {
             throw new PullRequestSink.DeliveryUnavailable("ready_for_review_not_observed");
         }
         return new PullRequestRef(observed.number(), observed.url(), false);
+    }
+
+    /** ADR-047 D9. GitHub answers 422 for a login that is not a collaborator of the repository. */
+    @Override
+    public void requestReviewers(RepoRef repo, PullRequestRef pullRequest, List<String> logins) {
+        String path = pullsPath(repo) + "/" + pullRequest.number() + "/requested_reviewers";
+        try {
+            client.postJson(path, Map.of("reviewers", logins));
+        } catch (GitHubApiException e) {
+            if (e.status() == UNPROCESSABLE) {
+                throw new PullRequestSink.DeliveryUnavailable(
+                        isAboutCollaborators(e) ? "reviewer_not_collaborator" : "reviewer_request_unprocessable");
+            }
+            throw e;
+        }
+    }
+
+    /** GitHub's 422 for a login outside the repository says "collaborators"; any other 422 keeps a name of its own (M-6). */
+    private static boolean isAboutCollaborators(GitHubApiException e) {
+        return e.getMessage() != null && e.getMessage().toLowerCase(Locale.ROOT).contains("collaborator");
     }
 
     private static final String READY_FOR_REVIEW = """

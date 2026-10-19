@@ -68,7 +68,10 @@ it('shows build evidence and the observed delivery state', () => {
   rerender(<MemoryRouter><WorkItemSteps item={delivered} current={null} /></MemoryRouter>);
   expect(step('Verify').getByText('Verification recorded without a result')).toBeInTheDocument();
   expect(step('Deliver').getByRole('link', { name: 'Draft pull request #901' })).toHaveAttribute('href', pullRequest.url);
-  expect(step('Review').getByText('Review recorded for this build.')).toBeInTheDocument();
+  expect(step('Review').getByText(/Review recorded for this build/)).toBeInTheDocument();
+  expect(step('Review').queryByRole('link', { name: 'Open the review' })).toBeNull();
+  rerender(<MemoryRouter><WorkItemSteps item={{ ...delivered, progress: { execution: { ...delivered.progress.execution, reviewId: 'review::TEST-owner/TEST-repo#901' } } }} current={null} /></MemoryRouter>);
+  expect(step('Review').getByRole('link', { name: 'Open the review' })).toHaveAttribute('href', '#/r/TEST-owner/TEST-repo/901');
   expect(step('Build').getByText(/Built commit/)).not.toHaveTextContent('held, not pushed');
   rerender(<MemoryRouter><WorkItemSteps item={{ ...delivered, progress: { execution: { ...delivered.progress.execution, pullRequest: { ...pullRequest, draft: null } } } }} current={null} /></MemoryRouter>);
   expect(step('Deliver').getByRole('link', { name: 'Pull request · draft state unknown #901' })).toBeInTheDocument();

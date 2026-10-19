@@ -9,6 +9,7 @@ import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
@@ -150,22 +151,29 @@ public class ReviewProjection {
                               String authorId, String sourceBranch, String destBranch, String sha,
                               String htmlUrl, String providerType, String status, int stage,
                               boolean claimRun) {
+        // A new run also clears what the forge held for the previous head (ADR-047): the commit guard
+        // on recordPostedVerdict protects the write, and "Posted as Approved" under "reviewing" would
+        // read as this head's verdict.
+        // A claimed run is a new run: it gets a fresh run_token (the worker marks this run's review with
+        // it, see runTokenOf); a refresh keeps the row's token as it keeps its outcome.
         String outcomeColumns = claimRun
                 ? "status = EXCLUDED.status, stage = EXCLUDED.stage, attempt = 1, "
-                        + "error_detail = NULL, answering = FALSE,"
+                        + "error_detail = NULL, answering = FALSE, "
+                        + "posted_verdict = NULL, posted_review_ref = NULL, posted_review_url = NULL, "
+                        + "run_token = EXCLUDED.run_token,"
                 : "";
         String sql = """
                 INSERT INTO review_status (review_id, workspace, slug, pr_id, title, author, author_id,
                         source_branch, dest_branch, commit_sha, html_url, provider_type, status, stage,
-                        attempt, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, now())
+                        attempt, run_token, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, %s, now())
                 ON CONFLICT (review_id) DO UPDATE SET
                         title = EXCLUDED.title, author = EXCLUDED.author, author_id = EXCLUDED.author_id,
                         source_branch = EXCLUDED.source_branch, dest_branch = EXCLUDED.dest_branch,
                         commit_sha = EXCLUDED.commit_sha, html_url = EXCLUDED.html_url,
                         provider_type = EXCLUDED.provider_type,
                         %s updated_at = now()
-                """.formatted(outcomeColumns);
+                """.formatted(NEW_RUN_TOKEN, outcomeColumns);
         update(sql, ps -> {
             ps.setString(1, reviewId);
             ps.setString(2, repo.workspace());
@@ -512,6 +520,30 @@ public class ReviewProjection {
             ps.setString(3, reviewId);
             ps.setString(4, commit);
         });
+    }
+
+    /** Same commit guard as {@link #recordPosted}: a superseded run's event cannot stamp the newer head (ADR-047). */
+    public void recordPostedVerdict(String reviewId, String commit, ReviewVerdict verdict, String reviewRef, String reviewUrl) {
+        update("""
+                UPDATE review_status SET posted_verdict = ?, posted_review_ref = ?, posted_review_url = ?, updated_at = now()
+                 WHERE review_id = ? AND commit_sha = ?
+                """, ps -> {
+            ps.setString(1, verdict.name());
+            ps.setString(2, reviewRef);
+            ps.setString(3, reviewUrl);
+            ps.setString(4, reviewId);
+            ps.setString(5, commit);
+        });
+    }
+
+    /** The open BLOCKER count the land gate waits on, for the verdict decision (ADR-047 D1, D4). */
+    public int openBlockers(String reviewId) {
+        try (Connection c = dataSource.getConnection()) {
+            ReviewRow row = loadRow(c, reviewId);
+            return row == null ? 0 : openCounts(row).openBlockers();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Cannot count open blockers", e);
+        }
     }
 
     /**
@@ -1450,15 +1482,37 @@ public class ReviewProjection {
      * can spend again.
      */
     public void markRerunStarted(String reviewId) {
+        // A re-run is a new run: a fresh run_token, so the worker's look-first does not take the
+        // earlier run's review for its own (spire-test PR 55, 2026-10-16).
         update("""
                 UPDATE review_status SET status = 'reviewing', stage = ?, error_detail = NULL,
-                       note = 'Re-run requested.', updated_at = now()
+                       note = 'Re-run requested.', run_token = %s, updated_at = now()
                 WHERE review_id = ?
-                """, ps -> {
+                """.formatted(NEW_RUN_TOKEN), ps -> {
             ps.setInt(1, STAGE_DIFF);
             ps.setString(2, reviewId);
         });
         broadcast(reviewId);
+    }
+
+    /** SQL for a fresh, opaque run token; a retry ({@link #retryPipeline}) and a refresh never write one. */
+    private static final String NEW_RUN_TOKEN = "md5(random()::text || clock_timestamp()::text)";
+
+    /**
+     * The token of the row's current run, for {@code PostComments.runToken}: a claimed run and a re-run
+     * start one, a retry continues one. Empty for a row written before V89 that has not run since.
+     */
+    public Optional<String> runTokenOf(String reviewId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT run_token FROM review_status WHERE review_id = ?")) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(rs.getString("run_token")) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            LOG.warnf(e, "runTokenOf read failed for %s", reviewId);
+            return Optional.empty();
+        }
     }
 
     /**
@@ -2061,15 +2115,32 @@ public class ReviewProjection {
                              String findingsJson, String openFindingsJson, String reconciliationJson,
                              String note, String errorDetail, int attempt, Instant createdAt,
                              Instant updatedAt, String prState, Instant archivedAt,
-                             boolean degraded) {
+                             boolean degraded, String postedVerdict, String postedReviewRef, String postedReviewUrl) {
         ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     openCounts.carriedOver(), ledger.totalCostMillicents(),
                     ledger.model() == null ? "" : ledger.model(),
                     ledger.llmType() == null ? "" : ledger.llmType(), updatedAt, answering, prState,
-                    ledger.unpricedCalls(), archivedAt, degraded);
+                    ledger.unpricedCalls(), archivedAt, degraded, verdictSlug(postedVerdict), reviewUrl(this));
         }
+    }
+
+    /** The dashboard's slug for a posted verdict (ADR-047 §4.3); null when nothing native was posted. */
+    static String verdictSlug(String postedVerdict) {
+        if (postedVerdict == null) {
+            return null;
+        }
+        return switch (postedVerdict) {
+            case "APPROVE" -> "approved";
+            case "REQUEST_CHANGES" -> "changes_requested";
+            default -> "commented";
+        };
+    }
+
+    /** The forge's own link to the posted review, as the adapter reported it; null when none was posted. */
+    static String reviewUrl(ReviewRow row) {
+        return row.postedReviewRef() == null ? null : row.postedReviewUrl();
     }
 
     private ReviewRow loadRow(Connection c, String reviewId) throws SQLException {
@@ -2277,7 +2348,8 @@ public class ReviewProjection {
                 rs.getString("error_detail"), rs.getInt("attempt"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(),
                 rs.getString("pr_state"), instantOrNull(rs.getTimestamp("archived_at")),
-                rs.getBoolean("degraded"));
+                rs.getBoolean("degraded"), rs.getString("posted_verdict"), rs.getString("posted_review_ref"),
+                rs.getString("posted_review_url"));
     }
 
     /** NULL means live, so it must stay null — {@code getTimestamp} yields null and only the
@@ -2312,7 +2384,7 @@ public class ReviewProjection {
                 computeStages(r.status, r.stage),
                 List.of("", "", "", "", "", ""), findings, reconciliation,
                 charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt, r.degraded);
+                events, r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r));
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */

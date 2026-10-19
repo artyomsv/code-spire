@@ -18,6 +18,15 @@ class RepositoryAccountsTest extends RepositoryFixture {
         assertEquals(providers.resolveById(factory), accounts.resolve(repository.id(), ProviderRole.FACTORY));
     }
 
+    @Test void reviewerIdentityIsKnownOnlyWhenTheRegistrationHasOne() throws Exception {
+        UUID reviewer = account("REVIEWER");
+        var repo = repositories.create(repository(reviewer, null));
+        assertTrue(accounts.reviewerIdentityKnown(repo.id()));
+        execute("UPDATE scm_provider SET bot_account_id='' WHERE id=?", reviewer);
+        assertFalse(accounts.reviewerIdentityKnown(repo.id()));
+        assertFalse(accounts.reviewerIdentityKnown(UUID.randomUUID()), "no registration, no identity");
+    }
+
     @Test void rejectsAnAccountFromAnotherOrigin() throws Exception {
         UUID reviewer = account("REVIEWER");
         var repo = repositories.create(repository(reviewer, null));

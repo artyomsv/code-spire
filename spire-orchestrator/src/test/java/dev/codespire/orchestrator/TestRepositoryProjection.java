@@ -10,6 +10,8 @@ public class TestRepositoryProjection extends ReviewProjection {
     public static final UUID REPOSITORY_ID = UUID.fromString("00000000-0000-4000-8000-000000000002");
 
     @Override public Optional<UUID> repositoryIdOf(String reviewId) { return Optional.of(REPOSITORY_ID); }
+    /** Read on every ReviewGenerated for PostComments.runToken; the real one opens a database. */
+    @Override public Optional<String> runTokenOf(String reviewId) { return Optional.of("TEST-run"); }
     @Override public boolean claimRepository(String reviewId, UUID repositoryId, RepoRef repo, long prId) {
         return REPOSITORY_ID.equals(repositoryId);
     }
