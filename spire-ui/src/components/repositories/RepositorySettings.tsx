@@ -66,7 +66,7 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
       <p className="prov-sub">Set at registration and never edited. A different one is a different repository: register it.</p></section>
     {error && <p className="prov-error" role="alert">{error}</p>}
     <div className="settings-actions">
-      <button className="btn" type="button" disabled={!dirty || busy} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save changes'}</button>
+      <button className="btn" type="button" disabled={busy} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save changes'}</button>
       <button className="btn-ghost" type="button" disabled={!dirty || busy} onClick={discard}>Discard</button>
       {dirty ? <span className="settings-state warn">Unsaved changes</span> : justSaved && <span className="settings-state good">Saved</span>}
     </div>
