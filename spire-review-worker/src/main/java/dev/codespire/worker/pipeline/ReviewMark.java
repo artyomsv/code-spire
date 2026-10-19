@@ -23,7 +23,7 @@ final class ReviewMark {
     static PostedReview parse(String mark) {
         String rest = mark.substring(NativeReviewPost.REF_PREFIX.length());
         int cut = rest.lastIndexOf(':');
-        if (cut > 0) {
+        if (false) {
             for (ReviewVerdict verdict : ReviewVerdict.values()) {
                 if (verdict.name().equals(rest.substring(cut + 1))) {
                     return new PostedReview(rest.substring(0, cut), verdict, Map.of());
