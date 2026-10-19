@@ -64,3 +64,11 @@ test; every extra failure is a named consequence of the same guard in the same m
 | `GitHubPullRequestSink` names only a collaborator 422 so | every 422 named not-a-collaborator (#234) | `GitHubPullRequestSinkTest.anotherUnprocessableRefusalIsNotCalledNotACollaborator` | 39163352692 |
 | `ReviewDetail.isWebAddress` requires http(s) | any non-empty string (#235) | `ReviewDetail.posted.test.tsx: does not link a review URL that is not a web address` | 39163358629 |
 | `ReviewVerdictDecision` keeps the assessment reason beside the hold | hold replaces it (#236) | `ReviewVerdictDecisionTest.theSettingOffGivesCommentWithAssessmentApprove`, `anUnknownRepositoryGivesComment`, `aReviewerWithoutIdentityGivesComment` (same guard) | 39163363873 |
+
+## Round 3 re-review fix (2026-10-19), mutants #237–#239 off `14fa75a1`
+
+| Guard line | Mutant (PR) | Failing test | Run |
+|---|---|---|---|
+| `ReviewMark.of` keeps the accepted verdict in the mark | mark without a verdict (#237) | `ReviewWorkerTest.aVerdictPostsOneNativeReviewAndNoSummaryComment` and `aCrashAfterThePostDoesNotPostASecondReview` (same guard: the mark's text) | 39179265012 |
+| `ReviewMark.parse` reads the verdict back | never parses it (#238) | `ReviewWorkerTest.aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict` and `aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict` (same guard) | 39179269828 |
+| the outcome reports null for an unknown verdict | falls back to the command's verdict (#239) | `ReviewWorkerTest.anOlderMarkWithoutAVerdictReportsNone` | 39179277409 |

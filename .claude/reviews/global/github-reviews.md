@@ -63,3 +63,6 @@ checks green). Mutants #229–#236 each died on the named test (`github-reviews-
 |---|---|
 | rules/H-3 the extracted `hold(Optional<Boolean>, boolean)` helper takes an Optional and a flag parameter | Fixed: folded back into `decide` (under 30 lines); pure refactor under `ReviewVerdictDecisionTest` |
 | code-quality/M-2 the M-4 fix guessed the command's verdict when the look-up missed; after a refusal stepped the post down to COMMENT and the attempt died after the mark, a redelivery would report APPROVE | Fixed: the `REVIEW` mark keeps the ACCEPTED verdict (`review:<id>:<verdict>`, `ReviewMark`), a redelivery reports that, and an older mark without one reports null; `aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict`, `anOlderMarkWithoutAVerdictReportsNone`, two mark assertions RED (commit `fe8862b4`) → GREEN. Spec §5.1 step 5 amended |
+
+GREEN commit `14fa75a1` (run 39179258612: all checks green). Mutants #237–#239 each died on the named test
+(`github-reviews-mutations.md`, "Round 3 re-review fix").
