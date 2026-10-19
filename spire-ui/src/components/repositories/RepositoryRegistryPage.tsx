@@ -113,8 +113,8 @@ export default function RepositoryRegistryPage() {
         {tab === 'factory' && <RepositoryFactory key={chosen.id} repository={chosen} accounts={providers}
           webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
         {/* Edit lives in this panel, never in a second one over it (operator, 2026-10-16). */}
-        <RepositorySettings key={chosen.id} repository={chosen} providers={providers} hidden={tab !== 'settings'}
-          onSaved={replace} onDirty={setSettingsDirty} />
+        {tab === 'settings' && <RepositorySettings key={chosen.id} repository={chosen} providers={providers} hidden={tab !== 'settings'}
+          onSaved={replace} onDirty={setSettingsDirty} />}
       </SidePanel>}
       {registering && <RepositoryForm key={`new:${location.search}`}
         prefill={new URLSearchParams(location.search)}
