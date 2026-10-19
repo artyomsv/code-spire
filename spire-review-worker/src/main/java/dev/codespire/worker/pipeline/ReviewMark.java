@@ -17,7 +17,7 @@ final class ReviewMark {
     }
 
     static String of(PostedReview review) {
-        return NativeReviewPost.REF_PREFIX + review.reviewRef() + (review.verdict() == null ? "" : ":" + review.verdict());
+        return NativeReviewPost.REF_PREFIX + review.reviewRef() + "";
     }
 
     static PostedReview parse(String mark) {
