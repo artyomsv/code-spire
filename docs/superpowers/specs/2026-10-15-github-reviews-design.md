@@ -235,9 +235,11 @@ native path first:
      continue at step 6 with `inlineFallback = true`.
    - Any other failure → `ReviewFailed(... "post-comments" ...)` as today. A review GitHub created
      before the failure is found by step 3 on redelivery, so nothing is posted twice.
-5. **Mark `REVIEW` posted (`review:<id>`) at once**, before any read-back or fallback. Every step after
-   this is a read, a per-anchor claimed post, or an idempotent `PUT`, so a crash anywhere later
-   re-enters at step 3, finds the mark, and finishes the rest.
+5. **Mark `REVIEW` posted (`review:<id>:<verdict>`) at once**, before any read-back or fallback. Every step
+   after this is a read, a per-anchor claimed post, or an idempotent `PUT`, so a crash anywhere later
+   re-enters at step 3, finds the mark, and finishes the rest. The verdict in the mark is the one the
+   forge ACCEPTED (step 2 may have stepped down to COMMENT), so a redelivery whose look-up misses reports
+   what stands, not what was asked; a mark without one reports no verdict (review of PR #196, M-2).
 6. Inline refs: `findReview` / `postReview` return the comment refs read back from the review (§5.2).
    Mark each matched anchor key with its comment id. With `inlineFallback`, post each unmatched finding
    with `postInline` under the existing per-anchor claim, backoff and 500 ms throttle, then

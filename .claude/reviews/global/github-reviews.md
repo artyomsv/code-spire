@@ -56,3 +56,10 @@ RED commit `35f11bff` (run 39162222729); GREEN follows in the commits after it.
 
 GREEN commits `1810f7d5` (run 39162723762: one test counted the faulted passes wrongly) and `ab6aa027` (run 39163300252: all
 checks green). Mutants #229–#236 each died on the named test (`github-reviews-mutations.md`, "Round 3 fixes").
+
+### Round 3, re-review of `208645a0` (2026-10-18 21:38): 4 verified fixed, 2 new
+
+| Finding | Outcome |
+|---|---|
+| rules/H-3 the extracted `hold(Optional<Boolean>, boolean)` helper takes an Optional and a flag parameter | Fixed: folded back into `decide` (under 30 lines); pure refactor under `ReviewVerdictDecisionTest` |
+| code-quality/M-2 the M-4 fix guessed the command's verdict when the look-up missed; after a refusal stepped the post down to COMMENT and the attempt died after the mark, a redelivery would report APPROVE | Fixed: the `REVIEW` mark keeps the ACCEPTED verdict (`review:<id>:<verdict>`, `ReviewMark`), a redelivery reports that, and an older mark without one reports null; `aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict`, `anOlderMarkWithoutAVerdictReportsNone`, two mark assertions RED (commit `fe8862b4`) → GREEN. Spec §5.1 step 5 amended |

@@ -121,7 +121,8 @@ Also from the proof:
   path posts but cannot release its own hold; the WARN log names it (API knowledge, not measured).
 - **The branch review's minors M-4 to M-9 were fixed after acceptance**, on the operator's word, in
   the round the PR's own review opened (`.claude/reviews/global/github-reviews.md`, Round 3): a
-  redelivery that cannot find its review reports the verdict it posted; a faulted reviewer request is
+  redelivery that cannot find its review reports the verdict the forge accepted, kept in the `REVIEW`
+  mark (an older mark without one reports none); a faulted reviewer request is
   tried again on the next pass instead of becoming a receipt; only a 422 that names collaborators is
   called `reviewer_not_collaborator`; the review link renders only for a web address; the timeline
   reason keeps the blocker count beside the hold (`open_blockers=1 · setting_off`); the transcript

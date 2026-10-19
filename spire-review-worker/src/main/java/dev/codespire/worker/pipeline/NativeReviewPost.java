@@ -91,8 +91,9 @@ final class NativeReviewPost {
         }
         List<CommentsPosted.PostedInline> inline = settleInline(plan, posted);
         finish(plan, posted);
+        // The verdict is what the forge accepted: read from it, or kept in the mark (M-4, M-2); unknown stays null.
         PostedReview review = posted.review();
-        return Optional.of(new Outcome(review.reviewRef(), postedVerdict(review), inline, review.reviewUrl()));
+        return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
     }
 
     private Plan plan() {
@@ -117,15 +118,15 @@ final class NativeReviewPost {
         }
         Posted posted = find(plan).orElseGet(() -> ladder(plan).post(plan.comments()));
         if (posted != null) {
-            idempotency.markPosted(command.reviewId(), command.commit(), REVIEW_KEY, REF_PREFIX + posted.review().reviewRef());
+            idempotency.markPosted(command.reviewId(), command.commit(), REVIEW_KEY, ReviewMark.of(posted.review()));
         }
         return posted;
     }
 
-    /** A redelivery after the mark: the forge's copy when it can be found, else the marked ref with no verdict read. */
+    /** A redelivery after the mark: the forge's copy when it can be found, else what the mark kept ({@link ReviewMark}). */
     private Posted marked(String postedRef, Plan plan) {
         return find(plan).orElseGet(() -> {
-            PostedReview held = new PostedReview(postedRef.substring(REF_PREFIX.length()), null, Map.of());
+            PostedReview held = ReviewMark.parse(postedRef);
             return new Posted(held, postedWithoutItsComments(held, plan.comments()));
         });
     }
@@ -143,16 +144,13 @@ final class NativeReviewPost {
     private void finish(Plan plan, Posted posted) {
         String reviewRef = posted.review().reviewRef();
         if (posted.inlineFallback() || !plan.failed().isEmpty()) {
-            sink.updateReviewBody(command.repo(), command.prId(), reviewRef, body(plan, postedVerdict(posted.review())));
+            // The verdict line belongs to the verdict that stands; an older mark without one gets the command's.
+            ReviewVerdict standing = posted.review().verdict();
+            sink.updateReviewBody(command.repo(), command.prId(), reviewRef, body(plan, standing == null ? command.verdict() : standing));
         }
         if (Boolean.FALSE.equals(command.reviewerMayApprove())) {
             dismissQuietly(reviewRef);
         }
-    }
-
-    /** The forge's verdict when it was read; otherwise the one this command posted (M-4). */
-    private ReviewVerdict postedVerdict(PostedReview review) {
-        return review.verdict() == null ? command.verdict() : review.verdict();
     }
 
     /**
