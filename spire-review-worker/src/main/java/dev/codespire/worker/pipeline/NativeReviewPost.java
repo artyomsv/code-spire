@@ -93,7 +93,7 @@ final class NativeReviewPost {
         finish(plan, posted);
         // The verdict is what the forge accepted: read from it, or kept in the mark (M-4, M-2); unknown stays null.
         PostedReview review = posted.review();
-        return Optional.of(new Outcome(review.reviewRef(), review.verdict(), inline, review.reviewUrl()));
+        return Optional.of(new Outcome(review.reviewRef(), review.verdict() == null ? command.verdict() : review.verdict(), inline, review.reviewUrl()));
     }
 
     private Plan plan() {
