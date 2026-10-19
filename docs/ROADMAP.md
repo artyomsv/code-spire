@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## The software factory — M0 to M3.5 delivered, M4 next (updated 2026-10-07)
+## The software factory — M0 to M3.5, M4 verify and GitHub reviews delivered, land next (updated 2026-10-19)
 
 The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
 item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
@@ -24,8 +24,10 @@ produced it is
 build, accepted 2026-10-07) are delivered** — see [`factory/ROADMAP.md`](factory/ROADMAP.md) for what
 each shipped and what the build taught that the design had wrong, [`HISTORY.md`](HISTORY.md) for the
 delivery log, and the [M3](factory/M3-ACCEPTANCE.md) and [M3.5](factory/M35-ACCEPTANCE.md) acceptance
-records. **M4 is next, with verify as its first slice.** Until it lands, every item build stops held
-at `verify / capability_unavailable`: nothing is pushed and no pull request is opened.
+records. **M4 slice 1, verify, is accepted (2026-10-08, [record](factory/M4-VERIFY-ACCEPTANCE.md)), and GitHub
+reviews are accepted (2026-10-18, PR #196, [record](factory/GITHUB-REVIEWS-ACCEPTANCE.md)).** An item now builds,
+verifies, delivers a pull request, gets a GitHub review with a verdict, and stops at the land gate.
+**Land is next**: approving land records the answer and merges nothing yet.
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates.
 

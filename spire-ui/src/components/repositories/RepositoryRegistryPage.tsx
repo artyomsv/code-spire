@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { fetchProviders, fetchWebhookRepos, type ProviderView, type WebhookRepoView } from '../../api';
 import RepositoryDetail from './RepositoryDetail';
 import RepositoryForm from './RepositoryForm';
+import RepositorySettings from './RepositorySettings';
 import RepositoryPending from './RepositoryPending';
 import RepositoryAccountsCell from './RepositoryAccountsCell';
 import SidePanel from '../SidePanel';
@@ -21,7 +22,8 @@ export default function RepositoryRegistryPage() {
   const navigate = useNavigate();
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [providers, setProviders] = useState<ProviderView[]>([]);
-  const [editing, setEditing] = useState<Repository | 'new' | null>(null);
+  const [registering, setRegistering] = useState(false);
+  const [settingsDirty, setSettingsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [kinds, setKinds] = useState<string[]>([]);
@@ -57,14 +59,18 @@ export default function RepositoryRegistryPage() {
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
-    if (query.get('register') === 'true') setEditing('new');
+    if (query.get('register') === 'true') setRegistering(true);
     const legacy = query.get('edit');
     if (legacy) navigate(`/settings/webhooks?edit=${encodeURIComponent(legacy)}`, { replace: true });
   }, [location.search, navigate]);
 
-  function saved(repository: Repository) {
+  function replace(repository: Repository) {
     setRepositories(previous => [...previous.filter(row => row.id !== repository.id), repository]);
-    setEditing(null);
+  }
+  function registered(repository: Repository) {
+    replace(repository);
+    setRegistering(false);
+    setTab('details');
     setSelected(repository.id);
   }
   async function retryHooks() {
@@ -74,7 +80,7 @@ export default function RepositoryRegistryPage() {
   const chosen = repositories.find(repository => repository.id === selected);
   return <section className="content"><div className="card">
     <div className="prov-head"><h2 className="prov-title">Registered repositories</h2>
-      {repositories.length > 0 && <button className="btn" onClick={() => setEditing('new')}>Register repository</button>}
+      {repositories.length > 0 && <button className="btn" onClick={() => setRegistering(true)}>Register repository</button>}
     </div>
     <p className="prov-note">Repositories own their workspace and select the accounts used for reviews and runs.</p>
     <p className="prov-note"><a className="btn-ghost" href="#/settings/webhooks">Manage legacy and organization webhooks</a></p>
@@ -87,7 +93,7 @@ export default function RepositoryRegistryPage() {
         <div className="wh-empty-icon"><GitBranch size={22} aria-hidden="true" /></div>
         <div className="wh-empty-title">No registered repositories yet.</div>
         <p className="wh-empty-text">Register a repository, then select its review and factory accounts and webhook kinds.</p>
-        <button className="btn" onClick={() => setEditing('new')}>Register repository</button>
+        <button className="btn" onClick={() => setRegistering(true)}>Register repository</button>
       </div> : <div className="prov-scroll"><table className="prov-table">
         <thead><tr><th>Repository</th><th>Forge origin</th><th>Workspace</th><th>Accounts</th><th>Factory setup</th><th>State</th></tr></thead>
         <tbody>{repositories.map(repository => <tr key={repository.id}>
@@ -100,18 +106,19 @@ export default function RepositoryRegistryPage() {
         </tr>)}</tbody>
       </table></div>}
       {chosen && <SidePanel wide title={chosen.slug} subtitle={`${chosen.workspace} · ${chosen.forgeOrigin}`}
-        busy={false} onClose={() => setSelected(null)} tabs={[{ id: 'details', label: 'Details' }, { id: 'factory', label: 'Factory' }]}
-        tab={tab} onTab={setTab} actions={<>
-          {tab === 'details' && <button className="btn" type="button" onClick={() => setEditing(chosen)}>Edit repository and accounts</button>}
-          <button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button></>}>
-        {tab === 'details'
-          ? <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />
-          : <RepositoryFactory key={chosen.id} repository={chosen} accounts={providers}
-            webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
+        busy={false} onClose={() => setSelected(null)}
+        tabs={[{ id: 'details', label: 'Details' }, { id: 'settings', label: 'Settings', marked: settingsDirty }, { id: 'factory', label: 'Factory' }]}
+        tab={tab} onTab={setTab} actions={<button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button>}>
+        {tab === 'details' && <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />}
+        {tab === 'factory' && <RepositoryFactory key={chosen.id} repository={chosen} accounts={providers}
+          webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
+        {/* Edit lives in this panel, never in a second one over it (operator, 2026-10-16). */}
+        <RepositorySettings key={chosen.id} repository={chosen} providers={providers} hidden={tab !== 'settings'}
+          onSaved={replace} onDirty={setSettingsDirty} />
       </SidePanel>}
-      {editing && <RepositoryForm key={editing === 'new' ? `new:${location.search}` : editing.id} initial={editing === 'new' ? null : editing}
+      {registering && <RepositoryForm key={`new:${location.search}`}
         prefill={new URLSearchParams(location.search)}
-        providers={providers} kinds={kinds} onSaved={saved} onCancel={() => setEditing(null)} />}
+        providers={providers} kinds={kinds} onSaved={registered} onCancel={() => setRegistering(false)} />}
     </>}
   </div></section>;
 }

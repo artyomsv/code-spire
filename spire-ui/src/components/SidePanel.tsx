@@ -6,6 +6,8 @@ export interface PanelTab {
   id: string;
   label: string;
   count?: number;
+  /** Something on this tab is not saved yet. Shown as a dot; the tab says so in words too. */
+  marked?: boolean;
 }
 
 interface Props {
@@ -60,6 +62,7 @@ export default function SidePanel({ title, subtitle, busy, onClose, tabs, tab, o
                   className={entry.id === tab ? 'panel-tab on' : 'panel-tab'} onClick={() => onTab?.(entry.id)}>
                   {entry.label}
                   {typeof entry.count === 'number' && <span className="panel-tab-n">{entry.count}</span>}
+                  {entry.marked && <span className="panel-tab-mark" aria-hidden="true" />}
                 </button>
               ))}
             </div>
