@@ -66,3 +66,9 @@ checks green). Mutants #229–#236 each died on the named test (`github-reviews-
 
 GREEN commit `14fa75a1` (run 39179258612: all checks green). Mutants #237–#239 each died on the named test
 (`github-reviews-mutations.md`, "Round 3 re-review fix").
+
+### Round 3, second re-review of `645952d9` (2026-10-19 14:26): 6 verified fixed, 1 new
+
+| Finding | Outcome |
+|---|---|
+| rules/H-4 `ReviewMark.parse` nests three deep (if, for, if); the rule allows two | Fixed: guard clause returns the legacy mark first, the loop runs at method scope; pure refactor under `aRedeliveryThatCannotFindItsReviewStillReportsTheVerdict`, `aRedeliveryAfterADowngradedPostReportsTheAcceptedVerdict` and `anOlderMarkWithoutAVerdictReportsNone` |
