@@ -157,6 +157,16 @@ describe('Repository registry', () => {
     expect(screen.getByLabelText('Reviewer may approve')).not.toBeChecked();
   });
 
+  /** The operator's finding (2026-10-20): each tab switch left the previous tab's content behind. */
+  it('shows only the chosen tab after the operator switches back and forth', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    for (const name of ['Settings', 'Details', 'Settings', 'Details']) fireEvent.click(screen.getByRole('tab', { name }));
+    expect(screen.getAllByText('Selected accounts')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.queryByText('Selected accounts')).not.toBeInTheDocument();
+  });
+
   it('shows the saved values after a save, with nothing left to save', async () => {
     vi.mocked(api.saveRepository).mockResolvedValue({ ...repo, reviewerMayApprove: false, revision: 4 });
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
