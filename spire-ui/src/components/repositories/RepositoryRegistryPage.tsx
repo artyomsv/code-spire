@@ -109,11 +109,12 @@ export default function RepositoryRegistryPage() {
         busy={false} onClose={() => setSelected(null)}
         tabs={[{ id: 'details', label: 'Details' }, { id: 'settings', label: 'Settings', marked: settingsDirty }, { id: 'factory', label: 'Factory' }]}
         tab={tab} onTab={setTab} actions={<button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button>}>
-        {tab === 'details' && <RepositoryDetail key={chosen.id} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />}
-        {tab === 'factory' && <RepositoryFactory key={chosen.id} repository={chosen} accounts={providers}
+        {/* Siblings, so each key names its tab too: one shared key made React leave old tabs behind (2026-10-20). */}
+        {tab === 'details' && <RepositoryDetail key={`details:${chosen.id}`} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />}
+        {tab === 'factory' && <RepositoryFactory key={`factory:${chosen.id}`} repository={chosen} accounts={providers}
           webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
         {/* Edit lives in this panel, never in a second one over it (operator, 2026-10-16). */}
-        <RepositorySettings key={chosen.id} repository={chosen} providers={providers} hidden={tab !== 'settings'}
+        <RepositorySettings key={`settings:${chosen.id}`} repository={chosen} providers={providers} hidden={tab !== 'settings'}
           onSaved={replace} onDirty={setSettingsDirty} />
       </SidePanel>}
       {registering && <RepositoryForm key={`new:${location.search}`}

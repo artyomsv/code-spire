@@ -1272,6 +1272,8 @@
      switch, so the hidden one must be told to stay hidden: a display rule beats [hidden] alone. */
   .panel-section { display: flex; flex-direction: column; gap: 14px; }
   .panel-section[hidden] { display: none; }
+  /* While a panel is open only its body scrolls; the page behind it would show a second scroll bar. */
+  html:has(.panel-overlay) { overflow: hidden; }
   .panel-actions {
     padding: 12px 18px; border-top: 1px solid var(--border); flex: none;
     display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;
