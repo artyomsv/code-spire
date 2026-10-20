@@ -10,8 +10,16 @@ interface Props {
   /** The tab is not showing. It stays mounted so an unsaved change survives a look at another tab. */
   hidden: boolean;
   onSaved: (repository: Repository) => void;
-  onDirty: (dirty: boolean) => void;
+  onState: (state: SettingsState) => void;
 }
+
+/** What the owning panel needs: a dirty tab is marked, and a pending save locks the whole panel. */
+export interface SettingsState {
+  dirty: boolean;
+  busy: boolean;
+}
+
+export const SETTLED: SettingsState = { dirty: false, busy: false };
 
 function inputOf(repository: Repository): RepositoryInput {
   return {
@@ -30,15 +38,16 @@ function changed(fields: RepositoryInput, saved: RepositoryInput): boolean {
  * Its identity — forge, origin, workspace, slug — is shown as text: a different one is a different
  * repository, registered anew. It replaced a second side panel opened over this one (operator, 2026-10-16).
  */
-export default function RepositorySettings({ repository, providers, hidden, onSaved, onDirty }: Props) {
+export default function RepositorySettings({ repository, providers, hidden, onSaved, onState }: Props) {
   const [saved, setSaved] = useState(repository);
   const [fields, setFields] = useState(() => inputOf(repository));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
   const dirty = changed(fields, inputOf(saved));
-  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
-  useEffect(() => () => onDirty(false), [onDirty]);
+  // The panel owns the lock: an input still editable while a save is in flight is overwritten by its answer.
+  useEffect(() => { onState({ dirty, busy }); }, [dirty, busy, onState]);
+  useEffect(() => () => onState(SETTLED), [onState]);
 
   const patch = (next: Partial<RepositoryInput>) => { setFields(previous => ({ ...previous, ...next })); setJustSaved(false); };
   async function submit() {

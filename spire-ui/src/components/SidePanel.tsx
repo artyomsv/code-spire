@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 /** One tab in the panel's own tab bar. `count` renders beside the label when it is a number. */
@@ -6,7 +6,8 @@ export interface PanelTab {
   id: string;
   label: string;
   count?: number;
-  /** Something on this tab is not saved yet. Shown as a dot; the tab says so in words too. */
+  /** Something on this tab is not saved yet. Shown as a dot, and given to assistive technology as the
+   *  tab's description, so the tab's name stays its label. */
   marked?: boolean;
 }
 
@@ -41,6 +42,7 @@ interface Props {
  * not for how it looks.
  */
 export default function SidePanel({ title, subtitle, busy, onClose, tabs, tab, onTab, wide, actions, children }: Props) {
+  const markId = useId();
   return (
     <div className="panel-overlay">
       <div className={wide ? 'side-panel wide' : 'side-panel'} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
@@ -59,10 +61,13 @@ export default function SidePanel({ title, subtitle, busy, onClose, tabs, tab, o
             <div className="panel-tabs" role="tablist" aria-label={`${title} sections`}>
               {tabs.map(entry => (
                 <button key={entry.id} type="button" role="tab" aria-selected={entry.id === tab}
+                  aria-describedby={entry.marked ? `${markId}-${entry.id}` : undefined}
                   className={entry.id === tab ? 'panel-tab on' : 'panel-tab'} onClick={() => onTab?.(entry.id)}>
                   {entry.label}
                   {typeof entry.count === 'number' && <span className="panel-tab-n">{entry.count}</span>}
-                  {entry.marked && <span className="panel-tab-mark" aria-hidden="true" />}
+                  {/* A hidden node still describes the tab it is referenced from; it never joins the tab's name. */}
+                  {entry.marked && <><span className="panel-tab-mark" aria-hidden="true" />
+                    <span id={`${markId}-${entry.id}`} hidden>Unsaved changes</span></>}
                 </button>
               ))}
             </div>

@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { fetchProviders, fetchWebhookRepos, type ProviderView, type WebhookRepoView } from '../../api';
 import RepositoryDetail from './RepositoryDetail';
 import RepositoryForm from './RepositoryForm';
-import RepositorySettings from './RepositorySettings';
+import RepositorySettings, { SETTLED, type SettingsState } from './RepositorySettings';
 import RepositoryPending from './RepositoryPending';
 import RepositoryAccountsCell from './RepositoryAccountsCell';
 import SidePanel from '../SidePanel';
@@ -23,7 +23,7 @@ export default function RepositoryRegistryPage() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [registering, setRegistering] = useState(false);
-  const [settingsDirty, setSettingsDirty] = useState(false);
+  const [settings, setSettings] = useState<SettingsState>(SETTLED);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [kinds, setKinds] = useState<string[]>([]);
@@ -106,16 +106,17 @@ export default function RepositoryRegistryPage() {
         </tr>)}</tbody>
       </table></div>}
       {chosen && <SidePanel wide title={chosen.slug} subtitle={`${chosen.workspace} · ${chosen.forgeOrigin}`}
-        busy={false} onClose={() => setSelected(null)}
-        tabs={[{ id: 'details', label: 'Details' }, { id: 'settings', label: 'Settings', marked: settingsDirty }, { id: 'factory', label: 'Factory' }]}
-        tab={tab} onTab={setTab} actions={<button className="btn-ghost" type="button" onClick={() => setSelected(null)}>Close</button>}>
+        busy={settings.busy} onClose={() => setSelected(null)}
+        tabs={[{ id: 'details', label: 'Details' }, { id: 'settings', label: 'Settings', marked: settings.dirty }, { id: 'factory', label: 'Factory' }]}
+        tab={tab} onTab={setTab}
+        actions={<button className="btn-ghost" type="button" disabled={settings.busy} onClick={() => setSelected(null)}>Close</button>}>
         {/* Siblings, so each key names its tab too: one shared key made React leave old tabs behind (2026-10-20). */}
         {tab === 'details' && <RepositoryDetail key={`details:${chosen.id}`} repository={chosen} hooks={hooks} onHooksChanged={setHooks} />}
         {tab === 'factory' && <RepositoryFactory key={`factory:${chosen.id}`} repository={chosen} accounts={providers}
           webhooks={{ hooks, unavailable: !!hookError, changed: setHooks }} onChanged={() => setSetupRefresh(value => value + 1)} />}
         {/* Edit lives in this panel, never in a second one over it (operator, 2026-10-16). */}
         <RepositorySettings key={`settings:${chosen.id}`} repository={chosen} providers={providers} hidden={tab !== 'settings'}
-          onSaved={replace} onDirty={setSettingsDirty} />
+          onSaved={replace} onState={setSettings} />
       </SidePanel>}
       {registering && <RepositoryForm key={`new:${location.search}`}
         prefill={new URLSearchParams(location.search)}

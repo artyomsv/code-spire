@@ -116,7 +116,7 @@ describe('Repository registry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('reload before saving');
     expect(screen.getByLabelText('Enabled')).not.toBeChecked();
-    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByText('Unsaved changes', { selector: '.settings-state' })).toBeInTheDocument();
   });
 
   /** The operator's finding (2026-10-16): edit opened a second side panel over the first. */
@@ -140,7 +140,7 @@ describe('Repository registry', () => {
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Reviewer may approve'));
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
-    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByText('Unsaved changes', { selector: '.settings-state' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(screen.getByLabelText('Reviewer may approve')).toBeChecked();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
