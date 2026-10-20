@@ -437,7 +437,8 @@ The design is [the M3.5 specification](../superpowers/specs/2026-09-16-factory-m
 
 **Goal:** the factory handles work that is bigger than one prompt.
 
-**Slice 1, verify: implemented (PR #184); live proof pending.** The operator's checks run on a clean
+**Slice 1, verify: accepted 2026-10-08 ([record](./M4-VERIFY-ACCEPTANCE.md)).** GitHub reviews followed on
+PR #196 (accepted 2026-10-18, [record](./GITHUB-REVIEWS-ACCEPTANCE.md)); land is the next slice. The operator's checks run on a clean
 copy of the checkpoint, with passed, failed and unverified outcomes, a result gate (Retry build or
 Stop), and a retry that starts from the failed checkpoint (ADR-046). The plan coordinator, with
 automatic retries, specifications and multi-step plans, comes in later slices.

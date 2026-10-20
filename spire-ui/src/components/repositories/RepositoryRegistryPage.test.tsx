@@ -75,8 +75,8 @@ describe('Repository registry', () => {
     expect(screen.getByText('Reviewer: TEST-reviewer (@TEST-review-bot) · configured')).toBeInTheDocument();
     expect(screen.getByText('Factory: TEST-factory · disabled')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'TEST-repo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
-    expect(screen.getByRole('textbox', { name: 'Workspace' })).toHaveValue('TEST-group/nested');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(within(screen.getByRole('region', { name: 'Identity' })).getByText('TEST-group/nested')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'REVIEWER account' })).toHaveValue('TEST-reviewer');
     expect(screen.getByRole('combobox', { name: 'FACTORY account' })).toHaveValue('TEST-factory');
   });
@@ -84,25 +84,26 @@ describe('Repository registry', () => {
   it('offers only same-origin accounts of the chosen role and saves explicit ids', async () => {
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const reviewer = screen.getByRole('combobox', { name: 'REVIEWER account' });
     expect(within(reviewer).queryByRole('option', { name: 'TEST-wrong-host' })).not.toBeInTheDocument();
     expect(within(reviewer).queryByRole('option', { name: 'TEST-factory' })).not.toBeInTheDocument();
     expect(within(reviewer).queryByRole('option', { name: 'TEST-context' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'FACTORY account' }), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({
-      workspace: 'TEST-group/nested', reviewerAccountId: 'TEST-reviewer', factoryAccountId: 'TEST-factory',
+      workspace: 'TEST-group/nested', reviewerAccountId: 'TEST-reviewer', factoryAccountId: null,
     }), repo));
   });
 
   it('saves the reviewer-may-approve setting, on by default', async () => {
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const setting = screen.getByLabelText('Reviewer may approve');
     expect(setting).toBeChecked();
     fireEvent.click(setting);
-    fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerMayApprove: false }), repo));
   });
 
@@ -110,10 +111,106 @@ describe('Repository registry', () => {
     vi.mocked(api.saveRepository).mockRejectedValue(new Error('Repository changed; reload before saving'));
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit repository and accounts' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('reload before saving');
-    expect(screen.getByRole('heading', { name: 'Repository details' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Enabled')).not.toBeChecked();
+    expect(screen.getByText('Unsaved changes', { selector: '.settings-state' })).toBeInTheDocument();
+  });
+
+  /** The operator's finding (2026-10-16): edit opened a second side panel over the first. */
+  it('edits a repository in a Settings tab of the same panel, never a second panel', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    expect(screen.queryByRole('button', { name: 'Edit repository and accounts' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByLabelText('Reviewer may approve')).toBeInTheDocument();
+    // Identity is read-only text, not locked inputs.
+    expect(screen.queryByRole('textbox', { name: 'Workspace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Forge kind' })).not.toBeInTheDocument();
+  });
+
+  it('offers Save only after a change, and Discard puts the saved values back', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Reviewer may approve'));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(screen.getByText('Unsaved changes', { selector: '.settings-state' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByLabelText('Reviewer may approve')).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(api.saveRepository).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unsaved change while the operator looks at another tab', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Reviewer may approve'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Details' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.getByLabelText('Reviewer may approve')).not.toBeChecked();
+  });
+
+  /** Review M-1 (2026-10-20): an edit made while a save was in flight was overwritten by its answer. */
+  it('locks every control and the close actions until a save settles', async () => {
+    let settle: (saved: api.Repository) => void = () => {};
+    vi.mocked(api.saveRepository).mockReturnValue(new Promise(resolve => { settle = resolve; }));
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByLabelText('Reviewer may approve')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'REVIEWER account' })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: 'Details' })).toBeDisabled();
+    for (const close of screen.getAllByRole('button', { name: 'Close' })) expect(close).toBeDisabled();
+    settle({ ...repo, enabled: false, revision: 4 });
+    await waitFor(() => expect(screen.getByLabelText('Reviewer may approve')).toBeEnabled());
+    for (const close of screen.getAllByRole('button', { name: 'Close' })) expect(close).toBeEnabled();
+  });
+
+  /** Review L-1 (2026-10-20): the unsaved-changes dot was the only sign, and a screen reader skipped it. */
+  it('tells assistive technology which tab holds unsaved changes', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Reviewer may approve'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Details' }));
+    expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAccessibleDescription('Unsaved changes');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByRole('tab', { name: 'Settings' })).not.toHaveAccessibleDescription('Unsaved changes');
+  });
+
+  /** The operator's finding (2026-10-20): each tab switch left the previous tab's content behind. */
+  it('shows only the chosen tab after the operator switches back and forth', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    for (const name of ['Settings', 'Details', 'Settings', 'Details']) fireEvent.click(screen.getByRole('tab', { name }));
+    expect(screen.getAllByText('Selected accounts')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(screen.queryByText('Selected accounts')).not.toBeInTheDocument();
+  });
+
+  it('shows the saved values after a save, with nothing left to save', async () => {
+    vi.mocked(api.saveRepository).mockResolvedValue({ ...repo, reviewerMayApprove: false, revision: 4 });
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Reviewer may approve'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reviewer may approve')).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Details' }));
+    expect(screen.getByText('Reviewer may approve: off')).toBeInTheDocument();
   });
 
   it('can register an unbound repository before accounts exist', async () => {

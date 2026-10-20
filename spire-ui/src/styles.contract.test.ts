@@ -106,4 +106,11 @@ describe('stylesheet contract', () => {
         'with browser defaults. Either add the rule or use an existing class.',
     ).toEqual([]);
   });
+
+  /** The operator's finding (2026-10-20): with a side panel open, the page behind it scrolled too,
+   *  so the window showed two scroll bars. Only the panel body may scroll while a panel is open. */
+  it('stops the page behind an open side panel from scrolling', () => {
+    const css = readFileSync(join(SRC, 'index.css'), 'utf8');
+    expect(css).toMatch(/html:has\(\.panel-overlay\)\s*\{[^}]*overflow:\s*hidden/);
+  });
 });
