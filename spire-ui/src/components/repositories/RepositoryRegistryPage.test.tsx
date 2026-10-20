@@ -157,6 +157,38 @@ describe('Repository registry', () => {
     expect(screen.getByLabelText('Reviewer may approve')).not.toBeChecked();
   });
 
+  /** Review M-1 (2026-10-20): an edit made while a save was in flight was overwritten by its answer. */
+  it('locks every control and the close actions until a save settles', async () => {
+    let settle: (saved: api.Repository) => void = () => {};
+    vi.mocked(api.saveRepository).mockReturnValue(new Promise(resolve => { settle = resolve; }));
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByLabelText('Reviewer may approve')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'REVIEWER account' })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: 'Details' })).toBeDisabled();
+    for (const close of screen.getAllByRole('button', { name: 'Close' })) expect(close).toBeDisabled();
+    settle({ ...repo, enabled: false, revision: 4 });
+    await waitFor(() => expect(screen.getByLabelText('Reviewer may approve')).toBeEnabled());
+    for (const close of screen.getAllByRole('button', { name: 'Close' })) expect(close).toBeEnabled();
+  });
+
+  /** Review L-1 (2026-10-20): the unsaved-changes dot was the only sign, and a screen reader skipped it. */
+  it('tells assistive technology which tab holds unsaved changes', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Reviewer may approve'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Details' }));
+    expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAccessibleDescription('Unsaved changes');
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByRole('tab', { name: 'Settings' })).not.toHaveAccessibleDescription('Unsaved changes');
+  });
+
   /** The operator's finding (2026-10-20): each tab switch left the previous tab's content behind. */
   it('shows only the chosen tab after the operator switches back and forth', async () => {
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
