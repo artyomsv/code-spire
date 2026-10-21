@@ -8,6 +8,7 @@ public class GitHubApiException extends RuntimeException implements ScmApiExcept
     private final int status;
     private final boolean rateLimited;
     private final Integer retryAfterSeconds;
+    private final String detail;
 
     public GitHubApiException(int status, String method, String path) {
         this(status, method, path, null);
@@ -25,11 +26,17 @@ public class GitHubApiException extends RuntimeException implements ScmApiExcept
         this.status = status;
         this.rateLimited = rateLimited;
         this.retryAfterSeconds = retryAfterSeconds;
+        this.detail = detail;
     }
 
     private static String message(int status, String method, String path, String detail) {
         return "GitHub API " + method + " " + path + " failed with HTTP " + status
                 + (detail == null || detail.isBlank() ? "" : ": " + detail);
+    }
+
+    /** The truncated response-body snippet or guard reason, without the method and path. */
+    public String detail() {
+        return detail;
     }
 
     @Override

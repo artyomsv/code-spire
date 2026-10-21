@@ -378,8 +378,21 @@ public class ProviderClients {
         };
     }
 
+    /**
+     * A client that merges a delivered pull request and deletes its branch. Like
+     * {@link #pullRequestSink}, only the FACTORY account may hold it: the reviewer's token is not
+     * provisioned for a merge, and a merge recorded as the reviewer would misattribute it. Land is
+     * GitHub only; every other forge gets a lander that is not {@code available()}.
+     */
     public dev.codespire.contract.port.PullRequestLander pullRequestLander(ScmProvider provider) {
-        return new dev.codespire.contract.port.PullRequestLander() {};
+        if (provider.role() != ProviderRole.FACTORY) {
+            throw new IllegalArgumentException("a pull request is landed by the FACTORY account; "
+                    + "this was handed the " + provider.role() + " provider " + provider.id());
+        }
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubPullRequestLander(new GitHubClient(githubConfig(provider), mapper));
+            default -> new dev.codespire.contract.port.PullRequestLander() {};
+        };
     }
 
     /**
