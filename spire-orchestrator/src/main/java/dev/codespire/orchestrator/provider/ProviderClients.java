@@ -378,6 +378,10 @@ public class ProviderClients {
         };
     }
 
+    public dev.codespire.contract.port.PullRequestLander pullRequestLander(ScmProvider provider) {
+        return new dev.codespire.contract.port.PullRequestLander() {};
+    }
+
     /**
      * A read client for a not-yet-registered provider, to resolve/validate the
      * token at create time via {@code whoami()} (before the bot account id is known).
