@@ -331,7 +331,68 @@ CI for every step (RED before GREEN), mutation checks on every guard, and a live
 6. A hand merge on GitHub: item completed with the human as merger, branch deleted, ticket comment.
 7. Fix attempts set to 1, two failures: the second hands the item with `land_fix_attempts_exhausted`.
 
-## 10. Left to the builder
+## 10. Review amendments (2026-10-22) — these override the sections they name
+
+1. **Ticket effect after completion (§7.7).** `WorkSourceEffects.dispatch` calls
+   `WorkPolicy.Phase.valueOf(item.phase())` and refuses on a changed revision/phase
+   (`WorkSourceEffects.java:76-88`); `complete` is not a `Phase`, so a row drained after completion
+   throws on every pass and stalls the whole outbox. Add a **post-land effect class**: enqueued in the
+   same transaction as `WORK_ITEM_LANDED` (binding that revision), drained whatever the item's current
+   phase or status, checked against the repository's `ticket_rule` instead of a phase mode, and never
+   calling `Phase.valueOf` on `complete`. A contract change with its own tests, including "drained
+   after completion" and "an unknown phase never stalls the batch".
+2. **One landing, two observers (§7.3, §7.8).** The factory's own merge produces a `pull_request
+   closed, merged: true` webhook. A `merged`/`closed` activity whose sender is the item's recorded
+   control identity **or** the current FACTORY/REVIEWER bot (`currentMachine`) is receipted
+   `recorded_machine` and left to the land effect. `WORK_ITEM_LANDED` is appended at most once per
+   generation and pull request, under `lockItem`; the webhook path and the effect both check history
+   first, and the later one only advances the effect row. Who merged comes from
+   `pull_request.merged_by.id`, not `sender`.
+3. **Retry land (§7.6).** The fresh gate is opened on `execution.head()` (the verified and reviewed
+   head), never on the pull request's current head. If the PR head differs, Retry land is refused
+   with `land_head_moved`; the operator can Stop. The existing "Recheck and resume" on a `land /
+   awaiting_input` item would reopen the gate with no note: `advance` refuses it there with
+   `retry_land_required`, and the UI shows Retry land instead.
+4. **Check reduction (§7.2, §7.3).** Reduce from the `statuses[]` and `check_runs[]` lists, not the
+   combined `state` (which is `pending` when there are no statuses at all). An empty set is PASSED.
+   Conclusions: `success|neutral|skipped` PASSED; `failure` FAILED (fix); `queued|in_progress` and
+   status `pending` PENDING; `cancelled|timed_out|action_required|stale` handed with
+   `land_checks_not_code` and the names. When `mergeable_state` is `clean`, pending non-required
+   checks are not waited for. `mergeable_state: unknown` is treated like `mergeable == null`.
+5. **Merge outcomes (§7.2, §7.3).** `uncertain` only for I/O failures (timeout, connection reset,
+   unreadable response); every HTTP status is definite. 409: re-read; head unchanged → `checking`
+   (the base moved), head changed → `land_head_moved`. 403/404 → handed `land_merge_refused` with
+   GitHub's message. A method the repository does not allow is detected in `checking` from
+   `allow_*_merge`, not parsed from a 405 message.
+6. **Revocation is best effort (§7.8).** As today, cancel goes through the delivery sweep and a push
+   already running may land. The guards are the sha-pinned branch delete (which then records
+   `branch_delete_failed`) and that nothing is merged. A late build or verify result for a cancelled
+   fix run is accounted through `recordLateBuild` (`WorkItemTransitions.java:116`), never left failing
+   on `item_not_active`.
+7. **Where the fix run starts (§7.5).** Like `/fix` (`FixDispatch.java:128`): clone the item branch at
+   `approved_head` from the forge, `onExistingBranch(item branch)`, no dependency on a retained
+   checkpoint. `approved_head` is also the publisher's expected remote head. The land-fix
+   `ExecuteRun.branch` is the item branch, because `WorkRunDispatcher.claim` rewrites `WorkControl`
+   from `execution().branch()` (`WorkRunDispatcher.java:100`).
+8. **New wire facts (§7.3, §7.9, §7.10).** `WorkExecution` gains a `landing` component (pull request,
+   merge commit, method, merger provider id, time) with a wither next to the record; it is covered by
+   a snapshot test that recurses into it. `WorkItemDetail` in `api.ts` gains `landing`. `canReadmit`
+   excludes `completed` with a landing and `land / awaiting_input`. Every new reason is added to
+   `workReasons.ts` in the same change.
+9. **Gate skipping is computed outside the decider (§7.5).** `WorkItemLifecycle.enter` sees no
+   history. `advance` and `answer` derive `landFixInProgress` from history under the lock and pass it
+   as `approved` for build and deliver. Decide-table rows for both, and a mutation test that the flag
+   alone flips each gate.
+10. **Takeover wording (§7.5).** `control.suspend` already skips the recorded FACTORY/REVIEWER
+    identities (`WorkItemControl.java:62`). What is missing is the *current* identity after rotation;
+    extend the exclusion with `currentMachine`.
+11. **Migrations.** `repository_land_settings` is V90, `work_land_effect` is V91.
+12. **Statuses (§7.3).** Use the existing `active / phase_started` on entering land; the new reasons
+    are `landed` (on `completed`) and the hand-off reasons, each with a decide-table row.
+13. **Branch delete (§7.2).** After any non-204 from `DELETE /git/refs/...`, re-read the ref: present →
+    `branch_delete_failed`, absent → done. Do not treat 404/422 as gone without the re-read.
+
+## 11. Left to the builder
 
 Slice order and task boundaries; event and record names beyond the ones above; how the fix-run
 prompt is worded; the exact check-summary cap; how the existing verify gate copy changes for a fix
