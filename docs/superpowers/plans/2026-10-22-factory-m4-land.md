@@ -63,12 +63,14 @@ decisions) is fixed. §n refers to the spec.
   free one and keep the name.
 - **Exact strings.**
   - Event milestones: `WORK_ITEM_LANDED`, `LAND_HANDED`, `LAND_FIX_REQUESTED`, `PULL_REQUEST_CLOSED`,
-    `LAND_RETRY_REQUESTED`.
-  - Item reasons: `landed` (on `completed`), `pr_closed_by_human` (on `stopped`), and the hand-off reasons
-    (on `land / awaiting_input`): `land_head_moved`, `land_checks_timeout`, `land_checks_not_code`,
-    `land_blocked`, `land_pr_draft`, `land_merge_refused`, `land_merge_method_not_allowed`,
-    `land_fix_attempts_exhausted`, `land_item_limit_reached`, `land_fix_review_blocked`, and (slices 4–6 only,
-    see slice 4) `land_checks_failed`, `land_conflict`, `land_branch_behind`.
+    `LAND_RETRY_REQUESTED`, `LAND_STOPPED`.
+  - Item reasons: `landed` (on `completed`), `pr_closed_by_human` (on `stopped`), `land_stopped_by_operator`
+    (on `stopped`, slice 8), and the hand-off reasons (on `land / awaiting_input`): `land_head_moved`,
+    `land_checks_timeout`, `land_checks_not_code`, `land_blocked`, `land_pr_draft`, `land_merge_refused`,
+    `land_merge_method_not_allowed`, `land_fix_attempts_exhausted`, `land_item_limit_reached`,
+    `land_fix_review_blocked`, `land_fix_run_failed` (slice 7b), and (slices 4–7a only, removed from the set
+    in slice 7b) `land_checks_failed`, `land_conflict`, `land_branch_behind`.
+  - Publisher failure: `BASE_TIP_UNAVAILABLE` (slice 7a), beside the existing failure codes.
   - Fix reasons (on `LAND_FIX_REQUESTED`): `land_checks_failed`, `land_conflict` (counted),
     `land_branch_behind` (not counted).
   - Command refusals: `readmission_landed`, `readmission_land_pending`, `retry_land_required`,
@@ -102,7 +104,8 @@ Inputs the spec implies but no slice's main path reaches. Each has its test in t
 4. **The factory's own merge webhook arrives before the effect records the merge.** Exactly one
    `WORK_ITEM_LANDED`, merger `factory`. Slice 6: `theFactorysOwnMergeWebhookIsLeftToTheEffect`.
 5. **A hand merge while the fix run is building.** The item completes with the human as merger; the running
-   fix is held and cancelled; its late build result is accounted, not failed. Slice 6:
+   fix is held and cancelled; its late build result is accounted, not failed. Slice 7b (an item can only be in
+   `build` with a pull request once the land fix exists; slice 6 cannot reach this state):
    `aHandMergeDuringAFixHoldsTheRunAndAccountsItsLateResult`.
 6. **A ticket effect drained after the item completed, and a stale phase row in the same batch.** Neither
    stalls the outbox (A1). Slice 5: `aPostLandCommentIsSentAfterCompletion`,
@@ -120,6 +123,41 @@ Inputs the spec implies but no slice's main path reaches. Each has its test in t
     before any merge call (A5). Slice 4: `aForbiddenMethodIsHandedBeforeAnyMergeCall`.
 12. **Branch delete returns 422 while the ref still exists.** Re-read; present → `branch_delete_failed`, not
     done (A13). Slice 1: `a422WithTheRefStillPresentIsNotDeleted`.
+13. **A human takes over while the merge is uncertain.** `HUMAN_TAKEOVER` refuses pending effects today. A land
+    row already past the merge call (`uncertain`, `merged`, `cleaning`) must keep reading and record what GitHub
+    did, or a real merge is never recorded. Slice 4: `aTakeoverDuringAnUncertainMergeStillRecordsTheMerge`.
+14. **A base merge brings a protected path from the base.** `PushGate` judges the tip tree against the run's
+    base commit (`PublishRepo.changesSince`), so merging `origin/<base>` into the branch shows every base change
+    since divergence — a workflow file edited on `master` would refuse the fix's push. Paths whose tip content
+    equals the merged base tip are not the agent's; an agent edit to a protected path is still refused.
+    Slice 7a: `aBaseMergeDoesNotBlameTheAgentForTheBasesProtectedPaths`, `anAgentEditInsideABaseMergeIsStillRefused`.
+15. **Readmit while the fix loop waits for a person.** Inside a land fix the item can stop at `build /
+    awaiting_input` (an assembly refusal such as missing pricing). Today `canReadmit` offers Readmit on every
+    `awaiting_input`, and a readmit there opens a second pull request beside the open one. Slice 7b:
+    `readmitIsRefusedWhileALandFixIsInProgress`.
+16. **The fix run itself fails** (`PHASE_FAILED` at build). Today the item ends `failed` and Readmit rebuilds
+    the delivered work beside the open pull request. Slice 7b hands it `land_fix_run_failed` instead:
+    `aFailedFixRunIsHandedNotFailed`.
+17. **A handed item the operator wants to end.** §7.6 offers Retry land **or Stop**, but a handed item has no
+    open gate, so the gate panel's Stop does not exist there. Slice 8: `stopLandEndsAHandedItemWithANote`.
+
+## Spec coverage
+
+| Spec item | Slice → proving test |
+|---|---|
+| Goal 1, §7.3 merge at approved head, branch delete, complete | 4 → `anApprovedLandMergesDeletesAndCompletes`, `theMergeIsPinnedToTheApprovedHead` |
+| Goal 2, §7.1 settings | 2 → `LandSettingsTest`, `LandStep.test` |
+| Goal 3, §7.5 fix loop, §6 "after an agent fix, wait for me" | 7a, 7b → `aFailedCheckRunsOneFixAndOpensANewLandGate` |
+| Goal 4, §7.6 hand-off, Retry land or Stop | 4, 7b, 8 → `blockedWithPassedChecksIsHanded`, `theSecondFailureWithOneAttemptIsExhausted`, `retryLandOpensAFreshGateThenLandsAfterApproval`, `stopLandEndsAHandedItemWithANote` |
+| Goal 5, §7.8 hand merge / close | 6, 7b → `aHandMergeCompletesWithTheHumanAsMerger`, `aHandMergeDuringAFixHoldsTheRunAndAccountsItsLateResult` |
+| Goal 6, §7.9 no readmit after land | 3, 7b → `aLandedItemCannotBeReadmitted`, `readmitIsRefusedWhileALandFixIsInProgress` |
+| §6 merge method / ticket rule / branch delete not a setting / attempts default 3 | 2, 4, 5 → `noRowReadsTheDefaults`, `theCloseRuleClosesAfterTheComment` |
+| §6 attempt cost (seat free, key priced) | 7b → `aLandFixRunGoesThroughTheBuildsSpendChecks` |
+| §6 reviewer blocks a fix → operator | 7b → `aBlockedReviewOfAFixIsHanded` |
+| §6 build/deliver gates skipped, verify kept | 7b → `theLandFixFlagAloneSkipsTheBuildGate`/`…DeliverGate`, `theLandFixFlagNeverSkipsVerifyOrLand` |
+| Non-goals: `auto_if_green`, GitLab/Bitbucket | 4 → `autoIfGreenStaysUnavailable`, `landStaysUnavailableOffGitHub` |
+| Anti-goals: blind retry, racing a human, foreign branch delete | 4, 6, 1 → `anUncertainMergeIsRecoveredByReadingNeverResent`, `aHumanPushIsStillTakeover`, `deleteOnlyAtTheExpectedSha` |
+| A1 … A13 | A1 → 5; A2 → 6; A3 → 8; A4 → 1, 4; A5 → 1, 4; A6 → 7b; A7 → 7b; A8 → 3, 7b; A9 → 7b; A10 → 6; A11 → 2, 4; A12 → 3; A13 → 1 |
 
 ---
 
@@ -170,8 +208,8 @@ public interface PullRequestLander {
     record FailedCheck(String name, String conclusion, String title, String summary, List<String> annotations) {}
     record CheckSummary(Checks state, int done, int total, List<FailedCheck> failed) {}   // capped
     record LandState(String state, boolean merged, String mergeCommitSha, String mergedBy, String headSha,
-                     String headBranch, String baseBranch, Boolean mergeable, String mergeableState,
-                     CheckSummary checks) {}
+                     String headBranch, String baseBranch, String baseSha, Boolean mergeable, String mergeableState,
+                     CheckSummary checks) {}   // baseSha = pull_request.base.sha; slice 7a's base-merge gate needs it
     record AllowedMethods(boolean checked, Set<MergeMethod> allowed) {}
     sealed interface MergeOutcome {
         record Merged(String sha) implements MergeOutcome {}
@@ -210,7 +248,8 @@ Empty → PASSED.
 | `…anUnknownConclusionNeverPasses` | conclusion `TEST-new` → NOT_CODE | default branch returns PASSED |
 | `…notCodeOutranksFailedOutranksPending` | mixed sets → precedence as above | precedence reordered |
 | `…theSummaryIsCapped` | 30 failures with 5000-char summaries → 20 entries, each summary ≤ 2000, ≤ 5 annotations | cap removed |
-| `GitHubPullRequestLanderTest.readMapsStateMergeableAndMergedBy` | `GET /pulls/42` fields map; `mergedBy` = `merged_by.id` not `sender` | field mis-mapped |
+| `GitHubPullRequestLanderTest.readMapsStateMergeableAndMergedBy` | `GET /pulls/42` fields map (including `base.sha`); `mergedBy` = `merged_by.id` not `sender` | field mis-mapped |
+| `…annotationsAreReadOnlyForFailedRuns` | `GET /check-runs/{id}/annotations` requested for the failed run only, at most 5 kept; none for passed runs | annotations fetched for every run, or never |
 | `…aFailureOnTheSecondCheckRunPageFails` | page 1 = 100 success, page 2 = 1 failure → FAILED; both pages requested | only page 1 read |
 | `…allowedMethodsReadsTheRepositoryFlags` | `allow_merge_commit:false, allow_squash_merge:true, allow_rebase_merge:false` → `{SQUASH}`, checked | flags ignored |
 | `…mergeSendsTheShaAndMethod` | `PUT /pulls/42/merge` body has `sha` and `merge_method:"squash"`; 200 → `Merged(sha)` | sha omitted |
@@ -256,7 +295,9 @@ mapping; I/O→Uncertain catch; sha check before `DELETE`; re-read after non-204
   revision), `factoryFixtures.ts`, `factoryModel.ts` if steps are counted there
 - Modify: `spire-ui/src/components/work-items/workReasons.ts` (`land_settings_changed`, `merge_method_invalid`,
   `ticket_rule_invalid`, `fix_attempts_invalid`)
-- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/factory/LandSettingsTest.java` (new, service tier)
+- Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/factory/LandSettingsTest.java` (new, service tier,
+  `@QuarkusTest` like `BuildDefaultsTest`; the options cases bind a GitHub FACTORY account to a WireMock forge the
+  way `WorkPreparedFixture` does)
 - Test: `spire-ui/src/components/repositories/factory/LandStep.test.tsx` (new)
 - Modify test: `spire-ui/src/components/repositories/factory/RepositoryFactory.test.tsx`
 
@@ -328,7 +369,8 @@ stays `capability_unavailable`.
 - Test: `spire-contract/src/test/java/dev/codespire/contract/work/WorkExecutionTest.java`,
   `spire-contract/src/test/java/dev/codespire/contract/work/WorkLandDecisionTest.java` (new, decide table),
   `spire-orchestrator/src/test/java/dev/codespire/orchestrator/work/WorkLandReadmitIT.java` (new, extends
-  `WorkPreparedFixture`), `spire-ui/src/components/work-items/WorkItemActions.test.tsx` (new or existing file)
+  `WorkPreparedFixture`), `spire-ui/src/components/work-items/WorkItems.test.tsx` (where `WorkItemActions` is
+  tested today; there is no `WorkItemActions.test.tsx`)
 
 **Interfaces — Produces:**
 ```java
@@ -373,9 +415,9 @@ workflowStatus === 'awaiting_input'`.
 | `WorkLandReadmitIT.aLandedItemCannotBeReadmitted` | drive an item to `landed` via the decider + `store.appendDecision`, POST resume readmit → 409 `readmission_landed`, generation unchanged | refusal removed |
 | `…aHandedItemCannotBeReadmitted` | `land/awaiting_input/land_blocked` → 409 `readmission_land_pending` | |
 | `…anItemStoppedElsewhereCanStillBeReadmitted` | `stopped/gate_rejected` at plan → readmit 200 | refusal too broad |
-| `WorkItemActions.test: no Readmit on a landed item` | completed + landing → button absent | |
-| `WorkItemActions.test: no Readmit at land awaiting_input` | | |
-| `WorkItemActions.test: Readmit still offered on a completed item without a landing` | | exclusion too broad |
+| `WorkItems.test (actions): no Readmit on a landed item` | completed + landing → button absent | |
+| `WorkItems.test (actions): no Readmit at land awaiting_input` | | |
+| `WorkItems.test (actions): Readmit still offered on a completed item without a landing` | | exclusion too broad |
 
 - [ ] RED (decider methods throw; `WorkLanding` exists; snapshot golden updated to the target text so it fails
   on the record), then GREEN.
@@ -407,8 +449,12 @@ this slice; slice 7b turns those three into the fix loop. This keeps every inter
   `@Scheduled(every="${spire.work-land-interval:5s}")`, `concurrentExecution=SKIP`)
 - Create: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/work/WorkLandDecision.java` (pure:
   `LandState` + `AllowedMethods` + method → `Next` = MERGE | WAIT | HAND(reason) | FIX(reason) | MERGED_FOUND | CLOSED)
-- Modify: `WorkItemStore.projectExecution` (insert the effect row on `land` + `PHASE_STARTED` with a PR;
-  refuse a non-terminal land effect on `HUMAN_TAKEOVER`/`WORK_ITEM_RETIRED`)
+- Modify: `WorkItemStore.projectExecution` (insert the effect row on `land` + `PHASE_STARTED` with a PR, only
+  when `item.gate()` is the APPROVED land gate and its `artifact` equals `execution.head()`; `approved_head` is
+  that artifact. On `HUMAN_TAKEOVER`/`WORK_ITEM_RETIRED` refuse only rows still before the merge call
+  (`pending`, `checking`, `waiting_checks`). A row in `uncertain`, `merged` or `cleaning` keeps draining: the
+  merge may have happened, and it is recovered by reading, then recorded through `transitions.landed`, which
+  accepts a suspended item (Review Focus 13))
 - Modify: `WorkPhaseCapability.available` (`case "land"`: mode `approve`, a delivered PR, and the FACTORY
   account's lander `available()`; `auto_if_green` stays false)
 - Modify: `WorkItemTransitions` (`landed(id, effectId, WorkLanding)`, `landHandOff(id, effectId, reason)`,
@@ -479,6 +525,9 @@ anything else → hand. `merged` → `transitions.landed` (merger `factory` or `
 | `…landStaysUnavailableOffGitHub` | GitLab-bound item approving land → `land_capability_unavailable` (unchanged) | capability too broad |
 | `…autoIfGreenStaysUnavailable` | land mode `auto_if_green` → `capability_unavailable` | |
 | `…landingIsRecordedOnce` | call `transitions.landed` twice for one effect → one `WORK_ITEM_LANDED` | history check removed |
+| `…aTakeoverBeforeTheMergeCallRefusesTheEffect` | row `waiting_checks`, human push → item suspended, row refused, no `PUT` ever | takeover leaves the row live |
+| `…aTakeoverDuringAnUncertainMergeStillRecordsTheMerge` | `PUT` resets, human push suspends the item, next pass reads PR merged → `WORK_ITEM_LANDED` recorded, item `completed/landed`, no second `PUT` | takeover refuses `uncertain` rows |
+| `…noEffectWithoutAnApprovedLandGate` | `PHASE_STARTED` at land with no APPROVED gate (e.g. a forged history row) → no effect row | gate condition removed |
 
 Fakes: if a QuarkusMock replaces any orchestrator bean on the new path (e.g. `WorkClock`), override every method
 the sweep reaches.
@@ -488,7 +537,11 @@ the sweep reaches.
 
 **Mutation guards:** each `checking` row; `uncertain` marked before the merge call; uncertain path never calls
 `merge`; 6 h bound; `cleanup_tries` bound; `landedIn` check in `transitions.landed`; capability `approve`-only
-and PR-present conditions.
+and PR-present conditions; the takeover refusal's pre-merge state list; the approved-gate condition on insert.
+
+Note: between this slice and slice 8, "Recheck and resume" on a handed item reopens the land gate on
+`execution.head()` with no note. That is safe (the effect re-checks the head) and is closed by slice 8's
+`retry_land_required`; do not ship a release from an intermediate slice.
 
 ---
 
@@ -520,7 +573,12 @@ static String landedComment(WorkLanding landing, String handle);   // "Merged by
 static Optional<String> closeTransition(WorkSourceType type);       // GITHUB "closed", GITLAB "close", JIRA empty
 ```
 Effect ids are derived (`UUID.nameUUIDFromBytes("post-land:<item>:<generation>:<kind>")`) so a replayed
-landing cannot enqueue twice. Post-land dispatch: no policy or phase mode; the generation must match; a
+landing cannot enqueue twice. The existing `enqueue` copies `generation, revision, phase` from `work_item WHERE
+id=? AND revision=?`, so `enqueuePostLand` runs **after** `store.appendDecision` of `WORK_ITEM_LANDED` in the
+same transaction (the projection row then holds that revision and phase `complete`). The merger's handle for
+"Merged by <handle>" is resolved **before** `lockItem` (`ActorDirectory.byId` on the repository's REVIEWER or
+FACTORY account; a forge call never runs under the item lock); an unresolved id writes "Merged by a person on
+GitHub", never the raw id. Post-land dispatch: no policy or phase mode; the generation must match; a
 TRANSITION is refused `ticket_rule_changed` unless the current `LandSettings.ticketRule` is still `CLOSE`;
 COMMENT always proceeds. The uncertain/recover path is shared unchanged. The TRANSITION row is dispatched
 only after the COMMENT row is `sent` (order: comment, then close). In `sweep`, a phase row whose phase is not
@@ -540,6 +598,8 @@ a `WorkPolicy.Phase` is marked `refused/unknown_phase` instead of throwing, and 
 | `invalidationLeavesPostLandRowsAlone` | a `WORK_ITEM_REFUSED` after landing does not refuse the post-land row | class filter missing |
 | `aReplayedLandingDoesNotEnqueueTwice` | `transitions.landed` twice → one COMMENT row | derived id removed |
 | `aHumanMergeSaysWhoMerged` | merger id resolves to the observed handle (`ActorDirectory`) → "Merged by TEST-handle" | |
+| `anUnresolvedMergerIsNotPrintedAsAnId` | `byId` fails → "Merged by a person on GitHub"; the numeric id is absent from the text | raw id written |
+| `closeTransitionPerSourceType` (pure) | GITHUB `closed`, GITLAB `close`, JIRA empty | a source type mapped wrong |
 
 - [ ] RED, then GREEN. Commits: `Add failing tests for the post-land ticket effect`,
   `Tell the ticket after land without stalling the outbox`.
@@ -552,8 +612,10 @@ a `WorkPolicy.Phase` is marked `refused/unknown_phase` instead of throwing, and 
 ### Slice 6: a person merges or closes the pull request (A2, A6, A10)
 
 **Goal:** GitHub's `pull_request closed` arrives as `merged` or `closed`. A human merge completes the item with
-the human as merger; a close stops it; the factory's own merge or push is never takeover; a running fix is held
-and cancelled; late results are accounted.
+the human as merger; a close stops it; the factory's own merge or push is never takeover. Holding a running fix
+run and accounting its late result move to slice 7b: before the fix loop exists no item is in `build` or
+`verify` with a pull request (`WorkProgress.start` clears `execution` for a build, and `linked` needs
+`execution.pullRequest()`), so no test here could reach that path.
 
 **Files:**
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/event/IntegrationEvent.java` (`RepositoryActivity`
@@ -564,12 +626,9 @@ and cancelled; late results are accounted.
   routing; `currentMachine` made package-visible and used by `WorkItemControl`)
 - Modify: `WorkItemControl.change` (skip recorded **or current** FACTORY/REVIEWER identity, A10)
 - Modify: `WorkItemTransitions` (`landedByHuman(id, delivery, prNumber, mergedBy)`, `closedByHuman(id, delivery, prNumber)`;
-  generalise `recordLateBuild` to accept a verify attempt by joining `work_verify_effect`)
-- Modify: `WorkItemStore.projectExecution` (`WORK_ITEM_LANDED` and `PULL_REQUEST_CLOSED` refuse pending
-  run/verify/delivery effects and enqueue `work_run_hold_outbox` rows, the same statements as `HUMAN_TAKEOVER`)
+  both enqueue the post-land ticket effect of slice 5 in their own transaction, after the append)
 - Modify: `WorkLanding` (a webhook-recorded landing creates or advances the effect row to `cleaning`; a row in
   any pre-merge state seeing `landedIn` moves to `cleaning` without a merge)
-- Modify: `WorkVerifyResults` (`item_not_active`/`attempt_changed` → `recordLateResult`)
 - Test: `spire-scm-github/src/test/java/dev/codespire/scm/github/GitHubIngressActivityTest.java`
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/work/WorkLandWebhookIT.java` (new, extends
   `WorkPolicyFixture` like `WorkGateChannelsIT`)
@@ -586,11 +645,15 @@ record RepositoryActivity(RepoRef repo,String kind,String actorId,String branch,
 }
 Outcome landedByHuman(String id, String delivery, long pullRequest, String mergedBy);
 Outcome closedByHuman(String id, String delivery, long pullRequest);
-Outcome recordLateResult(String id, PhaseResult result);   // build or verify attempt; replaces recordLateBuild's callers
 ```
+Note the activity loop selects only items `NOT IN ('retired','completed')` (`WorkGateChannels.java:56`), so a
+webhook arriving after the effect completed the item never reaches `landedByHuman`. The `landedIn` guard there
+matters only while the item is not yet completed (for example suspended); test it by calling `landedByHuman`
+directly.
 **Routing (§7.8 + A2):** for a linked item and kind `merged`/`closed`: sender is `control.machine(actor)` or
 `currentMachine(...)` → receipt `recorded_machine` and nothing else (the effect owns it). Otherwise `merged` →
-`landedByHuman` (any status but `retired`/`completed`; builder's call, recorded in Review Focus 5),
+`landedByHuman` (any status but `retired`/`completed`, `suspended` included, per §7.8 "at any phase after the
+pull request exists"),
 `closed` → `closedByHuman`. Both check `landedIn` under the lock; the later observer only advances the effect
 row. The landing merge commit comes from the effect's later read when the webhook lacks it (`merge_commit_sha`
 is in the payload; use it).
@@ -605,10 +668,10 @@ is in the payload; use it).
 | `ContractSchemaSnapshotTest` | 10-component `RepositoryActivity` | |
 | `WorkLandWebhookIT.aHandMergeCompletesWithTheHumanAsMerger` | item at land gate, `merged` by `900123` → `completed/landed`, landing `mergedBy=900123`, branch delete requested, post-land comment row | still suspended |
 | `…theFactorysOwnMergeWebhookIsLeftToTheEffect` | `merged` with sender = factory bot before the effect records → receipt `recorded_machine`; then effect records → exactly one `WORK_ITEM_LANDED`, `mergedBy=factory` | machine check removed |
-| `…aWebhookAfterTheEffectRecordedIsANoOp` | effect first, webhook (human sender, same PR) second → one landing | `landedIn` check removed |
+| `…aSecondLandingForTheSamePullRequestIsANoOp` | effect records the landing; then `transitions.landedByHuman` called **directly** (the webhook loop would skip a completed item) → 200 `landing_already_recorded`, one `WORK_ITEM_LANDED` | `landedIn` check removed |
+| `…aHandMergeWhileInReviewCompletes` | item at `review / active` (the reviewer still running), `merged` by `900123` → `completed/landed`, no takeover | merged routed only at the land gate |
+| `…aHandMergeOfASuspendedItemCompletes` | item suspended by an earlier human push, then `merged` → `completed/landed` | suspended excluded |
 | `…aCloseStopsTheItemWithoutDeletingTheBranch` | `stopped/pr_closed_by_human`, no `DELETE` | |
-| `…aHandMergeDuringAFixHoldsTheRunAndAccountsItsLateResult` | item in `build` with a running run, `merged` → hold outbox row for the run, run effect refused, completed; later build result → `late_result_accounted`, not 409 | projection or late path missing |
-| `…aLateVerifyResultIsAccountedNotFailed` | verify result after landing → applied with wall seconds added via `recordLateResult` | |
 | `…aRotatedFactoryPushIsNotTakeover` | factory account rotated after claim, `push` from the new bot id → receipt `recorded_machine`, item not suspended | `currentMachine` not consulted in `change` |
 | `…aHumanPushIsStillTakeover` | human id → `suspended/human_takeover` | exclusion too broad |
 
@@ -616,8 +679,7 @@ is in the payload; use it).
   `Recognise a pull request merged or closed on GitHub`.
 
 **Mutation guards:** `merged:true` branch in the ingress; `merged_by.id` source; machine/current-machine skip in
-both `WorkGateChannels` and `WorkItemControl`; `landedIn` check in `landedByHuman`; the two new milestones in the
-projection's hold/refuse sets; verify branch of `recordLateResult`.
+both `WorkGateChannels` and `WorkItemControl`; `landedIn` check in `landedByHuman`.
 
 ---
 
@@ -631,8 +693,12 @@ orchestrator sends such a run yet.
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/command/RunCommand.java` (`ExecuteWorkRun`:
   replace the `existingBranch()` refusal with "existing branch only when `branch` starts with `spire/work-`")
 - Modify: `spire-contract/src/main/java/dev/codespire/contract/work/WorkPublicationPermit.java`
-  (`expectedRemoteHead` last, nullable, 40-hex when present; 6-arg constructor passes `null`; wither
-  `onExistingBranch(String expectedRemoteHead)`), snapshot golden
+  (`expectedRemoteHead` then `mergedBaseTip`, both last, nullable, 40-hex when present; `mergedBaseTip` only
+  with `expectedRemoteHead`; 6-arg constructor passes `null, null`; wither
+  `onExistingBranch(String expectedRemoteHead, String mergedBaseTip)`), snapshot golden.
+  `mergedBaseTip` is `LandState.baseSha` read by the land effect for a `land_conflict` or `land_branch_behind`
+  fix, null for `land_checks_failed`. It travels in the permit (orchestrator-issued), never from the workspace,
+  because the agent can move any ref in its own clone.
 - Modify: `spire-run-worker/src/main/java/dev/codespire/runworker/RunUnitBuilder.java` (`buildHeld`: existing
   branch → init env `SPIRE_FETCH_BRANCH=<protectedBranch>`; `publication`: a permit with `expectedRemoteHead`
   requires `original.execution().pushesToAnExistingBranch()` and `baseCommit().equals(expectedRemoteHead)`, and
@@ -642,20 +708,27 @@ orchestrator sends such a run yet.
 - Modify: `spire-publisher/src/main/java/dev/codespire/publisher/PublicationPolicy.java` /
   `PublishCycle.java` (when `SPIRE_EXPECTED_REMOTE_HEAD` is set, read the remote ref immediately before the push;
   different → `failed("REMOTE_HEAD_MOVED", …)`, no push; the non-force push stays the second guard)
-- Modify: `spire-workspace/src/main/java/dev/codespire/workspace/PublishRepo.java` (`remoteHead(branch, credential)`)
+- Modify: `spire-workspace/src/main/java/dev/codespire/workspace/PublishRepo.java` (`remoteHead(branch, credential)`;
+  `changesSince(baseCommit, sha, mergedBaseTip)`: when `mergedBaseTip` is set, it must be an ancestor of `sha`
+  (else `BASE_TIP_UNAVAILABLE`, no push) and a changed path whose tip blob and mode equal the blob and mode at
+  `mergedBaseTip` is dropped from the `ChangeSet` — the base brought it, not the agent. `PushGate` itself is
+  unchanged: it still judges every remaining path, symlinks included)
+- Modify: `PublishCycle` (pass the permit's `mergedBaseTip` to `changesSince`; a missing object → `failed("BASE_TIP_UNAVAILABLE", …)`)
 - Tests: `spire-contract/.../command/RunCommandTest` (or `WorkRunProtocolTest`), `WorkPublicationPermit` cases in
   `spire-contract/src/test/java/dev/codespire/contract/work/WorkRunProtocolTest.java`,
   `spire-run-worker/src/test/java/dev/codespire/runworker/RunUnitBuilderTest.java`,
-  `spire-publisher/src/test/java/dev/codespire/publisher/CloneMainTest.java`,
+  `spire-publisher/src/test/java/dev/codespire/publisher/CloneMainTest.java` (new; no such file today — use
+  `GitFixture` and the local-origin overload `CloneMain` already exposes for tests),
   `spire-publisher/src/test/java/dev/codespire/publisher/PublishCycleTest.java`,
   `spire-workspace/src/test/java/dev/codespire/workspace/PublishRepoTest.java`
 
 **Interfaces — Produces:**
 ```java
-public WorkPublicationPermit onExistingBranch(String expectedRemoteHead);
+public WorkPublicationPermit onExistingBranch(String expectedRemoteHead, String mergedBaseTip);
 public boolean pushesToExistingBranch() { return expectedRemoteHead != null; }
 // PublishRepo
 public Optional<String> remoteHead(String branch, GitCredential credential) throws GitAPIException;
+public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException;   // null tip = today's behaviour
 ```
 
 **Failing tests first:**
@@ -664,7 +737,7 @@ public Optional<String> remoteHead(String branch, GitCredential credential) thro
 |---|---|---|
 | `itemBuildsMayUseOnlyTheirOwnExistingBranch` | existing branch `spire/work-TEST` accepted; `feature/TEST` and `main` refused | refusal kept, or loosened to any branch |
 | `aPermitsExpectedHeadIsAFullSha` | `abc` refused; null allowed; wither keeps every other component | |
-| `ContractSchemaSnapshotTest` | 7-component permit | |
+| `ContractSchemaSnapshotTest` | 8-component permit (`expectedRemoteHead`, `mergedBaseTip`) | |
 | `RunUnitBuilderTest.anExistingBranchItemBuildFetchesThePullRequestBase` | init env has `SPIRE_FETCH_BRANCH=TEST-main` | |
 | `…aNewBranchItemBuildFetchesNothingExtra` | absent | env always set |
 | `…anExpectedHeadPermitNeedsAnExistingBranchRunFromThatHead` | mismatch base → IAE; match → env `SPIRE_EXPECTED_REMOTE_HEAD` | check removed |
@@ -673,12 +746,21 @@ public Optional<String> remoteHead(String branch, GitCredential credential) thro
 | `PublishCycleTest.aMovedRemoteHeadRefusesThePush` | remote ref advanced by a TEST commit → `REMOTE_HEAD_MOVED`, remote unchanged | pre-push read removed |
 | `PublishCycleTest.theExpectedRemoteHeadPublishes` | equal → pushed | |
 | `PublishRepoTest.remoteHeadReadsTheBranch` | | |
+| `aPermitsBaseTipNeedsAnExpectedHead` | `mergedBaseTip` without `expectedRemoteHead` → IAE; non-hex → IAE | |
+| `PublishRepoTest.aBaseMergeDoesNotBlameTheAgentForTheBasesProtectedPaths` | base commit edits `.github/workflows/TEST.yml`; branch merges it (no other change) → `changesSince(approved, tip, baseTip)` omits the workflow; `PushGate` allows | exclusion missing (today's behaviour refuses) |
+| `PublishRepoTest.anAgentEditInsideABaseMergeIsStillRefused` | same merge, plus the agent changes `.github/workflows/TEST.yml` to differ from the base tip → path kept, `PushGate` refuses | exclusion compares names, not blob+mode |
+| `PublishRepoTest.aBaseTipThatIsNotAnAncestorIsRefused` | `mergedBaseTip` not reachable from the tip → `BASE_TIP_UNAVAILABLE` | ancestry check removed (an agent could name any commit) |
+| `PublishRepoTest.withoutABaseTipNothingIsDropped` | null tip → identical `ChangeSet` to the two-argument call | exclusion applied always |
 
 - [ ] RED, then GREEN. Commits: `Add failing tests for publishing to an item's own branch`,
   `Let an item build publish to its own branch at an expected head`.
 
 **Mutation guards:** `spire/work-` prefix check; permit sha pattern; both `publication` checks; pre-push remote
-read; `refs/spire-base` destination.
+read; `refs/spire-base` destination; base-tip ancestry check; blob-and-mode equality in the exclusion.
+
+Limit: a `mergedBaseTip` names a commit the agent never fetched only if the base moved between the land effect's
+read and the run's clone. Then the merge is of a newer base, some base paths differ from the named tip, and a
+protected one is refused — fail closed, the operator sees the refusal. Record that in UNVERIFIED (slice 9).
 
 ---
 
@@ -704,13 +786,28 @@ PR; review re-runs; a blocked review hands the item over; land opens a new gate.
   fix payload (+ verify failure for a retry within the fix))
 - Modify: `WorkRunDispatcher.claim` (pass the land-fix context; `WorkControl.branch` stays the item branch, A7)
 - Modify: `WorkItemRunBridge.finishBuild` (land-fix build proof carries the kept PR, `reviewId` null)
-- Modify: `WorkDelivery` (land fix: permit `.onExistingBranch(approved_head)`; after `pushed`, complete deliver with
-  `execution.delivered(keptPr)`, no `open`; refusal `verified_checkpoint_not_observed` query unchanged)
+- Modify: `WorkDelivery` (land fix: permit `.onExistingBranch(approved_head, mergedBaseTip)` with the tip from the
+  fix row; after `pushed`, complete deliver with `execution.delivered(keptPr)`, no `open`; refusal
+  `verified_checkpoint_not_observed` query unchanged)
+- Modify: `WorkItemLifecycle.LAND_HANDOFF_REASONS` — remove `land_checks_failed`, `land_conflict`,
+  `land_branch_behind` (from now on they only ever reach `LAND_FIX_REQUESTED`); add `land_fix_run_failed`
+- Modify: `WorkItemTransitions.advance` — (a) readmit refused `409 readmission_land_pending` while
+  `landFixInProgress(history)` (Review Focus 15); (b) a failed build result (`PHASE_FAILED` path) while
+  `landFixInProgress` → `landHanded("land_fix_run_failed")` instead of `failed/phase_failed`, usage still
+  accounted (Review Focus 16)
+- Modify (moved from slice 6): `WorkItemStore.projectExecution` (`WORK_ITEM_LANDED` and `PULL_REQUEST_CLOSED`
+  refuse pending run/verify/delivery effects and enqueue `work_run_hold_outbox` rows, the same statements as
+  `HUMAN_TAKEOVER`, `WorkItemStore.java:118-134`); `WorkItemTransitions.recordLateBuild` generalised to
+  `recordLateResult(id, PhaseResult)` accepting a verify attempt by joining `work_verify_effect`;
+  `WorkItemRunBridge.java:120` calls it; `WorkVerifyResults` (today it records any non-200 as applied with the
+  reason, line 69, losing the verify wall seconds) routes `item_not_active`/`attempt_changed` to it (A6)
 - Modify: `WorkReview.advance` (open blockers during a land fix → `transitions.landHandOff(id, …,
   "land_fix_review_blocked")`)
-- Modify: `WorkItemResource` `LandView` (`attempt`, `attemptsAllowed` = min(`fix_attempts`, runs left))
+- Modify: `WorkItemResource` `LandView` (`attempt`, `attemptsAllowed` = min(`fix_attempts`, runs left),
+  `fixInProgress`); `spire-ui` `canReadmit` also excludes `land?.fixInProgress` (the UI cannot see history)
 - Modify: `workReasons.ts` (fix reasons as journey copy; `land_fix_attempts_exhausted`, `land_item_limit_reached`,
-  `land_fix_review_blocked` sentences if not already present)
+  `land_fix_review_blocked`, `land_fix_run_failed` sentences if not already present), `WorkItemActions.tsx`
+  (`canReadmit` excludes `land?.fixInProgress`), `api.ts` (`LandView.fixInProgress`)
 - Tests: `spire-contract/src/test/java/dev/codespire/contract/work/WorkLandFixDecisionTest.java` (new, decide
   table), `spire-contract/.../WorkProgressTest.java`,
   `spire-orchestrator/src/test/java/dev/codespire/orchestrator/work/WorkLandFixIT.java` (new, extends
@@ -733,6 +830,8 @@ Outcome landFix(String id, UUID effect, String reason, byte[] encryptedPayload);
 //   count(LAND_FIX_REQUESTED in generation with reason in LAND_FIX_COUNTED) + (counted ? 1 : 0) > fix_attempts
 //     → landHanded("land_fix_attempts_exhausted"), detail = the last reason
 //   !progress.within(limits,"build") → landHanded("land_item_limit_reached"), detail names the limit
+//     (maxRunsPerItem, maxStepsPerPlan, maxWallClockSeconds, maxCostMillicents, maxCallsPerItem, or
+//      usage_unknown — `within` is false for each, WorkProgress.java:37)
 //   else landFixRequested(reason), then enterPrepared(..., landFix=true)
 // WorkLandFixes
 record Fix(UUID effect, String reason, String approvedHead, PullRequestRef pullRequest, String branch, String baseBranch, String payload) {}
@@ -759,7 +858,8 @@ merge instruction with "there are no conflicts to resolve".
 | `…inProgressEndsAtTheNextLandGateLandingOrHandOff` | each terminator ends it; a verify GATE_OPENED does not | terminator set wrong |
 | `WorkProgressTest.startKeepingExecutionCountsTheRun` | | |
 | `WorkLandFixIT.aFailedCheckRunsOneFixAndOpensANewLandGate` | approve land, checks FAILED → `LAND_FIX_REQUESTED`; one `ExecuteWorkRun` with `branch` = item branch, `baseCommit` = approved head, existing branch to the PR base, prompt contains the failed check name; no build/deliver gate; verify runs; `PublishWorkRun` permit `expectedRemoteHead` = approved head; no PR opened; review completes on the new head; land gate artifact = new head | any link missing |
-| `…aConflictAsksForABaseMerge` | `dirty` → prompt has the merge instruction; init fetches the base | |
+| `…aConflictAsksForABaseMerge` | `dirty` → prompt has the merge instruction; init fetches the base; permit `mergedBaseTip` = the read `base.sha` | |
+| `…aFailedCheckFixCarriesNoBaseTip` | `land_checks_failed` → permit `mergedBaseTip` null | base tip set for every fix (widens the exclusion) |
 | `…behindSpendsNoAttempt` | two `behind` with `fix_attempts=1` → two fixes, no exhaustion | `behind` counted |
 | `…zeroAttemptsHandsAFailedCheckButStillMergesBehindBase` | Review Focus 10 | |
 | `…theSecondFailureWithOneAttemptIsExhausted` | `land_fix_attempts_exhausted`, detail `land_checks_failed` | off-by-one |
@@ -769,6 +869,15 @@ merge instruction with "there are no conflicts to resolve".
 | `…aVerifyRetryInsideALandFixKeepsThePullRequestAndTheBranch` | verify FAILED → Retry build → second run on the item branch at approved head, no checkpoint, PR kept, no build gate | |
 | `…aBuildProofWithAPullRequestOutsideAFixIsRefused` | `phase_evidence_mismatch` | guard loosened |
 | `…theFixRunsPushIsNotTakeover` | `pull_request synchronize` from the factory bot → `recorded_machine` | |
+| `…aHandMergeDuringAFixHoldsTheRunAndAccountsItsLateResult` | (moved from slice 6) item in a land-fix `build` with a running run, `merged` → hold outbox row for the run, run effect refused, `completed/landed`; later build result → `late_result_accounted`, not 409 | projection or late path missing |
+| `…aLateVerifyResultIsAccountedNotFailed` | (moved from slice 6) verify result after landing → wall seconds added via `recordLateResult`, row not left `item_not_active` | verify branch missing |
+| `…aCloseDuringAFixHoldsTheRun` | `closed` during a land-fix build → hold row, `stopped/pr_closed_by_human` | `PULL_REQUEST_CLOSED` missing from the hold set |
+| `…readmitIsRefusedWhileALandFixIsInProgress` | land-fix build stopped at `build/awaiting_input` (assembly refusal) → readmit 409 `readmission_land_pending`, generation unchanged; `LandView.fixInProgress=true` | refusal missing |
+| `…aFailedFixRunIsHandedNotFailed` | land-fix build result unsuccessful → `land/awaiting_input/land_fix_run_failed`, usage accounted, Readmit refused | generic `phase_failed` kept |
+| `…aFailedBuildOutsideAFixStillFails` | first build fails → `failed/phase_failed` | hand-off too broad |
+| `…aLandFixRunGoesThroughTheBuildsSpendChecks` | API-key credential with incomplete pricing (or a fleet cap reached) → the same refusal reason an ordinary build gets, no `ExecuteWorkRun`; seat credential → run dispatched at cost 0 (§6 attempt-cost row, §5) | land-fix path bypasses `WorkRunAssembly` checks |
+| `…landHandedRefusesAFixReasonAfterThisSlice` (contract) | `landHanded(item, "land_checks_failed")` → IAE | the three fix reasons left in the hand-off set |
+| `WorkItems.test (actions): no Readmit while a land fix is in progress` | `awaiting_input` at build with `land.fixInProgress` → button absent | UI exclusion missing |
 
 - [ ] RED (decider methods present but returning the unchanged item; `landFix` delegates to `landHandOff`), then
   GREEN. Commits: `Add failing tests for the land fix loop`, `Fix refused merges on the same pull request`.
@@ -776,15 +885,17 @@ merge instruction with "there are no conflicts to resolve".
 **Mutation guards:** `landFix` in the build branch and in the deliver branch of `enter` (each alone);
 `startKeepingExecution` choice; terminator set; `LAND_FIX_COUNTED` membership; the `>` budget comparison; the
 item-limit check order; the land-fix condition in `validExecution`; the blocked-review land-fix condition;
-`expectedRemoteHead` set in `WorkDelivery`; `open` skipped only during a land fix.
+`expectedRemoteHead` set in `WorkDelivery`; `open` skipped only during a land fix; the two new milestones in the
+projection's hold/refuse sets; verify branch of `recordLateResult`; readmit refusal while a fix is in progress;
+the land-fix branch of the failed-build path.
 
 ---
 
 ### Slice 8: Retry land and the dashboard
 
 **Goal:** a handed item offers Retry land (verified operator, expected revision, note, audited) which opens a
-fresh land gate on `execution.head()`; "Recheck and resume" is refused there; the journey, gate panel and
-attention show land as it happens.
+fresh land gate on `execution.head()`, and Stop (same contract) which ends it; "Recheck and resume" is refused
+there; the journey, gate panel and attention show land as it happens.
 
 **Files:**
 - Modify: `WorkItemLifecycle` (`retryLandGate(item, previous, historySize, now, decisionId)` → land gate,
@@ -794,19 +905,25 @@ attention show land as it happens.
 - Modify: `WorkItemTransitions` (`retryLandControlled(...)` under the lock: requires `land/awaiting_input` with a
   hand-off reason else 409 `retry_land_unavailable`; PR head ≠ `execution.head()` → 409 `land_head_moved`;
   `advance` without readmit at `land/awaiting_input` + hand-off reason → 409 `retry_land_required`)
-- Modify: `WorkItemResource` (`POST /api/work-items/{id}/retry-land` `{expectedRevision, note}`, `spire-admin`,
-  subject from OIDC)
+- Modify: `WorkItemResource` (`POST /api/work-items/{id}/retry-land` and `POST /api/work-items/{id}/stop-land`,
+  both `{expectedRevision, note}`, `spire-admin`, subject from OIDC)
+- Stop (§7.6 "Retry land or Stop"; a handed item has no open gate, so `DecisionPanel`'s Stop is absent there):
+  `WorkItemLifecycle.landStopped(item)` → `stopped/land_stopped_by_operator`, milestone `LAND_STOPPED`;
+  `WorkItemControl.stopLand(id, expected, subject, note)` → `WorkItemTransitions.stopLandControlled` under the
+  lock, requiring `land/awaiting_input` with a hand-off reason (else 409 `retry_land_unavailable`), recording
+  operator and note. The pull request stays open; nothing is merged or deleted. Readmit afterwards follows the
+  ordinary stopped-item rule (allowed), which the UI copy says.
 - Modify: `WorkAttentionRows` (`WORK_LAND_HANDED` for `phase='land' AND workflow_status='awaiting_input'` with a
   hand-off reason)
-- Modify UI: `spire-ui/src/api.ts` (`retryLand`), `WorkItemActions.tsx` (Retry land button + required note; Recheck
-  hidden at land/awaiting_input), `workJourney.ts` / `WorkItemSteps.tsx` (land step text per §7.10 from `land`),
+- Modify UI: `spire-ui/src/api.ts` (`retryLand`, `stopLand`), `WorkItemActions.tsx` (Retry land and Stop buttons
+  sharing one required note; Recheck hidden at land/awaiting_input), `workJourney.ts` / `WorkItemSteps.tsx` (land step text per §7.10 from `land`),
   `DecisionPanel.tsx` (land gate preview: method, ticket rule, branch delete, check summary), `workReasons.ts`
-  (`retry_land_required`, `retry_land_unavailable`, `retry_land_head_unavailable`, every hand-off sentence naming
+  (`retry_land_required`, `retry_land_unavailable`, `retry_land_head_unavailable`, `land_stopped_by_operator`, every hand-off sentence naming
   what GitHub said, e.g. `land_blocked`: "GitHub requires something only a person can give: …")
 - Tests: `spire-contract/.../WorkLandDecisionTest.java` (+ retry rows),
   `spire-orchestrator/src/test/java/dev/codespire/orchestrator/work/WorkLandRetryIT.java` (new),
   `spire-orchestrator/src/test/java/dev/codespire/orchestrator/work/WorkAttentionTest.java`,
-  `spire-ui/src/components/work-items/WorkItemActions.test.tsx`, `workJourney.test.ts`, `DecisionPanel.test.tsx`,
+  `spire-ui/src/components/work-items/WorkItems.test.tsx`, `workJourney.test.ts`, `DecisionPanel.test.tsx`,
   `workReasons.test.ts`
 
 **Interfaces — Produces:**
@@ -817,7 +934,9 @@ public WorkItemTransitions.Outcome retryLand(String id, long expected, String su
 ```ts
 export async function retryLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome>;
 export interface LandView { state: string; reason: string | null; message: string | null; checks: { state: string; done: number; total: number } | null;
-  method: string; ticketRule: string; branchDeleted: boolean | null; note: string | null; attempt?: number; attemptsAllowed?: number }
+  method: string; ticketRule: string; branchDeleted: boolean | null; note: string | null; attempt?: number; attemptsAllowed?: number;
+  fixInProgress?: boolean }
+export async function stopLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome>;
 ```
 
 **Failing tests first:**
@@ -832,8 +951,12 @@ export interface LandView { state: string; reason: string | null; message: strin
 | `…recheckIsRefusedWhileHanded` | resume without readmit → 409 `retry_land_required` | refusal missing |
 | `…retryLandIsAudited` | control `operator`/`note` recorded on the event | |
 | `…retryOutsideAHandOffIsRefused` | at review → 409 `retry_land_unavailable` | |
+| `…theRetryGateBindsTheCurrentPolicyRevision` | policy revised while handed → retry gate's `policyRevision` = the new one; approving it lands (not `policy_changed_requires_new_decision`) | gate built from the stale revision |
+| `…stopLandEndsAHandedItemWithANote` | handed `land_blocked` → stop-land with note → `stopped/land_stopped_by_operator`, `LAND_STOPPED`, operator and note on the event, no `PUT`/`DELETE`, PR untouched; blank note → 400 | Stop missing or merges |
+| `…stopLandOutsideAHandOffIsRefused` | at review → 409 `retry_land_unavailable` | state check removed |
+| `WorkItems.test (actions): handed item offers Stop with the note` | | |
 | `WorkAttentionTest.aHandedItemNeedsTheOperator` | one `WORK_LAND_HANDED` row | |
-| `WorkItemActions.test: handed item shows Retry land and not Recheck` | | |
+| `WorkItems.test (actions): handed item shows Retry land and not Recheck` | | |
 | `workJourney.test: land step reads checking, waiting n of m, merging, merged by who, fixing k of N, needs you` | each `LandView` → text | |
 | `DecisionPanel.test: the land gate says what will happen` | method, rule, branch delete, check summary visible | |
 | `workReasons.test: every land reason has a sentence` | iterate the exported land reason list; none falls through to the raw reason | a reason missing |
@@ -841,8 +964,9 @@ export interface LandView { state: string; reason: string | null; message: strin
 - [ ] RED, then GREEN. Commits: `Add failing tests for Retry land and the land journey`,
   `Add Retry land and show land on the item page`.
 
-**Mutation guards:** the head comparison in `retryLandControlled`; hand-off-reason requirement; `retry_land_required`
-in `advance`; gate artifact source; attention predicate; Recheck hidden condition.
+**Mutation guards:** the head comparison in `retryLandControlled`; hand-off-reason requirement (retry and stop);
+`retry_land_required` in `advance`; gate artifact source; gate policy revision source; attention predicate; Recheck
+hidden condition.
 
 ---
 
@@ -857,11 +981,14 @@ in `advance`; gate artifact source; attention predicate; Recheck hidden conditio
 - `docs/CONTRACT.md` — new milestones, `WorkLanding`, `RepositoryActivity.mergedBy`, permit `expectedRemoteHead`,
   `PullRequestLander`.
 - `docs/DATA-MODEL.md` — `repository_land_settings`, `work_land_effect`, `work_tracker_outbox.effect_class`.
-- `docs/factory/AUTONOMY.md` land row; `docs/ROADMAP.md` M4 paragraph.
+- `docs/factory/AUTONOMY.md` land row and "merged, or handed to a human"; `docs/factory/ROADMAP.md` M4 paragraph;
+  `docs/ROADMAP.md`.
 - `docs/UNVERIFIED.md` — remove the "Readmit after an approved land" entry (line ~183) only with slice 3's test
   named as the evidence; add entries for: hand merge without a webhook noticed only by the effect's read;
   merge-queue repositories (handed, never proven live); fork pull requests; revocation racing a running push (A6);
-  GitHub `has_hooks` and `unstable` paths proven against fakes only.
+  GitHub `has_hooks` and `unstable` paths proven against fakes only; a base that moves between the land read and
+  the fix run's clone (the base-merge exclusion then fails closed, slice 7a); Jira `close` skipped
+  (`ticket_close_unsupported`).
 - `CLAUDE.md` Status and Limits — rewrite (never append) only at acceptance; until then leave it.
 - No test changes. Commit: `Document the land slice` (body lists the files).
 
