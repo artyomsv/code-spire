@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubPullRequestLanderTest {
@@ -188,6 +189,30 @@ class GitHubPullRequestLanderTest {
     }
 
     @Test
+    void moreStatusesThanOnePageIsNotCode() {
+        pull(openPull());
+        ArrayNode page = rows();
+        for (int index = 0; index < 100; index++) {
+            page.addObject().put("context", "TEST-status-" + index).put("state", "success");
+        }
+        // The 101st status is the one a single page never shows; it may be the failing one.
+        api.stubFor(get(urlEqualTo(REPO + "/commits/" + head + "/status?per_page=100"))
+                .willReturn(okJson("{\"state\":\"failure\",\"total_count\":101,\"statuses\":" + page + "}")));
+        runs(1, rows());
+        LandState state = lander.read(repo, 42);
+        assertEquals(Checks.NOT_CODE, state.checks().state());
+        assertEquals("history_incomplete", state.checks().failed().getFirst().conclusion());
+    }
+
+    @Test
+    void aPullRequestNumberMismatchIsRefused() {
+        pull(openPull().replace("\"number\":42", "\"number\":43"));
+        statuses("[]");
+        runs(1, rows());
+        assertThrows(IllegalStateException.class, () -> lander.read(repo, 42));
+    }
+
+    @Test
     void allowedMethodsReadsTheRepositoryFlags() {
         api.stubFor(get(urlEqualTo(REPO)).willReturn(okJson(
                 "{\"full_name\":\"TEST-owner/TEST-repo\",\"allow_merge_commit\":false,"
@@ -234,8 +259,19 @@ class GitHubPullRequestLanderTest {
         assertEquals(new MergeOutcome.HeadConflict("TEST head branch was modified"), outcome);
     }
 
+    /** A gateway answer is a lost answer: GitHub can finish the merge after its edge gives up. */
+    @ParameterizedTest
+    @ValueSource(ints = {500, 502, 503, 504})
+    void aServerErrorIsUncertain(int status) {
+        api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(aResponse().withStatus(status)
+                .withHeader("Content-Type", "text/html").withBody("TEST gateway " + status)));
+        MergeOutcome.Uncertain uncertain = assertInstanceOf(MergeOutcome.Uncertain.class,
+                lander.merge(repo, 42, head, MergeMethod.MERGE));
+        assertTrue(uncertain.cause().contains(String.valueOf(status)));
+    }
+
     @Test
-    void onlyAnIoFailureIsUncertain() {
+    void anIoFailureIsUncertain() {
         api.stubFor(put(urlEqualTo(PULL + "/merge"))
                 .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
         assertInstanceOf(MergeOutcome.Uncertain.class, lander.merge(repo, 42, head, MergeMethod.MERGE));
