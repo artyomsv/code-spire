@@ -583,6 +583,18 @@ it('handed item offers Stop with the note', async () => {
   fireEvent.click(stop);
   await waitFor(() => expect(api.stopLand).toHaveBeenCalledWith(handedItem(), 'TEST-merging it by hand'));
 });
+// Review of slice 9: land unavailable on this forge or for this repository has no other way on, and once land is off
+// the item is not eligible at land with its pull request still open. Stop ends either; Retry land follows only a hand-off.
+it('offers Stop land but not Retry land while land is unavailable', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+it('offers Stop land and no re-admission at land once land is off', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
 it('still offers re-admission for a completed item that did not land', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed', progress: { execution: deliveredExecution(false) } })).toBe(true);
 });

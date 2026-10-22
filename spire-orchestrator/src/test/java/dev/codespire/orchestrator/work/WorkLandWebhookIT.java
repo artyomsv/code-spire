@@ -47,6 +47,8 @@ class WorkLandWebhookIT extends WorkLandFixture {
         landed(id);assertFalse(takenOver(id));
         WorkLanding landing=store.load(id).progress().execution().landing();
         assertEquals(PERSON,landing.mergedBy());assertEquals(MERGED,landing.mergeCommit());
+        // GitHub's pull request read does not say which method a person used; the saved setting is not a fact about it.
+        assertEquals("unknown",landing.method());
         assertEquals(1,postLandComments(id));
         // The branch is the factory's, so it is still deleted, by the sweep and at the merged head.
         assertEquals("cleaning",effect(id,"state"));assertEquals(PERSON,effect(id,"merged_by"));

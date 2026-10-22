@@ -78,6 +78,19 @@ class WorkLandDecisionTest {
     @Test void landStoppedFollowsOnlyAHandOff(){
         assertThrows(IllegalStateException.class,()->WorkItemLifecycle.landStopped(atLand("approve",1)));
     }
+    // Review of slice 9: land unavailable on this forge or for this repository, or switched off, leaves the delivered pull
+    // request open with no other way on, so Stop ends it there too. Retry land still follows only a hand-off.
+    @Test void landStoppedEndsAnItemWhoseLandIsUnavailableOrOff(){
+        WorkItemEvent land=atLand("approve",1);
+        for(List<String> waiting:List.of(List.of("capability_unavailable","land_capability_unavailable","CAPABILITY_UNAVAILABLE"),
+                List.of("not_eligible","land_off","WORK_ITEM_REFUSED"))) {
+            WorkItemEvent item=WorkItemLifecycle.state(land,waiting.get(0),waiting.get(1),waiting.get(2),null,land.progress().reserve(false));
+            WorkItemEvent next=WorkItemLifecycle.landStopped(item);
+            assertEquals("stopped",next.workflowStatus());assertEquals("land_stopped_by_operator",next.reason());assertEquals("LAND_STOPPED",next.milestone());
+            assertEquals(item.progress().execution(),next.progress().execution());
+            assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(item,null,3,Instant.EPOCH,UUID.randomUUID()));
+        }
+    }
     @Test void anUnknownHandOffReasonIsRefused(){
         assertThrows(IllegalArgumentException.class,()->WorkItemLifecycle.landHanded(atLand("approve",1),"TEST-x"));
     }

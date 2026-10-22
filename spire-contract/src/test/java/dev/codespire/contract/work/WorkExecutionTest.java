@@ -63,6 +63,12 @@ class WorkExecutionTest {
         assertNull(mapper.readValue("{}",WorkProgress.class).execution());
     }
     final PullRequestRef pr42=new PullRequestRef(42,"https://forge.example.test/TEST/42",false);
+    // Review of slice 9: a merge the factory did not make names no method, because GitHub's pull request read reports none.
+    @Test void aLandingMayNameNoKnownMethod(){
+        WorkLanding landing=new WorkLanding(new PullRequestRef(7,"https://forge.example.test/TEST/7",false),"c".repeat(40),"unknown","TEST-900777",Instant.EPOCH);
+        assertEquals("unknown",landing.method());
+        assertThrows(IllegalArgumentException.class,()->new WorkLanding(landing.pullRequest(),"c".repeat(40),"TEST-octopus","TEST-900777",Instant.EPOCH));
+    }
     WorkLanding landing(long number){return new WorkLanding(new PullRequestRef(number,"https://forge.example.test/TEST/"+number,false),"c".repeat(40),"squash",WorkLanding.FACTORY,Instant.EPOCH);}
     @Test void landingIsCarriedThroughEveryWither(){
         var landed=built.delivered(pr42).landed(landing(42));

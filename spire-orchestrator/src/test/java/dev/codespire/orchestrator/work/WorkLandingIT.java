@@ -71,6 +71,19 @@ class WorkLandingIT extends WorkLandFixture {
         land.drain();assertEquals("uncertain",effect(id,"state"));
         mergedBy("900777");land.drain();
         landed(id);assertEquals("900777",store.load(id).progress().execution().landing().mergedBy());
+        assertEquals("unknown",store.load(id).progress().execution().landing().method(),"a person's merge does not report its method");
+    }
+    // Review of slice 9: the method is kept on the row when the merge is claimed, so a lost answer recovered after the
+    // repository's setting changed records the method that was sent, not the one saved now.
+    @Test void anUncertainMergeRecordsTheMethodItSent() throws Exception {
+        factoryIdentity(FACTORY_ID);
+        landSettings.save(repository,new LandSettings.Input(landSettings.get(repository).revision(),"squash","comment",3),"TEST-land-admin");
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();
+        assertEquals("uncertain",effect(id,"state"));assertEquals("squash",effect(id,"method"));
+        landSettings.save(repository,new LandSettings.Input(landSettings.get(repository).revision(),"rebase","comment",3),"TEST-land-admin");
+        mergedBy(FACTORY_ID);land.drain();
+        landed(id);assertEquals("squash",store.load(id).progress().execution().landing().method());
     }
     // The merge was pinned to the approved head, so a merge at any other head is not the factory's, whoever GitHub names.
     @Test void anUncertainMergeFoundAtAnotherHeadIsNotTheFactorys() throws Exception {

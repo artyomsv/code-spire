@@ -86,6 +86,30 @@ class WorkLandReadmitIT extends WorkPreparedFixture {
         append(id,WorkItemLifecycle.state(land,"capability_unavailable","land_capability_unavailable","CAPABILITY_UNAVAILABLE",null,land.progress().finish(0,0,0)));
         readmitRefused(id,"readmission_land_pending");
     }
+    void stopLand(String id) {
+        given().contentType("application/json").body(java.util.Map.of("expectedRevision",store.history(id).size(),"note","TEST-stop note"))
+                .post("/api/work-items/"+id+"/stop-land").then().statusCode(200);
+        WorkItemEvent stopped=store.load(id);
+        assertEquals("stopped",stopped.workflowStatus());assertEquals("land_stopped_by_operator",stopped.reason());
+        assertNotNull(stopped.progress().execution().pullRequest());
+    }
+    // Review of slice 9: land unavailable on this forge or for this repository has no other way on; Stop ends it, and
+    // only then may the work be built again.
+    @Test void anItemWhoseLandIsUnavailableCanBeStoppedThenReadmitted() throws Exception {
+        String id=admit("autonomous",89);WorkItemEvent land=atLand(id);append(id,land);
+        append(id,WorkItemLifecycle.state(land,"capability_unavailable","land_capability_unavailable","CAPABILITY_UNAVAILABLE",null,land.progress().finish(0,0,0)));
+        stopLand(id);
+        given().contentType("application/json").body(new WorkItemResource.Resume(store.history(id).size(),true))
+                .post("/api/work-items/"+id+"/resume").then().statusCode(200);
+        assertEquals(2,store.load(id).generation());
+    }
+    // Switching land off and rechecking leaves the item not eligible at land with its pull request still open (A8).
+    @Test void anItemWhoseLandIsOffCannotBeReadmittedButCanBeStopped() throws Exception {
+        String id=admit("autonomous",90);WorkItemEvent land=atLand(id);append(id,land);
+        append(id,WorkItemLifecycle.state(land,"not_eligible","land_off","WORK_ITEM_REFUSED",null,land.progress().finish(0,0,0)));
+        readmitRefused(id,"readmission_land_pending");
+        stopLand(id);
+    }
     // Stop ends land and leaves the pull request to the operator; re-admitting afterwards builds the work again.
     @Test void anItemStoppedAtLandCanStillBeReadmitted() throws Exception {
         String id=admit("autonomous",88);WorkItemEvent land=atLand(id);append(id,land);
