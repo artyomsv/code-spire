@@ -2,12 +2,12 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { WorkItemDetail } from '../../api';
 import { actorLabel } from '../actorsApi';
-import { JOURNEY, journeyCells, type Cell, type JourneyPhase } from './workJourney';
+import { JOURNEY, journeyCells, landProgress, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
-  | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress'>;
+  | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
 
 /** Proof only from this attempt. An entry that does not say its attempt is history, never current proof. */
 const current = (item: Item, generation: number | undefined) => generation !== undefined && generation === item.generation;
@@ -113,13 +113,19 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
   return <p className="factory-note"><a href={pr.url} target="_blank" rel="noreferrer">{name} #{pr.number}</a></p>;
 }
 
+/** Where the merge stands (spec §7.10). */
+function Land({ item }: { item: Item }) {
+  const text = landProgress(item);
+  return text ? <p className="factory-note work-land">{text}</p> : null;
+}
+
 function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
   switch (phase) {
     case 'intake': return <Intake item={item} />;
     case 'spec': return <Prepared item={item} part="specification" />;
     case 'plan': return <><Prepared item={item} part="plan" /><Decisions item={item} phase="plan" /></>;
     case 'build': return <Build item={item} />;
-    case 'land': return <Decisions item={item} phase="land" />;
+    case 'land': return <><Land item={item} /><Decisions item={item} phase="land" /></>;
     default: return <Delivery item={item} phase={phase} />;
   }
 }
@@ -132,6 +138,8 @@ function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
 export default function WorkItemSteps({ item, current: actions }: { item: Item; current: ReactNode }) {
   const cells = journeyCells(item);
   const hasCurrent = cells.some(cell => cell.startsWith('now-'));
+  // A land fix runs in the build, verify, deliver and review steps, but it is land's attempt, so the Land step says so.
+  const landSays = landProgress(item) !== null;
   return <><ol className="factory-steps work-steps" aria-label="Journey">
     {JOURNEY.map((phase, index) => {
       const cell = cells[index];
@@ -144,7 +152,7 @@ export default function WorkItemSteps({ item, current: actions }: { item: Item; 
             <span className="factory-q">{QUESTIONS[phase]}</span>
             <span className="factory-k">{phase} · {modeWords(item.effectiveModes?.[phase.toUpperCase()])}</span>
           </div>
-          {!later && <div className="factory-body">
+          {(!later || phase === 'land' && landSays) && <div className="factory-body">
             {now && <p className="work-reason">{workReason(item.reason)}</p>}
             <Evidence item={item} phase={phase} />
             {now && actions}

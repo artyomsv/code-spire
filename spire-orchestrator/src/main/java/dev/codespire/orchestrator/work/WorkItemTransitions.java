@@ -179,6 +179,8 @@ public class WorkItemTransitions {
                     if(!validExecution(item,result,landFix))return new Outcome(409,"phase_evidence_mismatch",item);
                 } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
                     return new Outcome(409,"explicit_readmission_required",item);
+                // A handed item goes on only with Retry land, which needs a note and the verified head (A3); recheck would reopen land with neither.
+                if(result==null && !readmit && WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
                 if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
                 // A merged pull request cannot be built again beside itself; a handed item goes on with Retry land (spec §7.9).
                 if(readmit && landed(history,item))return new Outcome(409,"readmission_landed",item);
@@ -309,6 +311,46 @@ public class WorkItemTransitions {
             if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
             WorkItemEvent next=WorkItemLifecycle.landHanded(item,reason);
             store.appendDecision(c,history,next,"land-handed:"+effect);
+            return new Outcome(200,next.reason(),next);
+        });
+    }
+    /**
+     * Retry land (spec §7.6, A3) under the lock: only an item land handed over, only at the revision the operator saw,
+     * and only while the pull request still holds the head that was verified and reviewed, so no gate opens on a head
+     * nobody reviewed. The policy and authority are the ones observed now, so the gate binds the current policy
+     * revision. The operator, the note and the head read are recorded on the same event.
+     *
+     * @param head the pull request's head as the forge reported it, read before the lock
+     */
+    Outcome retryLandControlled(String id,long expected,Observation observed,String subject,String note,String head) {
+        return QuarkusTransaction.requiringNew().call(()->{
+            try(Connection c=dataSource.getConnection()) {
+                if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
+                lockItem(c,id);List<dev.codespire.contract.event.EventEnvelope> history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
+                if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
+                if(!WorkItemLifecycle.landHandedOver(item) || item.progress().execution()==null)return new Outcome(409,"retry_land_unavailable",item);
+                if(!Objects.equals(head,item.progress().execution().head()))return new Outcome(409,"land_head_moved",item);
+                WorkPolicy.Selection selection=select(observed,item);
+                // Land approval is the only land mode that merges; a policy that no longer asks for it has nothing to retry.
+                if(selection.selected()==null || !"approve".equals(selection.effective().get(WorkPolicy.Phase.LAND)))return new Outcome(409,"retry_land_unavailable",item);
+                WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
+                WorkItemEvent observedItem=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),
+                        item.milestone(),item.gate(),item.progress()).controlled(recorded.action(subject,note,head));
+                WorkItemEvent next=WorkItemLifecycle.retryLandGate(observedItem,item,history.size(),clock.now(),UUID.randomUUID());
+                store.appendDecision(c,history,next,"retry-land:"+UUID.randomUUID());
+                return new Outcome(200,next.reason(),next);
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist retry land",failure);}
+        });
+    }
+    /** Stop on an item land handed over (spec §7.6): the item ends and the pull request is left as it is. */
+    Outcome stopLandControlled(String id,long expected,String subject,String note) {
+        return underLock(id,(c,history,item)->{
+            if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
+            if(!WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_unavailable",item);
+            WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
+            WorkItemEvent next=WorkItemLifecycle.landStopped(item).controlled(recorded.action(subject,note,null));
+            store.appendDecision(c,history,next,"stop-land:"+UUID.randomUUID());
             return new Outcome(200,next.reason(),next);
         });
     }
@@ -463,7 +505,7 @@ public class WorkItemTransitions {
         return effect;
     }
     /** The pull request as GitHub reports it now, read through the FACTORY or REVIEWER account; null when it cannot be read. */
-    private dev.codespire.contract.port.PullRequestLander.LandState readPullRequest(WorkItemEvent item,long pullRequest) {
+    dev.codespire.contract.port.PullRequestLander.LandState readPullRequest(WorkItemEvent item,long pullRequest) {
         Optional<dev.codespire.orchestrator.provider.ScmProvider> account=accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
                 .or(()->accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
         if(account.isEmpty())return null;

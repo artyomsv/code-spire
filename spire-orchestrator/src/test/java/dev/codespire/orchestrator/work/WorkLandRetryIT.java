@@ -94,6 +94,8 @@ class WorkLandRetryIT extends WorkLandFixture {
     }
     @Test void retryOutsideAHandOffIsRefused() throws Exception {
         String id=delivered(61);long revision=store.history(id).size();
+        // GitHub holds the verified head, so only the state check refuses.
+        openAt(HEAD,"clean",null);
         retry(id,"TEST-retry note").statusCode(409).body("reason",is("retry_land_unavailable"));
         assertEquals(revision,store.history(id).size());
     }

@@ -205,8 +205,12 @@ public class WorkItemResource {
                 "SELECT effect_id,state,reason,detail,method,note,ticket_note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
             ps.setString(1,id);ps.setLong(2,generation);
             try(ResultSet rs=ps.executeQuery()) {
-                if(!rs.next())return null;
+                boolean attempted=rs.next();
+                // A land gate with no attempt yet still says what approving it will do (spec §7.10).
+                if(!attempted && !"land".equals(item.phase()))return null;
                 dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(repository);
+                if(!attempted)return new LandView("not_started",null,null,null,dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()),
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing);
                 WorkLandSweep.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
                 String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
                 Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;

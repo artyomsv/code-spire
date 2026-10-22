@@ -1,4 +1,6 @@
 import type { WorkItemDetail, WorkItemSummary } from '../../api';
+import { actorLabel } from '../actorsApi';
+import { LAND_HANDOFF_REASONS, landReason, workReason } from './workReasons';
 
 /**
  * Where a work item stands, in the terms the list and the detail both draw.
@@ -108,7 +110,40 @@ export function nextAction(item: WorkItemRow): NextAction | null {
 /** What the land step reads from. */
 export type LandItem = Pick<WorkItemDetail, 'phase' | 'workflowStatus' | 'reason' | 'gate' | 'land' | 'progress' | 'people'>;
 
+/** What a land fix is fixing, in the words the Land step uses. */
+const FIXING: Record<string, string> = {
+  land_checks_failed: 'a failed check', land_conflict: 'a conflict with the base branch', land_branch_behind: 'the branch is behind its base',
+};
+
+function merger(item: LandItem, mergedBy: string): string {
+  if (mergedBy === 'factory') return 'the factory';
+  const person = item.people?.find(candidate => candidate.providerUserId === mergedBy);
+  return person ? actorLabel(person) : `GitHub user ${mergedBy}`;
+}
+
+/**
+ * What the Land step says (spec §7.10): waiting for approval, checking, waiting for checks, merging, merged by whom,
+ * fixing, or needs you with GitHub's reason. Null when land has nothing to say yet.
+ */
 export function landProgress(item: LandItem): string | null {
-  void item;
-  return null;
+  const land = item.land ?? null;
+  const landing = item.progress?.execution?.landing;
+  if (item.workflowStatus === 'completed' && landing) {
+    const branch = land?.branchDeleted === true ? ', branch deleted' : land?.branchDeleted === false ? ', branch not deleted' : ', deleting the branch';
+    return `Merged ${landing.mergeCommit.slice(0, 7)} by ${merger(item, landing.mergedBy)}${branch}`;
+  }
+  if (land?.fixInProgress) {
+    const what = FIXING[land.reason ?? ''] ?? workReason(land.reason ?? '');
+    return land.reason === 'land_branch_behind' ? `Fixing: ${what}, not counted as an attempt` : `Fixing: ${what}, attempt ${land.attempt} of ${land.attemptsAllowed}`;
+  }
+  if (item.phase !== 'land') return null;
+  if (item.workflowStatus === 'waiting_approval' && item.gate?.state === 'OPEN' && item.gate.phase === 'land') return 'Waiting for your approval';
+  if (item.workflowStatus === 'awaiting_input' && LAND_HANDOFF_REASONS.includes(item.reason)) return `Needs you: ${landReason(item.reason, land?.message ?? null)}`;
+  if (item.workflowStatus !== 'active' || !land) return null;
+  switch (land.state) {
+    case 'pending': case 'checking': return 'Checking GitHub';
+    case 'waiting_checks': return land.checks ? `Waiting for checks (${land.checks.done} of ${land.checks.total} done)` : 'Waiting for checks';
+    case 'merging': case 'uncertain': return 'Merging';
+    default: return null;
+  }
 }

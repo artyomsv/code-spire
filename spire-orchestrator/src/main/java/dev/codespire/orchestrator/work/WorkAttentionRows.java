@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.work;
 
 import dev.codespire.contract.attention.AttentionView;
+import dev.codespire.contract.work.WorkItemLifecycle;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
@@ -33,6 +34,17 @@ public final class WorkAttentionRows {
                 rows.add(new AttentionView(open?"WORK_APPROVAL_OPEN":"WORK_APPROVAL_EXPIRED",AttentionView.Severity.WARNING,
                         rs.getString(2),open?"A workflow phase is waiting for an operator decision.":"An approval expired; explicit re-admission is required.",
                         open?"/approvals":"/work-items/"+rs.getString(1)));
+            }
+        }
+        // Land handed these to the operator (spec §7.6): no gate is open, so the approval rows above do not list them.
+        try(var ps=c.prepareStatement("""
+                SELECT w.id,w.issue_key FROM work_item w WHERE w.phase='land' AND w.workflow_status='awaiting_input' AND w.reason=ANY(?)
+                ORDER BY w.updated_at,w.id
+                """)) {
+            ps.setArray(1,c.createArrayOf("text",WorkItemLifecycle.LAND_HANDOFF_REASONS.toArray(String[]::new)));
+            try(var rs=ps.executeQuery()) {
+                while(rs.next())rows.add(new AttentionView("WORK_LAND_HANDED",AttentionView.Severity.WARNING,rs.getString(2),
+                        "Land was handed to an operator: retry land or stop the item.","/work-items/"+rs.getString(1)));
             }
         }
         try(var ps=c.prepareStatement("""

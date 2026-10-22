@@ -194,11 +194,33 @@ public final class WorkItemLifecycle {
         WorkExecution kept=current!=null && current.reviewId()!=null?current:requested.progress().execution();
         return landHanded(state(stopped,stopped.workflowStatus(),stopped.reason(),stopped.milestone(),stopped.gate(),stopped.progress().withExecution(kept)),"land_fix_stopped");
     }
+    /**
+     * Retry land (spec §7.6, A3): a fresh land gate on the execution's head, the one that was verified and reviewed, never
+     * on whatever the pull request holds now; the caller refuses the retry when the two differ. The item carries the
+     * current policy revision before this is called, so the gate binds it. An approval resolved before the hand-off is
+     * not reused: the gate is new.
+     */
     public static WorkItemEvent retryLandGate(WorkItemEvent item,WorkItemEvent previous,long historySize,java.time.Instant now,UUID decisionId) {
-        throw new UnsupportedOperationException("RED");
+        requireHanded(item);
+        WorkExecution execution=item.progress().execution();
+        if(execution==null || execution.pullRequest()==null)throw new IllegalStateException("Only a delivered pull request can land");
+        long eventRevision=historySize+1+(clampChanged(previous,item)?1:0);
+        WorkGate gate=new WorkGate(decisionId,1,"OPEN","land",item.generation(),eventRevision,item.policyRevision(),item.authority(),execution.head(),
+                now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
+        return state(item,"waiting_approval","approval_required","LAND_RETRY_REQUESTED",gate,item.progress().reserve(true));
     }
+    /** Stop on a handed item (§7.6): it ends there. The pull request is left as it is, so the execution is kept. */
     public static WorkItemEvent landStopped(WorkItemEvent item) {
-        throw new UnsupportedOperationException("RED");
+        requireHanded(item);
+        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",null,item.progress().reserve(false));
+    }
+    /** Whether land handed this item to the operator, where Retry land and Stop are the only ways on. */
+    public static boolean landHandedOver(WorkItemEvent item) {
+        return "land".equals(item.phase()) && "awaiting_input".equals(item.workflowStatus()) && LAND_HANDOFF_REASONS.contains(item.reason());
+    }
+    private static void requireHanded(WorkItemEvent item) {
+        if(!landHandedOver(item))throw new IllegalStateException("Only an item land handed over can retry or stop land, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
     }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
         return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));

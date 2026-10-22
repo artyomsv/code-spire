@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import { workReason } from './components/work-items/workReasons';
 import type { Preparation, WorkBuild, WorkExecution } from './components/work-items/workPreparationApi';
 
 export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
@@ -92,14 +93,30 @@ export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, no
   return response.json();
 }
 
-export async function retryLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
-  void item; void note;
-  throw new Error('RED');
+/**
+ * Retry land or Stop on an item land handed to the operator (spec §7.6). Both are audited, so both carry a note,
+ * and a refusal such as "the pull request moved" is said in words.
+ */
+async function landCommand(item: WorkItemSummary, action: 'retry-land' | 'stop-land', note: string): Promise<WorkItemOutcome> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: item.revision, note }) });
+  if (!response.ok) {
+    const body = await response.text();
+    let reason: string | undefined;
+    try { reason = (JSON.parse(body) as { reason?: string }).reason; } catch { /* not a refusal the API shaped */ }
+    throw new Error(reason ? workReason(reason) : `${response.status}: ${body}`);
+  }
+  return response.json();
 }
 
+/** A fresh land gate on the head that was verified and reviewed; refused when the pull request moved since. */
+export async function retryLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
+  return landCommand(item, 'retry-land', note);
+}
+
+/** Ends a handed item. The pull request stays open. */
 export async function stopLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
-  void item; void note;
-  throw new Error('RED');
+  return landCommand(item, 'stop-land', note);
 }
 
 /** Fetched for the current detail request; these fields are never workflow projection columns. */

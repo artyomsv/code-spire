@@ -42,11 +42,32 @@ public class WorkItemControl {
         return transitions.resumeControlled(id,expected,observed,subject,note,head);
     }
 
+    /**
+     * Retry land on an item land handed over (spec §7.6, A3). The pull request's head is read through the lander before
+     * any lock, as every forge read is; the transition compares it with the verified head under the lock.
+     */
     public WorkItemTransitions.Outcome retryLand(String id,long expected,String subject,String note) {
-        throw new UnsupportedOperationException("RED");
+        WorkItemEvent reference=landCommand(id,subject,note);
+        WorkExecution execution=reference.progress().execution();
+        if(execution==null || execution.pullRequest()==null)return new WorkItemTransitions.Outcome(409,"retry_land_unavailable",reference);
+        WorkItemTransitions.Observation observed=transitions.observe(reference);
+        if(observed.evidence().failure()!=null)return new WorkItemTransitions.Outcome(503,observed.evidence().failure(),reference);
+        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=transitions.readPullRequest(reference,execution.pullRequest().number());
+        if(pullRequest==null || pullRequest.headSha()==null)return new WorkItemTransitions.Outcome(503,"retry_land_head_unavailable",reference);
+        return transitions.retryLandControlled(id,expected,observed,subject,note,pullRequest.headSha());
     }
+    /** Stop on an item land handed over (spec §7.6). Nothing is read or written on the forge: the pull request stays open. */
     public WorkItemTransitions.Outcome stopLand(String id,long expected,String subject,String note) {
-        throw new UnsupportedOperationException("RED");
+        landCommand(id,subject,note);
+        return transitions.stopLandControlled(id,expected,subject,note);
+    }
+    /** Both land commands are audited, so both need a verified operator and a note, like resume. */
+    private WorkItemEvent landCommand(String id,String subject,String note) {
+        if(subject==null || subject.isBlank() || note==null || note.isBlank())
+            throw new jakarta.ws.rs.BadRequestException("A verified operator and a note are required");
+        WorkItemEvent reference=store.load(id);
+        if(reference==null)throw new jakarta.ws.rs.NotFoundException();
+        return reference;
     }
 
     public void suspend(String id,String channel,String delivery,String actor,String head) {
