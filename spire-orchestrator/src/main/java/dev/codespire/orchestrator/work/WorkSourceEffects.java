@@ -113,13 +113,7 @@ public class WorkSourceEffects {
             while(rs.next())ids.add(rs.getObject(1,UUID.class));
         } catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         for(UUID id:ids) {
-            try { dispatch(id); }
-            catch(RuntimeException failure) {
-                // One row the outbox cannot handle must not hold back the rows behind it (A1). It stays as it was and
-                // is tried again after the recheck interval. The message may quote a remote body, so only the type is logged.
-                LOG.warnf("Tracker effect %s could not be dispatched (%s); it is tried again later",id,failure.getClass().getSimpleName());
-                touch(id);
-            }
+            dispatch(id);
         }
     }
 
