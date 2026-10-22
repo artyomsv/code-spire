@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -307,5 +308,82 @@ class PublishCycleTest {
 
         assertTrue(written().contains("\"cause\":\"BASE_TIP_UNAVAILABLE\""), written());
         assertEquals(base, rev(bare, "refs/heads/" + ITEM_BRANCH), "nothing was pushed");
+    }
+
+    /** A land fix's item branch at its approved head, a base that then edits the workflow, and the agent's merge. */
+    private record MergedBase(String approved, String baseTip, Path ws) {
+        Path bundle(Path dir) throws Exception {
+            Path bundle = dir.resolve("1.bundle");
+            Process p = new ProcessBuilder("git", "bundle", "create", bundle.toString(), approved + "..HEAD")
+                    .directory(ws.toFile()).inheritIO().start();
+            assertEquals(0, p.waitFor(), "git bundle create");
+            return bundle;
+        }
+    }
+
+    private MergedBase mergedBase(Path dir, Path bare) throws Exception {
+        Path seed = dir.resolve("seed");
+        git(seed, "git", "checkout", "-q", "-b", ITEM_BRANCH);
+        Files.writeString(seed.resolve("FEATURE.md"), "TEST feature\n");
+        git(seed, "git", "add", "-A");
+        git(seed, "git", "commit", "-m", "TEST approved head");
+        git(seed, "git", "push", "origin", ITEM_BRANCH);
+        String approved = rev(seed, "HEAD");
+        git(seed, "git", "checkout", "-q", "main");
+        Files.writeString(seed.resolve(".github/workflows/ci.yml"), "on: TEST-push\n");
+        git(seed, "git", "commit", "-am", "TEST base edits the workflow");
+        git(seed, "git", "push", "origin", "main");
+        String baseTip = rev(seed, "HEAD");
+
+        Path ws = dir.resolve("agent-ws");
+        git(dir, "git", "clone", "--branch", ITEM_BRANCH, bare.toUri().toString(), ws.toString());
+        git(ws, "git", "config", "user.email", "TEST@factory.invalid");
+        git(ws, "git", "config", "user.name", "TEST");
+        git(ws, "git", "merge", "--no-ff", "--no-edit", "origin/main");
+        return new MergedBase(approved, baseTip, ws);
+    }
+
+    private PublishCycle heldLandFix(PublishRepo repo, String approved, String mergedBaseTip) {
+        PublicationPolicy held = PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                Map.of("SPIRE_MERGED_BASE_TIP", mergedBaseTip));
+        return new PublishCycle(repo, approved, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, held);
+    }
+
+    /**
+     * The held build of a land fix that merged its base gates with the same base tip as its permit will, or it
+     * refuses the base's workflow edit before any checkpoint, verify or permit exists.
+     */
+    @Test
+    void aHeldLandFixCheckpointsABaseMergeOfAProtectedPath(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        MergedBase merge = mergedBase(dir, bare);
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertTrue(heldLandFix(repo, merge.approved(), merge.baseTip()).handle(bundle), written());
+        }
+
+        assertTrue(written().contains("\"event\":\"checkpoint\""), written());
+        assertFalse(written().contains("gate_refused"), written());
+    }
+
+    @Test
+    void aHeldLandFixThatRevertsTheBasesWorkflowIsRefused(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        MergedBase merge = mergedBase(dir, bare);
+        git(merge.ws(), "git", "checkout", merge.approved(), "--", ".github/workflows/ci.yml");
+        git(merge.ws(), "git", "commit", "-m", "TEST agent restores the approved workflow");
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertFalse(heldLandFix(repo, merge.approved(), merge.baseTip()).handle(bundle),
+                    "a reverted base workflow ends the run");
+        }
+
+        assertTrue(written().contains("gate_refused"), written());
+        assertTrue(written().contains(".github/workflows/ci.yml"), written());
+        assertFalse(written().contains("\"event\":\"checkpoint\""), written());
     }
 }

@@ -664,6 +664,70 @@ class PublishRepoTest {
         }
     }
 
+    /**
+     * Land fix: the gate judges what landing the head would change, not only what differs from the approved
+     * head. After a base merge the agent can put back the approved head's workflow: nothing differs from the
+     * approved head, yet landing the head reverts the base's edit.
+     */
+    @Test
+    void aBaseMergeThatRestoresTheApprovedWorkflowIsRefused(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        BaseMerge merge = baseMerge(dir, bare);
+        git(merge.ws(), "git", "checkout", merge.approved(), "--", ".github/workflows/ci.yml");
+        git(merge.ws(), "git", "commit", "-m", "TEST agent restores the approved workflow");
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            assertTrue(repo.changesSince(merge.approved(), sha).paths().stream()
+                    .noneMatch(path -> path.path().equals(".github/workflows/ci.yml")),
+                    "the workflow equals the approved head, so only the landing shows it");
+
+            ChangeSet changes = repo.changesSince(merge.approved(), sha, merge.baseTip());
+
+            assertEquals(List.of(".github/workflows/ci.yml"), changes.paths().stream().map(ChangedPath::path).toList());
+            assertFalse(PushGate.decide(changes, List.of()).allowed());
+        }
+    }
+
+    @Test
+    void aBaseMergeThatDeletesTheBasesNewWorkflowIsRefused(@TempDir Path dir) throws Exception {
+        // Absent from the approved head and from the agent's head: no entry against the approved head at all.
+        Path bare = origin(dir);
+        BaseMerge merge = baseMerge(dir, bare);
+        git(merge.ws(), "git", "rm", "-q", ".github/workflows/TEST.yml");
+        git(merge.ws(), "git", "commit", "-m", "TEST agent deletes the base's workflow");
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            ChangeSet changes = repo.changesSince(merge.approved(), sha, merge.baseTip());
+
+            assertEquals(List.of(".github/workflows/TEST.yml"), changes.paths().stream().map(ChangedPath::path).toList());
+            assertFalse(PushGate.decide(changes, List.of()).allowed());
+        }
+    }
+
+    @Test
+    void theApprovedHeadsOwnWorkflowIsNotTheAgents(@TempDir Path dir) throws Exception {
+        // The approved head was gated and approved before the fix. Landing it changes its own workflow, and the
+        // fix leaves that change as it was; a gate over everything the landing changes would refuse every fix.
+        Path bare = origin(dir);
+        BaseMerge merge = baseMerge(dir, bare, ".github/workflows/OWN.yml");
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            ChangeSet changes = repo.changesSince(merge.approved(), sha, merge.baseTip());
+
+            assertEquals(List.of(), changes.paths());
+            assertTrue(PushGate.decide(changes, List.of()).allowed());
+        }
+    }
+
     /** The item branch at its approved head, a base that then edits two workflows, and the agent's merge of it. */
     private record BaseMerge(String approved, String baseTip, Path ws) {
         Path bundle(Path dir) throws Exception {
@@ -676,12 +740,17 @@ class PublishRepoTest {
     }
 
     private BaseMerge baseMerge(Path dir, Path bare) throws Exception {
+        return baseMerge(dir, bare, "FEATURE.md");
+    }
+
+    /** {@code approvedFile} is the one file the approved head adds. */
+    private BaseMerge baseMerge(Path dir, Path bare, String approvedFile) throws Exception {
         Path ws = dir.resolve("TEST-item");
         git(dir, "git", "clone", bare.toUri().toString(), ws.toString());
         git(ws, "git", "config", "user.email", "TEST@factory.invalid");
         git(ws, "git", "config", "user.name", "TEST");
         git(ws, "git", "checkout", "-b", "spire/work-TEST");
-        Files.writeString(ws.resolve("FEATURE.md"), "TEST feature\n");
+        Files.writeString(ws.resolve(approvedFile), "TEST feature\n");
         git(ws, "git", "add", "-A");
         git(ws, "git", "commit", "-m", "TEST approved head");
         git(ws, "git", "push", "origin", "spire/work-TEST");

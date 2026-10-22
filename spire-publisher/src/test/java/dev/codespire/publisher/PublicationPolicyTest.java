@@ -74,6 +74,23 @@ class PublicationPolicyTest {
         assertThrows(IllegalStateException.class, () -> PublicationPolicy.held().onExistingBranch("b".repeat(40), null));
     }
 
+    @Test void aHeldLandFixGatesWithTheTrustedBaseTip() {
+        // The held build sees the base merge first; without the tip it refuses before any permit exists.
+        String tip = "c".repeat(40);
+        PublicationPolicy held = PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                Map.of("SPIRE_MERGED_BASE_TIP", tip));
+        assertEquals(PublicationPolicy.Mode.HELD, held.mode());
+        assertEquals(tip, held.mergedBaseTip());
+        assertNull(held.expectedRemoteHead(), "a held build pushes nothing");
+        assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of()).mergedBaseTip());
+        for (String invalid : new String[]{"abc", "C".repeat(40)}) {
+            assertThrows(IllegalStateException.class, () -> PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                    Map.of("SPIRE_MERGED_BASE_TIP", invalid)), invalid);
+        }
+        assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.AUTOMATIC,
+                Map.of("SPIRE_MERGED_BASE_TIP", tip)).mergedBaseTip(), "only a land fix's build merges its base");
+    }
+
     private PublicationPolicy at(Instant now) {
         return PublicationPolicy.permitted(HEAD, NOW, NOW.plusSeconds(1), Clock.fixed(now, ZoneOffset.UTC));
     }
