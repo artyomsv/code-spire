@@ -237,11 +237,14 @@ class PublishCycleTest {
 
     private static final Instant NOW = Instant.parse("2026-10-22T12:00:00Z");
 
-    /** A land fix: the item branch already exists on the origin at the approved head, which is {@code base} here. */
+    /**
+     * A land fix: the item branch already exists on the origin at the approved head, which is {@code base} here,
+     * and its pull request targets main.
+     */
     private PublishCycle landFix(PublishRepo repo, String base, String tip, String mergedBaseTip) {
         PublicationPolicy permit = PublicationPolicy.permitted(tip, NOW, NOW.plusSeconds(60),
                 Clock.fixed(NOW, ZoneOffset.UTC)).onExistingBranch(base, mergedBaseTip);
-        return new PublishCycle(repo, base, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, permit);
+        return new PublishCycle(repo, base, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, permit, "main");
     }
 
     @Test
@@ -346,7 +349,7 @@ class PublishCycleTest {
     private PublishCycle heldLandFix(PublishRepo repo, String approved, String mergedBaseTip) {
         PublicationPolicy held = PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
                 Map.of("SPIRE_MERGED_BASE_TIP", mergedBaseTip));
-        return new PublishCycle(repo, approved, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, held);
+        return new PublishCycle(repo, approved, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, held, "main");
     }
 
     /**
@@ -385,5 +388,51 @@ class PublishCycleTest {
         assertTrue(written().contains("gate_refused"), written());
         assertTrue(written().contains(".github/workflows/ci.yml"), written());
         assertFalse(written().contains("\"event\":\"checkpoint\""), written());
+    }
+
+    /**
+     * A failed-check fix has no base tip to excuse anything, but its agent still sees the base. A head whose tree
+     * equals the approved head's after merging and reverting the base is judged on its landing, against the base
+     * as the publisher's own clone holds it.
+     */
+    @Test
+    void aFixWithoutABaseTipThatRevertsTheBaseIsNotPushed(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        MergedBase merge = mergedBase(dir, bare);
+        git(merge.ws(), "git", "checkout", merge.approved(), "--", ".github/workflows/ci.yml");
+        git(merge.ws(), "git", "commit", "-m", "TEST agent restores the approved workflow");
+        Path bundle = merge.bundle(dir);
+        String tip = rev(merge.ws(), "HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), ITEM_BRANCH,
+                dir.resolve("publish"), null)) {
+            assertFalse(landFix(repo, merge.approved(), tip, null).handle(bundle), "a reverted base workflow ends the run");
+        }
+
+        assertTrue(written().contains("gate_refused"), written());
+        assertTrue(written().contains(".github/workflows/ci.yml"), written());
+        assertEquals(merge.approved(), rev(bare, "refs/heads/" + ITEM_BRANCH), "nothing was pushed");
+    }
+
+    @Test
+    void aLandingBranchMissingFromTheCloneIsNotPushed(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path seed = dir.resolve("seed");
+        String base = rev(seed, "HEAD");
+        git(seed, "git", "push", "origin", "main:" + ITEM_BRANCH);
+        Path bundle = agentBundle(dir, bare, base, "echo TEST-fix > FIX.md");
+        String tip = rev(dir.resolve("agent-ws"), "HEAD");
+        PublicationPolicy permit = PublicationPolicy.permitted(tip, NOW, NOW.plusSeconds(60),
+                Clock.fixed(NOW, ZoneOffset.UTC)).onExistingBranch(base, null);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            PublishCycle cycle = new PublishCycle(repo, base, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome,
+                    permit, "TEST-absent");
+            assertFalse(cycle.handle(bundle), "a landing that cannot be judged is not pushed");
+        }
+
+        assertTrue(written().contains("\"cause\":\"BASE_TIP_UNAVAILABLE\""), written());
+        assertEquals(base, rev(bare, "refs/heads/" + ITEM_BRANCH), "nothing was pushed");
     }
 }

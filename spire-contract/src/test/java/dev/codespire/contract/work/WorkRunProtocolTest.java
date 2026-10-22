@@ -67,6 +67,20 @@ class WorkRunProtocolTest {
         assertEquals(plain.work(),existing.work());assertEquals(plain.deliveryAttemptId(),existing.deliveryAttemptId());assertEquals(plain.head(),existing.head());
         assertEquals(plain.issuedAt(),existing.issuedAt());assertEquals(plain.expiresAt(),existing.expiresAt());assertEquals(plain.protectedPaths(),existing.protectedPaths());
     }
+    /** The held build gates the base merge before any permit exists, so it carries the same orchestrator-issued tip. */
+    @Test void aLandFixBuildCarriesItsBaseTip() throws Exception {
+        RunCommand.ExecuteWorkRun plain=new RunCommand.ExecuteWorkRun(onBranch("spire/work-TEST"),binding());
+        assertNull(plain.mergedBaseTip());
+        RunCommand.ExecuteWorkRun merged=plain.withMergedBaseTip("e".repeat(40));
+        assertEquals("e".repeat(40),merged.mergedBaseTip());assertEquals(plain.execution(),merged.execution());assertEquals(plain.work(),merged.work());
+        assertEquals(merged,mapper().readValue(mapper().writeValueAsString(merged),RunCommand.class));
+        RunCommand.ExecuteRun fromBase=merged.execution().fromCheckpoint("TEST-previous","d".repeat(40)).fromBaseInstead("TEST note");
+        assertEquals("e".repeat(40),merged.withExecution(fromBase).mergedBaseTip(),"a rebuilt execution keeps the tip");
+        assertEquals(fromBase,merged.withExecution(fromBase).execution());
+        for(String invalid:List.of("abc","E".repeat(40),"x".repeat(40)))assertThrows(IllegalArgumentException.class,()->plain.withMergedBaseTip(invalid),invalid);
+        RunCommand.ExecuteWorkRun newBranch=new RunCommand.ExecuteWorkRun(execution(),binding());
+        assertThrows(IllegalArgumentException.class,()->newBranch.withMergedBaseTip("e".repeat(40)),"only a run on the item's own branch merges its base");
+    }
     @Test void aPermitsBaseTipNeedsAnExpectedHead(){
         assertThrows(IllegalArgumentException.class,()->permit().onExistingBranch(null,"e".repeat(40)));
         for(String invalid:List.of("abc","E".repeat(40),"x".repeat(40)))assertThrows(IllegalArgumentException.class,()->permit().onExistingBranch("d".repeat(40),invalid),invalid);

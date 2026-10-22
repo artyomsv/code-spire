@@ -93,7 +93,8 @@ class HeldRunUnitBuilderTest {
         RunCommand.ExecuteWorkRun original=landFix("TEST-run");RunUnitSpec held=builder.buildHeld(original,new CodexAdapter());
         RunCommand.PublishWorkRun otherHead=existingPermit(original.runId(),"d".repeat(40),null);
         assertThrows(IllegalArgumentException.class,()->builder.publication(held,original,otherHead));
-        RunUnitSpec resumed=builder.publication(held,original,existingPermit(original.runId(),"b".repeat(40),"e".repeat(40)));
+        RunCommand.ExecuteWorkRun merging=original.withMergedBaseTip("e".repeat(40));RunUnitSpec heldMerging=builder.buildHeld(merging,new CodexAdapter());
+        RunUnitSpec resumed=builder.publication(heldMerging,merging,existingPermit(original.runId(),"b".repeat(40),"e".repeat(40)));
         assertEquals("b".repeat(40),resumed.publisher().environment().get("SPIRE_EXPECTED_REMOTE_HEAD"));
         assertEquals("e".repeat(40),resumed.publisher().environment().get("SPIRE_MERGED_BASE_TIP"));
         RunUnitSpec noTip=builder.publication(held,original,existingPermit(original.runId(),"b".repeat(40),null));
@@ -102,6 +103,25 @@ class HeldRunUnitBuilderTest {
         RunCommand.PublishWorkRun onANewBranch=existingPermit(fresh.runId(),"b".repeat(40),null);
         assertThrows(IllegalArgumentException.class,()->builder.publication(freshHeld,fresh,onANewBranch),"a new branch has no remote head to expect");
         assertFalse(builder.publication(freshHeld,fresh,permit(fresh.runId(),binding)).publisher().environment().containsKey("SPIRE_EXPECTED_REMOTE_HEAD"));
+    }
+    /** The held build gates the base merge first: its publisher must excuse the same base tip the permit will. */
+    @Test void aLandFixsHeldPublisherReceivesTheBaseTip() throws Exception {
+        RunUnitSpec merging=builder.buildHeld(landFix("TEST-run").withMergedBaseTip("e".repeat(40)),new CodexAdapter());
+        assertEquals("e".repeat(40),merging.publisher().environment().get("SPIRE_MERGED_BASE_TIP"));
+        assertEquals(List.of("spire-publish-held"),merging.publisher().argv());
+        assertFalse(merging.agent().environment().containsKey("SPIRE_MERGED_BASE_TIP"));
+        RunUnitSpec failedChecks=builder.buildHeld(landFix("TEST-run"),new CodexAdapter());
+        assertFalse(failedChecks.publisher().environment().containsKey("SPIRE_MERGED_BASE_TIP"));
+    }
+    @Test void aPermitMustExcuseTheSameBaseTipAsTheHeldBuild() throws Exception {
+        RunCommand.ExecuteWorkRun merging=landFix("TEST-run").withMergedBaseTip("e".repeat(40));RunUnitSpec held=builder.buildHeld(merging,new CodexAdapter());
+        RunCommand.PublishWorkRun otherTip=existingPermit(merging.runId(),"b".repeat(40),"f".repeat(40));
+        assertThrows(IllegalArgumentException.class,()->builder.publication(held,merging,otherTip));
+        RunCommand.PublishWorkRun noTip=existingPermit(merging.runId(),"b".repeat(40),null);
+        assertThrows(IllegalArgumentException.class,()->builder.publication(held,merging,noTip),"the checkpoint was gated with the tip");
+        RunCommand.ExecuteWorkRun failedChecks=landFix("TEST-run");RunUnitSpec heldChecks=builder.buildHeld(failedChecks,new CodexAdapter());
+        RunCommand.PublishWorkRun widened=existingPermit(failedChecks.runId(),"b".repeat(40),"e".repeat(40));
+        assertThrows(IllegalArgumentException.class,()->builder.publication(heldChecks,failedChecks,widened),"a permit cannot widen the held build's gate");
     }
     @Test void anExistingBranchRunNeedsAnExpectedHead() throws Exception {
         RunCommand.ExecuteWorkRun original=landFix("TEST-run");RunUnitSpec held=builder.buildHeld(original,new CodexAdapter());

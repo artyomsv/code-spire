@@ -710,6 +710,37 @@ class PublishRepoTest {
         }
     }
 
+    /**
+     * A failed-check fix carries no base tip, so nothing is excused, but its agent can still merge the base and
+     * revert it: the run's clone fetches the base for every existing-branch run. Its landing is judged against
+     * the base as the publisher's own clone holds it.
+     */
+    @Test
+    void aFixWithoutABaseTipIsJudgedOnWhatItsLandingChanges(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        BaseMerge merge = baseMerge(dir, bare);
+        git(merge.ws(), "git", "checkout", merge.approved(), "--", ".github/workflows/ci.yml");
+        git(merge.ws(), "git", "rm", "-q", ".github/workflows/TEST.yml");
+        git(merge.ws(), "git", "commit", "-m", "TEST agent reverts the base's workflows");
+        Path bundle = merge.bundle(dir);
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "spire/work-TEST",
+                dir.resolve("publish"), null)) {
+            String sha = repo.fetchBundle(bundle, 10_000_000L);
+            assertTrue(PushGate.decide(repo.changesSince(merge.approved(), sha, null), List.of()).allowed(),
+                    "the head's tree equals the approved head's, so only the landing shows the revert");
+            String landingTip = repo.localHead("main").orElseThrow();
+            assertEquals(merge.baseTip(), landingTip, "the publisher's clone of the item branch holds the base too");
+            assertEquals(Optional.empty(), repo.localHead("TEST-absent"));
+
+            ChangeSet changes = repo.changesSince(merge.approved(), sha, null, landingTip);
+
+            assertEquals(Set.of(".github/workflows/ci.yml", ".github/workflows/TEST.yml"),
+                    changes.paths().stream().map(ChangedPath::path).collect(Collectors.toSet()));
+            assertFalse(PushGate.decide(changes, List.of()).allowed());
+        }
+    }
+
     @Test
     void theApprovedHeadsOwnWorkflowIsNotTheAgents(@TempDir Path dir) throws Exception {
         // The approved head was gated and approved before the fix. Landing it changes its own workflow, and the
