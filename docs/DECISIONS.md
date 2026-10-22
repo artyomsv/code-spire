@@ -4,6 +4,79 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-048 — Land merges through a durable effect pinned to the approved head
+
+**Status:** implemented on `feat/m4-land` (PR #243), 2026-10-22. Live proof pending
+(`docs/factory/LAND-ACCEPTANCE.md` when it lands).
+
+**Context.** Approving land recorded the answer and merged nothing: the item ended at `land /
+capability_unavailable`, and the screen then offered Readmit, which would build and propose the same work
+again (#43, [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md)). The design is
+[the M4 land specification](superpowers/specs/2026-10-21-factory-m4-land-design.md); its section 6 holds the
+operator's decisions and section 10 the review amendments.
+
+**Decision.**
+- **A durable effect, pinned to the approved head.** Entering land with an approved gate writes one
+  `work_land_effect` row in the same transaction, with `approved_head` = the gate's artifact. `WorkLandSweep`
+  reads the pull request through `PullRequestLander`, waits for checks, and merges with GitHub's `sha` pin, so
+  nothing but the approved head is ever merged. GitHub only: a forge with no lander keeps `land /
+  capability_unavailable`, and `auto_if_green` stays unwired.
+- **An uncertain merge is read, never re-sent.** The row is committed `uncertain` before the merge call. A row
+  found there only reads the pull request: merged is recorded; open at the approved head goes back to
+  checking; anything else is handed over. A 5xx or an I/O failure is uncertain; every status below 500 is
+  definite (the ADR-043 rule, applied to a merge). A human takeover refuses only rows before the merge call.
+- **One reading decides** (`WorkLandDecision`, pure). A moved head is handed over (`land_head_moved`). Checks
+  are reduced from the check-run and status lists, never GitHub's combined state, and an empty set passes. A
+  failed check, a conflict (`dirty`) or a branch behind its base is the code's. Cancelled, timed-out or stale
+  checks, branch protection, a draft, and a merge method the repository does not allow (read from
+  `allow_*_merge` before any merge call) are not, and are handed over with GitHub's message.
+- **A refusal caused by code loops.** `LAND_FIX_REQUESTED` rewinds the item to build on the same pull request.
+  The fix run clones the item branch at the approved head, merges the base for a conflict or a branch behind,
+  and may push to the item branch only while it still points at the approved head
+  (`WorkPublicationPermit.expectedRemoteHead`). Verify runs; the build and deliver gates are skipped (the
+  operator's decision: the next land approval is the human check); the reviewer reviews the push; a new land
+  gate opens on the new head. A failed check or a conflict spends one of the repository's fix attempts
+  (default 3); a branch behind does not. Spent attempts, the item's run limits, a review with open blockers,
+  and a failed or stopped fix run hand the item over.
+- **Handed over means the operator.** `LAND_HANDED` leaves the item at `land / awaiting_input / <reason>` with
+  no gate. The operator retries land, which opens a fresh gate on the verified and reviewed head and is
+  refused when the pull request moved, or stops it. Both need a verified operator and a note. An approval
+  resolved before a hand-off is never reused.
+- **The merge completes the item.** `WORK_ITEM_LANDED` records the pull request, merge commit, method, merger
+  (`factory`, or the stable provider id GitHub names in `merged_by`) and time, and the item is `completed /
+  landed`. The branch delete (only while the ref still reads the merged head, three tries) and the ticket
+  follow it and never hold completion.
+- **A person's merge or close is a fact, not a takeover.** GitHub's `pull_request closed` becomes activity
+  `merged` or `closed`. A person's merge lands the item with that person as merger, also during a land fix,
+  whose run is held and whose late result is accounted; a close stops the item (`pr_closed_by_human`). The
+  factory's own merge webhook, and its own pushes from a recorded or current bot identity, are left to the
+  effect. `WORK_ITEM_LANDED` is recorded at most once per generation and pull request.
+- **The ticket is told, not closed, by default.** Per repository, `comment` (the default) posts that the work
+  is merged and keeps the ticket's status, because testing follows the merge; `close` comments, then closes on
+  GitHub Issues and GitLab. A Jira source under `close` keeps its status and the item notes
+  `ticket_close_unsupported`. These `post_land` outbox rows drain whatever the item's phase.
+- **No readmit after land.** A landed item refuses readmission with `readmission_landed`. An item waiting at
+  land, or inside a land fix, with its pull request open refuses with `readmission_land_pending`.
+
+**Consequences.**
+- The merge method, ticket rule and fix attempts (`repository_land_settings`) are facts about the repository,
+  not policy: no label can choose them. No row means merge, comment, 3.
+- The branch delete is check-then-act. GitHub's ref delete takes no expected sha, so a push landing between
+  the read and the delete goes with the branch (`docs/UNVERIFIED.md` §E). Nothing relies on the delete to stop
+  a late push; the sha-pinned merge is the guard.
+- A person's merge with no webhook is noticed only when a land row reads the pull request.
+- Each fix is a build run: the seat or key pricing, the spend checks and `maxRunsPerItem` apply to it.
+
+**Rejected.**
+- **GitHub's update-branch API for a branch behind its base.** Its merge commit would reach a land gate
+  unverified.
+- **Re-sending a merge whose answer was lost.** A merge is sent again only after a read proved the pull request
+  still open at the approved head.
+- **Closing the ticket by default.** A merged pull request is not finished work; testing follows it.
+- **Merge queues.** A repository that requires one is handed over (`land_blocked`), not driven.
+
+---
+
 ## ADR-047 — The reviewer posts a forge-native review where the forge has one
 
 **Status:** implemented on `feat/github-reviews` (PR #196), 2026-10-15. Live proof pending

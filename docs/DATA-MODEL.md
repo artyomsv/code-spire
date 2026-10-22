@@ -33,6 +33,33 @@ run ID and binding digest. It deliberately has no execution-row FK: a hold may a
 execution command. Its durable refusal is independent of the M1 cancel claim. In-flight publication
 outcomes remain recorded without completing a suspended work-item phase.
 
+## Land (M4 slice 2, ADR-048, orchestrator V90–V94)
+
+V90 adds `repository_land_settings`, one row per repository with `revision`, `updated_by` and `updated_at`
+like `repository_build_defaults`: `merge_method` (`merge`, `squash`, `rebase`), `ticket_rule` (`comment`,
+`close`) and `fix_attempts` (0..10). No row means merge, comment, 3, read in code, so no backfill. It is not
+part of `work_repository_policy`, because a label may never choose what a land spends or does to a ticket.
+
+V91 adds `work_land_effect`, one row per approved land attempt (`effect_id` is the attempt), written in the
+same transaction as the `PHASE_STARTED` that enters land, bound to item, generation, revision, pull request
+and `approved_head`. `state` runs `pending`, `checking`, `waiting_checks`, `merging`, `uncertain`, `merged`,
+`cleaning`, `done`, or ends `handed`, `fixing`, `closed`, `refused`. `detail` (GitHub's message and the check
+summary) and `fix_payload` (what a land fix run is told) may quote source and are Tink-encrypted under AADs
+`work-land-detail:<effect_id>` and `work-land-fix:<effect_id>`. `merged_by` is `factory` or a stable provider
+id, never a login. A partial unique index allows one recorded merge per item, generation and pull request.
+V92 adds `failing_since`, the start of a row's current run of failed reads; a row before the merge call is
+handed over six hours after it. V93 adds `ticket_note` (`ticket_close_unsupported`), kept apart from `note`
+(`branch_delete_failed`).
+
+V93 also adds `work_tracker_outbox.effect_class`: `phase` rows (every row before it) are sent only while the
+item is still at their revision and phase; `post_land` rows are enqueued with `WORK_ITEM_LANDED` and drained
+whatever the item's phase or status, matched on generation only, and a close is sent only while the ticket
+rule is still `close` and after the comment. Invalidating milestones refuse only `phase` rows.
+
+V94 adds `work_land_observation`, keyed by item, generation and pull request: a merge webhook whose pull
+request read failed or did not show the merge yet. It is written with the delivery receipt, read again by
+every land sweep, and deleted once settled or once the item is retired, completed or in a newer generation.
+
 ## M3 repository ownership (ADR-042, slices 1–2)
 
 V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)
