@@ -96,11 +96,36 @@ public final class WorkItemLifecycle {
         return state(item,"waiting_approval",reason,"GATE_OPENED",gate,item.progress().reserve(true));
     }
 
-    public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of();
-    public static WorkItemEvent landed(WorkItemEvent item,WorkLanding landing) {throw new UnsupportedOperationException("RED");}
-    public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {throw new UnsupportedOperationException("RED");}
-    public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {throw new UnsupportedOperationException("RED");}
-    public static boolean landedIn(List<WorkItemEvent> history,long generation,long pullRequest) {throw new UnsupportedOperationException("RED");}
+    /**
+     * Why land handed an item to the operator (spec §7.6). The item waits at land / awaiting_input with no gate:
+     * Retry land opens a fresh one, and readmission is refused (§7.9). The three check and branch reasons are
+     * hand-offs only until the land fix loop exists; then they request a fix instead.
+     */
+    public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
+            "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
+            "land_fix_review_blocked","land_checks_failed","land_conflict","land_branch_behind");
+
+    /** The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. */
+    public static WorkItemEvent landed(WorkItemEvent item,WorkLanding landing) {
+        WorkExecution execution=item.progress().execution();
+        if(execution==null)throw new IllegalStateException("Only a delivered execution can land");
+        WorkProgress progress=item.progress().finish(0,0,0).withExecution(execution.landed(landing));
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"complete","completed","landed","WORK_ITEM_LANDED",item.gate(),progress);
+    }
+    /** An approval resolved before the hand-off is never reused, so the item carries no gate. */
+    public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {
+        if(!LAND_HANDOFF_REASONS.contains(reason))throw new IllegalArgumentException("Unknown land hand-off reason "+reason);
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,item.progress().reserve(false));
+    }
+    public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
+        return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",item.gate(),item.progress().reserve(false));
+    }
+    /** Whether this generation recorded the merge of that pull request; a later fact does not hide it. */
+    public static boolean landedIn(List<WorkItemEvent> history,long generation,long pullRequest) {
+        return history.stream().anyMatch(event->event.generation()==generation && "WORK_ITEM_LANDED".equals(event.milestone())
+                && event.progress().execution()!=null && event.progress().execution().landing()!=null
+                && event.progress().execution().landing().pullRequest().number()==pullRequest);
+    }
 
     public static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {
         return item.decision(item.policyRevision(),item.authority(),item.policy(),item.phase(),status,reason,milestone,gate,progress);

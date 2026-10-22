@@ -158,6 +158,10 @@ public class WorkItemTransitions {
                 } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
                     return new Outcome(409,"explicit_readmission_required",item);
                 if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
+                // A merged pull request cannot be built again beside itself; a handed item goes on with Retry land (spec §7.9).
+                if(readmit && landed(history,item))return new Outcome(409,"readmission_landed",item);
+                if(readmit && "land".equals(item.phase()) && "awaiting_input".equals(item.workflowStatus())
+                        && WorkItemLifecycle.LAND_HANDOFF_REASONS.contains(item.reason()))return new Outcome(409,"readmission_land_pending",item);
                 WorkPolicy.Selection selection=select(observed,readmit?null:item);
                 WorkItemEvent next=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),"POLICY_CHECKED",item.gate(),item.progress());
                 if(readmit) {
@@ -211,6 +215,12 @@ public class WorkItemTransitions {
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode phase decision",failure);}
         });
+    }
+
+    private static boolean landed(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) {
+        WorkExecution execution=item.progress().execution();
+        return execution!=null && execution.pullRequest()!=null && WorkItemLifecycle.landedIn(
+                history.stream().map(dev.codespire.contract.event.EventEnvelope::payload).filter(WorkItemEvent.class::isInstance).map(WorkItemEvent.class::cast).toList(),item.generation(),execution.pullRequest().number());
     }
 
     private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now) {

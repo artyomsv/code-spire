@@ -51,7 +51,12 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // Without either the server can only refuse, so no button is offered for it.
   const coordinates = item.preparation != null || item.progress?.execution?.pullRequest != null;
   const canResume = ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
-  const canReadmit = ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
+  // A landed item cannot be built again beside its merged pull request, and an item handed to the operator at
+  // land goes on with Retry land (spec §7.9). The server refuses both, so no button is offered.
+  const landed = item.workflowStatus === 'completed' && item.progress?.execution?.landing != null;
+  const handedAtLand = item.phase === 'land' && item.workflowStatus === 'awaiting_input';
+  const canReadmit = !landed && !handedAtLand
+    && ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
   if (item.workflowStatus === 'suspended' && !coordinates)
     return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;
   // Composing is offered wherever a person could want the ticket read again: before anything is
