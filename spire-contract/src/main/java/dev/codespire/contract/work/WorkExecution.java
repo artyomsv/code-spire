@@ -33,4 +33,9 @@ public record WorkExecution(String runId,WorkRunBinding build,String head,UUID v
     }
     public WorkExecution delivered(PullRequestRef ref) {return new WorkExecution(runId,build,head,verificationAttempt,verification,Objects.requireNonNull(ref),reviewId);}
     public WorkExecution reviewed(String id) {return new WorkExecution(runId,build,head,verificationAttempt,verification,pullRequest,Objects.requireNonNull(id));}
+    public WorkExecution(String runId,WorkRunBinding build,String head,UUID verificationAttempt,WorkVerification verification,PullRequestRef pullRequest,String reviewId,WorkLanding landing) {
+        this(runId,build,head,verificationAttempt,verification,pullRequest,reviewId);
+    }
+    public WorkLanding landing() {return null;}
+    public WorkExecution landed(WorkLanding value) {throw new UnsupportedOperationException("RED");}
 }

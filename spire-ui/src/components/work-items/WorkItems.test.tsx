@@ -521,6 +521,29 @@ it('keeps re-admission reachable once every step is done', async () => {
   showDetail();
   expect(await screen.findByRole('button', { name: 'Re-admit under current policy' })).toBeInTheDocument();
 });
+// M4 land (spec §7.9): a merged pull request cannot be built again beside itself, and a handed item goes on with Retry land.
+function deliveredExecution(landed: boolean): NonNullable<NonNullable<Detail['progress']>['execution']> {
+  const pullRequest = { number: 901, url: 'https://github.example.test/TEST/repo/pull/901', draft: false };
+  return { runId: 'TEST-run', build: { workItemId: 'TEST-item-0', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
+    head: 'b'.repeat(40), verificationAttempt: null, pullRequest, reviewId: 'TEST-review',
+    landing: landed ? { pullRequest, mergeCommit: 'c'.repeat(40), method: 'squash', mergedBy: 'factory', landedAt: '2026-10-22T12:00:00Z' } : null };
+}
+async function readmitOffered(value: Detail) {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(value);
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();await screen.findByText('TEST-title');await act(async () => {});
+  return screen.queryByRole('button', { name: 'Re-admit under current policy' }) != null;
+}
+it('offers no re-admission for a landed item', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'landed', progress: { execution: deliveredExecution(true) } })).toBe(false);
+});
+it('offers no re-admission while an item waits at land for the operator', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'land_blocked', progress: { execution: deliveredExecution(false) } })).toBe(false);
+});
+it('still offers re-admission for a completed item that did not land', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed', progress: { execution: deliveredExecution(false) } })).toBe(true);
+});
 // Review finding: a re-read blanked the item, which unmounted an open panel and hid the notice.
 it('keeps the item and an open panel on screen while the page re-reads', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });

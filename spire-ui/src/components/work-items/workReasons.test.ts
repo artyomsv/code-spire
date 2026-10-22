@@ -43,3 +43,11 @@ describe('land setup reasons (M4 land)', () => {
     expect(workReason(reason)).not.toBe(reason);
   });
 });
+
+describe('land reasons (M4)', () => {
+  it.each(['landed', 'pr_closed_by_human', 'land_head_moved', 'land_checks_timeout', 'land_checks_not_code', 'land_blocked', 'land_pr_draft',
+    'land_merge_refused', 'land_merge_method_not_allowed', 'land_fix_attempts_exhausted', 'land_item_limit_reached', 'land_fix_review_blocked',
+    'land_checks_failed', 'land_conflict', 'land_branch_behind', 'readmission_landed', 'readmission_land_pending'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});

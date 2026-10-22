@@ -62,4 +62,32 @@ class WorkExecutionTest {
         assertEquals(progress,mapper.readValue(mapper.writeValueAsBytes(progress),WorkProgress.class));
         assertNull(mapper.readValue("{}",WorkProgress.class).execution());
     }
+    final PullRequestRef pr42=new PullRequestRef(42,"https://forge.example.test/TEST/42",false);
+    WorkLanding landing(long number){return new WorkLanding(new PullRequestRef(number,"https://forge.example.test/TEST/"+number,false),"c".repeat(40),"squash",WorkLanding.FACTORY,Instant.EPOCH);}
+    @Test void landingIsCarriedThroughEveryWither(){
+        var landed=built.delivered(pr42).landed(landing(42));
+        assertEquals(landing(42),landed.landing());
+        assertEquals(landing(42),landed.reviewed("TEST-review").landing());
+        assertEquals(landing(42),landed.delivered(pr42).landing());
+        assertEquals(landing(42),landed.verified(UUID.randomUUID()).landing());
+        var result=new WorkVerification(UUID.randomUUID(),built.head(),WorkVerification.Outcome.PASSED,null,
+                java.util.List.of(new WorkVerification.CheckResult("TEST-check",0,1,"")));
+        assertEquals(landing(42),landed.verified(result).landing());
+    }
+    @Test void aLandingOfAnotherPullRequestIsRefused(){
+        assertThrows(IllegalArgumentException.class,()->built.delivered(pr42).landed(landing(43)));
+        assertThrows(IllegalArgumentException.class,()->new WorkExecution("TEST-run",binding,built.head(),null,null,pr42,null,landing(43)));
+        assertThrows(IllegalArgumentException.class,()->built.landed(landing(42)),"a landing needs a delivered pull request");
+    }
+    @Test void anExecutionStoredBeforeLandingStillReads() throws Exception {
+        var mapper=new ObjectMapper().registerModule(new JavaTimeModule());
+        var json=(com.fasterxml.jackson.databind.node.ObjectNode)mapper.valueToTree(built.delivered(pr42));
+        json.remove("landing");
+        assertNull(mapper.treeToValue(json,WorkExecution.class).landing());
+    }
+    @Test void aLandingSurvivesAStoredRoundTrip() throws Exception {
+        var mapper=new ObjectMapper().registerModule(new JavaTimeModule());
+        var landed=built.delivered(pr42).landed(landing(42));
+        assertEquals(landed,mapper.readValue(mapper.writeValueAsBytes(landed),WorkExecution.class));
+    }
 }

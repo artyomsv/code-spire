@@ -96,6 +96,12 @@ public final class WorkItemLifecycle {
         return state(item,"waiting_approval",reason,"GATE_OPENED",gate,item.progress().reserve(true));
     }
 
+    public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of();
+    public static WorkItemEvent landed(WorkItemEvent item,WorkLanding landing) {throw new UnsupportedOperationException("RED");}
+    public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {throw new UnsupportedOperationException("RED");}
+    public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {throw new UnsupportedOperationException("RED");}
+    public static boolean landedIn(List<WorkItemEvent> history,long generation,long pullRequest) {throw new UnsupportedOperationException("RED");}
+
     public static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {
         return item.decision(item.policyRevision(),item.authority(),item.policy(),item.phase(),status,reason,milestone,gate,progress);
     }
