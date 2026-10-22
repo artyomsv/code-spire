@@ -35,7 +35,7 @@ public class LandSettings {
     public record Settings(long revision, MergeMethod mergeMethod, TicketRule ticketRule, int fixAttempts,
                            String updatedBy, Instant updatedAt) {
         public static Settings defaults() {
-            return new Settings(0, MergeMethod.MERGE, TicketRule.COMMENT, DEFAULT_FIX_ATTEMPTS, null, null);
+            return new Settings(0, MergeMethod.SQUASH, TicketRule.COMMENT, DEFAULT_FIX_ATTEMPTS, null, null);
         }
     }
 
