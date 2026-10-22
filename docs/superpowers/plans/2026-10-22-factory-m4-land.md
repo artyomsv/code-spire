@@ -955,6 +955,8 @@ export async function stopLand(item: WorkItemSummary, note: string): Promise<Wor
 | `…theRetryGateBindsTheCurrentPolicyRevision` | policy revised while handed → retry gate's `policyRevision` = the new one; approving it lands (not `policy_changed_requires_new_decision`) | gate built from the stale revision |
 | `…stopLandEndsAHandedItemWithANote` | handed `land_blocked` → stop-land with note → `stopped/land_stopped_by_operator`, `LAND_STOPPED`, operator and note on the event, no `PUT`/`DELETE`, PR untouched; blank note → 400 | Stop missing or merges |
 | `…stopLandOutsideAHandOffIsRefused` | at review → 409 `retry_land_unavailable` | state check removed |
+| `…retryLandAfterAStoppedFixLandsTheApprovedHead` | a fix stopped before delivery is handed `land_fix_stopped` on the approved head (slice 7b review) → retry → gate on that head | gate on the fix's unpushed checkpoint |
+| `…retryLandAfterAStoppedFixThatPushedIsRefused` | a fix pushed, then stopped before its review → PR head is the unreviewed fix, `execution.head()` the approved one → 409 `land_head_moved`; Stop still offered | an unreviewed head reaches a land gate |
 | `WorkItems.test (actions): handed item offers Stop with the note` | | |
 | `WorkAttentionTest.aHandedItemNeedsTheOperator` | one `WORK_LAND_HANDED` row | |
 | `WorkItems.test (actions): handed item shows Retry land and not Recheck` | | |

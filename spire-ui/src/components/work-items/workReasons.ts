@@ -127,6 +127,7 @@ const REASONS = new Map(Object.entries({
   land_conflict: 'The pull request conflicts with its base branch, so the factory merges the base in and resolves the conflicts on the same pull request. Land waits for your approval again after it.',
   land_branch_behind: 'The pull request is behind its base branch, so the factory merges the base in on the same pull request. This does not count as a fix attempt; land waits for your approval again after it.',
   land_fix_run_failed: 'The build that was fixing the pull request failed. Look at its run, then retry land or stop.',
+  land_fix_stopped: 'The fix stopped before land could be approved again; the land step names why. Fix the cause, then retry land or stop.',
   readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',
   readmission_land_pending: 'This item waits for a decision at land, or is fixing its open pull request. Retry land or stop it instead of re-admitting.',
   land_account_unavailable: "This repository's factory account could not be used to merge for six hours: it is missing, switched off, or has no login. Fix it on the Repositories screen, then retry land or stop.",

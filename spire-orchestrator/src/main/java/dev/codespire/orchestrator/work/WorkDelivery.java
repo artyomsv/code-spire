@@ -129,13 +129,20 @@ public class WorkDelivery {
 
     private void observeHeldProposal(Effect effect,WorkItemEvent item) {
         try {
-            var account=accounts.resolve(item.repositoryId()).orElseThrow();
-            var source=sources.get(item.sourceId()).orElseThrow();
-            var request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
-            // The write was already claimed before takeover. Recovery may only read its outcome.
-            var found=clients.pullRequestSink(account).findByHead(source.repository(),request.headBranch(),request.baseBranch());
-            if(found.isEmpty())return;
-            var pr=found.orElseThrow();runs.pullRequestOpened(effect.run(),pr.number(),pr.url());
+            byte[] stored=encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt());
+            PullRequestRef pr;
+            // A land fix's row holds the pull request its push updated; a row is proposing only after that push, so there
+            // is nothing left to find. A proposal's row holds the request it sent.
+            if(!mapper.readTree(stored).has("headBranch"))pr=mapper.readValue(stored,PullRequestRef.class);
+            else {
+                var account=accounts.resolve(item.repositoryId()).orElseThrow();
+                var source=sources.get(item.sourceId()).orElseThrow();
+                var request=mapper.readValue(stored,PullRequestSink.NewPullRequest.class);
+                // The write was already claimed before takeover. Recovery may only read its outcome.
+                var found=clients.pullRequestSink(account).findByHead(source.repository(),request.headBranch(),request.baseBranch());
+                if(found.isEmpty())return;
+                pr=found.orElseThrow();runs.pullRequestOpened(effect.run(),pr.number(),pr.url());
+            }
             QuarkusTransaction.requiringNew().run(()->{
                 try(var c=dataSource.getConnection()) {
                     sources.get(c,item.sourceId(),true);policies.get(c,item.repositoryId(),true);WorkItemTransitions.lockItem(c,item.workItemId());
@@ -192,7 +199,10 @@ public class WorkDelivery {
                 }
                 return new Claim(command,null,null);
             }
-            if("proposing".equals(effect.state()) && fix==null)request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            if("proposing".equals(effect.state())) {
+                // A land fix's row holds the pull request its push updated: completing delivery on it is all that is left.
+                if(fix==null)request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            }
             else if("pushed".equals(effect.state())) {
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='proposing',request=?,reason=NULL WHERE attempt_id=?")) {
                     // A proposing row must hold its request (V70); a land fix holds the pull request it updates instead.
@@ -278,8 +288,10 @@ public class WorkDelivery {
     }
     private void stopLocked(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,Effect effect,String reason) throws SQLException,java.io.IOException {
         state(effect,"refused",reason);
+        // Only a deliver still running is stopped by its row. A merge, a close or a takeover already ended it, and a
+        // refusal written over them would hide that; a land fix's pull request can be merged before its delivery completes.
         if(item.generation()==effect.generation() && Objects.equals(item.progress().attemptId(),effect.attempt())
-                && !Set.of("suspended","retired").contains(item.workflowStatus()))
-            store.appendDecision(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt());
+                && "deliver".equals(item.phase()) && "active".equals(item.workflowStatus()))
+            transitions.decide(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt());
     }
 }

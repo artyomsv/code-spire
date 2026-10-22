@@ -145,6 +145,14 @@ class WorkLandFixDecisionTest {
         assertEquals(verifying.progress().runs(),handed.progress().runs(),"the fix's run still counts");
         assertFalse(WorkItemLifecycle.landFixInProgress(List.of(item,history.get(1),history.get(2),verifying,stopped,handed)));
     }
+    @Test void aStopAfterTheFixWasReviewedKeepsItsReviewedHead(){
+        List<WorkItemEvent> history=fixingOn(atLand("auto"),"c".repeat(40));WorkItemEvent verifying=history.getLast();
+        WorkExecution reviewed=verifying.progress().execution().reviewed("TEST-fix-review");
+        WorkItemEvent entering=verifying.decision(1,verifying.authority(),verifying.policy(),"land","awaiting_input","phase_completed","PHASE_COMPLETED",null,
+                verifying.progress().finish(0,0,0).withExecution(reviewed));
+        WorkItemEvent handed=WorkItemLifecycle.landFixStopped(history,stopping(entering,"stopped","policy_cap_reached"));
+        assertEquals(reviewed,handed.progress().execution(),"a delivered and reviewed fix is what land decides on");
+    }
     @Test void everyWayAFixCanStopIsHanded(){
         List<WorkItemEvent> history=fixingOn(atLand("auto"),"c".repeat(40));WorkItemEvent verifying=history.getLast();
         for(List<String> stop:List.of(List.of("stopped","policy_cap_reached"),List.of("not_eligible","deliver_off"),List.of("failed","phase_failed"),

@@ -149,7 +149,7 @@ public final class WorkItemLifecycle {
      */
     public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
             "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
-            "land_fix_review_blocked","land_fix_run_failed","land_account_unavailable","land_read_failed");
+            "land_fix_review_blocked","land_fix_run_failed","land_fix_stopped","land_account_unavailable","land_read_failed");
 
     /**
      * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only
@@ -163,19 +163,36 @@ public final class WorkItemLifecycle {
         WorkProgress progress=current.withExecution(execution.landed(landing));
         return item.decision(item.policyRevision(),item.authority(),item.policy(),"complete","completed","landed","WORK_ITEM_LANDED",superseded(item.gate(),"landed"),progress);
     }
-    /** An approval resolved before the hand-off is never reused, so the item carries no gate. */
+    /**
+     * An approval resolved before the hand-off is never reused, so the item carries no gate. The attempt the hand-off
+     * interrupts (land, or a fix's review) is finished: a later land or review start in this generation would otherwise
+     * meet it still started, and only one attempt per phase may be.
+     */
     public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {
         if(!LAND_HANDOFF_REASONS.contains(reason))throw new IllegalArgumentException("Unknown land hand-off reason "+reason);
-        return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,item.progress().reserve(false));
+        WorkProgress progress="started".equals(item.progress().attemptState())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,progress);
     }
+    /** Where a stopped land fix would otherwise wait; with its pull request open, readmit and recheck both refuse each. */
+    private static final java.util.Set<String> FIX_STOP_STATUSES=java.util.Set.of("stopped","not_eligible","failed","capability_unavailable");
     /**
      * A land fix that stopped before its next land gate is handed to the operator, because its pull request is still
-     * open: readmit would build a second one beside it. Null when {@code stopped} stops no fix in progress.
+     * open: readmit would build a second one beside it. Unless the fix's own head was reviewed, the item goes back to
+     * the execution the fix started from, the head that was verified, reviewed and approved, so nothing the fix built
+     * unpushed or pushed unreviewed reaches a land gate. Null when {@code stopped} stops no fix in progress; the stop itself stays in history before the hand-off.
      *
      * @param before the history {@code stopped} is appended to
      */
     public static WorkItemEvent landFixStopped(List<WorkItemEvent> before,WorkItemEvent stopped) {
-        return null;
+        if(!landFixInProgress(before) || LAND_FIX_ENDS.contains(stopped.milestone()))return null;
+        boolean stops=FIX_STOP_STATUSES.contains(stopped.workflowStatus())
+                || "awaiting_input".equals(stopped.workflowStatus()) && "run_usage_unknown".equals(stopped.reason());
+        if(!stops)return null;
+        WorkItemEvent requested=before.reversed().stream().filter(event->"LAND_FIX_REQUESTED".equals(event.milestone())).findFirst().orElseThrow();
+        WorkExecution current=stopped.progress().execution();
+        // A fix delivered and reviewed already stands on its own head, as when entering land is refused after its review.
+        WorkExecution kept=current!=null && current.reviewId()!=null?current:requested.progress().execution();
+        return landHanded(state(stopped,stopped.workflowStatus(),stopped.reason(),stopped.milestone(),stopped.gate(),stopped.progress().withExecution(kept)),"land_fix_stopped");
     }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
         return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));

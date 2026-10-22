@@ -109,7 +109,8 @@ public class WorkRunDispatcher {
     }
     private void stop(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,UUID attempt,String reason) throws SQLException,java.io.IOException {
         refuse(c,attempt,reason);
-        store.appendDecision(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"build-refused:"+attempt);
+        // A land fix's build is handed at land instead, since its pull request stays open (review of slice 7b).
+        transitions.decide(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"build-refused:"+attempt);
     }
     private void refuse(Connection c,UUID attempt,String reason) throws SQLException {
         try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason=? WHERE attempt_id=? AND state='pending'")) {
