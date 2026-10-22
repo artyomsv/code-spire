@@ -55,11 +55,21 @@ public sealed interface IntegrationEvent {
 
     enum CloseReason { MERGED, DECLINED }
 
-    /** Signed acting identity, never a commit author. Comment text is reduced to an explicit command. */
+    /**
+     * Signed acting identity, never a commit author. Comment text is reduced to an explicit command.
+     *
+     * @param mergedBy for kind {@code merged} only: the stable provider id the forge names as the merger, which
+     *     need not be the sender (M4 land, A2); null otherwise
+     */
     record RepositoryActivity(RepoRef repo,String kind,String actorId,String branch,String head,long prId,
-                              String reviewId,String commentId,boolean fixCommand) implements IntegrationEvent {
-        public String mergedBy() { return null; }
-        public RepositoryActivity withMergedBy(String value) { return this; }
+                              String reviewId,String commentId,boolean fixCommand,String mergedBy) implements IntegrationEvent {
+        public RepositoryActivity(RepoRef repo,String kind,String actorId,String branch,String head,long prId,
+                                  String reviewId,String commentId,boolean fixCommand) {
+            this(repo,kind,actorId,branch,head,prId,reviewId,commentId,fixCommand,null);
+        }
+        public RepositoryActivity withMergedBy(String value) {
+            return new RepositoryActivity(repo,kind,actorId,branch,head,prId,reviewId,commentId,fixCommand,value);
+        }
     }
 
     // --- ingress (produced by spire-gateway / ScmIngress) ---

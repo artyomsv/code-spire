@@ -132,7 +132,7 @@ public class GitHubIngress implements ScmIngress {
     @Override public List<IntegrationEvent> activity(RawWebhook raw) {
         JsonNode root=parse(raw.body());String event=header(raw,"x-github-event");
         if(event==null)return List.of();
-        String actor=root.path("sender").path("id").asText(null),kind,branch=null,head=null,review=null,comment=null;
+        String actor=root.path("sender").path("id").asText(null),kind,branch=null,head=null,review=null,comment=null,mergedBy=null;
         long pr=0;boolean fix=false;
         if("push".equals(event)) {
             kind="push";branch=root.path("ref").asText("");head=root.path("after").asText(null);
@@ -145,8 +145,12 @@ public class GitHubIngress implements ScmIngress {
                 kind="commented".equalsIgnoreCase(nativeReview.path("state").asText())?"comment":"approval";
                 if("comment".equals(kind))comment=review;
             } else {
-                if(!java.util.Set.of("synchronize","edited","closed").contains(root.path("action").asText()))return List.of();
-                kind="push";
+                String action=root.path("action").asText();
+                if(!java.util.Set.of("synchronize","edited","closed").contains(action))return List.of();
+                // A close is a merge or an abandonment, not a push. The merger is merged_by, never the sender (M4 land, A2).
+                boolean merged="closed".equals(action) && pull.path("merged").asBoolean(false);
+                kind=!"closed".equals(action)?"push":merged?"merged":"closed";
+                if(merged)mergedBy=pull.path("merged_by").path("id").asText(null);
             }
         } else if("issue_comment".equals(event) || "pull_request_review_comment".equals(event)) {
             if(!"created".equals(root.path("action").asText()))return List.of();
@@ -156,7 +160,7 @@ public class GitHubIngress implements ScmIngress {
             String body=root.path("comment").path("body").asText("").strip();
             var parsed=parseCommand(body);fix=parsed!=null && "fix".equals(parsed.command());
         } else return List.of();
-        return List.of(new IntegrationEvent.RepositoryActivity(repo(root),kind,actor,branch,head,pr,review,comment,fix));
+        return List.of(new IntegrationEvent.RepositoryActivity(repo(root),kind,actor,branch,head,pr,review,comment,fix,mergedBy));
     }
 
     /**

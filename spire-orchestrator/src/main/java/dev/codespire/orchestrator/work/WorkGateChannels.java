@@ -60,6 +60,9 @@ public class WorkGateChannels {
             WorkItemEvent item=store.load(id);var source=sources.get(item.sourceId()).orElseThrow();
             if(!source.repository().equals(activity.repo()) || !linked(item,activity))continue;
             if(received(id,"scm",delivery))continue;
+            if(Set.of("merged","closed").contains(activity.kind())) {
+                pullRequestClosed(item,activity,delivery);continue;
+            }
             if("approval".equals(activity.kind())) {
                 approval(item,source,activity,delivery);continue;
             }
@@ -81,6 +84,22 @@ public class WorkGateChannels {
                 && ("refs/heads/"+item.control().branch()).equals(activity.branch());
     }
 
+    /**
+     * A merge or close on GitHub (M4 land, spec §7.8). The factory's own, sent as the recorded or the current bot,
+     * belongs to the land effect, which records it (A2). Anyone else's is a fact about the item: a merge lands it with
+     * that person as merger, a close stops it.
+     */
+    private void pullRequestClosed(WorkItemEvent item,IntegrationEvent.RepositoryActivity activity,String delivery) {
+        String id=item.workItemId();
+        if(item.control()!=null && item.control().machine(activity.actorId()) || control.currentMachine(item.repositoryId(),activity.actorId())) {
+            receipt(id,"scm",delivery,"recorded_machine");return;
+        }
+        boolean merged="merged".equals(activity.kind());
+        WorkItemTransitions.Outcome result=merged?transitions.landedByHuman(id,delivery,activity.prId(),activity.mergedBy()):transitions.closedByHuman(id,delivery,activity.prId());
+        if(result.status()>=500)throw new jakarta.ws.rs.ServiceUnavailableException(result.reason());
+        receipt(id,"scm",delivery,(merged?"landed:":"closed:")+result.reason());
+    }
+
     private void approval(WorkItemEvent item,WorkSourceRegistry.Source source,IntegrationEvent.RepositoryActivity activity,String delivery) {
         WorkGate gate=item.gate();
         if(!"waiting_approval".equals(item.workflowStatus()) || gate==null || !"OPEN".equals(gate.state()) || !"land".equals(gate.phase()))return;
@@ -92,7 +111,7 @@ public class WorkGateChannels {
         var pr=clients.diffSource(account).fetchPullRequest(source.repository(),activity.prId());
         if(!review.approved() || !review.human() || !Objects.equals(review.actorId(),activity.actorId())
                 || item.control()!=null && item.control().machine(review.actorId()))return;
-        if(currentMachine(item.repositoryId(),account,review.actorId()))return;
+        if(control.currentMachine(item.repositoryId(),review.actorId()))return;
         if(!pr.repo().equals(source.repository()) || pr.prId()!=activity.prId()
                 || !Objects.equals(review.head(),pr.headCommit()) || !Objects.equals(gate.artifact(),pr.headCommit())
                 || item.control()==null || !item.control().branch().equals(pr.sourceBranch()))return;
@@ -103,16 +122,6 @@ public class WorkGateChannels {
         receipt(item.workItemId(),"scm",delivery,"gate_answer:"+result.reason());
     }
 
-    /**
-     * The repository's CURRENT reviewer and factory identities, not only the ones recorded at build claim: a
-     * registration rotated after the claim is still the bot, and its Approve is still machine activity
-     * (review of PR #196, security/H-1).
-     */
-    private boolean currentMachine(UUID repository,ScmProvider reviewer,String actor) {
-        if(actor==null || actor.isBlank())return false;
-        if(actor.equals(reviewer.botAccountId()))return true;
-        return accounts.resolve(repository,ProviderRole.FACTORY).map(factory->actor.equals(factory.botAccountId())).orElse(false);
-    }
     private boolean received(String id,String channel,String delivery) {
         try(Connection c=dataSource.getConnection()){return WorkItemControl.received(c,id,channel,delivery);}
         catch(SQLException failure){throw WorkSourceRegistry.database(failure);}

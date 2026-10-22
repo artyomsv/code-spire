@@ -48,8 +48,21 @@ public class WorkItemControl {
     public void retire(String id,String delivery,String reason) {
         change(id,"tracker",delivery,null,null,true);
     }
+    /**
+     * The repository's CURRENT reviewer and factory identities, not only the ones recorded at build claim: a
+     * registration rotated after the claim is still the bot, and its activity is still machine activity
+     * (review of PR #196, security/H-1; M4 land, A10).
+     */
+    boolean currentMachine(UUID repository,String actor) {
+        if(actor==null || actor.isBlank())return false;
+        for(dev.codespire.orchestrator.provider.ProviderRole role:List.of(dev.codespire.orchestrator.provider.ProviderRole.REVIEWER,dev.codespire.orchestrator.provider.ProviderRole.FACTORY))
+            if(accounts.resolve(repository,role).map(account->actor.equals(account.botAccountId())).orElse(false))return true;
+        return false;
+    }
     private void change(String id,String channel,String delivery,String actor,String head,boolean retired) {
         WorkItemEvent reference=store.load(id);if(reference==null)return;
+        // Read before the locks, as every forge-account read is; tracker identities are their own namespace.
+        boolean currentBot=!retired && !"tracker".equals(channel) && currentMachine(reference.repositoryId(),actor);
         QuarkusTransaction.requiringNew().run(()->{
             try(Connection c=dataSource.getConnection()) {
                 var source=sources.get(c,reference.sourceId(),true).orElseThrow();
@@ -61,7 +74,7 @@ public class WorkItemControl {
                 // A completed item's ticket stays open so testing can follow (spec §7.7); activity on it is not a takeover.
                 if(!retired && "completed".equals(item.workflowStatus())){receipt(c,id,channel,delivery,"already_completed");return;}
                 // Tracker identities and SCM identities are separate namespaces even on one item.
-                if(!retired && item.control()!=null && ("tracker".equals(channel)?item.control().trackerMachine(actor):item.control().machine(actor))) {
+                if(currentBot || !retired && item.control()!=null && ("tracker".equals(channel)?item.control().trackerMachine(actor):item.control().machine(actor))) {
                     receipt(c,id,channel,delivery,"recorded_machine");return;
                 }
                 WorkGate gate=item.gate();

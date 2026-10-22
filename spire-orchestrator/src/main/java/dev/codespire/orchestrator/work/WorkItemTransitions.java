@@ -298,13 +298,99 @@ public class WorkItemTransitions {
             return new Outcome(200,next.reason(),next);
         });
     }
-    /** A person merged the pull request on GitHub (spec §7.8, A2). */
+    /**
+     * A person merged the pull request on GitHub (spec §7.8, A2). The webhook says a merge happened; the merge commit
+     * is read back from GitHub before anything is recorded. Recorded once per generation and pull request, whichever
+     * observer saw it first, at any phase after the pull request exists and on a suspended item too. The branch is the
+     * factory's, so the land effect still deletes it at the merged head ({@link #landingEffect}).
+     *
+     * @param mergedBy the merger GitHub named in the webhook (merged_by, never the sender); the read's when absent
+     */
     Outcome landedByHuman(String id,String delivery,long pullRequest,String mergedBy) {
-        return new Outcome(409,"RED",require(id));
+        WorkItemEvent reference=require(id);
+        // Forge reads never run under the item lock.
+        dev.codespire.contract.port.PullRequestLander.LandState pr=readPullRequest(reference,pullRequest);
+        if(pr==null)return new Outcome(503,"land_read_failed",reference);
+        String merger=mergedBy==null || mergedBy.isBlank()?pr.mergedBy():mergedBy;
+        if(!pr.merged() || pr.mergeCommitSha()==null || !pr.mergeCommitSha().matches("[0-9a-f]{40}") || merger==null || merger.isBlank())
+            return new Outcome(409,"merge_not_confirmed",reference);
+        String handle=mergerHandle(reference.repositoryId(),merger);
+        return underLock(id,(c,history,item)->{
+            if("retired".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
+            List<WorkItemEvent> facts=history.stream().map(event->(WorkItemEvent)event.payload()).toList();
+            if(WorkItemLifecycle.landedIn(facts,item.generation(),pullRequest))return new Outcome(200,"landing_already_recorded",item);
+            WorkExecution execution=item.progress().execution();
+            if(execution==null || execution.pullRequest()==null || execution.pullRequest().number()!=pullRequest)return new Outcome(409,"work_item_changed",item);
+            String method=dev.codespire.orchestrator.factory.LandSettings.wire(landSettings.get(c,item.repositoryId(),false).mergeMethod());
+            WorkLanding landing=new WorkLanding(execution.pullRequest(),pr.mergeCommitSha(),method,merger,clock.now());
+            WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
+            store.appendDecision(c,history,next,"land-webhook:"+delivery);
+            UUID effect=landingEffect(c,next,landing,pr.headSha()==null?execution.head():pr.headSha());
+            ticketAfterLand(c,next,effect,landing,handle);
+            return new Outcome(200,next.reason(),next);
+        });
     }
-    /** A person closed the pull request on GitHub without merging it (spec §7.8). */
+    /**
+     * The land effect row that deletes the branch after a merge someone else made. A row already holding a merge is
+     * the effect's own observation of it, which records the same landing and only advances; a row that sent no merge
+     * yet, or whose merge answer was lost, moves to cleaning without a merge; with neither, a row starts at cleaning.
+     */
+    private static UUID landingEffect(Connection c,WorkItemEvent landed,WorkLanding landing,String mergedHead) throws SQLException {
+        String item=landed.workItemId();long generation=landed.generation(),number=landing.pullRequest().number();
+        try(PreparedStatement ps=c.prepareStatement("SELECT effect_id FROM work_land_effect WHERE work_item_id=? AND generation=? AND pr_number=? AND merge_commit IS NOT NULL")) {
+            ps.setString(1,item);ps.setLong(2,generation);ps.setLong(3,number);
+            try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getObject(1,UUID.class);}
+        }
+        try(PreparedStatement ps=c.prepareStatement("""
+                UPDATE work_land_effect SET state='cleaning',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,failing_since=NULL,updated_at=now()
+                WHERE effect_id=(SELECT effect_id FROM work_land_effect WHERE work_item_id=? AND generation=? AND pr_number=?
+                AND state IN ('pending','checking','waiting_checks','merging','uncertain') ORDER BY created_at DESC LIMIT 1) RETURNING effect_id
+                """)) {
+            ps.setString(1,landing.mergeCommit());ps.setString(2,landing.mergedBy());ps.setString(3,landing.method());ps.setString(4,mergedHead);
+            ps.setString(5,item);ps.setLong(6,generation);ps.setLong(7,number);
+            try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getObject(1,UUID.class);}
+        }
+        UUID effect=UUID.randomUUID();
+        try(PreparedStatement ps=c.prepareStatement("""
+                INSERT INTO work_land_effect(effect_id,work_item_id,generation,item_revision,pr_number,approved_head,state,merge_commit,merged_by,method,merged_head)
+                VALUES (?,?,?,(SELECT revision FROM work_item WHERE id=?),?,?,'cleaning',?,?,?,?)
+                """)) {
+            ps.setObject(1,effect);ps.setString(2,item);ps.setLong(3,generation);ps.setString(4,item);ps.setLong(5,number);ps.setString(6,mergedHead);
+            ps.setString(7,landing.mergeCommit());ps.setString(8,landing.mergedBy());ps.setString(9,landing.method());ps.setString(10,mergedHead);
+            ps.executeUpdate();
+        }
+        return effect;
+    }
+    /** The pull request as GitHub reports it now, read through the FACTORY or REVIEWER account; null when it cannot be read. */
+    private dev.codespire.contract.port.PullRequestLander.LandState readPullRequest(WorkItemEvent item,long pullRequest) {
+        Optional<dev.codespire.orchestrator.provider.ScmProvider> account=accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
+                .or(()->accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
+        if(account.isEmpty())return null;
+        try {
+            dev.codespire.contract.port.PullRequestLander lander=clients.pullRequestLander(account.get());
+            if(!lander.available())return null;
+            return lander.read(sources.get(item.sourceId()).orElseThrow(NotFoundException::new).repository(),pullRequest);
+        }catch(RuntimeException unreadable){return null;}
+    }
+    /**
+     * A person closed the pull request on GitHub without merging it (spec §7.8): the item stops, nothing is deleted
+     * and the ticket is not told, since nothing landed. A land that has not sent its merge ends with it; one whose
+     * merge answer was lost keeps reading, and reads the same close (§7.3).
+     */
     Outcome closedByHuman(String id,String delivery,long pullRequest) {
-        return new Outcome(409,"RED",require(id));
+        return underLock(id,(c,history,item)->{
+            if(Set.of("retired","completed").contains(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
+            if("stopped".equals(item.workflowStatus()) && "pr_closed_by_human".equals(item.reason()))return new Outcome(200,"close_already_recorded",item);
+            WorkExecution execution=item.progress().execution();
+            if(execution==null || execution.pullRequest()==null || execution.pullRequest().number()!=pullRequest)return new Outcome(409,"work_item_changed",item);
+            WorkItemEvent next=WorkItemLifecycle.pullRequestClosed(item);
+            store.appendDecision(c,history,next,"pr-closed:"+delivery);
+            try(PreparedStatement ps=c.prepareStatement(
+                    "UPDATE work_land_effect SET state='closed',reason=NULL,next_check_at=NULL,updated_at=now() WHERE work_item_id=? AND generation=? AND pr_number=? AND state IN ('pending','checking','waiting_checks')")) {
+                ps.setString(1,id);ps.setLong(2,item.generation());ps.setLong(3,pullRequest);ps.executeUpdate();
+            }
+            return new Outcome(200,next.reason(),next);
+        });
     }
     private static boolean landAttempt(WorkItemEvent item,UUID effect) {
         return "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && effect.equals(item.progress().attemptId());
