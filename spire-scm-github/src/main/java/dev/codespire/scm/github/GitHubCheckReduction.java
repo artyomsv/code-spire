@@ -84,7 +84,7 @@ final class GitHubCheckReduction {
     }
 
     private static boolean keep(Checks entry, List<FailedCheck> failed) {
-        return (entry == Checks.FAILED || entry == Checks.NOT_CODE) && failed.size() < MAX_FAILED;
+        return (entry == Checks.FAILED || entry == Checks.NOT_CODE);
     }
 
     private static FailedCheck failedRun(JsonNode run, Checks entry, Function<JsonNode, List<String>> annotations) {
