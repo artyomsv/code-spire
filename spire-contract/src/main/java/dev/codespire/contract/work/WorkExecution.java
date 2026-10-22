@@ -32,7 +32,7 @@ public record WorkExecution(String runId,WorkRunBinding build,String head,UUID v
             throw new IllegalArgumentException("A landing must name this execution's pull request");
     }
     /** Stored history and TEST-only drivers before M4: an attempt with no outcome. Delivery refuses it. */
-    public WorkExecution verified(UUID attempt) {return new WorkExecution(runId,build,head,Objects.requireNonNull(attempt),null,pullRequest,reviewId,landing);}
+    public WorkExecution verified(UUID attempt) {return new WorkExecution(runId,build,head,Objects.requireNonNull(attempt),null,pullRequest,reviewId,null);}
     public WorkExecution verified(WorkVerification result) {
         Objects.requireNonNull(result);
         if(!result.head().equals(head))throw new IllegalArgumentException("A verification of another head cannot verify this build");
