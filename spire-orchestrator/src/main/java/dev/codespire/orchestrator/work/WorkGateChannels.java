@@ -92,7 +92,7 @@ public class WorkGateChannels {
      */
     private void pullRequestClosed(WorkItemEvent item,IntegrationEvent.RepositoryActivity activity,String delivery) {
         String id=item.workItemId();
-        if(item.control()!=null && item.control().machine(activity.actorId()) || control.currentMachine(item.repositoryId(),activity.actorId())) {
+        if(item.control()!=null && item.control().machine(activity.actorId())) {
             receipt(id,"scm",delivery,"recorded_machine");return;
         }
         boolean merged="merged".equals(activity.kind());
