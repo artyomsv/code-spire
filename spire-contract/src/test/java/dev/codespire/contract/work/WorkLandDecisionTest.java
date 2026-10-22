@@ -59,6 +59,42 @@ class WorkLandDecisionTest {
         assertEquals("stopped",next.workflowStatus());assertEquals("pr_closed_by_human",next.reason());assertEquals("PULL_REQUEST_CLOSED",next.milestone());
         assertEquals("land",next.phase());assertFalse(next.progress().reserved());assertNull(next.progress().execution().landing());
     }
+    WorkItemEvent atLandGate(){
+        var waiting=atLand("approve",1);
+        var gated=WorkItemLifecycle.enter(waiting.decision(1,waiting.authority(),waiting.policy(),"land","awaiting_input","phase_completed","PHASE_COMPLETED",null,waiting.progress().reserve(false)),
+                waiting,4,false,Instant.EPOCH,true,UUID.randomUUID());
+        assertEquals("OPEN",gated.gate().state());
+        return gated;
+    }
+    /** A delivered item running another phase when the merge is seen: a fix build (§7.8) or a verify. */
+    WorkItemEvent activeIn(String phase){
+        var item=atLand("approve",1);
+        var progress=WorkProgress.empty().start(UUID.randomUUID(),phase,Instant.EPOCH).withExecution(item.progress().execution());
+        return item.decision(1,item.authority(),item.policy(),phase,"active","phase_started","PHASE_STARTED",null,progress);
+    }
+    // An open gate left on a terminal item would be expired later and turn the merged item into stopped/gate_expired.
+    @Test void landedSupersedesAnOpenGate(){
+        var gated=atLandGate();var next=WorkItemLifecycle.landed(gated,landing(42));
+        assertEquals("SUPERSEDED",next.gate().state());assertEquals(gated.gate().id(),next.gate().id());
+        assertEquals(gated.gate().version()+1,next.gate().version());
+    }
+    @Test void aClosedPullRequestSupersedesAnOpenGate(){
+        var gated=atLandGate();var next=WorkItemLifecycle.pullRequestClosed(gated);
+        assertEquals("SUPERSEDED",next.gate().state());assertEquals(gated.gate().id(),next.gate().id());
+    }
+    @Test void aResolvedGateIsCarriedUnchanged(){
+        var gated=atLandGate();var approved=WorkItemLifecycle.state(gated,"active","phase_started","PHASE_STARTED",gated.gate().resolve("APPROVED","TEST-operator","TEST-key",null),gated.progress());
+        assertEquals(approved.gate(),WorkItemLifecycle.landed(approved,landing(42)).gate());
+        assertEquals(approved.gate(),WorkItemLifecycle.pullRequestClosed(approved).gate());
+    }
+    // The run of another phase is still out; its late result must reach recordLateBuild, never result_already_applied.
+    @Test void landedLeavesAnotherPhasesAttemptOpenForItsLateResult(){
+        for(String phase:List.of("build","verify")) {
+            var item=activeIn(phase);var next=WorkItemLifecycle.landed(item,landing(42));
+            assertEquals("started",next.progress().attemptState(),phase);assertFalse(next.progress().reserved(),phase);
+            assertEquals(item.progress().attemptId(),next.progress().attemptId(),phase);assertEquals("completed",next.workflowStatus(),phase);
+        }
+    }
     @Test void landedInSeesOnlyThisGenerationAndPullRequest(){
         var item=atLand("approve",1);var landed=WorkItemLifecycle.landed(item,landing(42));
         var history=List.of(item,landed);

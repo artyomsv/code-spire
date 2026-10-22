@@ -5,6 +5,7 @@ import dev.codespire.contract.work.*;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.UUID;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestSecurity(user="TEST-land-admin",roles="spire-admin")
 class WorkLandReadmitIT extends WorkPreparedFixture {
     static final PullRequestRef PR=new PullRequestRef(901,"https://forge.example.test/TEST-pull/901",false);
+    @Inject WorkItemControl control;
 
     WorkItemEvent atLand(String id) {
         WorkItemEvent item=store.load(id);
@@ -46,6 +48,26 @@ class WorkLandReadmitIT extends WorkPreparedFixture {
         append(id,WorkItemLifecycle.landed(land,new WorkLanding(PR,"c".repeat(40),"squash",WorkLanding.FACTORY,Instant.EPOCH)));
         assertEquals("completed",store.load(id).workflowStatus());assertEquals("landed",store.load(id).reason());
         readmitRefused(id,"readmission_landed");
+    }
+    // The ticket stays open after a landing so testing can follow (§7.7); a tester's comment is not a takeover.
+    @Test void aTrackerCommentDoesNotSuspendALandedItem() throws Exception {
+        String id=admit("autonomous",84);WorkItemEvent land=atLand(id);append(id,land);
+        append(id,WorkItemLifecycle.landed(land,new WorkLanding(PR,"c".repeat(40),"squash",WorkLanding.FACTORY,Instant.EPOCH)));
+        long revision=store.history(id).size();
+        control.suspend(id,"tracker","TEST-land-comment","TEST-tester",null);
+        assertEquals(revision,store.history(id).size());
+        assertEquals("completed",store.load(id).workflowStatus());assertEquals("landed",store.load(id).reason());
+    }
+    // An item suspended after its landing (recorded before this guard, or merged by hand while suspended) keeps its refusal.
+    @Test void aLandedSuspendedItemCannotBeResumed() throws Exception {
+        String id=admit("autonomous",85);WorkItemEvent land=atLand(id);append(id,land);
+        WorkItemEvent landed=WorkItemLifecycle.landed(land,new WorkLanding(PR,"c".repeat(40),"squash",WorkLanding.FACTORY,Instant.EPOCH));
+        append(id,landed);
+        append(id,WorkItemLifecycle.state(landed,"suspended","human_takeover","HUMAN_TAKEOVER",null,landed.progress().reserve(false)));
+        long revision=store.history(id).size();long generation=store.load(id).generation();
+        var outcome=transitions.resumeControlled(id,revision,transitions.observe(store.load(id)),"TEST-operator","TEST-note","b".repeat(40));
+        assertEquals(409,outcome.status());assertEquals("readmission_landed",outcome.reason());
+        assertEquals(revision,store.history(id).size());assertEquals(generation,store.load(id).generation());
     }
     @Test void aHandedItemCannotBeReadmitted() throws Exception {
         String id=admit("autonomous",82);WorkItemEvent land=atLand(id);append(id,land);
