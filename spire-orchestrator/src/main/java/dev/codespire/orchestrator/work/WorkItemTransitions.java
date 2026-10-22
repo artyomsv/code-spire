@@ -184,9 +184,9 @@ public class WorkItemTransitions {
                 if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
                 // A merged pull request cannot be built again beside itself; a handed item goes on with Retry land (spec §7.9).
                 if(readmit && landed(history,item))return new Outcome(409,"readmission_landed",item);
-                // Waiting at land for any reason, a hand-off or not, leaves the delivered pull request open: a close stops
-                // the item, so only a stopped or failed land may build again (A8).
-                if(readmit && "land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable").contains(item.workflowStatus()))
+                // Waiting at land for any reason, a hand-off, a land that cannot merge here or one switched off, leaves the
+                // delivered pull request open: a close stops the item, so only a stopped or failed land may build again (A8).
+                if(readmit && "land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable","not_eligible").contains(item.workflowStatus()))
                     return new Outcome(409,"readmission_land_pending",item);
                 // A land fix waiting for a person still has its pull request open; readmit would build a second one beside it.
                 if(readmit && landFix)return new Outcome(409,"readmission_land_pending",item);
@@ -345,11 +345,14 @@ public class WorkItemTransitions {
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist retry land",failure);}
         });
     }
-    /** Stop on an item land handed over (spec §7.6): the item ends and the pull request is left as it is. */
+    /**
+     * Stop on an item land handed over (spec §7.6), or one waiting at land where land cannot merge or is off, which
+     * nothing else moves on (review of slice 9): the item ends and the pull request is left as it is.
+     */
     Outcome stopLandControlled(String id,long expected,String subject,String note) {
         return underLock(id,(c,history,item)->{
             if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
-            if(!WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_unavailable",item);
+            if(!WorkItemLifecycle.landStoppable(item))return new Outcome(409,"retry_land_unavailable",item);
             WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
             WorkItemEvent next=WorkItemLifecycle.landStopped(item).controlled(recorded.action(subject,note,null));
             store.appendDecision(c,history,next,"stop-land:"+UUID.randomUUID());
@@ -466,8 +469,8 @@ public class WorkItemTransitions {
             if(WorkItemLifecycle.landedIn(facts,item.generation(),pullRequest))return new Outcome(200,"landing_already_recorded",item);
             WorkExecution execution=item.progress().execution();
             if(execution==null || execution.pullRequest()==null || execution.pullRequest().number()!=pullRequest)return new Outcome(409,"work_item_changed",item);
-            String method=dev.codespire.orchestrator.factory.LandSettings.wire(landSettings.get(c,item.repositoryId(),false).mergeMethod());
-            WorkLanding landing=new WorkLanding(execution.pullRequest(),pr.mergeCommitSha(),method,merger,clock.now());
+            // GitHub's pull request read does not say which method a person used, and the saved setting is no evidence of it.
+            WorkLanding landing=new WorkLanding(execution.pullRequest(),pr.mergeCommitSha(),WorkLanding.UNKNOWN_METHOD,merger,clock.now());
             WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
             store.appendDecision(c,history,next,"land-webhook:"+delivery);
             UUID effect=landingEffect(c,next,landing,pr.headSha()==null?execution.head():pr.headSha());

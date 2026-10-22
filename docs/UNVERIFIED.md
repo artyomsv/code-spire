@@ -188,6 +188,18 @@ refuses a landed item (`readmission_landed`), and
 capability_unavailable` item #43 was (`readmission_land_pending`). Everything below is proven against a
 WireMock GitHub and a local origin only; no item has been merged live yet (`factory/LAND-ACCEPTANCE.md`
 when it lands).
+- **Land that cannot merge is a stop, not a path.** On GitLab and Bitbucket, and on a GitHub repository
+  with no FACTORY account or with land `auto_if_green`, every item that reaches land waits at `land /
+  capability_unavailable`; switching land `off` leaves it at `land / not_eligible / land_off`. Readmit is
+  refused at both and Retry land needs a hand-off, so Stop land is the only way on
+  (`WorkLandReadmitIT.anItemWhoseLandIsUnavailableCanBeStoppedThenReadmitted`,
+  `…anItemWhoseLandIsOffCannotBeReadmittedButCanBeStopped`). A readmit after that Stop builds the work again
+  beside the delivered pull request, which is still open; closing or reusing it is the operator's job.
+- **The merge method is a fact only for the factory's own merge.** `WorkLanding.method` is the method the
+  factory sent, kept on the row when the merge is claimed, so a lost answer recovered after the setting
+  changed records what was sent (`WorkLandingIT.anUncertainMergeRecordsTheMethodItSent`). A merge a person
+  made, or one a re-read found made by someone else, records `unknown`: GitHub's pull request read does not
+  report the method. Nothing reads back whether GitHub merged with the method that was sent.
 - **A merge by hand with no webhook is noticed only by a land row's read.** With no webhook registered,
   or a missed delivery, nothing observes the merge until a `work_land_effect` row reads the pull request.
   An item at its land gate, or handed over, has no row reading, so it waits on a merged pull request until

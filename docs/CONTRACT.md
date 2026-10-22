@@ -52,7 +52,7 @@ head/policy evidence, and a new generation. Retired items cannot resume. See the
 | `LAND_HANDED` | `land / awaiting_input / <hand-off reason>`, no gate | anything else land cannot finish (below) |
 | `PULL_REQUEST_CLOSED` | `stopped / pr_closed_by_human` | a person closed the pull request unmerged, or the land effect read it closed |
 | `LAND_RETRY_REQUESTED` | `land / waiting_approval`, a fresh gate on `execution.head()` | Retry land on a handed item |
-| `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item |
+| `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item, or on one at `land / capability_unavailable` or `land / not_eligible` |
 
 Hand-off reasons: `land_head_moved`, `land_checks_timeout`, `land_checks_not_code`, `land_blocked`,
 `land_pr_draft`, `land_merge_refused`, `land_merge_method_not_allowed`, `land_fix_attempts_exhausted`,
@@ -67,7 +67,9 @@ request's head is not the verified head). `POST /api/work-items/{id}/retry-land`
 Wire changes, each through a wither or an enumerating constructor next to its record:
 
 - `WorkExecution.landing` is a `WorkLanding(pullRequest, mergeCommit, method, mergedBy, landedAt)`.
-  `mergedBy` is `factory` or the person's stable provider id, never a login.
+  `mergedBy` is `factory` or the person's stable provider id, never a login. `method` is what the factory
+  sent with its merge, or `unknown` for a merge it did not make: GitHub's pull request read does not report
+  a person's method, and the repository's setting is no evidence of it.
 - `RepositoryActivity.mergedBy`, for kind `merged` only, is GitHub's `pull_request.merged_by.id`, not the
   sender. GitHub's `pull_request closed` maps to kind `merged` or `closed` instead of `push`.
 - `WorkPublicationPermit.expectedRemoteHead` and `mergedBaseTip` (set together by `onExistingBranch`): a land

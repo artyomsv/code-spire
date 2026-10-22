@@ -186,14 +186,15 @@ public class WorkLandSweep {
     }
 
     private void merge(Effect effect, Target target) {
-        if (!claimMerge(effect)) return;
+        String method = LandSettings.wire(target.method());
+        if (!claimMerge(effect, method)) return;
         Effect sent = effect.at("uncertain");
         MergeOutcome outcome;
         try { outcome = target.lander().merge(target.repo(), effect.pullRequest(), effect.approvedHead(), target.method()); }
         catch (RuntimeException lost) { note(sent, "merge_outcome_unknown"); return; }
         switch (outcome) {
             case MergeOutcome.Merged merged -> {
-                markMerged(sent, merged.sha(), WorkLanding.FACTORY, effect.approvedHead(), target);
+                markMerged(sent, merged.sha(), WorkLanding.FACTORY, effect.approvedHead(), method);
                 advance(effect.id());
             }
             // The row stays uncertain: the next pass only reads.
@@ -206,15 +207,16 @@ public class WorkLandSweep {
     /**
      * Commits {@code uncertain} before the merge call, under the item lock, and only while the item is still at
      * this attempt: a takeover that refused the row first wins, and a merge that was claimed is never re-sent blind.
+     * The method sent is kept with the claim, so a recovery on a later pass records it, not the setting saved then.
      */
-    private boolean claimMerge(Effect effect) {
+    private boolean claimMerge(Effect effect, String method) {
         return QuarkusTransaction.requiringNew().call(() -> {
             try (Connection c = dataSource.getConnection()) {
                 WorkItemTransitions.lockItem(c, effect.item());
                 if (!atAttempt(store.load(effect.item()), effect)) return false;
                 try (PreparedStatement ps = c.prepareStatement(
-                        "UPDATE work_land_effect SET state='uncertain',reason=NULL,next_check_at=NULL,failing_since=NULL,updated_at=now() WHERE effect_id=? AND state=?")) {
-                    ps.setObject(1, effect.id()); ps.setString(2, effect.state());
+                        "UPDATE work_land_effect SET state='uncertain',reason=NULL,method=?,next_check_at=NULL,failing_since=NULL,updated_at=now() WHERE effect_id=? AND state=?")) {
+                    ps.setString(1, method); ps.setObject(2, effect.id()); ps.setString(3, effect.state());
                     return ps.executeUpdate() == 1;
                 }
             } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
@@ -253,7 +255,9 @@ public class WorkLandSweep {
         if (pr == null) { failed(effect, "land_read_failed"); return; }
         if (pr.merged()) {
             if (!factoryMerge(effect, item, target, pr)) { found(effect, pr, pr.mergedBy()); return; }
-            if (markMerged(effect, pr.mergeCommitSha(), WorkLanding.FACTORY, pr.headSha(), target)) advance(effect.id());
+            // A row claimed before the method was kept with the claim names none.
+            String sent = effect.method() == null ? WorkLanding.UNKNOWN_METHOD : effect.method();
+            if (markMerged(effect, pr.mergeCommitSha(), WorkLanding.FACTORY, pr.headSha(), sent)) advance(effect.id());
             return;
         }
         if ("closed".equals(pr.state())) { settle(effect, new Next.Closed(), pr, null); return; }
@@ -276,18 +280,20 @@ public class WorkLandSweep {
         return merger.equals(target.factoryId()) || item.control() != null && merger.equals(item.control().factoryActor());
     }
 
-    /** A merge someone else made, or one this effect's re-read found: GitHub names the merger. */
+    /**
+     * A merge someone else made, or one this effect's re-read found: GitHub names the merger, but not the method, so
+     * none is claimed.
+     */
     private void found(Effect effect, LandState pr, String mergedBy) {
-        if (markMerged(effect, pr.mergeCommitSha(), mergedBy, pr.headSha(), null)) advance(effect.id());
+        if (markMerged(effect, pr.mergeCommitSha(), mergedBy, pr.headSha(), WorkLanding.UNKNOWN_METHOD)) advance(effect.id());
     }
 
-    /** @param target the factory's merge, recorded with the saved method; null for a found merge, recorded likewise */
-    private boolean markMerged(Effect effect, String sha, String mergedBy, String head, Target target) {
+    /** @param method the method the factory sent for its own merge; {@link WorkLanding#UNKNOWN_METHOD} for any other */
+    private boolean markMerged(Effect effect, String sha, String mergedBy, String head, String method) {
         if (sha == null || !sha.matches("[0-9a-f]{40}") || mergedBy == null || mergedBy.isBlank()) {
             failed(effect, "land_merge_unreadable");
             return false;
         }
-        String method = LandSettings.wire(target == null ? settings.get(store.load(effect.item()).repositoryId()).mergeMethod() : target.method());
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 UPDATE work_land_effect SET state='merged',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?

@@ -209,17 +209,31 @@ public final class WorkItemLifecycle {
                 now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
         return state(item,"waiting_approval","approval_required","LAND_RETRY_REQUESTED",gate,item.progress().reserve(true));
     }
-    /** Stop on a handed item (§7.6): it ends there. The pull request is left as it is, so the execution is kept. */
+    /**
+     * Stop at land (§7.6): the item ends there. The pull request is left as it is, so the execution is kept. A gate the
+     * item still holds is superseded, so its expiry cannot overwrite why the item ended.
+     */
     public static WorkItemEvent landStopped(WorkItemEvent item) {
-        requireHanded(item);
-        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",null,item.progress().reserve(false));
+        if(!landStoppable(item))throw new IllegalStateException("Only an item waiting at land can stop land, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
+        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",superseded(item.gate(),"land_stopped"),item.progress().reserve(false));
+    }
+    /**
+     * Statuses at land where the delivered pull request is still open and nothing moves the item on: land cannot merge
+     * on this forge or for this repository, or land is off. Readmit there would build beside the open pull request
+     * (A8), so Stop is the way out, as for a hand-off (review of slice 9).
+     */
+    public static final java.util.Set<String> LAND_STOPPABLE_STATUSES=java.util.Set.of("capability_unavailable","not_eligible");
+    /** Whether Stop land may end this item: handed over, or waiting at land in one of {@link #LAND_STOPPABLE_STATUSES}. */
+    public static boolean landStoppable(WorkItemEvent item) {
+        return landHandedOver(item) || "land".equals(item.phase()) && LAND_STOPPABLE_STATUSES.contains(item.workflowStatus());
     }
     /** Whether land handed this item to the operator, where Retry land and Stop are the only ways on. */
     public static boolean landHandedOver(WorkItemEvent item) {
         return "land".equals(item.phase()) && "awaiting_input".equals(item.workflowStatus()) && LAND_HANDOFF_REASONS.contains(item.reason());
     }
     private static void requireHanded(WorkItemEvent item) {
-        if(!landHandedOver(item))throw new IllegalStateException("Only an item land handed over can retry or stop land, not "
+        if(!landHandedOver(item))throw new IllegalStateException("Only an item land handed over can retry land, not "
                 +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
     }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {

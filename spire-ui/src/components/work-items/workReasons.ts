@@ -129,7 +129,7 @@ const REASONS = new Map(Object.entries({
   land_fix_run_failed: 'The build that was fixing the pull request failed. Look at its run, then retry land or stop.',
   land_fix_stopped: 'The fix stopped before land could be approved again; the land step names why. Fix the cause, then retry land or stop.',
   retry_land_required: 'Land handed this item to you, so it goes on with Retry land, which records your note, or Stop. Recheck would open land again without either.',
-  retry_land_unavailable: 'Retry land and Stop are for an item land handed to you, and this item is not waiting there. Read it again.',
+  retry_land_unavailable: 'Retry land is for an item land handed to you, and Stop for an item waiting at land; this item is not waiting there. Read it again.',
   retry_land_head_unavailable: 'The pull request could not be read on GitHub, so it is unknown whether it still holds the approved head. Nothing changed; try again.',
   land_stopped_by_operator: 'Stopped at land by an operator. The pull request stays open; re-admitting builds the work again on a new pull request.',
   readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',

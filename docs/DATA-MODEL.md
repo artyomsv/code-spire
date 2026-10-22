@@ -33,7 +33,7 @@ run ID and binding digest. It deliberately has no execution-row FK: a hold may a
 execution command. Its durable refusal is independent of the M1 cancel claim. In-flight publication
 outcomes remain recorded without completing a suspended work-item phase.
 
-## Land (M4 slice 2, ADR-048, orchestrator V90–V94)
+## Land (M4 slice 2, ADR-048, orchestrator V90–V95)
 
 V90 adds `repository_land_settings`, one row per repository with `revision`, `updated_by` and `updated_at`
 like `repository_build_defaults`: `merge_method` (`merge`, `squash`, `rebase`), `ticket_rule` (`comment`,
@@ -59,6 +59,9 @@ rule is still `close` and after the comment. Invalidating milestones refuse only
 V94 adds `work_land_observation`, keyed by item, generation and pull request: a merge webhook whose pull
 request read failed or did not show the merge yet. It is written with the delivery receipt, read again by
 every land sweep, and deleted once settled or once the item is retired, completed or in a newer generation.
+
+V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
+recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
 ## M3 repository ownership (ADR-042, slices 1–2)
 

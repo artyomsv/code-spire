@@ -56,7 +56,7 @@ public class WorkItemControl {
         if(pullRequest==null || pullRequest.headSha()==null)return new WorkItemTransitions.Outcome(503,"retry_land_head_unavailable",reference);
         return transitions.retryLandControlled(id,expected,observed,subject,note,pullRequest.headSha());
     }
-    /** Stop on an item land handed over (spec §7.6). Nothing is read or written on the forge: the pull request stays open. */
+    /** Stop on an item waiting at land (spec §7.6, review of slice 9). Nothing is read or written on the forge: the pull request stays open. */
     public WorkItemTransitions.Outcome stopLand(String id,long expected,String subject,String note) {
         landCommand(id,subject,note);
         return transitions.stopLandControlled(id,expected,subject,note);

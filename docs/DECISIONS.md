@@ -41,10 +41,12 @@ operator's decisions and section 10 the review amendments.
 - **Handed over means the operator.** `LAND_HANDED` leaves the item at `land / awaiting_input / <reason>` with
   no gate. The operator retries land, which opens a fresh gate on the verified and reviewed head and is
   refused when the pull request moved, or stops it. Both need a verified operator and a note. An approval
-  resolved before a hand-off is never reused.
+  resolved before a hand-off is never reused. Stop also ends an item at `land / capability_unavailable` or
+  `land / not_eligible`, which nothing else moves on.
 - **The merge completes the item.** `WORK_ITEM_LANDED` records the pull request, merge commit, method, merger
   (`factory`, or the stable provider id GitHub names in `merged_by`) and time, and the item is `completed /
-  landed`. The branch delete (only while the ref still reads the merged head, three tries) and the ticket
+  landed`. The method is the one the factory sent, kept on the row when the merge is claimed; a merge the
+  factory did not make records `unknown`, because GitHub's pull request read does not report it. The branch delete (only while the ref still reads the merged head, three tries) and the ticket
   follow it and never hold completion.
 - **A person's merge or close is a fact, not a takeover.** GitHub's `pull_request closed` becomes activity
   `merged` or `closed`. A person's merge lands the item with that person as merger, also during a land fix,
@@ -56,7 +58,8 @@ operator's decisions and section 10 the review amendments.
   GitHub Issues and GitLab. A Jira source under `close` keeps its status and the item notes
   `ticket_close_unsupported`. These `post_land` outbox rows drain whatever the item's phase.
 - **No readmit after land.** A landed item refuses readmission with `readmission_landed`. An item waiting at
-  land, or inside a land fix, with its pull request open refuses with `readmission_land_pending`.
+  land (handed over, land unavailable, or land off), or inside a land fix, with its pull request open refuses
+  with `readmission_land_pending`.
 
 **Consequences.**
 - The merge method, ticket rule and fix attempts (`repository_land_settings`) are facts about the repository,
@@ -65,6 +68,10 @@ operator's decisions and section 10 the review amendments.
   the read and the delete goes with the branch (`docs/UNVERIFIED.md` §E). Nothing relies on the delete to stop
   a late push; the sha-pinned merge is the guard.
 - A person's merge with no webhook is noticed only when a land row reads the pull request.
+- Where land cannot merge (GitLab, Bitbucket, no FACTORY account, `auto_if_green`) or is off, an item that
+  reaches land waits there, and Stop land is its only way on. A readmit after that Stop builds the work
+  again beside the delivered pull request, which is still open (`docs/UNVERIFIED.md`, M4 land).
+- The recorded method is an observation only for the factory's own merge; a person's merge records `unknown`.
 - Each fix is a build run: the seat or key pricing, the spend checks and `maxRunsPerItem` apply to it.
 
 **Rejected.**

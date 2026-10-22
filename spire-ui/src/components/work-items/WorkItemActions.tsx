@@ -32,7 +32,7 @@ export default function WorkItemActions({ item, started, changed }: Props) {
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(null); }
   }
-  /** Retry land or Stop on an item land handed over (spec §7.6); both record the operator and the note. */
+  /** Retry land or Stop on an item waiting at land (spec §7.6); both record the operator and the note. */
   async function land(action: 'retry' | 'stop') {
     const number = started(); setBusy(action); setError('');
     try {
@@ -66,7 +66,10 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // Readmit is refused at land whenever the item waits, handed or not: its delivered pull request is still open (A8).
   const landed = item.workflowStatus === 'completed' && item.progress?.execution?.landing != null;
   const handedAtLand = item.phase === 'land' && item.workflowStatus === 'awaiting_input' && LAND_HANDOFF_REASONS.includes(item.reason);
-  const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
+  const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable', 'not_eligible'].includes(item.workflowStatus);
+  // Land that cannot merge here, or that is off, leaves the pull request open with nothing else to move the item on, so
+  // Stop ends it there as after a hand-off. Retry land stays for a hand-off: it opens a land gate, which land here cannot.
+  const stoppableAtLand = handedAtLand || (item.phase === 'land' && ['capability_unavailable', 'not_eligible'].includes(item.workflowStatus));
   const canResume = !handedAtLand && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
   const fixing = item.land?.fixInProgress === true;
@@ -86,16 +89,16 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const attempted = (item.builds ?? []).some(build => build.generation === item.generation);
   const canCompose = !attempted
     && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
-  if (!canResume && !canReadmit && !canCompose && !handedAtLand) return null;
+  if (!canResume && !canReadmit && !canCompose && !stoppableAtLand) return null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">
       <textarea aria-label="Resume note" disabled={busy !== null} value={note} onChange={event => setNote(event.target.value)} /></SettingField>}
-    {handedAtLand && <SettingField label="Land note" scope="work item" hint="Required. Why land may be tried again, or why it stops here; recorded with the item. Stop leaves the pull request open, and re-admitting afterwards builds the work again.">
+    {stoppableAtLand && <SettingField label="Land note" scope="work item" hint="Required. Why land may be tried again, or why it stops here; recorded with the item. Stop leaves the pull request open, and re-admitting afterwards builds the work again.">
       <textarea aria-label="Land note" disabled={busy !== null} value={landNote} onChange={event => setLandNote(event.target.value)} /></SettingField>}
     <div className="prov-actions">
       {handedAtLand && <button className="btn sm" type="button" disabled={busy !== null || !landNote.trim()} onClick={() => void land('retry')}>
         {busy === 'retry' ? 'Retrying land…' : 'Retry land'}</button>}
-      {handedAtLand && <button className="btn-ghost danger sm" type="button" disabled={busy !== null || !landNote.trim()} onClick={() => void land('stop')}>
+      {stoppableAtLand && <button className="btn-ghost danger sm" type="button" disabled={busy !== null || !landNote.trim()} onClick={() => void land('stop')}>
         {busy === 'stop' ? 'Stopping…' : 'Stop land'}</button>}
       {canResume && <button className="btn sm" type="button" disabled={busy !== null || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}

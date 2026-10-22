@@ -37,7 +37,9 @@ failed check, a conflict, a branch behind its base) goes back through build, ver
 new land gate, within the repository's fix attempts; the build and deliver gates are skipped on that loop
 because the new land approval is the human check. Anything else is handed to the operator with GitHub's
 reason, and the operator retries land or stops the item. The ticket gets a comment and keeps its status
-unless the repository chose to close it. Other forges keep `land / capability_unavailable`.
+unless the repository chose to close it. Other forges, and a GitHub repository with no FACTORY account or
+with `auto_if_green`, end at `land / capability_unavailable`; the operator stops the item there, and a
+readmit after that builds beside the pull request that is still open.
 
 ### Why steps are vertical slices
 

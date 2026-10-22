@@ -10,12 +10,14 @@ import java.util.Set;
  * completes the item and refuses readmission (§7.9); the ticket and the branch delete come after it.
  *
  * @param mergeCommit the full commit the forge merged as
- * @param method the merge method used: merge, squash or rebase
+ * @param method the method the factory sent with its merge: merge, squash or rebase; {@link #UNKNOWN_METHOD} for a merge
+ *        it did not make, because the forge's pull request read does not report which method a person used
  * @param mergedBy {@link #FACTORY} when the land effect merged, else the person's stable provider id, never a login
  */
 public record WorkLanding(PullRequestRef pullRequest, String mergeCommit, String method, String mergedBy, Instant landedAt) {
     public static final String FACTORY = "factory";
-    public static final Set<String> METHODS = Set.of("merge", "squash", "rebase");
+    public static final String UNKNOWN_METHOD = "unknown";
+    public static final Set<String> METHODS = Set.of("merge", "squash", "rebase", UNKNOWN_METHOD);
 
     public WorkLanding {
         Objects.requireNonNull(pullRequest, "A landing names its pull request");
