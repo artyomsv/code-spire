@@ -46,6 +46,8 @@ public final class PublishCycle {
 
     private final PublicationPolicy publication;
 
+    private final String landingBranch;
+
     private boolean published;
 
     public PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
@@ -57,6 +59,16 @@ public final class PublishCycle {
     PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                  long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome,
                  PublicationPolicy publication) {
+        this(repo, baseCommit, branch, profileGlobs, bundleMaxBytes, credential, outcome, publication, null);
+    }
+
+    /**
+     * {@code landingBranch} is the pull request destination an existing-branch push lands on, or null when the
+     * push opens a new branch. With it the gate also judges what landing the head changes.
+     */
+    PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
+                 long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome,
+                 PublicationPolicy publication, String landingBranch) {
         this.repo = repo;
         this.baseCommit = baseCommit;
         this.branch = branch;
@@ -65,6 +77,20 @@ public final class PublishCycle {
         this.credential = credential;
         this.outcome = outcome;
         this.publication = publication;
+        this.landingBranch = landingBranch;
+    }
+
+    /**
+     * Where the head would land: the permit's merged base tip when there is one, else the destination as this
+     * process's own clone holds it. A fix without a base tip excuses nothing, yet its agent can still merge the
+     * base and revert it without differing from the approved head.
+     */
+    private String landingTip() throws IOException {
+        if (publication.mergedBaseTip() != null || landingBranch == null) {
+            return publication.mergedBaseTip();
+        }
+        return repo.localHead(landingBranch).orElseThrow(() -> new BaseTipUnavailableException(
+                "the pull request's base " + landingBranch + " is not in the publisher's clone"));
     }
 
     /**
@@ -81,7 +107,7 @@ public final class PublishCycle {
             if (!publication.selects(sha)) {
                 return true;
             }
-            changes = repo.changesSince(baseCommit, sha, publication.mergedBaseTip());
+            changes = repo.changesSince(baseCommit, sha, publication.mergedBaseTip(), landingTip());
         } catch (BaseTipUnavailableException unavailable) {
             // Not an unreadable bundle to skip: the permit's base tip cannot excuse anything, so nothing is pushed.
             outcome.failed("BASE_TIP_UNAVAILABLE", unavailable.getMessage());

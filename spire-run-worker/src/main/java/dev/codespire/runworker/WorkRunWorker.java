@@ -209,7 +209,7 @@ public class WorkRunWorker {
         String previous=command.execution().startFromRunId();
         if(previous==null || localUnit(previous).isPresent())return command;
         LOG.warnf("run %s: the checkpoint of %s is gone; the retried build starts from the base",command.runId(),previous);
-        return new RunCommand.ExecuteWorkRun(command.execution().fromBaseInstead(BASE_FALLBACK_NOTE),command.work());
+        return command.withExecution(command.execution().fromBaseInstead(BASE_FALLBACK_NOTE));
     }
 
     public void flushResults() {

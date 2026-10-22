@@ -275,11 +275,22 @@ public sealed interface RunCommand {
         }
     }
 
-    /** A distinct discriminator prevents an old worker from treating a held build as an automatic push. */
-    record ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) implements RunCommand {
+    /**
+     * A distinct discriminator prevents an old worker from treating a held build as an automatic push.
+     *
+     * <p>{@code mergedBaseTip} is a land fix's pull request base as the orchestrator read it (M4 slice 7a), null for
+     * every other build. The held build gates the base merge before any permit exists, so it excuses the same tip the
+     * permit will; like the permit's, it never comes from the workspace.
+     */
+    record ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work,
+                          String mergedBaseTip) implements RunCommand {
         static final String ITEM_BRANCH_PREFIX="spire/work-";
         public ExecuteWorkRun(ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) {
-            this(execution.runId(),execution,work);
+            this(execution.runId(),execution,work,null);
+        }
+        /** Every build written before a land fix could merge its base. One already on the bus decodes with no tip. */
+        public ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) {
+            this(runId,execution,work,null);
         }
         public ExecuteWorkRun {
             Objects.requireNonNull(execution,"Build execution is required");
@@ -288,7 +299,14 @@ public sealed interface RunCommand {
             // A land fix (M4 slice 7a) pushes to the item's own pull request branch; never to any other existing branch.
             if(execution.existingBranch() && !execution.branch().startsWith(ITEM_BRANCH_PREFIX))
                 throw new IllegalArgumentException("Prepared item builds may push only to their own existing "+ITEM_BRANCH_PREFIX+" branch");
+            if(mergedBaseTip!=null && !execution.existingBranch())
+                throw new IllegalArgumentException("Only a build on the item's own branch merges its pull request base");
+            if(mergedBaseTip!=null && !mergedBaseTip.matches("[0-9a-f]{40}"))
+                throw new IllegalArgumentException("A merged base tip must be a full commit sha");
         }
+        public ExecuteWorkRun withMergedBaseTip(String tip){return new ExecuteWorkRun(runId,execution,work,tip);}
+        /** The same build over another execution of the same run; the base tip is the orchestrator's and stays. */
+        public ExecuteWorkRun withExecution(ExecuteRun next){return new ExecuteWorkRun(runId,next,work,mergedBaseTip);}
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }

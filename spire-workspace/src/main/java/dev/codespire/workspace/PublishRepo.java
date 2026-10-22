@@ -251,15 +251,38 @@ public final class PublishRepo implements AutoCloseable {
      * <p>A diff against the approved head shows only what differs from it, and after a base merge that is not
      * what landing changes: an agent that puts back the approved head's workflow, or deletes one the base added,
      * leaves no entry while the landing reverts the base. So the paths {@link #landingChanges} finds are judged
-     * too.
+     * too, landing on {@code mergedBaseTip}.
      *
      * @throws BaseTipUnavailableException when the tip is missing or not merged into {@code sha}
      */
     public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException {
-        ChangeSet changes = changesSince(baseCommit, sha);
-        if (mergedBaseTip == null) {
-            return changes;
+        return changesSince(baseCommit, sha, mergedBaseTip, mergedBaseTip);
+    }
+
+    /**
+     * {@link #changesSince(String, String, String)} with the landing judged on {@code landingTip}, which may be set
+     * when {@code mergedBaseTip} is not. A fix that carries no base tip excuses nothing, but its agent can still
+     * merge the base and revert it; the publisher then lands it on the base as its own clone holds it. A null
+     * {@code landingTip} judges no landing.
+     *
+     * @throws BaseTipUnavailableException when a tip is missing, the merged tip is not merged into {@code sha}, or
+     *         {@code sha} shares no history with the landing tip
+     */
+    public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip, String landingTip)
+            throws IOException {
+        List<ChangedPath> agents = new ArrayList<>(mergedBaseTip == null
+                ? changesSince(baseCommit, sha).paths()
+                : excludingTheBase(baseCommit, sha, mergedBaseTip));
+        if (landingTip != null) {
+            agents.addAll(landingChanges(baseCommit, sha, landingTip, agents));
         }
+        return new ChangeSet(agents);
+    }
+
+    /** The paths changed since {@code baseCommit} that the merge of {@code mergedBaseTip} did not bring. */
+    private List<ChangedPath> excludingTheBase(String baseCommit, String sha, String mergedBaseTip)
+            throws IOException {
+        ChangeSet changes = changesSince(baseCommit, sha);
         Repository repo = git.getRepository();
         List<ChangedPath> agents = new ArrayList<>();
         try (RevWalk walk = new RevWalk(repo)) {
@@ -275,8 +298,18 @@ public final class PublishRepo implements AutoCloseable {
                 }
             }
         }
-        agents.addAll(landingChanges(baseCommit, sha, mergedBaseTip, agents));
-        return new ChangeSet(agents);
+        return agents;
+    }
+
+    /**
+     * The sha {@code refs/heads/<branch>} points at in this clone, or empty when the clone has no such branch.
+     *
+     * <p>The clone fetched every branch of the remote, so a land fix's publisher holds its pull request's base
+     * as the forge had it at clone time, read by this process rather than by anything in the workspace.
+     */
+    public Optional<String> localHead(String branch) throws IOException {
+        Ref ref = git.getRepository().getRefDatabase().exactRef(Constants.R_HEADS + branch);
+        return ref == null || ref.getObjectId() == null ? Optional.empty() : Optional.of(ref.getObjectId().name());
     }
 
     /**
