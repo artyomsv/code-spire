@@ -19,6 +19,7 @@ public class WorkRunDispatcher {
     @Inject WorkRunAssembly assembly;
     @Inject FactoryRunProjection runs;
     @Inject WorkRunTransport transport;
+    @Inject WorkLandFixes landFixes;
 
     @Scheduled(every="${spire.work-run-interval:5s}",concurrentExecution=Scheduled.ConcurrentExecution.SKIP)
     public void drain() {
@@ -74,7 +75,9 @@ public class WorkRunDispatcher {
             if(refusal==null && !transport.available())refusal="publication_hold_unavailable";
             if(refusal!=null) { stop(c,history,item,attempt,refusal);return null; }
             WorkRunAssembly.Prepared prepared;
-            try { prepared=assembly.assemble(c,observed.source(),item,observed.artifacts()); }
+            // A land fix builds on its own pull request's branch from the approved head (A7); null for every other build.
+            WorkLandFixes.Fix fix=landFixes.current(c,history).orElse(null);
+            try { prepared=assembly.assemble(c,observed.source(),item,observed.artifacts(),fix); }
             catch(IllegalStateException | jakarta.ws.rs.BadRequestException unavailable) {
                 // The assembly names the rule that refused. Collapsing every cause into one word left an
                 // approved plan stopping with nothing to act on, so a known reason is kept as it came.

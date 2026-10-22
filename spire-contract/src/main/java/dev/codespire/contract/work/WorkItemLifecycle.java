@@ -58,31 +58,68 @@ public final class WorkItemLifecycle {
         return events.isEmpty() ? null : events.getLast();
     }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
+        return enter(item,previous,historySize,approved,now,available,decisionId,false);
+    }
+    /**
+     * @param landFix whether this generation's latest land fix is still in progress ({@link #landFixInProgress}). The
+     *     decider sees no history, so the caller derives it under the item lock (A9). During a fix the build and deliver
+     *     gates are skipped, because the new land approval is the one human check (operator, 2026-10-21), and a build
+     *     keeps the pull request it fixes. Verify and land keep their gates.
+     */
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,boolean landFix) {
         if(item.policy().selected()==null)return state(item,"not_eligible",item.policy().reason(),"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("complete".equals(item.phase()))return state(item,"completed","all_phases_completed","WORK_ITEM_COMPLETED",item.gate(),item.progress().reserve(false));
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        if("approve".equals(mode) && !approved) {
+        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
+        if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }
-        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId);
+        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,landFix);
         if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
             return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
-        return state(item,"active","phase_started","PHASE_STARTED",item.gate(),item.progress().start(decisionId,item.phase(),now));
+        WorkProgress started=landFix && "build".equals(item.phase())?item.progress().startKeepingExecution(decisionId,item.phase(),now)
+                :item.progress().start(decisionId,item.phase(),now);
+        return state(item,"active","phase_started","PHASE_STARTED",item.gate(),started);
     }
 
-    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,boolean landFix) {
-        return enter(item,previous,historySize,approved,now,available,decisionId);
+    /** The refusals a land fix answers (spec §7.5): they rewind to build instead of handing the item over. */
+    public static final java.util.Set<String> LAND_FIX_REASONS=java.util.Set.of("land_checks_failed","land_conflict","land_branch_behind");
+    /** The fixes that spend an attempt; a branch behind its base is merged up for free (§7.5). */
+    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of("land_checks_failed","land_conflict");
+    /** What ends a land fix, beside the next land gate: the merge, a hand-off, a close, or a new generation. */
+    private static final java.util.Set<String> LAND_FIX_ENDS=java.util.Set.of("WORK_ITEM_LANDED","LAND_HANDED","PULL_REQUEST_CLOSED","READMITTED");
+
+    /**
+     * Land was refused for a reason code can fix (spec §7.5): the item rewinds to build on the same pull request. The
+     * execution, and with it the pull request, is kept, and the progress still names the land attempt, which is how
+     * the fix's effect row is found again. Entering build is the caller's next decision.
+     */
+    public static WorkItemEvent landFixRequested(WorkItemEvent item,String reason) {
+        if(!LAND_FIX_REASONS.contains(reason))throw new IllegalArgumentException("Not a land fix reason "+reason);
+        if(item.progress().execution()==null || item.progress().execution().pullRequest()==null)
+            throw new IllegalStateException("Only a delivered pull request can be fixed");
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"build","awaiting_input",reason,"LAND_FIX_REQUESTED",null,item.progress().reserve(false));
     }
-    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of();
-    public static WorkItemEvent landFixRequested(WorkItemEvent item,String reason) { return item; }
-    public static boolean landFixInProgress(List<WorkItemEvent> generationHistory) { return false; }
+    /** Whether the current generation's latest land fix has not ended yet. A verify gate inside the fix does not end it. */
+    public static boolean landFixInProgress(List<WorkItemEvent> history) {
+        if(history.isEmpty())return false;
+        long generation=history.getLast().generation();
+        boolean fixing=false;
+        for(WorkItemEvent event:history) {
+            if(event.generation()!=generation)continue;
+            if("LAND_FIX_REQUESTED".equals(event.milestone()))fixing=true;
+            else if(LAND_FIX_ENDS.contains(event.milestone())
+                    || "GATE_OPENED".equals(event.milestone()) && event.gate()!=null && "land".equals(event.gate().phase()))fixing=false;
+        }
+        return fixing;
+    }
 
     /** The reasons an open verify gate carries when it asks about a result rather than permission to run. */
     public static final java.util.Set<String> VERIFY_RESULT_REASONS=java.util.Set.of("verify_failed","verify_unverified");
@@ -105,12 +142,12 @@ public final class WorkItemLifecycle {
 
     /**
      * Why land handed an item to the operator (spec §7.6). The item waits at land / awaiting_input with no gate:
-     * Retry land opens a fresh one, and readmission is refused (§7.9). The three check and branch reasons are
-     * hand-offs only until the land fix loop exists; then they request a fix instead.
+     * Retry land opens a fresh one, and readmission is refused (§7.9). A failed check, a conflict and a branch behind
+     * its base are not here: they request a land fix ({@link #LAND_FIX_REASONS}).
      */
     public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
             "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
-            "land_fix_review_blocked","land_checks_failed","land_conflict","land_branch_behind","land_account_unavailable","land_read_failed");
+            "land_fix_review_blocked","land_fix_run_failed","land_account_unavailable","land_read_failed");
 
     /**
      * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only

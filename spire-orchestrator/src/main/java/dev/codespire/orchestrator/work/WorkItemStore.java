@@ -115,9 +115,13 @@ public class WorkItemStore {
     }
 
     private void projectExecution(Connection c,WorkItemEvent item,long revision) throws SQLException {
-        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
+        // A merge or a close on GitHub ends the item while a land fix may be running; its pending work is refused and its
+        // running build held like a takeover's (M4 land, spec §7.8, A6).
+        boolean prEnded=Set.of("WORK_ITEM_LANDED","PULL_REQUEST_CLOSED").contains(item.milestone());
+        if(prEnded || Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
             // A post-land row tells the ticket about a merge that happened; no later decision undoes the merge (A1).
-            try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending' AND effect_class='phase'")) {
+            // A ticket write for a phase that happened is still true after a merge or a close, so only the other facts refuse it.
+            if(!prEnded)try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending' AND effect_class='phase'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
@@ -127,13 +131,15 @@ public class WorkItemStore {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
         }
-        if(Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
+        boolean takenOver=Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone());
+        if(prEnded || takenOver) {
             try(var ps=c.prepareStatement("UPDATE work_delivery_effect SET state='refused',reason='publication_held_by_human' WHERE work_item_id=? AND state IN ('pending','publishing','pushed')")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             // Only a land still before its merge call. From uncertain on the merge may have happened, and the row
-            // keeps draining by reading until it records what GitHub did (M4 land, Review Focus 13).
-            try(var ps=c.prepareStatement("UPDATE work_land_effect SET state='refused',reason='publication_held_by_human',updated_at=now() WHERE work_item_id=? AND state IN ('pending','checking','waiting_checks')")) {
+            // keeps draining by reading until it records what GitHub did (M4 land, Review Focus 13). A merge or a close
+            // moves its own land row, so only a takeover refuses it here.
+            if(takenOver)try(var ps=c.prepareStatement("UPDATE work_land_effect SET state='refused',reason='publication_held_by_human',updated_at=now() WHERE work_item_id=? AND state IN ('pending','checking','waiting_checks')")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(var ps=c.prepareStatement("""

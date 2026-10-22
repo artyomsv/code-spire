@@ -42,8 +42,8 @@ import javax.sql.DataSource;
  * recovered by reading the pull request, never by sending the merge again (ADR-043). The merge completes the
  * item; the branch delete comes after it and never holds it (§7.7).
  *
- * <p>Every code refusal (a failed check, a conflict, a branch behind its base) is handed to the operator in this
- * slice; the land fix loop turns those into fix runs later.
+ * <p>A code refusal (a failed check, a conflict, a branch behind its base) requests a land fix on the same pull request
+ * (§7.5); the row then rests in {@code fixing}, and the next land approval starts a new row.
  */
 @ApplicationScoped
 public class WorkLandSweep {
@@ -65,6 +65,7 @@ public class WorkLandSweep {
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
     @Inject WorkLandObservations observations;
+    @Inject WorkLandFixes fixes;
 
     record Effect(UUID id, String item, long generation, long pullRequest, String approvedHead, String state, String mergeCommit,
                   String mergedBy, String method, String mergedHead, int cleanupTries, Instant waitingSince, Instant failingSince) {
@@ -135,7 +136,7 @@ public class WorkLandSweep {
         else settle(effect, next, pr, null);
     }
 
-    /** A found merge, a closed pull request or a hand-off. A fix is handed with its own reason until the fix loop exists. */
+    /** A found merge, a closed pull request, a hand-off or a land fix. */
     private void settle(Effect effect, Next next, LandState pr, String message) {
         switch (next) {
             case Next.MergedFound found -> found(effect, pr, found.mergedBy());
@@ -144,7 +145,7 @@ public class WorkLandSweep {
                 update(effect, "closed", outcome.status() == 200 ? null : "work_item_changed", null);
             }
             case Next.Hand hand -> hand(effect, hand.reason(), new Detail(message, pr.checks()));
-            case Next.Fix fix -> hand(effect, fix.reason(), new Detail(message, pr.checks()));
+            case Next.Fix fix -> fix(effect, fix.reason(), pr, new Detail(message, pr.checks()));
             default -> throw new IllegalStateException("Not a settling land outcome: " + next);
         }
     }
@@ -152,6 +153,22 @@ public class WorkLandSweep {
     private void hand(Effect effect, String reason, Detail detail) {
         WorkItemTransitions.Outcome outcome = transitions.landHandOff(effect.item(), effect.id(), reason);
         update(effect, "handed", outcome.status() == 200 ? reason : "work_item_changed", detail);
+    }
+
+    /**
+     * The refusal is the code's (§7.5). The decider requests the fix, or hands the item over when the attempts or the
+     * item's limits are spent, and moves this row in the same transaction. The detail is kept first, so the operator
+     * reads what GitHub said either way.
+     */
+    private void fix(Effect effect, String reason, LandState pr, Detail detail) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE work_land_effect SET detail=?,updated_at=now() WHERE effect_id=? AND state=?")) {
+            ps.setBytes(1, encode(effect, detail)); ps.setObject(2, effect.id()); ps.setString(3, effect.state());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+        WorkItemTransitions.Outcome outcome = transitions.landFix(effect.item(), effect.id(), reason,
+                fixes.encode(effect.id(), WorkLandFixes.payload(reason, pr)));
+        if (outcome.status() != 200) update(effect, "handed", "work_item_changed", null);
     }
 
     private void waitForChecks(Effect effect, LandState pr) {

@@ -55,7 +55,9 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // land goes on with Retry land (spec §7.9). The server refuses both, so no button is offered.
   const landed = item.workflowStatus === 'completed' && item.progress?.execution?.landing != null;
   const handedAtLand = item.phase === 'land' && item.workflowStatus === 'awaiting_input';
-  const canReadmit = !landed && !handedAtLand
+  // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
+  const fixing = item.land?.fixInProgress === true;
+  const canReadmit = !landed && !handedAtLand && !fixing
     && ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
   if (item.workflowStatus === 'suspended' && !coordinates)
     return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;

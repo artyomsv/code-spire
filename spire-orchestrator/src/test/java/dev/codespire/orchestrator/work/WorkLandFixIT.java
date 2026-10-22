@@ -118,6 +118,7 @@ class WorkLandFixIT extends WorkLandFixture {
         assertEquals("fixing",latestEffect(id,"state"));
         WorkItemResource.LandView during=resource.get(id).land();
         assertTrue(during.fixInProgress());assertEquals(1,during.attempt());assertEquals(3,during.attemptsAllowed());
+        assertEquals(dev.codespire.contract.port.PullRequestLander.Checks.FAILED,during.checks().state(),"the operator still reads what failed");
 
         RunCommand.ExecuteWorkRun fix=dispatchedFix();
         assertEquals(branch,fix.execution().branch(),"the fix pushes to the item branch");

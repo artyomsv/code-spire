@@ -73,6 +73,9 @@ public class WorkItemResource {
      * @param message GitHub's own words when it refused, so the operator reads the cause and not a code
      * @param checks the check summary last read, for "n of m done" and the failed names
      * @param branchDeleted true once the branch is gone, false when deleting it gave up, null before
+     * @param attempt the counted land fixes of this generation; a branch behind its base is fixed without counting
+     * @param attemptsAllowed the smaller of the repository's fix attempts and the build runs the item has left (§7.5)
+     * @param fixInProgress a land fix is running; readmit is refused then, and the screen cannot see the history that says so
      */
     public record LandView(String state,String reason,String message,dev.codespire.contract.port.PullRequestLander.CheckSummary checks,
                            String method,String ticketRule,Boolean branchDeleted,String note,int attempt,int attemptsAllowed,boolean fixInProgress) {}
@@ -161,14 +164,20 @@ public class WorkItemResource {
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
                 item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
-                sweep.health(id,item.generation()).orElse(null),land(id,item.generation(),item.repositoryId()));
+                sweep.health(id,item.generation()).orElse(null),land(id,item,events));
     }
 
     @Inject WorkLandSweep landing;
     @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;
 
     /** The latest land attempt of this generation, its detail decrypted for the operator; null before land is approved. */
-    private LandView land(String id,long generation,UUID repository) {
+    private LandView land(String id,WorkItemEvent item,List<EventEnvelope> events) {
+        long generation=item.generation();UUID repository=item.repositoryId();
+        List<WorkItemEvent> facts=WorkItemTransitions.facts(events);
+        int attempt=(int)facts.stream().filter(event->event.generation()==generation && "LAND_FIX_REQUESTED".equals(event.milestone())
+                && dev.codespire.contract.work.WorkItemLifecycle.LAND_FIX_COUNTED.contains(event.reason())).count();
+        long runsLeft=Math.max(0,item.policy().limits().maxRunsPerItem()-item.progress().runs());
+        boolean fixing=dev.codespire.contract.work.WorkItemLifecycle.landFixInProgress(facts);
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(
                 "SELECT effect_id,state,reason,detail,method,note,ticket_note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
             ps.setString(1,id);ps.setLong(2,generation);
@@ -181,7 +190,8 @@ public class WorkItemResource {
                 return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
                         method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
                         // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,0,0,false);
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,
+                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }

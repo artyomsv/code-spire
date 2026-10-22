@@ -66,7 +66,9 @@ public class WorkVerifyResults {
         }
         var outcome = transitions.verified(item, decided);
         // An authority outage (503) is retried by the sweep; any other answer is final for this attempt.
-        if (outcome.status() != 503) applied(verification.attemptId(), outcome.status() == 200 ? null : outcome.reason());
+        // A late result is accounted, not applied to the phase; its reason keeps it out of a later retry's prompt (A6).
+        boolean decided = outcome.status() == 200 && !outcome.reason().startsWith("late_result");
+        if (outcome.status() != 503) applied(verification.attemptId(), decided ? null : outcome.reason());
     }
 
     /** Re-applies results stored before a crash between storing and applying. */

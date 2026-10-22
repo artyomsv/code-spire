@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * An approved land merges at the approved head, deletes the branch and completes the item (M4 land, spec §7.3).
  * Approval, the effect row, the sweep and the GitHub lander are production; GitHub is the fixture's WireMock.
- * Every code refusal is handed to the operator until the land fix loop exists (slice 7b).
+ * A code refusal requests a land fix instead; WorkLandFixIT proves that loop.
  */
 @QuarkusTest
 @TestSecurity(user="TEST-land-admin",roles="spire-admin")
@@ -182,12 +182,6 @@ class WorkLandingIT extends WorkLandFixture {
         assertEquals("waiting_checks",effect(id,"state"));
         now.set(start.plus(java.time.Duration.ofHours(6)).plusSeconds(1));land.drain();
         assertEquals(0,merges());handed(id,"land_checks_timeout");
-    }
-    @Test void aFailedCheckIsHandedUntilTheFixLoopExists() throws Exception {
-        String id=approved();openAt(HEAD,"unstable","failure");merge(merged());
-        land.drain();
-        assertEquals(0,merges());handed(id,"land_checks_failed");
-        assertEquals(dev.codespire.contract.port.PullRequestLander.Checks.FAILED,resource.get(id).land().checks().state());
     }
     @Test void aPullRequestAlreadyMergedIsRecordedAsFound() throws Exception {
         String id=approved();mergedBy("900123");branchAt(HEAD,204);

@@ -60,7 +60,12 @@ public class WorkReview {
         var detail=reviews.loadDetail(observed.workspace(),observed.slug(),execution.pullRequest().number()).orElse(null);
         if(detail==null || !detail.id().equals(observed.review()) || !detail.sha().equals(execution.head())
                 || !"completed".equals(detail.status()) || detail.degraded()) {waiting(item,"review_result_pending");return;}
-        if(detail.openBlockers()>0){waiting(item,"review_blockers_open");return;}
+        if(detail.openBlockers()>0) {
+            // A land fix the reviewer holds goes to the operator with the review; no agent fixes findings in this loop (§6).
+            if(WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(store.history(id))))transitions.landFixReviewBlocked(id,item.progress().attemptId());
+            else waiting(item,"review_blockers_open");
+            return;
+        }
         // Review spend already belongs to the existing reviewer ledger. Merely observing it is not another call.
         transitions.complete(id,new WorkItemTransitions.PhaseResult(item.progress().attemptId(),true,0,0,0,true,execution.reviewed(observed.review())));
     }

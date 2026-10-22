@@ -35,8 +35,12 @@ public class WorkDelivery {
     @Inject WorkPublicationTransport transport;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
+    @Inject WorkLandFixes landFixes;
     record Effect(UUID attempt,String item,long generation,String run,String state,Instant expires,byte[] request) {}
-    record Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request) {}
+    /** @param kept a land fix's pull request, which the push updated: delivery completes on it and opens none (M4 land) */
+    record Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request,PullRequestRef kept) {
+        Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request) {this(permit,sink,request,null);}
+    }
 
     public boolean available(WorkItemEvent item,String phase) {
         WorkExecution execution=item.progress().execution();
@@ -93,6 +97,14 @@ public class WorkDelivery {
             RunLaunch.Outcome sent=transport.publish(claim.permit());
             if(sent instanceof RunLaunch.DefiniteMiss)state(before,"pending","publication_dispatch_missed");
             else if(sent instanceof RunLaunch.Uncertain)state(before,"publishing","publication_dispatch_uncertain");
+            return;
+        }
+        if(claim.kept()!=null) {
+            // A land fix pushed to its own pull request's branch; the pull request is reused, never opened again (§7.5).
+            WorkItemEvent current=store.load(before.item());
+            WorkItemTransitions.Outcome complete=transitions.complete(before.item(),new WorkItemTransitions.PhaseResult(before.attempt(),true,0,0,0,true,
+                    current.progress().execution().delivered(claim.kept())));
+            if(complete.status()==200)state(before,"delivered",null);
             return;
         }
         try {
@@ -155,6 +167,8 @@ public class WorkDelivery {
                 ps.setObject(1,item.repositoryId());try(ResultSet rs=ps.executeQuery()){if(!rs.next()){stopLocked(c,history,item,effect,"factory_account_unavailable");return null;}}
             }
             var account=accounts.resolve(item.repositoryId()).orElse(null);
+            // Read under the item lock, like the run dispatcher's: a land fix pushes with the lease on the approved head.
+            WorkLandFixes.Fix fix=landFixes.current(c,history).orElse(null);
             if(account==null){stopLocked(c,history,item,effect,"factory_account_unavailable");return null;}
             PullRequestSink sink=clients.pullRequestSink(account);
             var run=runs.find(effect.run()).orElseThrow();
@@ -170,6 +184,8 @@ public class WorkDelivery {
                 var execution=item.progress().execution();Instant issued=clock.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS),expires=issued.plusSeconds(30);
                 var command=new RunCommand.PublishWorkRun(effect.run(),new WorkPublicationPermit(execution.build(),effect.attempt(),execution.head(),
                         issued,expires,item.policy().limits().protectedPaths().stream().sorted().toList()),credentials.packScm(effect.run(),account.botUsername(),account.secret()));
+                // The push may land only while the item branch is still at the approved head, and excuses only the base tip the land effect read.
+                if(fix!=null)command=new RunCommand.PublishWorkRun(command.runId(),command.permit().onExistingBranch(fix.approvedHead(),fix.baseTip()),command.scmCredential());
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='publishing',permit=?,permit_expires_at=?,reason=NULL WHERE attempt_id=?")) {
                     ps.setBytes(1,encode(command,"work-delivery-permit:"+effect.attempt()));ps.setTimestamp(2,Timestamp.from(expires));ps.setObject(3,effect.attempt());ps.executeUpdate();
                 }
@@ -181,7 +197,7 @@ public class WorkDelivery {
                     ps.setBytes(1,encode(request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
                 }
             } else return null;
-            return new Claim(null,sink,request);
+            return new Claim(null,sink,request,fix==null?null:fix.pullRequest());
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist work delivery",failure);}
     }
