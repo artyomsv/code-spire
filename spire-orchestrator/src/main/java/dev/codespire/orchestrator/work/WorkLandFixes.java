@@ -78,7 +78,7 @@ public class WorkLandFixes {
 
     /** What the fix run's prompt gains after the task. */
     public static String promptSection(Fix fix) {
-        return "\n\nGitHub refused to merge this task's pull request. This build fixes it on the pull request's own branch, "
+        return "\n\nThe forge refused to merge this task's pull request. This build fixes it on the pull request's own branch, "
                 + "which is checked out at the head that was approved.\n" + fix.payload();
     }
 
