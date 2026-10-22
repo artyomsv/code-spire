@@ -25,8 +25,6 @@ public record WorkPublicationPermit(WorkRunBinding work,UUID deliveryAttemptId,S
         if(!expiresAt.isAfter(issuedAt))throw new IllegalArgumentException("A permit needs a positive validity window");
         protectedPaths=List.copyOf(Objects.requireNonNull(protectedPaths,"Current protected paths are required"));
         if(expectedRemoteHead!=null && !expectedRemoteHead.matches("[0-9a-f]{40}"))throw new IllegalArgumentException("An expected remote head must be a full sha");
-        if(mergedBaseTip!=null && (expectedRemoteHead==null || !mergedBaseTip.matches("[0-9a-f]{40}")))
-            throw new IllegalArgumentException("A merged base tip is a full sha, and only for a push to an existing branch");
     }
     public WorkPublicationPermit(WorkRunBinding work,UUID deliveryAttemptId,String head,
                                  Instant issuedAt,Instant expiresAt,List<String> protectedPaths) {
