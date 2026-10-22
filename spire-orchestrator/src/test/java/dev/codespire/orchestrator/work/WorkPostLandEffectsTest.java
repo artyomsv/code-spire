@@ -8,6 +8,7 @@ import dev.codespire.worksource.WorkEffectMarker;
 import dev.codespire.worksource.WorkSourceType;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
 import java.time.Duration;
@@ -132,7 +133,8 @@ class WorkPostLandEffectsTest extends WorkFixture {
         assertEquals("refused",status(close()).state());assertEquals("ticket_rule_changed",status(close()).reason());
         assertEquals(0,patches());
     }
-    @Test void jiraUnderCloseCommentsAndNotesTheSkip() throws Exception {
+    @Test @TestSecurity(user="TEST-land-admin",roles="spire-admin")
+    void jiraUnderCloseCommentsAndNotesTheSkip() throws Exception {
         rule("close");
         executeWith("INSERT INTO work_land_effect(effect_id,work_item_id,generation,item_revision,pr_number,approved_head,state) VALUES (?,?,?,1,901,?,'done')",
                 attempt,itemId,store.load(itemId).generation(),"b".repeat(40));
@@ -178,7 +180,7 @@ class WorkPostLandEffectsTest extends WorkFixture {
         land("900999");
         effects.dispatch(comment());assertEquals("sent",status(comment()).state());
         String body=postedBody();
-        assertTrue(body.startsWith("Merged by a person on GitHub: "+PR.url()),body);assertFalse(body.contains("900999"),body);
+        assertTrue(body.startsWith("Merged by a person: "+PR.url()),body);assertFalse(body.contains("900999"),body);
     }
     @Test void closeTransitionPerSourceType() {
         assertEquals(Optional.of("closed"),WorkSourceEffects.closeTransition(WorkSourceType.GITHUB));

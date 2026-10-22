@@ -126,6 +126,18 @@ public class ProviderClients {
         };
     }
 
+    /**
+     * The tracker transition that closes a ticket after land (M4 land, spec §7.7), in the words each adapter's
+     * {@code transition} accepts. Empty where closing needs a per-workflow transition id nothing configures yet.
+     */
+    public static java.util.Optional<String> closeTransition(dev.codespire.worksource.WorkSourceType type) {
+        return switch (type) {
+            case GITHUB -> java.util.Optional.of("closed");
+            case GITLAB -> java.util.Optional.of("close");
+            case JIRA -> java.util.Optional.empty();
+        };
+    }
+
     public boolean compatibleWorkAccount(dev.codespire.worksource.WorkSourceType type, ScmProvider account) {
         return supportsWorkAccount(type, account.type(), account.authKind());
     }

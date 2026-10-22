@@ -95,19 +95,15 @@ public class WorkSourceEffects {
      * follows, and the sentence that the status is unchanged would contradict it.
      */
     static String landedComment(WorkLanding landing, String handle, boolean closing) {
-        String merger = WorkLanding.FACTORY.equals(landing.mergedBy()) ? "the factory" : handle == null || handle.isBlank() ? "a person on GitHub" : handle;
+        String merger = WorkLanding.FACTORY.equals(landing.mergedBy()) ? "the factory" : handle == null || handle.isBlank() ? "a person" : handle;
         String link = landing.pullRequest().url() == null ? "pull request #"+landing.pullRequest().number() : landing.pullRequest().url();
         String merged = "Merged by "+merger+": "+link+" ("+landing.mergeCommit().substring(0,7)+").";
         return closing ? merged : merged+" The ticket status is unchanged so testing can follow.";
     }
 
-    /** The transition that closes a ticket. Jira needs a transition id per workflow, which nothing configures yet. */
+    /** The transition that closes a ticket of this source type; the per-type words live in the composition root. */
     static Optional<String> closeTransition(WorkSourceType type) {
-        return switch (type) {
-            case GITHUB -> Optional.of("closed");
-            case GITLAB -> Optional.of("close");
-            case JIRA -> Optional.empty();
-        };
+        return dev.codespire.orchestrator.provider.ProviderClients.closeTransition(type);
     }
 
     @Scheduled(every="${spire.work-effects-interval:2s}", concurrentExecution=Scheduled.ConcurrentExecution.SKIP)
