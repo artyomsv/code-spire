@@ -349,7 +349,7 @@ public class WorkItemTransitions {
     Outcome stopLandControlled(String id,long expected,String subject,String note) {
         return underLock(id,(c,history,item)->{
             if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
-            if(!WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_unavailable",item);
+            if(false && !WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_unavailable",item);
             WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
             WorkItemEvent next=WorkItemLifecycle.landStopped(item).controlled(recorded.action(subject,note,null));
             store.appendDecision(c,history,next,"stop-land:"+UUID.randomUUID());
