@@ -411,7 +411,7 @@ public class ProviderClients {
      * token never merges or deletes. A CONTEXT account is refused: it is not bound to read pull requests.
      */
     public dev.codespire.contract.port.PullRequestLander pullRequestReader(ScmProvider provider) {
-        if (provider.role() != ProviderRole.FACTORY && provider.role() != ProviderRole.REVIEWER) {
+        if (provider.role() != ProviderRole.FACTORY) {
             throw new IllegalArgumentException("a pull request's land state is read by the FACTORY or REVIEWER account; "
                     + "this was handed the " + provider.role() + " provider " + provider.id());
         }
