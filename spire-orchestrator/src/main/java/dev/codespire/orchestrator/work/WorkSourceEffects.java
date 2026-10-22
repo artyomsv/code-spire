@@ -134,7 +134,6 @@ public class WorkSourceEffects {
         if(POST_LAND.equals(effect.effectClass())) return dispatchPostLand(effect,item,source);
         Optional<WorkPolicy.Phase> phase=phase(item.phase());
         // A phase row on an item past its phases (complete) has no mode to check; it is refused, never thrown on every pass.
-        if(phase.isEmpty() || phase(effect.phase()).isEmpty()) { mark(id,"pending","refused",null,"unknown_phase");return false; }
 
         WorkPolicyRegistry.Policy policy=policies.get(source.repositoryId());
         WorkEvidence evidence=WorkEvidence.collect(()->sources.client(source),item.issue(),null);
