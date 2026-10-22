@@ -149,10 +149,40 @@ abstract class WorkLandFixture extends WorkPreparedFixture {
         WorkItemEvent item=store.load(id);
         assertEquals("land",item.phase());assertEquals("awaiting_input",item.workflowStatus());assertEquals(reason,item.reason());
         assertEquals("handed",effect(id,"state"));assertEquals(reason,effect(id,"reason"));
+        // The server says the item was handed over, so the screen never keeps its own copy of the reasons (review of the branch).
+        WorkItemResource.LandView view=resource.get(id).land();
+        assertTrue(view.handedOver(),"the land view says the item was handed over");assertTrue(view.stoppable(),"and that Stop land ends it");
     }
     void landed(String id) {
         WorkItemEvent item=store.load(id);
         assertEquals("complete",item.phase());assertEquals("completed",item.workflowStatus());assertEquals("landed",item.reason());
+    }
+    long fixes(String id) {
+        return store.history(id).stream().filter(event->"LAND_FIX_REQUESTED".equals(((WorkItemEvent)event.payload()).milestone())).count();
+    }
+    /** The ticket as GitHub now reports it, carrying only {@code labels}; the intake stub is replaced. */
+    void ticketLabels(int number,String... labels) {
+        var ticket=mapper.createObjectNode().put("id",50000+number).put("number",number).put("repository_url",forge.baseUrl()+"/repos/"+scope)
+                .put("html_url",forge.baseUrl()+"/"+scope+"/issues/"+number).put("title","TEST-prepared-task").put("body","TEST-identical task").put("state","open");
+        var array=ticket.putArray("labels");for(String label:labels)array.add(label);
+        forge.stubFor(get(urlEqualTo("/repos/"+scope+"/issues/"+number)).willReturn(okJson(ticket.toString())));
+    }
+    interface Action { void run() throws Exception; }
+    /** The WARN lines the land sweep logged while {@code action} ran, each as its format and its arguments. */
+    List<String> landWarnings(Action action) throws Exception {
+        java.util.logging.Logger logger=java.util.logging.Logger.getLogger(WorkLandSweep.class.getName());
+        List<String> warnings=Collections.synchronizedList(new ArrayList<>());
+        java.util.logging.Handler handler=new java.util.logging.Handler() {
+            @Override public void publish(java.util.logging.LogRecord record) {
+                if(record.getLevel().intValue()>=java.util.logging.Level.WARNING.intValue())
+                    warnings.add(record.getMessage()+Arrays.toString(record.getParameters()));
+            }
+            @Override public void flush() {}
+            @Override public void close() {}
+        };
+        logger.addHandler(handler);
+        try { action.run(); } finally { logger.removeHandler(handler); }
+        return List.copyOf(warnings);
     }
     long landings(String id) {
         return store.history(id).stream().filter(event->"WORK_ITEM_LANDED".equals(((WorkItemEvent)event.payload()).milestone())).count();

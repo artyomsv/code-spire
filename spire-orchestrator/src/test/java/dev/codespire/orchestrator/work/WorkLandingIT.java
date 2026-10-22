@@ -246,6 +246,121 @@ class WorkLandingIT extends WorkLandFixture {
         mergedBy("900777");land.drain();
         assertEquals(1,merges());assertEquals(1,landings(id));landed(id);
     }
+    // --- consent withdrawn after approval (review of the branch) ---
+    // Approval binds the policy it was given under, as delivery's permit does: once the labels, the policy or the source
+    // change, the merge waits for a new decision instead of going ahead on the old one.
+    /** An approved land waiting for its checks, which then pass; whatever {@code withdraw} changed is read before the merge. */
+    String waitingForChecksThen(Instant start,Action withdraw) throws Exception {
+        String id=approved();clockAt(start);
+        openAt(HEAD,"unstable","pending");merge(merged());
+        land.drain();assertEquals("waiting_checks",effect(id,"state"));
+        withdraw.run();
+        openAt(HEAD,"clean",null);now.set(start.plusSeconds(120));land.drain();
+        return id;
+    }
+    @Test void aLabelRemovedAfterApprovalIsNotMerged() throws Exception {
+        String id=waitingForChecksThen(Instant.now(),()->ticketLabels(61));
+        assertEquals(0,merges());handed(id,"land_policy_changed");
+    }
+    @Test void aPolicySavedAfterApprovalIsNotMerged() throws Exception {
+        String id=waitingForChecksThen(Instant.now(),()->{
+            WorkPolicyRegistry.Policy policy=policies.get(repository);Map<String,WorkPolicyRegistry.Pin> mappings=new HashMap<>();
+            policy.mappings().forEach((key,pin)->mappings.put(key,new WorkPolicyRegistry.Pin(pin.id(),pin.version())));
+            WorkPolicy.Profile ceiling=profiles.get("autonomous");
+            policies.save(repository,new WorkPolicyRegistry.Input(policy.revision(),new WorkPolicyRegistry.Pin(ceiling.id(),ceiling.version()),mappings));
+        });
+        assertEquals(0,merges());handed(id,"land_policy_changed");
+    }
+    @Test void aSourceDisabledAfterApprovalIsNotMerged() throws Exception {
+        String id=waitingForChecksThen(Instant.now(),()->execute("UPDATE work_source SET enabled=false,revision=revision+1 WHERE id=?",source));
+        assertEquals(0,merges());handed(id,"land_policy_changed");
+    }
+    // Stop land reaches a land that has sent no merge yet, which may wait hours for checks; the row is refused with it.
+    @Test void stopLandEndsALandStillWaitingForChecks() throws Exception {
+        String id=approved();Instant start=Instant.now();clockAt(start);
+        openAt(HEAD,"unstable","pending");merge(merged());
+        land.drain();assertEquals("waiting_checks",effect(id,"state"));
+        WorkItemResource.LandView view=resource.get(id).land();
+        assertTrue(view.stoppable());assertFalse(view.handedOver());
+        WorkItemTransitions.Outcome stop=control.stopLand(id,store.history(id).size(),"TEST-land-admin","TEST-stop before the merge");
+        assertEquals(200,stop.status(),stop.reason());
+        assertEquals("stopped",store.load(id).workflowStatus());assertEquals("land_stopped_by_operator",store.load(id).reason());
+        assertEquals("refused",effect(id,"state"));assertEquals("land_stopped_by_operator",effect(id,"reason"));
+        assertEquals(0,count("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND state='started'",id),"the land attempt is finished");
+        openAt(HEAD,"clean",null);now.set(start.plusSeconds(120));land.drain();
+        assertEquals(0,merges());assertEquals("refused",effect(id,"state"));
+    }
+    @Test void stopLandIsRefusedOnceTheMergeWasSent() throws Exception {
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        assertFalse(resource.get(id).land().stoppable());
+        WorkItemTransitions.Outcome stop=control.stopLand(id,store.history(id).size(),"TEST-land-admin","TEST-stop after the merge");
+        assertEquals(409,stop.status());assertEquals("retry_land_unavailable",stop.reason());
+        assertEquals("uncertain",effect(id,"state"));assertEquals("active",store.load(id).workflowStatus());
+    }
+
+    // --- a lost merge on an item taken over keeps reading (review of the branch) ---
+    // GitHub can finish a merge after its edge gave up (A5), and the factory's own merged webhook is left to this row.
+    @Test void aTakeoverDuringAnUncertainMergeKeepsReadingAnOpenPullRequest() throws Exception {
+        factoryIdentity(FACTORY_ID);
+        String id=approved();Instant start=Instant.now();clockAt(start);
+        openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        control.suspend(id,"github","TEST-land-push-4","900555",HEAD);
+        land.drain();
+        assertEquals("uncertain",effect(id,"state"),"an open pull request does not prove the sent merge will not finish");
+        assertEquals(1,merges(),"and the row only reads");
+        WorkItemTransitions.Outcome resume=transitions.resumeControlled(id,store.history(id).size(),transitions.observe(store.load(id)),"TEST-operator","TEST-note",HEAD);
+        assertEquals(409,resume.status());assertEquals("readmission_merge_unconfirmed",resume.reason());
+        mergedBy(FACTORY_ID);now.set(start.plusSeconds(120));land.drain();
+        assertEquals(1,merges());assertEquals(1,landings(id));landed(id);
+    }
+    @Test void aHeldMergeStillOpenAfterTheBoundIsRefused() throws Exception {
+        String id=approved();Instant start=Instant.now();clockAt(start);
+        openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));
+        land.drain();control.suspend(id,"github","TEST-land-push-5","900555",HEAD);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        now.set(start.plus(java.time.Duration.ofHours(6)).plusSeconds(1));land.drain();
+        assertEquals("refused",effect(id,"state"));assertEquals("publication_held_by_human",effect(id,"reason"));
+        assertEquals(1,merges());
+    }
+
+    // --- a refused merge is read again (spec A5, review of the branch) ---
+    /** The merge PUT answers {@code status}; after it GitHub reads the pull request as {@code after}. */
+    void mergeRefusedThenRead(int status,String after) {
+        forge.stubFor(get(urlPathEqualTo(pulls())).inScenario("TEST-refused").whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(okJson(pullJson("open",false,HEAD,"clean",null))));
+        forge.stubFor(get(urlPathEqualTo(pulls())).inScenario("TEST-refused").whenScenarioStateIs("TEST-refused-read").willReturn(okJson(after)));
+        checks(HEAD,null);
+        forge.stubFor(put(urlPathEqualTo(pulls()+"/merge")).inScenario("TEST-refused").whenScenarioStateIs(Scenario.STARTED).willSetStateTo("TEST-refused-read")
+                .willReturn(aResponse().withStatus(status).withBody("{\"message\":\"TEST-GitHub refused the merge\"}")));
+    }
+    @Test void aRefusedMergeFoundMergedOnTheReReadIsRecorded() throws Exception {
+        String id=approved();mergeRefusedThenRead(405,pullJson("closed",true,HEAD,"unknown","900123"));branchAt(HEAD,204);
+        land.drain();
+        assertEquals(1,merges());landed(id);assertEquals("900123",store.load(id).progress().execution().landing().mergedBy());
+    }
+    @Test void aRefusedMergeThatNowConflictsIsFixed() throws Exception {
+        String id=approved();mergeRefusedThenRead(405,pullJson("open",false,HEAD,"dirty",null));
+        land.drain();
+        assertEquals(1,merges());assertEquals(1,fixes(id));
+        assertEquals("fixing",effect(id,"state"));assertEquals("land_conflict",effect(id,"reason"));
+    }
+    @Test void a403IsHandedEvenWhenTheReReadShowsAConflict() throws Exception {
+        String id=approved();mergeRefusedThenRead(403,pullJson("open",false,HEAD,"dirty",null));
+        land.drain();
+        assertEquals(1,merges());assertEquals(0,fixes(id));handed(id,"land_merge_refused");
+    }
+
+    // A read that fails names its status in the log, never GitHub's body (observability; review of the branch).
+    @Test void aFailedReadIsLoggedWithItsStatus() throws Exception {
+        String id=approved();String effectId=effect(id,"effect_id");
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(401).withBody("{\"message\":\"TEST-Bad credentials\"}")));
+        List<String> warnings=landWarnings(()->land.drain());
+        assertTrue(warnings.stream().anyMatch(line->line.contains(effectId) && line.contains("401")),warnings::toString);
+        assertTrue(warnings.stream().noneMatch(line->line.contains("TEST-Bad credentials")),"an adapter message may quote a body");
+    }
+
     @Test void noEffectWithoutAnApprovedLandGate() throws Exception {
         String id=approved();
         assertEquals(1,count("SELECT count(*) FROM work_land_effect WHERE work_item_id=? AND approved_head=? AND pr_number=901 AND state='pending'",id,HEAD));

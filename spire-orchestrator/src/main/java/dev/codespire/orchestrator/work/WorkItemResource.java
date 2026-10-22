@@ -99,9 +99,12 @@ public class WorkItemResource {
      * @param attempt the counted land fixes of this generation; a branch behind its base is fixed without counting
      * @param attemptsAllowed the smaller of the repository's fix attempts and the build runs the item has left (§7.5)
      * @param fixInProgress a land fix is running; readmit is refused then, and the screen cannot see the history that says so
+     * @param handedOver land handed the item to the operator: Retry land and Stop land are the ways on
+     * @param stoppable Stop land may end the item now
      */
     public record LandView(String state,String reason,String message,dev.codespire.contract.port.PullRequestLander.CheckSummary checks,
-                           String method,String ticketRule,Boolean branchDeleted,String note,int attempt,int attemptsAllowed,boolean fixInProgress) {}
+                           String method,String ticketRule,Boolean branchDeleted,String note,int attempt,int attemptsAllowed,boolean fixInProgress,
+                           boolean handedOver,boolean stoppable) {}
     /**
      * @param counts items per workflow status across every page, so a filter can say how many rows it
      *     holds before it is chosen, and a band can say how many items need a person
@@ -210,7 +213,7 @@ public class WorkItemResource {
                 if(!attempted && !"land".equals(item.phase()))return null;
                 dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(repository);
                 if(!attempted)return new LandView("not_started",null,null,null,dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()),
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing);
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,false,false);
                 WorkLandSweep.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
                 String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
                 Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
@@ -218,7 +221,7 @@ public class WorkItemResource {
                         method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
                         // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
                         dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,
-                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing);
+                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,false,false);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }

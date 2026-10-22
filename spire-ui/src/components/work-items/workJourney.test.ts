@@ -77,7 +77,7 @@ describe('land step', () => {
   const execution = { runId: 'TEST-run', build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
     head: 'b'.repeat(40), verificationAttempt: null, pullRequest, reviewId: 'TEST-review', landing: null };
   const view = (overrides: Partial<LandView> = {}): LandView => ({ state: 'checking', reason: null, message: null, checks: null, method: 'squash', ticketRule: 'comment',
-    branchDeleted: null, note: null, attempt: 0, attemptsAllowed: 3, fixInProgress: false, ...overrides });
+    branchDeleted: null, note: null, attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver: false, stoppable: false, ...overrides });
   const landItem = (overrides: Partial<LandItem> = {}): LandItem => ({ phase: 'land', workflowStatus: 'active', reason: 'phase_started', gate: null,
     land: view(), progress: { execution }, people: [], ...overrides });
   const gate = { id: 'TEST-land-gate', version: 1, state: 'OPEN' as const, phase: 'land', generation: 1, itemRevision: 9, policyRevision: 1,
@@ -107,9 +107,16 @@ describe('land step', () => {
   });
   it('says a hand-off needs you, with what GitHub said', () => {
     const text = landProgress(landItem({ workflowStatus: 'awaiting_input', reason: 'land_blocked',
-      land: view({ state: 'handed', reason: 'land_blocked', message: 'TEST-Required review missing' }) }));
+      land: view({ state: 'handed', reason: 'land_blocked', message: 'TEST-Required review missing', handedOver: true }) }));
     expect(text).toMatch(/^Needs you: GitHub requires something only a person can give/);
     expect(text).toContain('TEST-Required review missing');
+  });
+  // The server says which reasons hand an item over; a reason the screen has no copy for yet still reads as needing you.
+  it('says a hand-off needs you whenever the server says the item was handed over', () => {
+    expect(landProgress(landItem({ workflowStatus: 'awaiting_input', reason: 'TEST-land-future-reason',
+      land: view({ state: 'handed', reason: 'TEST-land-future-reason', handedOver: true }) }))).toMatch(/^Needs you: /);
+    expect(landProgress(landItem({ workflowStatus: 'awaiting_input', reason: 'land_blocked',
+      land: view({ state: 'handed', reason: 'land_blocked', handedOver: false }) }))).toBeNull();
   });
   it('says nothing before land has anything to say', () => {
     expect(landProgress(landItem({ phase: 'review', land: null }))).toBeNull();

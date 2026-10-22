@@ -40,9 +40,6 @@ class WorkLandFixIT extends WorkLandFixture {
         },WorkPublicationTransport.class);
     }
 
-    long fixes(String id) {
-        return store.history(id).stream().filter(event->"LAND_FIX_REQUESTED".equals(((WorkItemEvent)event.payload()).milestone())).count();
-    }
     String itemBranch() {return heldCommands.getFirst().execution().branch();}
     RunCommand.ExecuteWorkRun dispatchedFix() {
         int before=heldCommands.size();dispatcher.drain();
@@ -173,6 +170,17 @@ class WorkLandFixIT extends WorkLandFixture {
         fixedTo(id,FIXED);approve(id);
         openAt(FIXED,"behind",null);land.drain();
         assertEquals(2,fixes(id));assertEquals("build",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());
+    }
+    // A free behind fix earlier in the generation does not count when a later failure is weighed, nor on the screen (§7.5).
+    @Test void anEarlierBehindFixSpendsNoAttemptLater() throws Exception {
+        fixAttempts(1);
+        String id=approved();openAt(HEAD,"behind",null);
+        land.drain();assertEquals(1,fixes(id));
+        fixedTo(id,FIXED);approve(id);
+        openAt(FIXED,"unstable","failure");land.drain();
+        assertEquals(2,fixes(id),"the failure still has its one attempt");
+        assertEquals("build",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus(),store.load(id).reason());
+        assertEquals(1,resource.get(id).land().attempt(),"attempt 1 of 1, the behind fix not counted");
     }
     @Test void zeroAttemptsHandsAFailedCheckButStillMergesBehindBase() throws Exception {
         fixAttempts(0);
@@ -352,6 +360,34 @@ class WorkLandFixIT extends WorkLandFixture {
         assertEquals("verify_stopped_by_operator",latestEffect(id,"note"));
         assertEquals(HEAD,store.load(id).progress().execution().head(),"never the fix's unpushed checkpoint");
         assertEquals(1,count("SELECT count(*) FROM work_item_gate WHERE id=? AND state='REJECTED'",gate.id()),"the operator's answer is kept");
+        noAttemptLeftStarted(id);
+    }
+    // Every way a fix stops goes through decide(), which hands it; these two reach the gate-expiry and the transition sites.
+    @Test void aFixWhoseVerifyGateExpiresIsHanded() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();
+        saga.on(new RunResult.RunWorkReady(fix.runId(),fix.work(),FIXED,List.of("TEST-file"),Map.of("INPUT",7L),9));
+        verifier.drain();verifyResults.apply(failed(verifies.getLast()));
+        WorkGate gate=store.load(id).gate();assertEquals("verify",gate.phase());
+        clockAt(gate.expiresAt().plusSeconds(1));
+        transitions.expire(gate.id());
+        handedAtLand(id,"land_fix_stopped");
+        assertEquals("gate_expired",latestEffect(id,"note"));
+        assertEquals(HEAD,store.load(id).progress().execution().head(),"never the fix's unpushed checkpoint");
+        noAttemptLeftStarted(id);
+    }
+    @Test void aFixThatSpendsTheWallClockBeforeDeliverIsHanded() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();
+        saga.on(new RunResult.RunWorkReady(fix.runId(),fix.work(),FIXED,List.of("TEST-file"),Map.of("INPUT",7L),9));
+        verifier.drain();RunCommand.VerifyWork verify=verifies.getLast();
+        // Verify time counts toward the item's wall clock: a verify as long as the limit leaves deliver past it.
+        long limit=store.load(id).policy().limits().maxWallClockSeconds();
+        List<WorkVerification.CheckResult> checks=verify.commands().stream().map(command->new WorkVerification.CheckResult(command,0,limit*1000,"TEST-tail")).toList();
+        verifyResults.apply(new RunVerification.RunWorkVerified(verify.runId(),verify.work(),
+                new WorkVerification(verify.attemptId(),verify.head(),WorkVerification.Outcome.PASSED,null,checks)));
+        handedAtLand(id,"land_fix_stopped");
+        assertEquals("policy_cap_reached",latestEffect(id,"note"));
         noAttemptLeftStarted(id);
     }
     @Test void aFixWhosePushFailsIsHanded() throws Exception {

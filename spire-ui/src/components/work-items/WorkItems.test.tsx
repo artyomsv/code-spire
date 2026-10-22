@@ -554,15 +554,21 @@ it('offers no re-admission while an item waits at land for a capability', async 
 it('offers no re-admission while a land fix is in progress', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'build', workflowStatus: 'awaiting_input', reason: 'run_usage_unknown', progress: { execution: deliveredExecution(false) },
     land: { state: 'fixing', reason: 'land_checks_failed', message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
-      attempt: 1, attemptsAllowed: 3, fixInProgress: true } })).toBe(false);
+      attempt: 1, attemptsAllowed: 3, fixInProgress: true, handedOver: false, stoppable: false } })).toBe(false);
 });
 // M4 land slice 8 (spec §7.6, A3): a handed item goes on with Retry land or Stop, both with a note; Recheck would reopen land without one.
-function handedItem(): Detail {
-  return { ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'land_blocked', progress: { execution: deliveredExecution(false) } };
+/** The land view the server sends; whether the item was handed over, and whether Stop land ends it, are the server's to say. */
+function landView(state: string, handedOver: boolean, stoppable: boolean): NonNullable<Detail['land']> {
+  return { state, reason: null, message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
+    attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver, stoppable };
 }
-async function showHanded() {
+function handedItem(reason = 'land_blocked'): Detail {
+  return { ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason, progress: { execution: deliveredExecution(false) },
+    land: { ...landView('handed', true, true), reason } };
+}
+async function showHanded(reason = 'land_blocked') {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
-  vi.spyOn(api, 'getWorkItem').mockResolvedValue(handedItem());
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(handedItem(reason));
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   showDetail();await screen.findByText('TEST-title');await act(async () => {});
 }
@@ -586,14 +592,34 @@ it('handed item offers Stop with the note', async () => {
 // Review of slice 9: land unavailable on this forge or for this repository has no other way on, and once land is off
 // the item is not eligible at land with its pull request still open. Stop ends either; Retry land follows only a hand-off.
 it('offers Stop land but not Retry land while land is unavailable', async () => {
-  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) })).toBe(false);
   expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
 });
 it('offers Stop land and no re-admission at land once land is off', async () => {
-  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) })).toBe(false);
   expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+// Review of the branch: the hand-off reasons are the server's. A reason the screen has no copy of still offers Retry land.
+it('offers Retry land for any reason the server says handed the item over', async () => {
+  await showHanded('TEST-land-future-reason');
+  expect(screen.getByRole('button', { name: 'Retry land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).toBeNull();
+});
+// A land waiting hours for its checks has sent no merge, so Stop land ends it; once the merge was sent it cannot.
+it('offers Stop land but not Retry land while land waits for checks', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'active', reason: 'phase_started', progress: { execution: deliveredExecution(false) },
+    land: landView('waiting_checks', false, true) })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+it('offers no Stop land once the merge was sent', async () => {
+  await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'active', reason: 'phase_started', progress: { execution: deliveredExecution(false) },
+    land: landView('uncertain', false, false) });
+  expect(screen.queryByRole('button', { name: 'Stop land' })).toBeNull();
 });
 it('still offers re-admission for a completed item that did not land', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed', progress: { execution: deliveredExecution(false) } })).toBe(true);

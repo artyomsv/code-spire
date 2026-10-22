@@ -81,6 +81,10 @@ export interface LandView {
   attemptsAllowed: number;
   /** A land fix is building, verifying, delivering or being reviewed; readmit would open a second pull request. */
   fixInProgress: boolean;
+  /** Land handed the item to the operator: Retry land and Stop land are the ways on. The server decides, from its own reasons. */
+  handedOver: boolean;
+  /** Stop land may end the item now: handed over, waiting at land with nothing to move it, or a land that has sent no merge yet. */
+  stoppable: boolean;
 }
 
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */

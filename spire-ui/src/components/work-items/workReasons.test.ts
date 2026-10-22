@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { LAND_HANDOFF_REASONS, LAND_REASONS, landReason, workReason, workRefusal } from './workReasons';
 
 /**
@@ -68,6 +70,17 @@ describe('every land reason (M4 land)', () => {
   });
   it.each([...LAND_REASONS])('%s has a sentence', reason => {
     expect(workReason(reason)).not.toBe(reason);
+  });
+  // The screen's list is copy only; the server says which reasons hand an item over. Read the contract's set so a reason
+  // added there without a sentence here fails (review of the branch).
+  it('has a sentence for every hand-off reason the contract names', () => {
+    const java = readFileSync(join(process.cwd(), '..', 'spire-contract', 'src', 'main', 'java', 'dev', 'codespire', 'contract', 'work', 'WorkItemLifecycle.java'), 'utf8');
+    const declaration = /LAND_HANDOFF_REASONS\s*=\s*java\.util\.Set\.of\(([^)]*)\)/.exec(java);
+    expect(declaration, 'WorkItemLifecycle.LAND_HANDOFF_REASONS is declared').not.toBeNull();
+    const contract = [...(declaration?.[1] ?? '').matchAll(/"([a-z_]+)"/g)].map(match => match[1]);
+    expect(contract.length).toBeGreaterThan(0);
+    expect([...LAND_HANDOFF_REASONS].sort()).toEqual([...contract].sort());
+    for (const reason of contract) expect(workReason(reason), reason).not.toBe(reason);
   });
   it('quotes what GitHub said beside a hand-off', () => {
     const sentence = landReason('land_blocked', 'TEST-At least 1 approving review is required');

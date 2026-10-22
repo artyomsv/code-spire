@@ -209,7 +209,7 @@ it('the land gate says what will happen', async () => {
     verificationAttempt: 'TEST-verify', pullRequest, reviewId: 'TEST-review' } },
     land: { state: 'handed', reason: 'land_blocked', message: null, method: 'squash', ticketRule: 'close', branchDeleted: null, note: null,
       checks: { state: 'FAILED', done: 3, total: 4, failed: [{ name: 'TEST-ci', conclusion: 'failure', title: 'TEST-title', summary: 'TEST-summary', annotations: [] }] },
-      attempt: 0, attemptsAllowed: 3, fixInProgress: false } });
+      attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver: true, stoppable: true } });
   show();
   const preview = await screen.findByRole('region', { name: 'What land will do' });
   expect(preview).toHaveTextContent('Merges pull request #901 with a squash merge');
