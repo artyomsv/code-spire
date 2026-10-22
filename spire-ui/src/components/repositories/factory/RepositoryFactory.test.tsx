@@ -232,7 +232,8 @@ describe('land setup', () => {
     await within(method).findByRole('option', { name: 'squash' });
     fireEvent.change(method, { target: { value: 'squash' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save land setup' }));
-    expect(await within(await step(6)).findByText(/squash/)).toBeInTheDocument();
+    // Re-keyed on the new revision, so the step is a new element: look it up again rather than reuse the old one.
+    expect(await screen.findByText(/^squash · a comment on the ticket/)).toBeInTheDocument();
     fireEvent.click(within(await step(6)).getByRole('button', { name: 'Change' }));
     expect(await screen.findByRole('combobox', { name: 'Merge method' })).toHaveValue('squash');
   });
