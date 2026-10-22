@@ -181,9 +181,6 @@ public class WorkSourceEffects {
             if(!"sent".equals(comment.state())) { touch(effect.id());return false; }
         }
         return send(effect,item,source,c-> {
-            if(effect.intent().kind()==Kind.TRANSITION && landSettings.lockForUpdate(c,source.repositoryId()).ticketRule()!=LandSettings.TicketRule.CLOSE) {
-                mark(effect.id(),"pending","refused",null,"ticket_rule_changed");return false;
-            }
             try(PreparedStatement ps=c.prepareStatement("SELECT generation FROM work_item WHERE id=? FOR UPDATE")) {
                 ps.setString(1,effect.item());try(ResultSet rs=ps.executeQuery()) {
                     if(!rs.next() || rs.getLong(1)!=effect.generation()) { mark(effect.id(),"pending","refused",null,"work_item_changed");return false; }
