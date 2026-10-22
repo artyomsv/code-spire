@@ -120,6 +120,7 @@ abstract class WorkFixture {
                 execute("DELETE FROM work_activity_receipt WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_hold_outbox WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_land_effect WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_land_observation WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_verify_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_delivery_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);

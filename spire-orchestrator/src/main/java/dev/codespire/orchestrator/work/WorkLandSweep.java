@@ -64,6 +64,7 @@ public class WorkLandSweep {
     @Inject LandSettings settings;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
+    @Inject WorkLandObservations observations;
 
     record Effect(UUID id, String item, long generation, long pullRequest, String approvedHead, String state, String mergeCommit,
                   String mergedBy, String method, String mergedHead, int cleanupTries, Instant waitingSince, Instant failingSince) {
@@ -81,6 +82,8 @@ public class WorkLandSweep {
 
     @Scheduled(every = "${spire.work-land-interval:5s}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void drain() {
+        // Hand merges first: one this read confirms starts its cleaning row, which the same pass then drains.
+        observations.drain();
         List<UUID> ids = new ArrayList<>();
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "SELECT effect_id FROM work_land_effect WHERE state = ANY(?) AND (next_check_at IS NULL OR next_check_at <= ?)"
