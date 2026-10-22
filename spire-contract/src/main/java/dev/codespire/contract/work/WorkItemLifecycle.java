@@ -72,8 +72,8 @@ public final class WorkItemLifecycle {
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
         return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);
     }
-    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,EntryMode mode) {
-        boolean landFix=mode==EntryMode.LAND_FIX;
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,EntryMode entry) {
+        boolean landFix=entry==EntryMode.LAND_FIX;
         if(item.policy().selected()==null)return state(item,"not_eligible",item.policy().reason(),"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("complete".equals(item.phase()))return state(item,"completed","all_phases_completed","WORK_ITEM_COMPLETED",item.gate(),item.progress().reserve(false));
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
@@ -87,7 +87,7 @@ public final class WorkItemLifecycle {
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }
-        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,mode);
+        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,entry);
         if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
             return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
