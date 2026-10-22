@@ -77,6 +77,13 @@ public final class WorkItemLifecycle {
         return state(item,"active","phase_started","PHASE_STARTED",item.gate(),item.progress().start(decisionId,item.phase(),now));
     }
 
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,boolean landFix) {
+        return enter(item,previous,historySize,approved,now,available,decisionId);
+    }
+    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of();
+    public static WorkItemEvent landFixRequested(WorkItemEvent item,String reason) { return item; }
+    public static boolean landFixInProgress(List<WorkItemEvent> generationHistory) { return false; }
+
     /** The reasons an open verify gate carries when it asks about a result rather than permission to run. */
     public static final java.util.Set<String> VERIFY_RESULT_REASONS=java.util.Set.of("verify_failed","verify_unverified");
 

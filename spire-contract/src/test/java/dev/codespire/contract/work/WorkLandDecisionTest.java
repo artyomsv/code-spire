@@ -48,7 +48,7 @@ class WorkLandDecisionTest {
     @Test void everyHandOffReasonWaitsAtLand(){
         assertEquals(Set.of("land_head_moved","land_checks_timeout","land_checks_not_code","land_blocked","land_pr_draft","land_merge_refused",
                 "land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached","land_fix_review_blocked",
-                "land_checks_failed","land_conflict","land_branch_behind","land_account_unavailable","land_read_failed"),WorkItemLifecycle.LAND_HANDOFF_REASONS);
+                "land_fix_run_failed","land_account_unavailable","land_read_failed"),WorkItemLifecycle.LAND_HANDOFF_REASONS);
         for(String reason:WorkItemLifecycle.LAND_HANDOFF_REASONS)assertEquals(reason,WorkItemLifecycle.landHanded(atLand("approve",1),reason).reason());
     }
     @Test void anUnknownHandOffReasonIsRefused(){

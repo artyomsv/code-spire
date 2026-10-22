@@ -75,7 +75,7 @@ public class WorkItemResource {
      * @param branchDeleted true once the branch is gone, false when deleting it gave up, null before
      */
     public record LandView(String state,String reason,String message,dev.codespire.contract.port.PullRequestLander.CheckSummary checks,
-                           String method,String ticketRule,Boolean branchDeleted,String note) {}
+                           String method,String ticketRule,Boolean branchDeleted,String note,int attempt,int attemptsAllowed,boolean fixInProgress) {}
     /**
      * @param counts items per workflow status across every page, so a filter can say how many rows it
      *     holds before it is chosen, and a band can say how many items need a person
@@ -181,7 +181,7 @@ public class WorkItemResource {
                 return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
                         method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
                         // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note);
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,0,0,false);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }

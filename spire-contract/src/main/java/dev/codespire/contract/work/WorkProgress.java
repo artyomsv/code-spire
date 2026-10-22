@@ -23,6 +23,7 @@ public record WorkProgress(UUID attemptId, String attemptPhase, String attemptSt
         boolean build="build".equals(phase);
         return new WorkProgress(id,phase,"started",true,now,runs+(build?1:0),steps+(build?1:0),wallSeconds,costMillicents,calls,usageUnknown,build?null:execution);
     }
+    public WorkProgress startKeepingExecution(UUID id,String phase,Instant now) { return start(id,phase,now); }
     public WorkProgress finish(long wall,long cost,long callCount) {
         if(wall<0 || cost<0 || callCount<0)throw new IllegalArgumentException("Usage cannot be negative");
         return new WorkProgress(attemptId,attemptPhase,"completed",false,startedAt,runs,steps,

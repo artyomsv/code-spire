@@ -74,6 +74,12 @@ export interface LandView {
   ticketRule: string;
   branchDeleted: boolean | null;
   note: string | null;
+  /** Counted fix attempts of this generation (a branch behind its base is not counted). */
+  attempt: number;
+  /** The smaller of the repository's fix attempts and the runs this item has left. */
+  attemptsAllowed: number;
+  /** A land fix is building, verifying, delivering or being reviewed; readmit would open a second pull request. */
+  fixInProgress: boolean;
 }
 
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */
