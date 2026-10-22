@@ -138,6 +138,11 @@ verdict, and stops at the land gate; land (ADR-048) is built and awaits live acc
   with 3 inline comments, #56 commented with the merge box untouched, and the re-run on PR 55
   dismissed its hold. The proof fixed the inline read-back endpoint and the re-run review reuse.
 
+- **M4 slice 2: land is built on `feat/m4-land` (PR #243, ADR-048), live acceptance pending.** On GitHub
+  an approved land merges the pull request at the approved head, deletes the item branch and comments on
+  the ticket (closing it is a per-repository choice). A code refusal loops through a land fix to a new land
+  gate; anything else is handed to the operator. A merge or close by hand completes or stops the item.
+
 **Limits that remain:**
 
 - **Land is built but not accepted live (ADR-048).** On GitHub an approved land merges at the

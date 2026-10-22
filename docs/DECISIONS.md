@@ -24,7 +24,13 @@ operator's decisions and section 10 the review amendments.
 - **An uncertain merge is read, never re-sent.** The row is committed `uncertain` before the merge call. A row
   found there only reads the pull request: merged is recorded; open at the approved head goes back to
   checking; anything else is handed over. A 5xx or an I/O failure is uncertain; every status below 500 is
-  definite (the ADR-043 rule, applied to a merge). A human takeover refuses only rows before the merge call.
+  definite (the ADR-043 rule, applied to a merge). A human takeover refuses only rows before the merge call;
+  an uncertain row on a taken-over item keeps reading for six hours, because GitHub can still finish the merge.
+- **Approval is re-observed before the merge.** Under the item lock, before the merge is claimed, land re-reads
+  the ticket's labels, the policy revision and the source, as delivery does before its permit. A change since
+  approval, or land no longer `approve`, hands the item over (`land_policy_changed`); a ticket that cannot be
+  read holds the merge (`land_read_failed`). Stop land ends a land that has sent no merge and refuses its row
+  in the same transaction.
 - **One reading decides** (`WorkLandDecision`, pure). A moved head is handed over (`land_head_moved`). Checks
   are reduced from the check-run and status lists, never GitHub's combined state, and an empty set passes. A
   failed check, a conflict (`dirty`) or a branch behind its base is the code's. Cancelled, timed-out or stale
