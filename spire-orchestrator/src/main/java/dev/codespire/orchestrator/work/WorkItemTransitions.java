@@ -184,8 +184,10 @@ public class WorkItemTransitions {
                 if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
                 // A merged pull request cannot be built again beside itself; a handed item goes on with Retry land (spec §7.9).
                 if(readmit && landed(history,item))return new Outcome(409,"readmission_landed",item);
-                if(readmit && "land".equals(item.phase()) && "awaiting_input".equals(item.workflowStatus())
-                        && WorkItemLifecycle.LAND_HANDOFF_REASONS.contains(item.reason()))return new Outcome(409,"readmission_land_pending",item);
+                // Waiting at land for any reason, a hand-off or not, leaves the delivered pull request open: a close stops
+                // the item, so only a stopped or failed land may build again (A8).
+                if(readmit && "land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable").contains(item.workflowStatus()))
+                    return new Outcome(409,"readmission_land_pending",item);
                 // A land fix waiting for a person still has its pull request open; readmit would build a second one beside it.
                 if(readmit && landFix)return new Outcome(409,"readmission_land_pending",item);
                 if(readmit && mergeUnconfirmed(c,item))return new Outcome(409,"readmission_merge_unconfirmed",item);

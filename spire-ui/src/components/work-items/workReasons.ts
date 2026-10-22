@@ -133,7 +133,7 @@ const REASONS = new Map(Object.entries({
   retry_land_head_unavailable: 'The pull request could not be read on GitHub, so it is unknown whether it still holds the approved head. Nothing changed; try again.',
   land_stopped_by_operator: 'Stopped at land by an operator. The pull request stays open; re-admitting builds the work again on a new pull request.',
   readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',
-  readmission_land_pending: 'This item waits for a decision at land, or is fixing its open pull request. Retry land or stop it instead of re-admitting.',
+  readmission_land_pending: 'This item waits at land, or is fixing, with its pull request still open, so re-admitting would build a second one. Recheck, retry land or stop it instead.',
   land_account_unavailable: "This repository's factory account could not be used to merge for six hours: it is missing, switched off, or has no login. Fix it on the Repositories screen, then retry land or stop.",
   land_read_failed: 'The pull request could not be read on GitHub, and no merge was sent. After six hours of this the item waits for you: check that the repository and the pull request still exist, then retry land or stop.',
   land_merge_unconfirmed: 'A merge was sent, but GitHub has not answered whether it happened for six hours. The factory keeps reading and will record what GitHub did; check the pull request on GitHub.',

@@ -63,12 +63,14 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // A landed item cannot be built again beside its merged pull request, and an item handed to the operator at
   // land goes on with Retry land or Stop (spec §7.6, §7.9). The server refuses readmit and recheck there, so neither
   // is offered. Waiting at land for any other reason, such as a tracker outage, is still answered by recheck.
+  // Readmit is refused at land whenever the item waits, handed or not: its delivered pull request is still open (A8).
   const landed = item.workflowStatus === 'completed' && item.progress?.execution?.landing != null;
   const handedAtLand = item.phase === 'land' && item.workflowStatus === 'awaiting_input' && LAND_HANDOFF_REASONS.includes(item.reason);
+  const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
   const canResume = !handedAtLand && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
   const fixing = item.land?.fixInProgress === true;
-  const canReadmit = !landed && !handedAtLand && !fixing
+  const canReadmit = !landed && !waitingAtLand && !fixing
     && ['not_eligible', 'stopped', 'failed', 'completed', 'awaiting_input', 'capability_unavailable'].includes(item.workflowStatus);
   if (item.workflowStatus === 'suspended' && !coordinates)
     return <p className="factory-note">This item has no branch to re-observe, so it cannot resume. Its prepared task or pull request is missing.</p>;
