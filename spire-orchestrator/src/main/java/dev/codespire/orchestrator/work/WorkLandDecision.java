@@ -32,7 +32,6 @@ final class WorkLandDecision {
         if ("closed".equals(pr.state())) return new Next.Closed();
         if (!Objects.equals(approvedHead, pr.headSha())) return new Next.Hand("land_head_moved");
         // Read from the repository's allow_*_merge flags, never parsed from a refusal (A5).
-        if (allowed.checked() && !allowed.allowed().contains(method)) return new Next.Hand("land_merge_method_not_allowed");
         Checks checks = pr.checks().state();
         if (checks == Checks.NOT_CODE) return new Next.Hand("land_checks_not_code");
         // A failing non-required check is fixed too: the operator asked for failed checks to be fixed (§7.4).
