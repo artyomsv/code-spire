@@ -58,6 +58,8 @@ public class WorkItemControl {
                 var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
                 if(received(c,id,channel,delivery))return;
                 if("retired".equals(item.workflowStatus())){receipt(c,id,channel,delivery,"already_retired");return;}
+                // A completed item's ticket stays open so testing can follow (spec §7.7); activity on it is not a takeover.
+                if(!retired && "completed".equals(item.workflowStatus())){receipt(c,id,channel,delivery,"already_completed");return;}
                 // Tracker identities and SCM identities are separate namespaces even on one item.
                 if(!retired && item.control()!=null && ("tracker".equals(channel)?item.control().trackerMachine(actor):item.control().machine(actor))) {
                     receipt(c,id,channel,delivery,"recorded_machine");return;

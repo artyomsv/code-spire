@@ -105,12 +105,17 @@ public final class WorkItemLifecycle {
             "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
             "land_fix_review_blocked","land_checks_failed","land_conflict","land_branch_behind");
 
-    /** The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. */
+    /**
+     * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only
+     * the land attempt finishes here; a fix build or verify still running keeps its attempt open, so its late
+     * result is accounted rather than read as already applied (§7.8).
+     */
     public static WorkItemEvent landed(WorkItemEvent item,WorkLanding landing) {
         WorkExecution execution=item.progress().execution();
         if(execution==null)throw new IllegalStateException("Only a delivered execution can land");
-        WorkProgress progress=item.progress().finish(0,0,0).withExecution(execution.landed(landing));
-        return item.decision(item.policyRevision(),item.authority(),item.policy(),"complete","completed","landed","WORK_ITEM_LANDED",item.gate(),progress);
+        WorkProgress current="land".equals(item.progress().attemptPhase())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        WorkProgress progress=current.withExecution(execution.landed(landing));
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"complete","completed","landed","WORK_ITEM_LANDED",superseded(item.gate(),"landed"),progress);
     }
     /** An approval resolved before the hand-off is never reused, so the item carries no gate. */
     public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {
@@ -118,7 +123,11 @@ public final class WorkItemLifecycle {
         return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,item.progress().reserve(false));
     }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
-        return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",item.gate(),item.progress().reserve(false));
+        return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));
+    }
+    /** An open gate on a terminal item would later expire and overwrite why it ended, so the fact supersedes it. */
+    private static WorkGate superseded(WorkGate gate,String fact) {
+        return gate!=null && "OPEN".equals(gate.state())?gate.resolve("SUPERSEDED",null,"system",fact,null):gate;
     }
     /** Whether this generation recorded the merge of that pull request; a later fact does not hide it. */
     public static boolean landedIn(List<WorkItemEvent> history,long generation,long pullRequest) {

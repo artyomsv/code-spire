@@ -67,6 +67,8 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!"suspended".equals(item.workflowStatus()))return new Outcome(409,"resume_requires_suspended_item",item);
+                // Resume starts a new generation too, so a merged pull request refuses it as readmission does (spec §7.9).
+                if(landed(history,item))return new Outcome(409,"readmission_landed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 var p=item.progress();
                 var fresh=new WorkProgress(null,null,null,false,null,p.runs(),p.steps(),p.wallSeconds(),p.costMillicents(),p.calls(),p.usageUnknown(),null);
