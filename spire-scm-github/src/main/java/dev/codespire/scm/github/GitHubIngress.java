@@ -150,7 +150,7 @@ public class GitHubIngress implements ScmIngress {
                 // A close is a merge or an abandonment, not a push. The merger is merged_by, never the sender (M4 land, A2).
                 boolean merged="closed".equals(action) && pull.path("merged").asBoolean(false);
                 kind=!"closed".equals(action)?"push":merged?"merged":"closed";
-                if(merged)mergedBy=pull.path("merged_by").path("id").asText(null);
+                if(merged)mergedBy=root.path("sender").path("id").asText(null);
             }
         } else if("issue_comment".equals(event) || "pull_request_review_comment".equals(event)) {
             if(!"created".equals(root.path("action").asText()))return List.of();
