@@ -35,12 +35,12 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..047 cover the software factory; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..048 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..046. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..048. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
@@ -53,7 +53,7 @@ the live proof of "one ticket to a build", the [M4 verify acceptance record](doc
 the live proof of verify, and the [GitHub reviews acceptance record](docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md)
 the live proof of forge-native reviews. **M3, M3.5 and M4 slice 1 are on master; GitHub reviews are
 accepted on PR #196.** An item now builds, verifies, delivers a PR, gets a GitHub review with a
-verdict, and stops at the land gate; land is next.
+verdict, and stops at the land gate; land (ADR-048) is built and awaits live acceptance.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -140,8 +140,12 @@ verdict, and stops at the land gate; land is next.
 
 **Limits that remain:**
 
-- **Production LAND remains unavailable.** Approving land records the answer and merges nothing.
-  Readmit after an approved land rebuilds delivered work, and nothing guards it yet.
+- **Land is built but not accepted live (ADR-048).** On GitHub an approved land merges at the
+  approved head through a durable `work_land_effect` row; a lost merge answer is recovered by reading,
+  never re-sent. A failed check, a conflict or a branch behind its base loops through a land fix on
+  the same pull request; anything else hands the item to the operator (Retry land or Stop land).
+  Readmit is refused after a landing and while an item waits at land. All of it is proven against a
+  WireMock GitHub only; no item has been merged live (docs/UNVERIFIED.md, the M4 land entry).
 - **Live item publication is GitHub only.** Marking a draft ready is refused on GitLab and
   Bitbucket. GitLab and Bitbucket reviews are posted as comments; GitHub gets a pull request review
   (ADR-047).

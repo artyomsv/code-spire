@@ -224,21 +224,6 @@ public final class PublishRepo implements AutoCloseable {
     }
 
     /**
-     * Every path changed between {@code baseCommit} and {@code sha}, renames on both sides.
-     *
-     * <p>Uses {@link DiffFormatter} rather than {@code git.diff()} because rename detection lives
-     * there and nowhere else. <b>Rename detection is off by default, and without it the RENAME
-     * branch is unreachable:</b> a 100% rename arrives as an unrelated ADD plus DELETE, so
-     * {@link ChangeKind#RENAMED_FROM} and {@link ChangeKind#RENAMED_TO} could never be produced,
-     * and the push gate's rename case would be testable only against fixtures no real diff can
-     * generate. Measured, not assumed: with detection off, deleting the RENAME branch broke no test.
-     *
-     * <p>Every path is checked before it is returned. The fetch does not run {@code fsck}, so a tree
-     * can carry {@code ..} segments, an absolute path, a backslash or a NUL — entries a glob written
-     * as {@code .github/workflows/**} does not match but a checkout on the forge would honour. A
-     * path the gate cannot reason about is refused here rather than judged there.
-     */
-    /**
      * {@link #changesSince(String, String)} for a land fix that merged its pull request's base (M4 slice 7a).
      *
      * <p>Merging the base into the item branch shows every base change since divergence, so a workflow edited on
@@ -399,6 +384,21 @@ public final class PublishRepo implements AutoCloseable {
         return Optional.empty();
     }
 
+    /**
+     * Every path changed between {@code baseCommit} and {@code sha}, renames on both sides.
+     *
+     * <p>Uses {@link DiffFormatter} rather than {@code git.diff()} because rename detection lives
+     * there and nowhere else. <b>Rename detection is off by default, and without it the RENAME
+     * branch is unreachable:</b> a 100% rename arrives as an unrelated ADD plus DELETE, so
+     * {@link ChangeKind#RENAMED_FROM} and {@link ChangeKind#RENAMED_TO} could never be produced,
+     * and the push gate's rename case would be testable only against fixtures no real diff can
+     * generate. Measured, not assumed: with detection off, deleting the RENAME branch broke no test.
+     *
+     * <p>Every path is checked before it is returned. The fetch does not run {@code fsck}, so a tree
+     * can carry {@code ..} segments, an absolute path, a backslash or a NUL — entries a glob written
+     * as {@code .github/workflows/**} does not match but a checkout on the forge would honour. A
+     * path the gate cannot reason about is refused here rather than judged there.
+     */
     public ChangeSet changesSince(String baseCommit, String sha) throws IOException {
         Repository repo = git.getRepository();
         try (RevWalk walk = new RevWalk(repo);
