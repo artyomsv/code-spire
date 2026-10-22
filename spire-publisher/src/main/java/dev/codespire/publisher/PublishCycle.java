@@ -79,7 +79,7 @@ public final class PublishCycle {
             if (!publication.selects(sha)) {
                 return true;
             }
-            changes = repo.changesSince(baseCommit, sha);
+            changes = repo.changesSince(baseCommit, sha, publication.mergedBaseTip());
         } catch (GitAPIException | IOException | BundleTooLargeException | EmptyBundleException
                  | AmbiguousBundleException | UnsafeTreePathException e) {
             // A bundle that cannot be read is not a refusal and not a push. Reported and skipped:

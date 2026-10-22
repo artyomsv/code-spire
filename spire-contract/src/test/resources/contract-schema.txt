@@ -72,7 +72,7 @@ RepositoryDelivery(repositoryId: java.util.UUID, registrationId: java.util.UUID,
 WorkRunBinding(workItemId: java.lang.String, generation: long, buildAttemptId: java.util.UUID, preparationBinding: java.lang.String)
 
 # WorkPublicationPermit
-WorkPublicationPermit(work: dev.codespire.contract.work.WorkRunBinding, deliveryAttemptId: java.util.UUID, head: java.lang.String, issuedAt: java.time.Instant, expiresAt: java.time.Instant, protectedPaths: java.util.List<java.lang.String>)
+WorkPublicationPermit(work: dev.codespire.contract.work.WorkRunBinding, deliveryAttemptId: java.util.UUID, head: java.lang.String, issuedAt: java.time.Instant, expiresAt: java.time.Instant, protectedPaths: java.util.List<java.lang.String>, expectedRemoteHead: java.lang.String, mergedBaseTip: java.lang.String)
 
 # WorkProgress
 WorkProgress(attemptId: java.util.UUID, attemptPhase: java.lang.String, attemptState: java.lang.String, reserved: boolean, startedAt: java.time.Instant, runs: long, steps: long, wallSeconds: long, costMillicents: long, calls: long, usageUnknown: boolean, execution: dev.codespire.contract.work.WorkExecution)

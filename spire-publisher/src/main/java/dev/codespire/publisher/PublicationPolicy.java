@@ -5,16 +5,23 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 
-/** Selected by a trusted executable, never by anything in the repository or handoff volume. */
-record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock) {
+/**
+ * Selected by a trusted executable, never by anything in the repository or handoff volume.
+ *
+ * <p>{@code expectedRemoteHead} and {@code mergedBaseTip} come from a land fix's permit (M4 slice 7a): the push
+ * goes to the item's existing branch only while the remote still points at the expected head, and paths whose
+ * content equals the merged base tip are the base's, not the agent's.
+ */
+record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
+                         String expectedRemoteHead, String mergedBaseTip) {
     enum Mode { AUTOMATIC, HELD, PERMITTED }
 
     static PublicationPolicy automatic() {
-        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC());
+        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null);
     }
 
     static PublicationPolicy held() {
-        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC());
+        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null, null);
     }
 
     static PublicationPolicy permitted(String head, Instant issuedAt, Instant expiresAt, Clock clock) {
@@ -25,7 +32,12 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("The publication permit needs a positive validity window");
         }
         return new PublicationPolicy(Mode.PERMITTED, head, issuedAt, expiresAt,
-                java.util.Objects.requireNonNull(clock));
+                java.util.Objects.requireNonNull(clock), null, null);
+    }
+
+    /** The same permitted policy, pushing to an existing branch expected at {@code expectedRemoteHead}. */
+    PublicationPolicy onExistingBranch(String expectedRemoteHead, String mergedBaseTip) {
+        return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead, mergedBaseTip);
     }
 
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {

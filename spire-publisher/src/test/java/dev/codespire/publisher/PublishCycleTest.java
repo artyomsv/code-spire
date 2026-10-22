@@ -10,6 +10,9 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -227,5 +230,82 @@ class PublishCycleTest {
 
         assertTrue(written().contains("deploy/values.yaml"), written());
         assertEquals("", rev(bare, "refs/heads/spire/run_1"));
+    }
+
+    private static final String ITEM_BRANCH = "spire/work-TEST";
+
+    private static final Instant NOW = Instant.parse("2026-10-22T12:00:00Z");
+
+    /** A land fix: the item branch already exists on the origin at the approved head, which is {@code base} here. */
+    private PublishCycle landFix(PublishRepo repo, String base, String tip, String mergedBaseTip) {
+        PublicationPolicy permit = PublicationPolicy.permitted(tip, NOW, NOW.plusSeconds(60),
+                Clock.fixed(NOW, ZoneOffset.UTC)).onExistingBranch(base, mergedBaseTip);
+        return new PublishCycle(repo, base, ITEM_BRANCH, List.of(), 10_000_000L, null, outcome, permit);
+    }
+
+    @Test
+    void aMovedRemoteHeadRefusesThePush(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path seed = dir.resolve("seed");
+        String base = rev(seed, "HEAD");
+        git(seed, "git", "push", "origin", "main:" + ITEM_BRANCH);
+        Path bundle = agentBundle(dir, bare, base, "echo TEST-fix > FIX.md");
+        String tip = rev(dir.resolve("agent-ws"), "HEAD");
+
+        // A person pushes to the pull request's branch after the land gate was approved.
+        Path other = dir.resolve("other");
+        git(dir, "git", "clone", "--branch", ITEM_BRANCH, bare.toUri().toString(), other.toString());
+        Files.writeString(other.resolve("TEST-moved.txt"), "TEST a commit the fix has never seen\n");
+        git(other, "git", "add", ".");
+        git(other, "git", "-c", "user.email=TEST@example.test", "-c", "user.name=TEST", "commit", "-m", "TEST move");
+        git(other, "git", "push", "origin", ITEM_BRANCH);
+        String moved = rev(other, "HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertFalse(landFix(repo, base, tip, null).handle(bundle), "a moved branch ends the run");
+        }
+
+        assertTrue(written().contains("\"cause\":\"REMOTE_HEAD_MOVED\""), written());
+        assertFalse(written().contains("\"event\":\"pushed\""), written());
+        assertEquals(moved, rev(bare, "refs/heads/" + ITEM_BRANCH), "the person's commit is untouched");
+    }
+
+    @Test
+    void theExpectedRemoteHeadPublishes(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path seed = dir.resolve("seed");
+        String base = rev(seed, "HEAD");
+        git(seed, "git", "push", "origin", "main:" + ITEM_BRANCH);
+        Path bundle = agentBundle(dir, bare, base, "echo TEST-fix > FIX.md");
+        String tip = rev(dir.resolve("agent-ws"), "HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            PublishCycle cycle = landFix(repo, base, tip, null);
+            assertTrue(cycle.handle(bundle));
+            assertTrue(cycle.finish());
+        }
+
+        assertTrue(written().contains("\"event\":\"pushed\""), written());
+        assertEquals(tip, rev(bare, "refs/heads/" + ITEM_BRANCH));
+    }
+
+    @Test
+    void anUnavailableBaseTipIsNotPushed(@TempDir Path dir) throws Exception {
+        Path bare = origin(dir);
+        Path seed = dir.resolve("seed");
+        String base = rev(seed, "HEAD");
+        git(seed, "git", "push", "origin", "main:" + ITEM_BRANCH);
+        Path bundle = agentBundle(dir, bare, base, "echo TEST-fix > FIX.md");
+        String tip = rev(dir.resolve("agent-ws"), "HEAD");
+
+        try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "main",
+                dir.resolve("publish"), null)) {
+            assertFalse(landFix(repo, base, tip, "f".repeat(40)).handle(bundle), "a base tip the run cannot use ends it");
+        }
+
+        assertTrue(written().contains("\"cause\":\"BASE_TIP_UNAVAILABLE\""), written());
+        assertEquals(base, rev(bare, "refs/heads/" + ITEM_BRANCH), "nothing was pushed");
     }
 }

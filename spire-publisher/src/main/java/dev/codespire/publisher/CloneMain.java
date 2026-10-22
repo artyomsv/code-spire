@@ -101,6 +101,11 @@ public final class CloneMain {
     /** Separate from {@link #run} so a test can use a local origin, which the remote rules refuse. */
     static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
                          String username, Checkpoint checkpoint) throws IOException, GitAPIException {
+        populate(remote, base, branch, workspace, credential, username, checkpoint, null);
+    }
+
+    static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
+                         String username, Checkpoint checkpoint, String fetchBranch) throws IOException, GitAPIException {
         WorkspaceClone.populate(remote, base, branch, workspace, credential, username, username + "@" + IDENTITY_DOMAIN);
         if (checkpoint != null) CheckpointBundles.importInto(workspace, checkpoint.bundles(), checkpoint.head(), checkpoint.maxBytes());
     }

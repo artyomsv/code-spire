@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -230,6 +231,14 @@ public final class PublishRepo implements AutoCloseable {
      * as {@code .github/workflows/**} does not match but a checkout on the forge would honour. A
      * path the gate cannot reason about is refused here rather than judged there.
      */
+    public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException {
+        return changesSince(baseCommit, sha);
+    }
+
+    public Optional<String> remoteHead(String branch, GitCredential credential) throws GitAPIException {
+        return Optional.empty();
+    }
+
     public ChangeSet changesSince(String baseCommit, String sha) throws IOException {
         Repository repo = git.getRepository();
         try (RevWalk walk = new RevWalk(repo);

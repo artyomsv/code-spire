@@ -52,6 +52,28 @@ class PublicationPolicyTest {
                                 "SPIRE_PERMIT_EXPIRES_AT", NOW.toString())));
     }
 
+    @Test void anExistingBranchPermitComesFromTheTrustedEnvironment() {
+        String expected = "b".repeat(40), tip = "c".repeat(40);
+        Map<String, String> env = Map.of("SPIRE_PERMITTED_HEAD", HEAD,
+                "SPIRE_PERMIT_ISSUED_AT", NOW.toString(), "SPIRE_PERMIT_EXPIRES_AT", NOW.plusSeconds(1).toString(),
+                "SPIRE_EXPECTED_REMOTE_HEAD", expected, "SPIRE_MERGED_BASE_TIP", tip);
+        PublicationPolicy permit = PublicationPolicy.fromEnv(PublicationPolicy.Mode.PERMITTED, env);
+        assertEquals(expected, permit.expectedRemoteHead());
+        assertEquals(tip, permit.mergedBaseTip());
+        assertNull(at(NOW).expectedRemoteHead(), "a new-branch permit expects nothing");
+        assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, env).expectedRemoteHead(),
+                "only a permitted publisher pushes");
+    }
+
+    @Test void anExistingBranchPermitNeedsFullShas() {
+        for (String invalid : new String[]{"", "abc", "B".repeat(40)}) {
+            assertThrows(IllegalStateException.class, () -> at(NOW).onExistingBranch(invalid, null), invalid);
+            assertThrows(IllegalStateException.class, () -> at(NOW).onExistingBranch("b".repeat(40), invalid), invalid);
+        }
+        assertThrows(IllegalStateException.class, () -> at(NOW).onExistingBranch(null, "c".repeat(40)));
+        assertThrows(IllegalStateException.class, () -> PublicationPolicy.held().onExistingBranch("b".repeat(40), null));
+    }
+
     private PublicationPolicy at(Instant now) {
         return PublicationPolicy.permitted(HEAD, NOW, NOW.plusSeconds(1), Clock.fixed(now, ZoneOffset.UTC));
     }
