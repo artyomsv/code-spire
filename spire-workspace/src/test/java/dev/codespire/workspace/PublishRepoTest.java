@@ -659,8 +659,8 @@ class PublishRepoTest {
                 dir.resolve("publish"), null)) {
             String sha = repo.fetchBundle(bundle, 10_000_000L);
 
-            assertEquals(repo.changesSince(merge.approved(), sha), repo.changesSince(merge.approved(), sha, null));
-            assertFalse(repo.changesSince(merge.approved(), sha, null).isEmpty());
+            assertEquals(repo.changesSince(merge.approved(), sha), repo.changesSince(merge.approved(), sha, (String) null));
+            assertFalse(repo.changesSince(merge.approved(), sha, (String) null).isEmpty());
         }
     }
 
@@ -727,7 +727,7 @@ class PublishRepoTest {
         try (PublishRepo repo = PublishRepo.cloneBranch(bare.toUri().toString(), "spire/work-TEST",
                 dir.resolve("publish"), null)) {
             String sha = repo.fetchBundle(bundle, 10_000_000L);
-            assertTrue(PushGate.decide(repo.changesSince(merge.approved(), sha, null), List.of()).allowed(),
+            assertTrue(PushGate.decide(repo.changesSince(merge.approved(), sha, (String) null), List.of()).allowed(),
                     "the head's tree equals the approved head's, so only the landing shows the revert");
             String landingTip = repo.localHead("main").orElseThrow();
             assertEquals(merge.baseTip(), landingTip, "the publisher's clone of the item branch holds the base too");

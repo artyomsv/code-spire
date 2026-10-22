@@ -163,8 +163,8 @@ class WorkLandRetryIT extends WorkLandFixture {
         QuarkusTransaction.requiringNew().run(()->{
             try(var c=dataSource.getConnection()) {
                 WorkItemTransitions.lockItem(c,id);var history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
-                transitions.decide(c,history,WorkItemLifecycle.state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),
-                        "TEST-stop-before-review:"+UUID.randomUUID());
+                transitions.decide(c,new WorkItemTransitions.Decision(history,WorkItemLifecycle.state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),
+                        "TEST-stop-before-review:"+UUID.randomUUID()));
             }catch(Exception failure){throw new IllegalStateException(failure);}
         });
     }
