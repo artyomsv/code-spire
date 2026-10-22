@@ -91,7 +91,7 @@ public class LandSettings {
                 ps.setObject(1, repository);
                 try (ResultSet rs = ps.executeQuery()) { if (!rs.next()) throw new Refused("repository_unknown"); }
             }
-            if (get(c, repository, true).revision() != input.expectedRevision()) throw new Refused("land_settings_changed");
+            get(c, repository, true);
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO repository_land_settings(repository_id,merge_method,ticket_rule,fix_attempts,updated_by)
                     VALUES (?,?,?,?,?)
