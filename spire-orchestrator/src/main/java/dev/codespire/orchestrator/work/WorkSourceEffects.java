@@ -51,6 +51,15 @@ public class WorkSourceEffects {
         catch (java.io.IOException invalid) { throw new IllegalStateException("Cannot encode tracker effect",invalid); }
     }
 
+    void enqueuePostLand(Connection c, UUID id, String itemId, long revision, Kind kind, String value) throws SQLException {
+        throw new UnsupportedOperationException("RED");
+    }
+    static UUID postLandId(String itemId, long generation, Kind kind) {
+        return UUID.nameUUIDFromBytes(("post-land:"+itemId+":"+generation+":"+kind).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+    static String landedComment(WorkLanding landing, String handle, boolean closing) { return "RED"; }
+    static Optional<String> closeTransition(WorkSourceType type) { return Optional.empty(); }
+
     @Scheduled(every="${spire.work-effects-interval:2s}", concurrentExecution=Scheduled.ConcurrentExecution.SKIP)
     public void sweep() {
         List<UUID> ids = new ArrayList<>();
