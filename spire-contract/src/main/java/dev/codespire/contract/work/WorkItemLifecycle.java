@@ -84,7 +84,7 @@ public final class WorkItemLifecycle {
         if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
             return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
-        WorkProgress started=landFix && "build".equals(item.phase())?item.progress().startKeepingExecution(decisionId,item.phase(),now)
+        WorkProgress started=landFix && "build".equals(item.phase())?item.progress().start(decisionId,item.phase(),now)
                 :item.progress().start(decisionId,item.phase(),now);
         return state(item,"active","phase_started","PHASE_STARTED",item.gate(),started);
     }
