@@ -55,6 +55,19 @@ class WorkLandWebhookIT extends WorkLandFixture {
         land.drain();
         assertEquals(1,deletes());assertEquals(0,merges());assertEquals("done",effect(id,"state"));
     }
+    /**
+     * Reading a merge needs no merge rights: with the FACTORY account gone the reviewer reads the pull request, so a
+     * hand merge is still recorded and the ticket is still told (code-quality review of the branch).
+     */
+    @Test void aHandMergeIsReadThroughTheReviewerWhenTheFactoryIsUnavailable() throws Exception {
+        String id=atLandGate();mergedBy(PERSON);branchAt(HEAD,204);
+        executeWith("DELETE FROM repository_account WHERE repository_id=? AND role='FACTORY'",repository);
+        channels.activity(repository,closedOnGitHub(id,"merged",PERSON,PERSON),"TEST-hand-merge-reviewer-read");
+        landed(id);
+        assertEquals(PERSON,store.load(id).progress().execution().landing().mergedBy());
+        assertEquals(1,postLandComments(id));
+        assertEquals(0,merges());
+    }
     @Test void aHandMergeOfAnApprovedLandMovesItsEffectToCleaning() throws Exception {
         String id=approved();assertEquals("pending",effect(id,"state"));
         mergedBy(PERSON);branchAt(HEAD,204);

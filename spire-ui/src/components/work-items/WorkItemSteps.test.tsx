@@ -143,3 +143,16 @@ it('a passed result shows the tick', () => {
     progress: { execution: executionWith(verification('PASSED', null, 0)) } }));
   expect(step('Verify').getByLabelText('Passed')).toBeInTheDocument();
 });
+
+// Review finding: a Jira ticket under the close rule stays open, and only the land note tells the operator to close it.
+it('shows the land note beside a completed merge', () => {
+  const pullRequest = { number: 901, url: 'https://forge.example.test/TEST-pull/901', draft: false };
+  const execution: WorkExecution = { runId: 'TEST-run', build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
+    head: 'b'.repeat(40), verificationAttempt: null, pullRequest, reviewId: 'TEST-review',
+    landing: { pullRequest, mergeCommit: 'c'.repeat(40), method: 'squash', mergedBy: 'factory', landedAt: '2026-10-22T12:00:00Z' } };
+  show(item({ phase: 'complete', workflowStatus: 'completed', reason: 'landed', gate: null, progress: { execution },
+    land: { state: 'done', reason: null, message: null, checks: null, method: 'squash', ticketRule: 'close', branchDeleted: true, note: 'ticket_close_unsupported',
+      attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver: false, stoppable: false } }));
+  expect(step('Land').getByText('Merged ccccccc by the factory, branch deleted')).toBeInTheDocument();
+  expect(step('Land').getByText(/Close it in Jira\.$/)).toBeInTheDocument();
+});

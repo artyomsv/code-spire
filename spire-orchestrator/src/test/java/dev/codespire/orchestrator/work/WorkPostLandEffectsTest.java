@@ -6,14 +6,19 @@ import dev.codespire.contract.work.*;
 import dev.codespire.orchestrator.factory.LandSettings;
 import dev.codespire.worksource.WorkEffectMarker;
 import dev.codespire.worksource.WorkSourceType;
+import io.quarkus.arc.ClientProxy;
 import io.quarkus.narayana.jta.QuarkusTransaction;
+import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.*;
@@ -156,6 +161,31 @@ class WorkPostLandEffectsTest extends WorkFixture {
         assertFalse(effects.dispatch(close()));
         assertEquals("refused",status(close()).state());assertEquals("ticket_rule_changed",status(close()).reason());
         assertEquals(0,patches());
+    }
+    /**
+     * The rule is read before the close is claimed. An operator who saves comment in between withdraws the consent,
+     * so the claim reads the rule again under the locks a save takes (security review of the branch). The first read
+     * is the dispatch's own; the save lands while it returns, before the claim.
+     */
+    @Test void aRuleChangedBetweenTheReadAndTheClaimDoesNotClose() throws Exception {
+        rule("close");land(WorkLanding.FACTORY);
+        effects.dispatch(comment());assertEquals("sent",status(comment()).state());
+        LandSettings real=ClientProxy.unwrap(landSettings);
+        AtomicBoolean firstRead=new AtomicBoolean(true);
+        // Every method the dispatch and the test reach is delegated, so nothing here opens a second path.
+        QuarkusMock.installMockForType(new LandSettings() {
+            @Override public Settings get(UUID repository) {
+                Settings read=real.get(repository);
+                if(firstRead.getAndSet(false))real.save(repository,new Input(read.revision(),"squash","comment",3),"TEST-land-admin");
+                return read;
+            }
+            @Override public Settings get(Connection c,UUID repository) throws SQLException {return real.get(c,repository);}
+            @Override public Settings save(UUID repository,Input input,String subject) {return real.save(repository,input,subject);}
+        },LandSettings.class);
+        assertFalse(effects.dispatch(close()),"the close was claimed under a rule the operator had withdrawn");
+        assertEquals("refused",status(close()).state());assertEquals("ticket_rule_changed",status(close()).reason());
+        assertEquals(0,patches());
+        assertEquals(LandSettings.TicketRule.COMMENT,real.get(repository).ticketRule());
     }
     @Test @TestSecurity(user="TEST-land-admin",roles="spire-admin")
     void jiraUnderCloseCommentsAndNotesTheSkip() throws Exception {
