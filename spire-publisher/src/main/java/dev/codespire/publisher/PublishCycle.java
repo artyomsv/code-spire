@@ -107,7 +107,7 @@ public final class PublishCycle {
             if (!publication.selects(sha)) {
                 return true;
             }
-            changes = repo.changesSince(baseCommit, sha, publication.mergedBaseTip(), landingTip());
+            changes = repo.changesSince(baseCommit, sha, new PublishRepo.BaseTips(publication.mergedBaseTip(), landingTip()));
         } catch (BaseTipUnavailableException unavailable) {
             // Not an unreadable bundle to skip: the permit's base tip cannot excuse anything, so nothing is pushed.
             outcome.failed("BASE_TIP_UNAVAILABLE", unavailable.getMessage());
@@ -179,7 +179,7 @@ public final class PublishCycle {
             return false;
         }
         Optional<String> remote = repo.remoteHead(branch, credential);
-        if (remote.isPresent() && remote.get().equals(expected)) {
+        if (remote.filter(expected::equals).isPresent()) {
             return false;
         }
         outcome.failed("REMOTE_HEAD_MOVED", "Expected " + branch + " at " + expected + " but the remote has "

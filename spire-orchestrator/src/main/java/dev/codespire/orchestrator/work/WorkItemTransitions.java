@@ -174,7 +174,7 @@ public class WorkItemTransitions {
                     if(!"active".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
                     if(!validExecution(item,result,mode))return new Outcome(409,"phase_evidence_mismatch",item);
                 } else {
-                    Outcome refused=readmit?readmitRefusal(c,history,item,mode):recheckRefusal(item);
+                    Outcome refused=readmit?readmitRefusal(c,history,item):recheckRefusal(item);
                     if(refused!=null)return refused;
                 }
                 WorkPolicy.Selection selection=select(observed,readmit?null:item);
@@ -197,7 +197,7 @@ public class WorkItemTransitions {
                     if(next.policy().selected()==null || "off".equals(next.policy().effective().getOrDefault(WorkPolicy.Phase.VERIFY,"off"))) {
                         next=state(next,"not_eligible",next.policy().selected()==null?next.policy().reason():"verify_off","WORK_ITEM_REFUSED",
                                 next.gate(),finished.reserve(false));
-                        next=decide(c,history,next,"phase-result:"+result.attemptId());
+                        next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                         return new Outcome(200,next.reason(),next);
                     }
                     next=WorkItemLifecycle.verifyResultGate(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),finished),
@@ -217,7 +217,7 @@ public class WorkItemTransitions {
                     }
                     next=state(next,result.successful()?"awaiting_input":"failed",result.successful()?"phase_completed":"phase_failed",
                             result.successful()?"PHASE_COMPLETED":"PHASE_FAILED",next.gate(),progress);
-                    next=decide(c,history,next,"phase-result:"+result.attemptId());
+                    next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
                     next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
@@ -228,7 +228,7 @@ public class WorkItemTransitions {
                     next=enterPrepared(c,history,next,false,clock.now(),mode);
                     history=store.history(id);
                 }
-                next=decide(c,history,next,"transition:"+UUID.randomUUID());
+                next=decide(c,new Decision(history,next,"transition:"+UUID.randomUUID()));
                 // The rule travels only when the artifacts are what stopped the item; an authority
                 // outage checked first owns the reason, and naming a plan rule there would mislead.
                 String detail=observed.evidence().failure()==null && observed.artifacts().failure()!=null?observed.artifacts().detail():null;
@@ -245,7 +245,10 @@ public class WorkItemTransitions {
      *
      * @return the item as it now stands
      */
-    WorkItemEvent decide(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent next,String cause) throws SQLException,java.io.IOException {
+    WorkItemEvent decide(Connection c,Decision decision) throws SQLException,java.io.IOException {
+        List<dev.codespire.contract.event.EventEnvelope> history=decision.history();
+        WorkItemEvent next=decision.next();
+        String cause=decision.cause();
         store.appendDecision(c,history,next,cause);
         List<WorkItemEvent> before=facts(history);
         WorkItemEvent handed=WorkItemLifecycle.landFixStopped(before,next);
@@ -257,6 +260,8 @@ public class WorkItemTransitions {
         }
         return handed;
     }
+    /** A decision to append: the history it was made from, the item it records and the cause it is recorded under. */
+    record Decision(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent next,String cause) {}
     static List<WorkItemEvent> facts(List<dev.codespire.contract.event.EventEnvelope> history) {
         return history.stream().map(event->(WorkItemEvent)event.payload()).toList();
     }
@@ -279,8 +284,8 @@ public class WorkItemTransitions {
      * names the strongest reason first: a merged pull request cannot be built again beside itself (spec §7.9), then
      * anything that still holds the delivered pull request open, then a merge whose outcome is not recorded yet.
      */
-    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,
-                                          WorkItemLifecycle.EntryMode mode) throws SQLException {
+    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
+        WorkItemLifecycle.EntryMode mode=entryMode(history);
         if(Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
         if(landed(history,item))return new Outcome(409,"readmission_landed",item);
         // Waiting at land for any reason, a hand-off, a land that cannot merge here or one switched off, leaves the
@@ -424,7 +429,7 @@ public class WorkItemTransitions {
                     // Immutable profile pins and the policy binding above fix the vectors. Re-observe every current applier.
                     if(!selection.applied().equals(current.policy().applied())) {
                         next=state(current,"stopped","labels_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));
-                        next=decide(c,history,next,"gate-labels:"+gateId+":"+key);
+                        next=decide(c,new Decision(history,next,"gate-labels:"+gateId+":"+key));
                         return new Outcome(409,next.reason(),next);
                     }
                     // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
@@ -442,7 +447,7 @@ public class WorkItemTransitions {
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
                 }
-                next=decide(c,history,next,"gate:"+gateId+":"+key);
+                next=decide(c,new Decision(history,next,"gate:"+gateId+":"+key));
                 return new Outcome(status,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode gate decision",failure);}
@@ -460,7 +465,7 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
                 WorkGate gate=item.gate();
                 if(gate==null || !gate.id().equals(gateId) || !"OPEN".equals(gate.state()) || clock.now().isBefore(gate.expiresAt()))return;
-                decide(c,history,expire(item,gate),"gate-expiry:"+gateId);
+                decide(c,new Decision(history,expire(item,gate),"gate-expiry:"+gateId));
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode gate expiry",failure);}
         });

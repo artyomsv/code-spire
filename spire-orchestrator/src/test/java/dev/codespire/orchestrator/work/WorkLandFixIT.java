@@ -97,7 +97,7 @@ class WorkLandFixIT extends WorkLandFixture {
     }
     /** Retry land as the operator, on the pull request head the test's GitHub reports. */
     WorkItemTransitions.Outcome retryLand(String id) {
-        return control.retryLand(id,store.history(id).size(),"TEST-land-admin","TEST-retry land");
+        return control.retryLand(new WorkItemControl.LandRequest(id,store.history(id).size(),"TEST-land-admin","TEST-retry land"));
     }
     void fixAttempts(int attempts) {
         landSettings.save(repository,new LandSettings.Input(0,"merge","comment",attempts),"TEST-land-admin");

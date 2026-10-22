@@ -733,7 +733,7 @@ class PublishRepoTest {
             assertEquals(merge.baseTip(), landingTip, "the publisher's clone of the item branch holds the base too");
             assertEquals(Optional.empty(), repo.localHead("TEST-absent"));
 
-            ChangeSet changes = repo.changesSince(merge.approved(), sha, null, landingTip);
+            ChangeSet changes = repo.changesSince(merge.approved(), sha, new PublishRepo.BaseTips(null, landingTip));
 
             assertEquals(Set.of(".github/workflows/ci.yml", ".github/workflows/TEST.yml"),
                     changes.paths().stream().map(ChangedPath::path).collect(Collectors.toSet()));

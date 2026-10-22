@@ -48,6 +48,12 @@ public class WorkLandEffects {
     /** What a merged row holds: the merge commit, who merged, the method and the head that was merged. */
     record Merge(String commit, String mergedBy, String method, String head) {}
 
+    /** Where a row moves; a null {@code detail} keeps the one it holds. */
+    record Move(String state, String reason, Detail detail) {}
+
+    /** A row read again at {@code next}; {@code since} is when it started waiting or failing. */
+    record Recheck(Instant since, Instant next) {}
+
     /** The oldest live rows due for a pass at {@code now}, at most twenty. */
     List<UUID> due(Instant now) {
         List<UUID> ids = new ArrayList<>();
@@ -73,12 +79,16 @@ public class WorkLandEffects {
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
     }
 
-    /** A state change; {@code detail} is kept when null. */
-    void move(Effect effect, String state, String reason, Detail detail) {
+    /** A state change that keeps the row's detail. */
+    void move(Effect effect, String state, String reason) {
+        move(effect, new Move(state, reason, null));
+    }
+
+    void move(Effect effect, Move move) {
         execute("""
                 UPDATE work_land_effect SET state=?,reason=?,detail=COALESCE(?,detail),next_check_at=NULL,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?
-                """, state, reason, detail == null ? null : encode(effect.id(), detail), effect.id(), effect.state());
+                """, move.state(), move.reason(), move.detail() == null ? null : encode(effect.id(), move.detail()), effect.id(), effect.state());
     }
 
     /** Why the row did not move this pass; the next pass tries again. */
@@ -92,17 +102,17 @@ public class WorkLandEffects {
                 encode(effect.id(), detail), effect.id(), effect.state());
     }
 
-    /** A row that did not move this pass and is read again at {@code next}; {@code since} is when it started failing. */
-    void backOff(Effect effect, String reason, Instant since, Instant next) {
+    /** A row that did not move this pass and is read again at {@code recheck.next()}, failing since {@code recheck.since()}. */
+    void backOff(Effect effect, String reason, Recheck recheck) {
         execute("UPDATE work_land_effect SET reason=?,failing_since=?,next_check_at=?,updated_at=now() WHERE effect_id=? AND state=?",
-                reason, Timestamp.from(since), Timestamp.from(next), effect.id(), effect.state());
+                reason, Timestamp.from(recheck.since()), Timestamp.from(recheck.next()), effect.id(), effect.state());
     }
 
-    void waitForChecks(Effect effect, Instant since, Instant next, Detail detail) {
+    void waitForChecks(Effect effect, Recheck recheck, Detail detail) {
         execute("""
                 UPDATE work_land_effect SET state='waiting_checks',reason=NULL,waiting_since=?,next_check_at=?,detail=?,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?
-                """, Timestamp.from(since), Timestamp.from(next), encode(effect.id(), detail), effect.id(), effect.state());
+                """, Timestamp.from(recheck.since()), Timestamp.from(recheck.next()), encode(effect.id(), detail), effect.id(), effect.state());
     }
 
     /**
@@ -124,8 +134,9 @@ public class WorkLandEffects {
                 """, merge.commit(), merge.mergedBy(), merge.method(), merge.head(), effect.id(), effect.state()) == 1;
     }
 
-    /** One more failed branch delete; the row is done once {@code exhausted}, with the note the operator reads. */
-    void cleanupFailed(Effect effect, int tries, boolean exhausted) {
+    /** One more failed branch delete; the row is done after {@link WorkLandCleanup#CLEANUP_TRIES}, with the note the operator reads. */
+    void cleanupFailed(Effect effect, int tries) {
+        boolean exhausted = tries >= WorkLandCleanup.CLEANUP_TRIES;
         execute("UPDATE work_land_effect SET cleanup_tries=?,state=?,note=?,updated_at=now() WHERE effect_id=? AND state='cleaning'",
                 tries, exhausted ? "done" : "cleaning", exhausted ? "branch_delete_failed" : null, effect.id());
     }

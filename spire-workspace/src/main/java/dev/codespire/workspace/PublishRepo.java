@@ -241,25 +241,37 @@ public final class PublishRepo implements AutoCloseable {
      * @throws BaseTipUnavailableException when the tip is missing or not merged into {@code sha}
      */
     public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException {
-        return changesSince(baseCommit, sha, mergedBaseTip, mergedBaseTip);
+        return changesSince(baseCommit, sha, new BaseTips(mergedBaseTip, mergedBaseTip));
     }
 
     /**
-     * {@link #changesSince(String, String, String)} with the landing judged on {@code landingTip}, which may be set
-     * when {@code mergedBaseTip} is not. A fix that carries no base tip excuses nothing, but its agent can still
+     * The base tips a land fix is judged against: {@code merged} is the tip its permit says it merged, which excuses
+     * the paths that tip brought; {@code landing} is the tip the landing is judged on. Either may be null.
+     */
+    public record BaseTips(String merged, String landing) {}
+
+    /**
+     * {@link #changesSince(String, String, String)} with the landing judged on {@code tips.landing()}, which may be
+     * set when {@code tips.merged()} is not. A fix that carries no base tip excuses nothing, but its agent can still
      * merge the base and revert it; the publisher then lands it on the base as its own clone holds it. A null
-     * {@code landingTip} judges no landing.
+     * landing tip judges no landing.
      *
      * @throws BaseTipUnavailableException when a tip is missing, the merged tip is not merged into {@code sha}, or
      *         {@code sha} shares no history with the landing tip
      */
-    public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip, String landingTip)
-            throws IOException {
-        List<ChangedPath> agents = new ArrayList<>(mergedBaseTip == null
+    public ChangeSet changesSince(String baseCommit, String sha, BaseTips tips) throws IOException {
+        List<ChangedPath> agents = new ArrayList<>(tips.merged() == null
                 ? changesSince(baseCommit, sha).paths()
-                : excludingTheBase(baseCommit, sha, mergedBaseTip));
-        if (landingTip != null) {
-            agents.addAll(landingChanges(baseCommit, sha, landingTip, agents));
+                : excludingTheBase(baseCommit, sha, tips.merged()));
+        if (tips.landing() != null) {
+            // Paths already judged are not repeated.
+            Set<String> seen = new HashSet<>();
+            agents.forEach(path -> seen.add(path.path()));
+            for (ChangedPath path : landingChanges(baseCommit, sha, tips.landing())) {
+                if (seen.add(path.path())) {
+                    agents.add(path);
+                }
+            }
         }
         return new ChangeSet(agents);
     }
@@ -278,7 +290,7 @@ public final class PublishRepo implements AutoCloseable {
                         + " is not an ancestor of " + sha);
             }
             for (ChangedPath path : changes.paths()) {
-                if (!sameEntry(repo, path.path(), tip, base)) {
+                if (!sameEntry(path.path(), tip, base)) {
                     agents.add(path);
                 }
             }
@@ -301,11 +313,9 @@ public final class PublishRepo implements AutoCloseable {
      * The paths landing {@code sha} on {@code landingTip} changes, except where landing the approved head would
      * have made the same change. Landing changes a path when {@code sha}'s entry differs from the entry at their
      * merge base. The approved head was gated and approved, so a path it changes and {@code sha} leaves as the
-     * approved head has it is not the agent's; every other landing change is. Paths already in {@code judged}
-     * are not repeated.
+     * approved head has it is not the agent's; every other landing change is.
      */
-    private List<ChangedPath> landingChanges(String approved, String sha, String landingTip,
-                                             List<ChangedPath> judged) throws IOException {
+    private List<ChangedPath> landingChanges(String approved, String sha, String landingTip) throws IOException {
         Repository repo = git.getRepository();
         RevCommit head;
         RevCommit approvedHead;
@@ -318,13 +328,11 @@ public final class PublishRepo implements AutoCloseable {
             headLandsFrom = mergeBase(repo, head, target);
             approvedLandsFrom = mergeBase(repo, approvedHead, target);
         }
-        Set<String> seen = new HashSet<>();
-        judged.forEach(path -> seen.add(path.path()));
         List<ChangedPath> landing = new ArrayList<>();
         for (ChangedPath path : changesSince(headLandsFrom.name(), sha).paths()) {
-            boolean approvedLanding = sameEntry(repo, path.path(), head, approvedHead)
-                    && !sameEntry(repo, path.path(), approvedHead, approvedLandsFrom);
-            if (!approvedLanding && seen.add(path.path())) {
+            boolean approvedLanding = sameEntry(path.path(), head, approvedHead)
+                    && !sameEntry(path.path(), approvedHead, approvedLandsFrom);
+            if (!approvedLanding) {
                 landing.add(path);
             }
         }
@@ -356,7 +364,8 @@ public final class PublishRepo implements AutoCloseable {
     }
 
     /** Whether {@code path} has the same blob and mode in both commits, or is absent from both. */
-    private static boolean sameEntry(Repository repo, String path, RevCommit tip, RevCommit base) throws IOException {
+    private boolean sameEntry(String path, RevCommit tip, RevCommit base) throws IOException {
+        Repository repo = git.getRepository();
         try (TreeWalk atTip = TreeWalk.forPath(repo, path, tip.getTree());
              TreeWalk atBase = TreeWalk.forPath(repo, path, base.getTree())) {
             if (atTip == null || atBase == null) {

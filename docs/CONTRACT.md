@@ -85,7 +85,9 @@ Wire changes, each through a wither or an enumerating constructor next to its re
 `WorkLandSweep` drains `work_land_effect` every `spire.work-land-interval` (5 s):
 `pending → checking → (waiting_checks) → merging → uncertain → merged → cleaning → done`, or `handed`,
 `fixing`, `closed`, `refused`. Checks are re-read every 60 s and given up after 6 h. `WorkLandDecision` is
-the pure reading of one `LandState`. Land settings are served at
+the pure reading of one `LandState`; `WorkLandApproval` claims the merge and `WorkLandCleanup` records the
+landing and deletes the branch. A merge is read through `ProviderClients.pullRequestReader`, which the
+REVIEWER account may hold when the FACTORY account is unavailable and which never merges or deletes. Land settings are served at
 `GET/PUT /api/repositories/{repository}/factory/land` (`expectedRevision` on PUT, as for build defaults)
 and the methods GitHub allows at `GET …/land/options`.
 
@@ -360,7 +362,7 @@ interface PullRequestLander {                           // scm adapter — the f
   boolean available();                                  // false by default: land is capability_unavailable there
   LandState read(RepoRef repo, long pr);                // state, merged_by, head/base, mergeable(_state), reduced checks
   AllowedMethods allowedMethods(RepoRef repo);          // allow_*_merge; checked=false when not reported
-  MergeOutcome merge(RepoRef repo, long pr, String expectedHead, MergeMethod m);  // Merged | HeadConflict | Refused (<500) | Uncertain (5xx, I/O)
+  MergeOutcome merge(RepoRef repo, MergeRequest request);  // (pr, expectedHead, method): Merged | HeadConflict | Refused (<500) | Uncertain (5xx, I/O)
   BranchDeletion deleteBranch(RepoRef repo, String branch, String expectedSha);   // reads first; check-then-act, not a CAS
 }
 interface ContextProvider {                             // jira, confluence, issues, rules (shipped) / code (P3) / memory

@@ -292,6 +292,6 @@ public class WorkDelivery {
         // refusal written over them would hide that; a land fix's pull request can be merged before its delivery completes.
         if(item.generation()==effect.generation() && Objects.equals(item.progress().attemptId(),effect.attempt())
                 && "deliver".equals(item.phase()) && "active".equals(item.workflowStatus()))
-            transitions.decide(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt());
+            transitions.decide(c,new WorkItemTransitions.Decision(history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt()));
     }
 }

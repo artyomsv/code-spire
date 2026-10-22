@@ -44,14 +44,14 @@ public class WorkItemResource {
     @Consumes(MediaType.APPLICATION_JSON)
     public jakarta.ws.rs.core.Response retryLand(@PathParam("id") String id,LandCommand input) {
         String subject=landOperator(input);
-        var result=control.retryLand(id,input.expectedRevision(),subject,input.note());
+        var result=control.retryLand(new WorkItemControl.LandRequest(id,input.expectedRevision(),subject,input.note()));
         return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
     }
     @POST @Path("/{id}/stop-land") @RolesAllowed("spire-admin")
     @Consumes(MediaType.APPLICATION_JSON)
     public jakarta.ws.rs.core.Response stopLand(@PathParam("id") String id,LandCommand input) {
         String subject=landOperator(input);
-        var result=control.stopLand(id,input.expectedRevision(),subject,input.note());
+        var result=control.stopLand(new WorkItemControl.LandRequest(id,input.expectedRevision(),subject,input.note()));
         return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
     }
     /** The verified operator a land command is recorded under; the revision is checked again under the item lock. */
@@ -198,38 +198,48 @@ public class WorkItemResource {
 
     /** The latest land attempt of this generation, its detail decrypted for the operator; null before land is approved. */
     private LandView land(String id,WorkItemEvent item,List<EventEnvelope> events) {
-        long generation=item.generation();UUID repository=item.repositoryId();
-        List<WorkItemEvent> facts=WorkItemTransitions.facts(events);
-        int attempt=(int)facts.stream().filter(event->event.generation()==generation && "LAND_FIX_REQUESTED".equals(event.milestone())
-                && dev.codespire.contract.work.WorkItemLifecycle.LAND_FIX_COUNTED.contains(event.reason())).count();
-        long runsLeft=Math.max(0,item.policy().limits().maxRunsPerItem()-item.progress().runs());
-        boolean fixing=dev.codespire.contract.work.WorkItemLifecycle.landFixInProgress(facts);
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(
                 "SELECT effect_id,state,reason,detail,method,note,ticket_note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
-            ps.setString(1,id);ps.setLong(2,generation);
+            ps.setString(1,id);ps.setLong(2,item.generation());
             try(ResultSet rs=ps.executeQuery()) {
                 boolean attempted=rs.next();
                 // A land gate with no attempt yet still says what approving it will do (spec §7.10).
                 if(!attempted && !"land".equals(item.phase()))return null;
-                dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(repository);
-                boolean handedOver=dev.codespire.contract.work.WorkItemLifecycle.landHandedOver(item);
+                LandBudget budget=landBudget(item,events);
+                dev.codespire.orchestrator.factory.LandSettings.Settings saved=budget.saved();
                 if(!attempted)return new LandView("not_started",null,null,null,dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()),
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,
-                        handedOver,dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item));
-                WorkLandEffects.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
-                String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
-                // Stop land reaches a land that sent no merge yet; the transition refuses the row of the item's own attempt.
-                boolean stoppable=dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item)
-                        || "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && WorkLandEffects.BEFORE_MERGE.contains(state)
-                        && rs.getObject(1,UUID.class).equals(item.progress().attemptId());
-                Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
-                return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
-                        method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
-                        // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,
-                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,handedOver,stoppable);
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,budget.attempt(),budget.allowed(),budget.fixing(),
+                        dev.codespire.contract.work.WorkItemLifecycle.landHandedOver(item),dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item));
+                return attemptedLand(rs,item,budget);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+    }
+    /** The saved land settings, the counted fix attempts of this generation, the attempts it may still spend, and whether a fix runs. */
+    private record LandBudget(dev.codespire.orchestrator.factory.LandSettings.Settings saved,int attempt,int allowed,boolean fixing) {}
+    private LandBudget landBudget(WorkItemEvent item,List<EventEnvelope> events) {
+        List<WorkItemEvent> facts=WorkItemTransitions.facts(events);
+        int attempt=(int)facts.stream().filter(event->event.generation()==item.generation() && "LAND_FIX_REQUESTED".equals(event.milestone())
+                && dev.codespire.contract.work.WorkItemLifecycle.LAND_FIX_COUNTED.contains(event.reason())).count();
+        long runsLeft=Math.max(0,item.policy().limits().maxRunsPerItem()-item.progress().runs());
+        dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(item.repositoryId());
+        return new LandBudget(saved,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),dev.codespire.contract.work.WorkItemLifecycle.landFixInProgress(facts));
+    }
+    /** The land row {@code rs} stands on, as the operator reads it. */
+    private LandView attemptedLand(ResultSet rs,WorkItemEvent item,LandBudget budget) throws SQLException {
+        dev.codespire.orchestrator.factory.LandSettings.Settings saved=budget.saved();
+        boolean handedOver=dev.codespire.contract.work.WorkItemLifecycle.landHandedOver(item);
+        WorkLandEffects.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
+        String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
+        // Stop land reaches a land that sent no merge yet; the transition refuses the row of the item's own attempt.
+        boolean stoppable=dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item)
+                || "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && WorkLandEffects.BEFORE_MERGE.contains(state)
+                && rs.getObject(1,UUID.class).equals(item.progress().attemptId());
+        Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
+        return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
+                method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
+                // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
+                dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,
+                budget.attempt(),budget.allowed(),budget.fixing(),handedOver,stoppable);
     }
 
     @Inject WorkPreparationSweep sweep;

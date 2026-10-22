@@ -13,6 +13,7 @@ import dev.codespire.contract.port.PullRequestLander.FailedCheck;
 import dev.codespire.contract.port.PullRequestLander.LandState;
 import dev.codespire.contract.port.PullRequestLander.MergeMethod;
 import dev.codespire.contract.port.PullRequestLander.MergeOutcome;
+import dev.codespire.contract.port.PullRequestLander.MergeRequest;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -232,7 +233,7 @@ class GitHubPullRequestLanderTest {
     void mergeSendsTheShaAndMethod() {
         api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(okJson(
                 "{\"sha\":\"" + "f".repeat(40) + "\",\"merged\":true,\"message\":\"TEST merged\"}")));
-        MergeOutcome outcome = lander.merge(repo, 42, head, MergeMethod.SQUASH);
+        MergeOutcome outcome = lander.merge(repo, new MergeRequest(42, head, MergeMethod.SQUASH));
         assertEquals(new MergeOutcome.Merged("f".repeat(40)), outcome);
         api.verify(putRequestedFor(urlEqualTo(PULL + "/merge"))
                 .withRequestBody(equalToJson("{\"sha\":\"" + head + "\",\"merge_method\":\"squash\"}")));
@@ -244,7 +245,7 @@ class GitHubPullRequestLanderTest {
         api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(aResponse().withStatus(status)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"message\":\"TEST refusal " + status + "\"}")));
-        MergeOutcome outcome = lander.merge(repo, 42, head, MergeMethod.MERGE);
+        MergeOutcome outcome = lander.merge(repo, new MergeRequest(42, head, MergeMethod.MERGE));
         MergeOutcome.Refused refused = assertInstanceOf(MergeOutcome.Refused.class, outcome);
         assertEquals(status, refused.status());
         assertEquals("TEST refusal " + status, refused.message());
@@ -255,7 +256,7 @@ class GitHubPullRequestLanderTest {
         api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(aResponse().withStatus(409)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"message\":\"TEST head branch was modified\"}")));
-        MergeOutcome outcome = lander.merge(repo, 42, head, MergeMethod.REBASE);
+        MergeOutcome outcome = lander.merge(repo, new MergeRequest(42, head, MergeMethod.REBASE));
         assertEquals(new MergeOutcome.HeadConflict("TEST head branch was modified"), outcome);
     }
 
@@ -266,7 +267,7 @@ class GitHubPullRequestLanderTest {
         api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(aResponse().withStatus(status)
                 .withHeader("Content-Type", "text/html").withBody("TEST gateway " + status)));
         MergeOutcome.Uncertain uncertain = assertInstanceOf(MergeOutcome.Uncertain.class,
-                lander.merge(repo, 42, head, MergeMethod.MERGE));
+                lander.merge(repo, new MergeRequest(42, head, MergeMethod.MERGE)));
         assertTrue(uncertain.cause().contains(String.valueOf(status)));
     }
 
@@ -274,10 +275,10 @@ class GitHubPullRequestLanderTest {
     void anIoFailureIsUncertain() {
         api.stubFor(put(urlEqualTo(PULL + "/merge"))
                 .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
-        assertInstanceOf(MergeOutcome.Uncertain.class, lander.merge(repo, 42, head, MergeMethod.MERGE));
+        assertInstanceOf(MergeOutcome.Uncertain.class, lander.merge(repo, new MergeRequest(42, head, MergeMethod.MERGE)));
         api.stubFor(put(urlEqualTo(PULL + "/merge")).willReturn(aResponse().withStatus(200)
                 .withHeader("Content-Type", "application/json").withBody("{not json")));
-        assertInstanceOf(MergeOutcome.Uncertain.class, lander.merge(repo, 42, head, MergeMethod.MERGE));
+        assertInstanceOf(MergeOutcome.Uncertain.class, lander.merge(repo, new MergeRequest(42, head, MergeMethod.MERGE)));
     }
 
     private void ref(String sha) {

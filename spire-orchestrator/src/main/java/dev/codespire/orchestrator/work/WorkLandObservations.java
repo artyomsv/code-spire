@@ -39,18 +39,18 @@ public class WorkLandObservations {
     }
 
     /** Keeps the merge for the sweep and receipts the delivery, both or neither; the first observation of a merge wins. */
-    void observe(WorkItemEvent item, long pullRequest, String mergedBy, String delivery, String reason) {
+    void observe(WorkItemEvent item, WorkLandTransitions.HandMerge merge, String reason) {
         QuarkusTransaction.requiringNew().run(() -> {
             try (Connection c = dataSource.getConnection()) {
                 try (PreparedStatement ps = c.prepareStatement("""
                         INSERT INTO work_land_observation(work_item_id,generation,pr_number,delivery_id,merged_by,reason)
                         VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING
                         """)) {
-                    ps.setString(1, item.workItemId()); ps.setLong(2, item.generation()); ps.setLong(3, pullRequest);
-                    ps.setString(4, delivery); ps.setString(5, mergedBy); ps.setString(6, reason);
+                    ps.setString(1, item.workItemId()); ps.setLong(2, item.generation()); ps.setLong(3, merge.pullRequest());
+                    ps.setString(4, merge.delivery()); ps.setString(5, merge.mergedBy()); ps.setString(6, reason);
                     ps.executeUpdate();
                 }
-                WorkItemControl.receipt(c, item.workItemId(), "scm", delivery, "merge_observed:" + reason);
+                WorkItemControl.receipt(c, item.workItemId(), "scm", merge.delivery(), "merge_observed:" + reason);
             } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
         });
     }
@@ -72,8 +72,8 @@ public class WorkLandObservations {
     private void settle(Observation observation) {
         WorkItemEvent item = store.load(observation.item());
         if (item == null || FINAL.contains(item.workflowStatus()) || item.generation() != observation.generation()) { end(observation); return; }
-        WorkItemTransitions.Outcome outcome = transitions.landedByHuman(observation.item(), observation.delivery(), observation.pullRequest(),
-                observation.mergedBy());
+        WorkItemTransitions.Outcome outcome = transitions.landedByHuman(observation.item(),
+                new WorkLandTransitions.HandMerge(observation.delivery(), observation.pullRequest(), observation.mergedBy()));
         if (unsettled(outcome)) later(observation, outcome.reason());
         else end(observation);
     }

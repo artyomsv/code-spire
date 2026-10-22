@@ -201,18 +201,21 @@ public final class WorkItemLifecycle {
         WorkExecution kept=current!=null && current.reviewId()!=null?current:requested.progress().execution();
         return landHanded(state(stopped,stopped.workflowStatus(),stopped.reason(),stopped.milestone(),stopped.gate(),stopped.progress().withExecution(kept)),"land_fix_stopped");
     }
+    /** When and under which decision a gate opens, and how long the item's history was before it. */
+    public record GateOpening(long historySize,java.time.Instant now,UUID decisionId) {}
     /**
      * Retry land (spec §7.6, A3): a fresh land gate on the execution's head, the one that was verified and reviewed, never
      * on whatever the pull request holds now; the caller refuses the retry when the two differ. The item carries the
      * current policy revision before this is called, so the gate binds it. An approval resolved before the hand-off is
      * not reused: the gate is new.
      */
-    public static WorkItemEvent retryLandGate(WorkItemEvent item,WorkItemEvent previous,long historySize,java.time.Instant now,UUID decisionId) {
+    public static WorkItemEvent retryLandGate(WorkItemEvent item,WorkItemEvent previous,GateOpening opening) {
         requireHanded(item);
         WorkExecution execution=item.progress().execution();
         if(execution==null || execution.pullRequest()==null)throw new IllegalStateException("Only a delivered pull request can land");
-        long eventRevision=historySize+1+(clampChanged(previous,item)?1:0);
-        WorkGate gate=new WorkGate(decisionId,1,"OPEN","land",item.generation(),eventRevision,item.policyRevision(),item.authority(),execution.head(),
+        long eventRevision=opening.historySize()+1+(clampChanged(previous,item)?1:0);
+        java.time.Instant now=opening.now();
+        WorkGate gate=new WorkGate(opening.decisionId(),1,"OPEN","land",item.generation(),eventRevision,item.policyRevision(),item.authority(),execution.head(),
                 now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
         return state(item,"waiting_approval","approval_required","LAND_RETRY_REQUESTED",gate,item.progress().reserve(true));
     }

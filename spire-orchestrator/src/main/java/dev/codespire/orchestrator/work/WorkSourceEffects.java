@@ -39,6 +39,10 @@ public class WorkSourceEffects {
     public record Intent(Kind kind, String value) {}
     public record Status(UUID id, String state, String remoteId, String reason) {}
     private record Pending(UUID id, String item, long generation, long revision, String phase, Intent intent, String state, String effectClass) {}
+    /** A post-land row: the landed item, the revision WORK_ITEM_LANDED holds, and what to send. */
+    record PostLand(WorkItemEvent landed, long revision, Intent intent) {}
+    /** The item an effect writes to and the source whose tracker it is written through. */
+    private record Ticket(WorkItemEvent item, WorkSourceRegistry.Source source) {}
     /** Checks the item under its row lock before the claim commits; false leaves the row unclaimed. */
     private interface Claim { boolean holds(Connection c) throws SQLException; }
 
@@ -68,14 +72,18 @@ public class WorkSourceEffects {
      * after it, so the projection row already holds that revision. Ids are {@link #postLandId derived}, so a replayed
      * landing finds its row instead of adding one.
      */
-    void enqueuePostLand(Connection c, UUID id, String itemId, long revision, Kind kind, String value) throws SQLException {
-        if (id == null || kind == null || value == null || value.isBlank()) throw new IllegalArgumentException("A post-land effect identity and value are required");
+    void enqueuePostLand(Connection c, PostLand row) throws SQLException {
+        Intent intent = row.intent();
+        if (intent == null || intent.kind() == null || intent.value() == null || intent.value().isBlank()) throw new IllegalArgumentException("A post-land effect identity and value are required");
+        String itemId = row.landed().workItemId();
+        long revision = row.revision();
+        UUID id = postLandId(itemId, row.landed().generation(), intent.kind());
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO work_tracker_outbox(effect_id,work_item_id,generation,item_revision,phase,payload,effect_class)
                 SELECT ?,id,generation,revision,phase,?,'post_land' FROM work_item WHERE id=? AND revision=?
                 ON CONFLICT(effect_id) DO NOTHING
                 """)) {
-            ps.setObject(1,id); ps.setBytes(2,encode(id,new Intent(kind,value))); ps.setString(3,itemId); ps.setLong(4,revision);
+            ps.setObject(1,id); ps.setBytes(2,encode(id,intent)); ps.setString(3,itemId); ps.setLong(4,revision);
             if (ps.executeUpdate() == 1) return;
         }
         try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM work_tracker_outbox WHERE effect_id=? AND work_item_id=? AND effect_class='post_land'")) {
@@ -144,12 +152,12 @@ public class WorkSourceEffects {
         WorkEvidence evidence=WorkEvidence.collect(()->sources.client(source),item.issue(),null);
         WorkItemTransitions.Observation observed=new WorkItemTransitions.Observation(source,policy,evidence);
         WorkPolicy.Selection selection=transitions.select(observed,item);
-        String mode=selection.effective().get(phase.get());
+        String mode=selection.effective().get(phase.orElseThrow());
         if(evidence.failure()!=null || selection.selected()==null || mode==null || mode.equals("off")
                 || effect.intent().kind()==Kind.TRANSITION && (!mode.equals("auto") || !item.workflowStatus().equals("active"))) {
             mark(id,"pending","refused",null,"current_policy_refused");return false;
         }
-        return send(effect,item,source,c-> {
+        return send(effect,new Ticket(item,source),c-> {
             if(!transitions.current(c,observed))return false;
             try(PreparedStatement ps=c.prepareStatement("SELECT generation,revision,phase FROM work_item WHERE id=? FOR UPDATE")) {
                 ps.setString(1,effect.item());try(ResultSet rs=ps.executeQuery()) {
@@ -180,7 +188,7 @@ public class WorkSourceEffects {
             if(comment==null || "refused".equals(comment.state())) { mark(effect.id(),"pending","refused",null,"comment_not_sent");return false; }
             if(!"sent".equals(comment.state())) { touch(effect.id());return false; }
         }
-        return send(effect,item,source,c-> {
+        return send(effect,new Ticket(item,source),c-> {
             if(effect.intent().kind()==Kind.TRANSITION && landSettings.lockForUpdate(c,source.repositoryId()).ticketRule()!=LandSettings.TicketRule.CLOSE) {
                 mark(effect.id(),"pending","refused",null,"ticket_rule_changed");return false;
             }
@@ -193,7 +201,7 @@ public class WorkSourceEffects {
         });
     }
 
-    private boolean send(Pending effect,WorkItemEvent item,WorkSourceRegistry.Source source,Claim claim) {
+    private boolean send(Pending effect,Ticket ticket,Claim claim) {
         UUID id=effect.id();
         boolean claimed=QuarkusTransaction.requiringNew().call(()-> {
             try(Connection c=dataSource.getConnection()) {
@@ -205,9 +213,9 @@ public class WorkSourceEffects {
         if(!claimed)return false;
         try {
             String remote=bounded(()-> {
-                WorkSource client=sources.client(source);
-                if(effect.intent().kind()==Kind.COMMENT)return client.comment(item.issue(),effect.intent().value(),id.toString());
-                client.transition(item.issue(),effect.intent().value(),id.toString());return "transition-confirmed";
+                WorkSource client=sources.client(ticket.source());
+                if(effect.intent().kind()==Kind.COMMENT)return client.comment(ticket.item().issue(),effect.intent().value(),id.toString());
+                client.transition(ticket.item().issue(),effect.intent().value(),id.toString());return "transition-confirmed";
             });
             return mark(id,"uncertain","sent",remote,null);
         }catch(RuntimeException unknown){mark(id,"uncertain","uncertain",null,"write_outcome_unknown");return false;}

@@ -110,7 +110,7 @@ class WorkLandWebhookIT extends WorkLandFixture {
         String id=approved();openAt(HEAD,"clean",null);merge(merged());branchAt(HEAD,204);
         land.drain();landed(id);
         mergedBy(PERSON);
-        WorkItemTransitions.Outcome again=landTransitions.landedByHuman(id,"TEST-late-hook",store.load(id).progress().execution().pullRequest().number(),PERSON);
+        WorkItemTransitions.Outcome again=landTransitions.landedByHuman(id,new WorkLandTransitions.HandMerge("TEST-late-hook",store.load(id).progress().execution().pullRequest().number(),PERSON));
         assertEquals(200,again.status());assertEquals("landing_already_recorded",again.reason());
         assertEquals(1,landings(id));assertEquals(WorkLanding.FACTORY,store.load(id).progress().execution().landing().mergedBy());
     }

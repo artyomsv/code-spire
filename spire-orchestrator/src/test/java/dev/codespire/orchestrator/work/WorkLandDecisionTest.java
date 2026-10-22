@@ -33,7 +33,7 @@ class WorkLandDecisionTest {
     }
 
     static Next decide(LandState pr) {
-        return WorkLandDecision.checking(pr, HEAD, UNCHECKED, MergeMethod.MERGE);
+        return WorkLandDecision.checking(pr, HEAD, new WorkLandDecision.Methods(UNCHECKED, MergeMethod.MERGE));
     }
 
     @Test void aMergedPullRequestIsFoundWithItsMerger() {
@@ -50,21 +50,21 @@ class WorkLandDecisionTest {
 
     @Test void aMovedHeadIsHandedBeforeAnythingElse() {
         assertEquals(new Next.Hand("land_head_moved"), WorkLandDecision.checking(open(OTHER, true, "dirty", Checks.NOT_CODE), HEAD,
-                new AllowedMethods(true, Set.of(MergeMethod.SQUASH)), MergeMethod.MERGE));
+                new WorkLandDecision.Methods(new AllowedMethods(true, Set.of(MergeMethod.SQUASH)), MergeMethod.MERGE)));
     }
 
     @Test void aForbiddenMethodIsHandedBeforeAnyMergeCall() {
         assertEquals(new Next.Hand("land_merge_method_not_allowed"), WorkLandDecision.checking(open(HEAD, true, "clean", Checks.NOT_CODE), HEAD,
-                new AllowedMethods(true, Set.of(MergeMethod.MERGE, MergeMethod.REBASE)), MergeMethod.SQUASH));
+                new WorkLandDecision.Methods(new AllowedMethods(true, Set.of(MergeMethod.MERGE, MergeMethod.REBASE)), MergeMethod.SQUASH)));
     }
 
     @Test void anUncheckedMethodListDoesNotHand() {
-        assertEquals(new Next.Merge(), WorkLandDecision.checking(open(HEAD, true, "clean", Checks.PASSED), HEAD, UNCHECKED, MergeMethod.SQUASH));
+        assertEquals(new Next.Merge(), WorkLandDecision.checking(open(HEAD, true, "clean", Checks.PASSED), HEAD, new WorkLandDecision.Methods(UNCHECKED, MergeMethod.SQUASH)));
     }
 
     @Test void anAllowedMethodMerges() {
         assertEquals(new Next.Merge(), WorkLandDecision.checking(open(HEAD, true, "clean", Checks.PASSED), HEAD,
-                new AllowedMethods(true, Set.of(MergeMethod.SQUASH)), MergeMethod.SQUASH));
+                new WorkLandDecision.Methods(new AllowedMethods(true, Set.of(MergeMethod.SQUASH)), MergeMethod.SQUASH)));
     }
 
     @Test void aCheckACodeChangeCannotFixIsHanded() {

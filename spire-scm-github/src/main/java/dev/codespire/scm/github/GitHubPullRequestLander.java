@@ -86,13 +86,13 @@ public final class GitHubPullRequestLander implements PullRequestLander {
     }
 
     @Override
-    public MergeOutcome merge(RepoRef repo, long pullRequest, String expectedHead, MergeMethod method) {
-        requirePullRequest(pullRequest);
-        requireSha(expectedHead);
-        String path = repoPath(repo) + "/pulls/" + pullRequest + "/merge";
+    public MergeOutcome merge(RepoRef repo, MergeRequest request) {
+        requirePullRequest(request.pullRequest());
+        requireSha(request.expectedHead());
+        String path = repoPath(repo) + "/pulls/" + request.pullRequest() + "/merge";
         try {
             JsonNode response = client.putJson(path,
-                    Map.of("sha", expectedHead, "merge_method", method.name().toLowerCase(Locale.ROOT)));
+                    Map.of("sha", request.expectedHead(), "merge_method", request.method().name().toLowerCase(Locale.ROOT)));
             String sha = response.path("sha").asText("");
             if (!SHA.matcher(sha).matches()) return new MergeOutcome.Uncertain("merge answer carried no merge sha");
             return new MergeOutcome.Merged(sha);

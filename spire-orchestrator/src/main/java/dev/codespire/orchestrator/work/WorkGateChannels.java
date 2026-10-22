@@ -97,9 +97,10 @@ public class WorkGateChannels {
             receipt(id,"scm",delivery,"recorded_machine");return;
         }
         boolean merged="merged".equals(activity.kind());
-        WorkItemTransitions.Outcome result=merged?landTransitions.landedByHuman(id,delivery,activity.prId(),activity.mergedBy()):landTransitions.closedByHuman(id,delivery,activity.prId());
+        WorkLandTransitions.HandMerge merge=new WorkLandTransitions.HandMerge(delivery,activity.prId(),activity.mergedBy());
+        WorkItemTransitions.Outcome result=merged?landTransitions.landedByHuman(id,merge):landTransitions.closedByHuman(id,delivery,activity.prId());
         // A merge the read could not confirm is kept and read again by the land sweep, never dead-lettered or dropped.
-        if(merged && WorkLandObservations.unsettled(result)){observations.observe(item,activity.prId(),activity.mergedBy(),delivery,result.reason());return;}
+        if(merged && WorkLandObservations.unsettled(result)){observations.observe(item,merge,result.reason());return;}
         if(result.status()>=500)throw new jakarta.ws.rs.ServiceUnavailableException(result.reason());
         receipt(id,"scm",delivery,(merged?"landed:":"closed:")+result.reason());
     }

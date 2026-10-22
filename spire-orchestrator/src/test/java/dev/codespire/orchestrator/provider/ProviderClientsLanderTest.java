@@ -51,7 +51,7 @@ class ProviderClientsLanderTest {
                 provider("github", "https://api.github.example.test", ProviderRole.REVIEWER));
         assertTrue(reader.available());
         RepoRef repo = new RepoRef("TEST-owner", "TEST-repo");
-        assertThrows(UnsupportedOperationException.class, () -> reader.merge(repo, 901, "b".repeat(40), PullRequestLander.MergeMethod.MERGE));
+        assertThrows(UnsupportedOperationException.class, () -> reader.merge(repo, new PullRequestLander.MergeRequest(901, "b".repeat(40), PullRequestLander.MergeMethod.MERGE)));
         assertThrows(UnsupportedOperationException.class, () -> reader.deleteBranch(repo, "TEST-branch", "b".repeat(40)));
         assertThrows(UnsupportedOperationException.class, () -> reader.allowedMethods(repo));
         assertFalse(clients.pullRequestReader(

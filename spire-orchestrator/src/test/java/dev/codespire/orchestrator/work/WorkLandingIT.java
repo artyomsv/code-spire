@@ -282,7 +282,7 @@ class WorkLandingIT extends WorkLandFixture {
         land.drain();assertEquals("waiting_checks",effect(id,"state"));
         WorkItemResource.LandView view=resource.get(id).land();
         assertTrue(view.stoppable());assertFalse(view.handedOver());
-        WorkItemTransitions.Outcome stop=control.stopLand(id,store.history(id).size(),"TEST-land-admin","TEST-stop before the merge");
+        WorkItemTransitions.Outcome stop=control.stopLand(new WorkItemControl.LandRequest(id,store.history(id).size(),"TEST-land-admin","TEST-stop before the merge"));
         assertEquals(200,stop.status(),stop.reason());
         assertEquals("stopped",store.load(id).workflowStatus());assertEquals("land_stopped_by_operator",store.load(id).reason());
         assertEquals("refused",effect(id,"state"));assertEquals("land_stopped_by_operator",effect(id,"reason"));
@@ -294,7 +294,7 @@ class WorkLandingIT extends WorkLandFixture {
         String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));
         land.drain();assertEquals("uncertain",effect(id,"state"));
         assertFalse(resource.get(id).land().stoppable());
-        WorkItemTransitions.Outcome stop=control.stopLand(id,store.history(id).size(),"TEST-land-admin","TEST-stop after the merge");
+        WorkItemTransitions.Outcome stop=control.stopLand(new WorkItemControl.LandRequest(id,store.history(id).size(),"TEST-land-admin","TEST-stop after the merge"));
         assertEquals(409,stop.status());assertEquals("retry_land_unavailable",stop.reason());
         assertEquals("uncertain",effect(id,"state"));assertEquals("active",store.load(id).workflowStatus());
     }

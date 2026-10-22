@@ -55,6 +55,9 @@ public interface PullRequestLander {
         }
     }
 
+    /** A merge of {@code pullRequest} only while its head is {@code expectedHead}, with {@code method}. */
+    record MergeRequest(long pullRequest, String expectedHead, MergeMethod method) {}
+
     sealed interface MergeOutcome {
         record Merged(String sha) implements MergeOutcome {}
         /** 409: the head or the base moved; the caller re-reads. */
@@ -77,7 +80,7 @@ public interface PullRequestLander {
         throw new UnsupportedOperationException("land unavailable");
     }
 
-    default MergeOutcome merge(RepoRef repo, long pullRequest, String expectedHead, MergeMethod method) {
+    default MergeOutcome merge(RepoRef repo, MergeRequest request) {
         throw new UnsupportedOperationException("land unavailable");
     }
 

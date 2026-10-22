@@ -185,7 +185,7 @@ public class RepositoryBuildResource {
         Optional<ScmProvider> factory = accounts.resolve(repository, ProviderRole.FACTORY);
         if (factory.isEmpty()) return LandOptions.unchecked();
         // Built OUTSIDE the try, as in head(): a local client-construction fault stays a 500.
-        PullRequestLander lander = clients.pullRequestLander(factory.get());
+        PullRequestLander lander = clients.pullRequestLander(factory.orElseThrow());
         if (!lander.available()) return LandOptions.unchecked();
         try {
             PullRequestLander.AllowedMethods methods = lander.allowedMethods(new RepoRef(view.workspace(), view.slug()));

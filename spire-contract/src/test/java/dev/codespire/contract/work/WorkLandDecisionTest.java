@@ -54,7 +54,7 @@ class WorkLandDecisionTest {
     // Retry land (§7.6, A3): a fresh gate on the head that was verified and reviewed, never an earlier approval.
     @Test void retryLandOpensAGateOnTheVerifiedHead(){
         var handed=WorkItemLifecycle.landHanded(atLand("approve",1),"land_blocked");UUID decision=UUID.randomUUID();
-        var next=WorkItemLifecycle.retryLandGate(handed,handed,7,Instant.EPOCH,decision);
+        var next=WorkItemLifecycle.retryLandGate(handed,handed,new WorkItemLifecycle.GateOpening(7,Instant.EPOCH,decision));
         assertEquals("land",next.phase());assertEquals("waiting_approval",next.workflowStatus());assertEquals("approval_required",next.reason());
         assertEquals("LAND_RETRY_REQUESTED",next.milestone());
         assertEquals(decision,next.gate().id());assertEquals("OPEN",next.gate().state());assertEquals("land",next.gate().phase());
@@ -63,9 +63,9 @@ class WorkLandDecisionTest {
         assertTrue(next.progress().reserved());assertEquals(handed.progress().execution(),next.progress().execution());
     }
     @Test void retryLandFollowsOnlyAHandOff(){
-        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(atLand("approve",1),null,3,Instant.EPOCH,UUID.randomUUID()));
+        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(atLand("approve",1),null,new WorkItemLifecycle.GateOpening(3,Instant.EPOCH,UUID.randomUUID())));
         var stopped=WorkItemLifecycle.pullRequestClosed(atLand("approve",1));
-        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(stopped,null,3,Instant.EPOCH,UUID.randomUUID()));
+        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(stopped,null,new WorkItemLifecycle.GateOpening(3,Instant.EPOCH,UUID.randomUUID())));
     }
     // Stop (§7.6): the handed item ends; the pull request stays as it is, so its execution is kept.
     @Test void landStoppedEndsAHandedItem(){
@@ -98,7 +98,7 @@ class WorkLandDecisionTest {
             WorkItemEvent next=WorkItemLifecycle.landStopped(item);
             assertEquals("stopped",next.workflowStatus());assertEquals("land_stopped_by_operator",next.reason());assertEquals("LAND_STOPPED",next.milestone());
             assertEquals(item.progress().execution(),next.progress().execution());
-            assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(item,null,3,Instant.EPOCH,UUID.randomUUID()));
+            assertThrows(IllegalStateException.class,()->WorkItemLifecycle.retryLandGate(item,null,new WorkItemLifecycle.GateOpening(3,Instant.EPOCH,UUID.randomUUID())));
         }
     }
     @Test void anUnknownHandOffReasonIsRefused(){

@@ -27,7 +27,12 @@ final class WorkLandDecision {
     /** The states in which GitHub merges when asked; anything else is waited for or handed. */
     private static final Set<String> MERGEABLE = Set.of("clean", "unstable", "has_hooks");
 
-    static Next checking(LandState pr, String approvedHead, AllowedMethods allowed, MergeMethod method) {
+    /** The merge methods the repository allows, and the one the land setup chose. */
+    record Methods(AllowedMethods allowed, MergeMethod chosen) {}
+
+    static Next checking(LandState pr, String approvedHead, Methods methods) {
+        AllowedMethods allowed = methods.allowed();
+        MergeMethod method = methods.chosen();
         if (pr.merged()) return new Next.MergedFound(pr.mergeCommitSha(), pr.mergedBy());
         if ("closed".equals(pr.state())) return new Next.Closed();
         if (!Objects.equals(approvedHead, pr.headSha())) return new Next.Hand("land_head_moved");

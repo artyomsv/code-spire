@@ -17,6 +17,7 @@ public class WorkItemControl {
     @Inject WorkPolicyRegistry policies;
     @Inject WorkItemTransitions transitions;
     @Inject WorkLandTransitions landTransitions;
+    @Inject WorkLandReads landReads;
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
 
@@ -47,29 +48,31 @@ public class WorkItemControl {
      * Retry land on an item land handed over (spec §7.6, A3). The pull request's head is read through the lander before
      * any lock, as every forge read is; the transition compares it with the verified head under the lock.
      */
-    public WorkItemTransitions.Outcome retryLand(String id,long expected,String subject,String note) {
-        WorkItemEvent reference=landCommand(id,subject,note);
+    public WorkItemTransitions.Outcome retryLand(LandRequest request) {
+        WorkItemEvent reference=landCommand(request);
         WorkExecution execution=reference.progress().execution();
         if(execution==null || execution.pullRequest()==null)return new WorkItemTransitions.Outcome(409,"retry_land_unavailable",reference);
         WorkItemTransitions.Observation observed=transitions.observe(reference);
         if(observed.evidence().failure()!=null)return new WorkItemTransitions.Outcome(503,observed.evidence().failure(),reference);
-        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=landTransitions.readPullRequest(reference,execution.pullRequest().number());
+        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=landReads.readPullRequest(reference,execution.pullRequest().number());
         if(pullRequest==null || pullRequest.headSha()==null)return new WorkItemTransitions.Outcome(503,"retry_land_head_unavailable",reference);
-        return landTransitions.retryLandControlled(id,expected,observed,subject,note,pullRequest.headSha());
+        return landTransitions.retryLandControlled(request,observed,pullRequest.headSha());
     }
     /**
      * Stop on an item waiting at land, or on a land that has sent no merge yet (spec §7.6, review of slice 9 and of the
      * branch). Nothing is read or written on the forge: the pull request stays open.
      */
-    public WorkItemTransitions.Outcome stopLand(String id,long expected,String subject,String note) {
-        landCommand(id,subject,note);
-        return landTransitions.stopLandControlled(id,expected,subject,note);
+    public WorkItemTransitions.Outcome stopLand(LandRequest request) {
+        landCommand(request);
+        return landTransitions.stopLandControlled(request);
     }
+    /** A land command: the item, the revision the operator saw, the verified operator and their note. */
+    public record LandRequest(String id,long expected,String subject,String note) {}
     /** Both land commands are audited, so both need a verified operator and a note, like resume. */
-    private WorkItemEvent landCommand(String id,String subject,String note) {
-        if(subject==null || subject.isBlank() || note==null || note.isBlank())
+    private WorkItemEvent landCommand(LandRequest request) {
+        if(request.subject()==null || request.subject().isBlank() || request.note()==null || request.note().isBlank())
             throw new jakarta.ws.rs.BadRequestException("A verified operator and a note are required");
-        WorkItemEvent reference=store.load(id);
+        WorkItemEvent reference=store.load(request.id());
         if(reference==null)throw new jakarta.ws.rs.NotFoundException();
         return reference;
     }
