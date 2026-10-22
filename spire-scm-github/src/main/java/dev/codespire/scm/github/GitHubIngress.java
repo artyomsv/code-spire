@@ -148,7 +148,7 @@ public class GitHubIngress implements ScmIngress {
                 String action=root.path("action").asText();
                 if(!java.util.Set.of("synchronize","edited","closed").contains(action))return List.of();
                 // A close is a merge or an abandonment, not a push. The merger is merged_by, never the sender (M4 land, A2).
-                boolean merged="closed".equals(action) && pull.path("merged").asBoolean(false);
+                boolean merged="closed".equals(action);
                 kind=!"closed".equals(action)?"push":merged?"merged":"closed";
                 if(merged)mergedBy=pull.path("merged_by").path("id").asText(null);
             }
