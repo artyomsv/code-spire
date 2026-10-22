@@ -116,7 +116,7 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
 /** Where the merge stands (spec §7.10), and the land row's note, which may ask the operator to act after completion. */
 function Land({ item }: { item: Item }) {
   const text = landProgress(item);
-  const note = landNote(item.land?.note);
+  const note = landNote(item.land?.reason);
   return <>
     {text && <p className="factory-note">{text}</p>}
     {note && <p className="factory-note">{note}</p>}
