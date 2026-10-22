@@ -73,7 +73,7 @@ public final class WorkItemLifecycle {
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
+        boolean fixSkipsGate=landFix && java.util.Set.of("build").contains(item.phase());
         if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
