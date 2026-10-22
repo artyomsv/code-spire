@@ -13,6 +13,7 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.storage.file.WindowCacheConfig;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
@@ -34,6 +35,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -246,6 +248,11 @@ public final class PublishRepo implements AutoCloseable {
      * paths the base never brought. {@code mergedBaseTip} comes from the orchestrator's permit, never from the
      * workspace. Null is the two-argument behaviour.
      *
+     * <p>A diff against the approved head shows only what differs from it, and after a base merge that is not
+     * what landing changes: an agent that puts back the approved head's workflow, or deletes one the base added,
+     * leaves no entry while the landing reverts the base. So the paths {@link #landingChanges} finds are judged
+     * too.
+     *
      * @throws BaseTipUnavailableException when the tip is missing or not merged into {@code sha}
      */
     public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException {
@@ -254,6 +261,7 @@ public final class PublishRepo implements AutoCloseable {
             return changes;
         }
         Repository repo = git.getRepository();
+        List<ChangedPath> agents = new ArrayList<>();
         try (RevWalk walk = new RevWalk(repo)) {
             RevCommit tip = walk.parseCommit(ObjectId.fromString(sha));
             RevCommit base = baseTip(walk, mergedBaseTip);
@@ -261,13 +269,62 @@ public final class PublishRepo implements AutoCloseable {
                 throw new BaseTipUnavailableException("the merged base tip " + mergedBaseTip
                         + " is not an ancestor of " + sha);
             }
-            List<ChangedPath> agents = new ArrayList<>();
             for (ChangedPath path : changes.paths()) {
                 if (!sameEntry(repo, path.path(), tip, base)) {
                     agents.add(path);
                 }
             }
-            return new ChangeSet(agents);
+        }
+        agents.addAll(landingChanges(baseCommit, sha, mergedBaseTip, agents));
+        return new ChangeSet(agents);
+    }
+
+    /**
+     * The paths landing {@code sha} on {@code landingTip} changes, except where landing the approved head would
+     * have made the same change. Landing changes a path when {@code sha}'s entry differs from the entry at their
+     * merge base. The approved head was gated and approved, so a path it changes and {@code sha} leaves as the
+     * approved head has it is not the agent's; every other landing change is. Paths already in {@code judged}
+     * are not repeated.
+     */
+    private List<ChangedPath> landingChanges(String approved, String sha, String landingTip,
+                                             List<ChangedPath> judged) throws IOException {
+        Repository repo = git.getRepository();
+        RevCommit head;
+        RevCommit approvedHead;
+        RevCommit headLandsFrom;
+        RevCommit approvedLandsFrom;
+        try (RevWalk walk = new RevWalk(repo)) {
+            head = walk.parseCommit(ObjectId.fromString(sha));
+            approvedHead = walk.parseCommit(ObjectId.fromString(approved));
+            RevCommit target = baseTip(walk, landingTip);
+            headLandsFrom = mergeBase(repo, head, target);
+            approvedLandsFrom = mergeBase(repo, approvedHead, target);
+        }
+        Set<String> seen = new HashSet<>();
+        judged.forEach(path -> seen.add(path.path()));
+        List<ChangedPath> landing = new ArrayList<>();
+        for (ChangedPath path : changesSince(headLandsFrom.name(), sha).paths()) {
+            boolean approvedLanding = sameEntry(repo, path.path(), head, approvedHead)
+                    && !sameEntry(repo, path.path(), approvedHead, approvedLandsFrom);
+            if (!approvedLanding && seen.add(path.path())) {
+                landing.add(path);
+            }
+        }
+        return landing;
+    }
+
+    /** The commit landing {@code head} on {@code target} merges from; none means nothing can be judged. */
+    private static RevCommit mergeBase(Repository repo, RevCommit head, RevCommit target) throws IOException {
+        try (RevWalk walk = new RevWalk(repo)) {
+            walk.setRevFilter(RevFilter.MERGE_BASE);
+            walk.markStart(walk.parseCommit(head));
+            walk.markStart(walk.parseCommit(target));
+            RevCommit base = walk.next();
+            if (base == null) {
+                throw new BaseTipUnavailableException(head.name() + " shares no history with the base tip "
+                        + target.name());
+            }
+            return base;
         }
     }
 

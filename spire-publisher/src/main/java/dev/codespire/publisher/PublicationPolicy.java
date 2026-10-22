@@ -10,7 +10,9 @@ import java.util.Map;
  *
  * <p>{@code expectedRemoteHead} and {@code mergedBaseTip} come from a land fix's permit (M4 slice 7a): the push
  * goes to the item's existing branch only while the remote still points at the expected head, and paths whose
- * content equals the merged base tip are the base's, not the agent's.
+ * content equals the merged base tip are the base's, not the agent's. A land fix's held build carries the same
+ * tip, from the run worker's trusted environment, because it gates the base merge first: without it the base's
+ * workflow edit is refused before any checkpoint, verify or permit exists.
  */
 record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
                          String expectedRemoteHead, String mergedBaseTip) {
@@ -21,7 +23,20 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
     }
 
     static PublicationPolicy held() {
-        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null, null);
+        return held(null);
+    }
+
+    /** A held build that may have merged the base at {@code mergedBaseTip}; null when it merges nothing. */
+    static PublicationPolicy held(String mergedBaseTip) {
+        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null,
+                fullShaOrNull(mergedBaseTip));
+    }
+
+    private static String fullShaOrNull(String mergedBaseTip) {
+        if (mergedBaseTip != null && !mergedBaseTip.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("SPIRE_MERGED_BASE_TIP must be a full sha");
+        }
+        return mergedBaseTip;
     }
 
     static PublicationPolicy permitted(String head, Instant issuedAt, Instant expiresAt, Clock clock) {
@@ -43,16 +58,14 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
         if (expectedRemoteHead == null || !expectedRemoteHead.matches("[0-9a-f]{40}")) {
             throw new IllegalStateException("SPIRE_EXPECTED_REMOTE_HEAD must be a full sha");
         }
-        if (mergedBaseTip != null && !mergedBaseTip.matches("[0-9a-f]{40}")) {
-            throw new IllegalStateException("SPIRE_MERGED_BASE_TIP must be a full sha");
-        }
-        return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead, mergedBaseTip);
+        return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead,
+                fullShaOrNull(mergedBaseTip));
     }
 
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {
         return switch (mode) {
             case AUTOMATIC -> automatic();
-            case HELD -> held();
+            case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"));
             case PERMITTED -> {
                 try {
                     PublicationPolicy permit = permitted(Env.required(env, "SPIRE_PERMITTED_HEAD"),
