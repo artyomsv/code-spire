@@ -115,6 +115,23 @@ const FIXING: Record<string, string> = {
   land_checks_failed: 'a failed check', land_conflict: 'a conflict with the base branch', land_branch_behind: 'the branch is behind its base',
 };
 
+/** The item limit a land fix would have crossed, as the backend names it (WorkProgress.limitReached). */
+const LIMITS: Record<string, string> = {
+  usage_unknown: 'the usage of an earlier run is unknown', maxRunsPerItem: 'runs per item', maxStepsPerPlan: 'steps per plan',
+  maxWallClockSeconds: 'wall-clock time', maxCostMillicents: 'cost', maxCallsPerItem: 'calls per item',
+};
+
+/**
+ * The land row's note in words: a Jira ticket left open, a branch that would not delete, the limit a fix would have
+ * crossed, or what the spent fix attempts were fixing. Null when the row has none.
+ */
+export function landNote(note: string | null | undefined): string | null {
+  if (!note) return null;
+  if (LIMITS[note]) return `Limit reached: ${LIMITS[note]}.`;
+  if (FIXING[note]) return `It was fixing ${FIXING[note]}.`;
+  return workReason(note);
+}
+
 /** What became of the branch after the merge; null while the delete has not finished. */
 function branchWords(branchDeleted: boolean | null | undefined): string {
   if (branchDeleted === true) return ', branch deleted';

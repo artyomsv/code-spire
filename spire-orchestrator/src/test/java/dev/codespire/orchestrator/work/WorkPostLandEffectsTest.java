@@ -180,6 +180,7 @@ class WorkPostLandEffectsTest extends WorkFixture {
                 return read;
             }
             @Override public Settings get(Connection c,UUID repository) throws SQLException {return real.get(c,repository);}
+            @Override public Settings lockForUpdate(Connection c,UUID repository) throws SQLException {return real.lockForUpdate(c,repository);}
             @Override public Settings save(UUID repository,Input input,String subject) {return real.save(repository,input,subject);}
         },LandSettings.class);
         assertFalse(effects.dispatch(close()),"the close was claimed under a rule the operator had withdrawn");

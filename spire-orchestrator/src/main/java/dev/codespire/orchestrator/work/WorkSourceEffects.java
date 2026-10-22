@@ -166,6 +166,8 @@ public class WorkSourceEffects {
      * The ticket after land (A1): no policy or phase mode, and whatever the item's phase now, since it is complete by
      * then. Only the generation must still match. A close is sent while the current ticket rule is still close, and
      * only once the comment that says why is sent; a refused or missing comment refuses it {@code comment_not_sent}.
+     * The rule is read again inside the claim, under the locks a settings save takes (security review of the branch):
+     * a save after the first read would otherwise still be overridden by a close.
      */
     private boolean dispatchPostLand(Pending effect,WorkItemEvent item,WorkSourceRegistry.Source source) {
         if(item.generation()!=effect.generation()) { mark(effect.id(),"pending","refused",null,"work_item_changed");return false; }
@@ -179,6 +181,9 @@ public class WorkSourceEffects {
             if(!"sent".equals(comment.state())) { touch(effect.id());return false; }
         }
         return send(effect,item,source,c-> {
+            if(effect.intent().kind()==Kind.TRANSITION && landSettings.lockForUpdate(c,source.repositoryId()).ticketRule()!=LandSettings.TicketRule.CLOSE) {
+                mark(effect.id(),"pending","refused",null,"ticket_rule_changed");return false;
+            }
             try(PreparedStatement ps=c.prepareStatement("SELECT generation FROM work_item WHERE id=? FOR UPDATE")) {
                 ps.setString(1,effect.item());try(ResultSet rs=ps.executeQuery()) {
                     if(!rs.next() || rs.getLong(1)!=effect.generation()) { mark(effect.id(),"pending","refused",null,"work_item_changed");return false; }

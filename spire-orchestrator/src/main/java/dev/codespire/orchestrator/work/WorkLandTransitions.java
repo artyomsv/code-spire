@@ -300,12 +300,15 @@ public class WorkLandTransitions {
         }
         return effect;
     }
-    /** The pull request as GitHub reports it now, read through the FACTORY or REVIEWER account; null when it cannot be read. */
+    /**
+     * The pull request as GitHub reports it now, read through the FACTORY or REVIEWER account; null when it cannot be
+     * read. The reader only reads, so the reviewer's token is never asked to merge (code-quality review of the branch).
+     */
     PullRequestLander.LandState readPullRequest(WorkItemEvent item,long pullRequest) {
         Optional<ScmProvider> account=readingAccount(item.repositoryId());
         if(account.isEmpty())return null;
         try {
-            PullRequestLander lander=clients.pullRequestLander(account.get());
+            PullRequestLander lander=clients.pullRequestReader(account.get());
             if(!lander.available())return null;
             return lander.read(sources.get(item.sourceId()).orElseThrow(NotFoundException::new).repository(),pullRequest);
         }catch(RuntimeException unreadable) {

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { WorkItemDetail } from '../../api';
 import { actorLabel } from '../actorsApi';
-import { JOURNEY, journeyCells, landProgress, type Cell, type JourneyPhase } from './workJourney';
+import { JOURNEY, journeyCells, landNote, landProgress, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
 
@@ -113,10 +113,14 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
   return <p className="factory-note"><a href={pr.url} target="_blank" rel="noreferrer">{name} #{pr.number}</a></p>;
 }
 
-/** Where the merge stands (spec §7.10). */
+/** Where the merge stands (spec §7.10), and the land row's note, which may ask the operator to act after completion. */
 function Land({ item }: { item: Item }) {
   const text = landProgress(item);
-  return text ? <p className="factory-note">{text}</p> : null;
+  const note = landNote(item.land?.note);
+  return <>
+    {text && <p className="factory-note">{text}</p>}
+    {note && <p className="factory-note">{note}</p>}
+  </>;
 }
 
 function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {

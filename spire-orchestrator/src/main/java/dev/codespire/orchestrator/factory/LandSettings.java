@@ -64,6 +64,24 @@ public class LandSettings {
         return read(c, repository, SELECT + " FOR UPDATE");
     }
 
+    /**
+     * The settings as a save would find them: the repository row, then the settings row, both held until the caller's
+     * transaction ends, the order {@link #save} locks them in. A post-land close reads its consent here, so a save
+     * either commits before this read or waits until the close is claimed.
+     */
+    public Settings lockForUpdate(Connection c, UUID repository) throws SQLException {
+        lockRepository(c, repository);
+        return getForUpdate(c, repository);
+    }
+
+    /** @return false when the repository does not exist */
+    private static boolean lockRepository(Connection c, UUID repository) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT id FROM repository WHERE id=? FOR UPDATE")) {
+            ps.setObject(1, repository);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        }
+    }
+
     private static final String SELECT = "SELECT revision,merge_method,ticket_rule,fix_attempts,updated_by,updated_at"
             + " FROM repository_land_settings WHERE repository_id=?";
 
@@ -97,10 +115,7 @@ public class LandSettings {
         if (attempts == null || attempts < 0 || attempts > MAX_FIX_ATTEMPTS) throw new Refused("fix_attempts_invalid");
         try (Connection c = dataSource.getConnection()) {
             // The repository row first, the same lock order as the build setup and the policy save.
-            try (PreparedStatement ps = c.prepareStatement("SELECT id FROM repository WHERE id=? FOR UPDATE")) {
-                ps.setObject(1, repository);
-                try (ResultSet rs = ps.executeQuery()) { if (!rs.next()) throw new Refused("repository_unknown"); }
-            }
+            if (!lockRepository(c, repository)) throw new Refused("repository_unknown");
             if (getForUpdate(c, repository).revision() != input.expectedRevision()) throw new Refused("land_settings_changed");
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO repository_land_settings(repository_id,merge_method,ticket_rule,fix_attempts,updated_by)

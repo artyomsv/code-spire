@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LandView } from '../../api';
-import { filterById, journeyCells, landProgress, nextAction, standing, type LandItem, type WorkItemRow } from './workJourney';
+import { filterById, journeyCells, landNote, landProgress, nextAction, standing, type LandItem, type WorkItemRow } from './workJourney';
 
 const ASSISTED = { INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto', VERIFY: 'auto', DELIVER: 'draft_pr', REVIEW: 'auto', LAND: 'approve' };
 function row(overrides: Partial<WorkItemRow> = {}): WorkItemRow {
@@ -117,6 +117,13 @@ describe('land step', () => {
       land: view({ state: 'handed', reason: 'TEST-land-future-reason', handedOver: true }) }))).toMatch(/^Needs you: /);
     expect(landProgress(landItem({ workflowStatus: 'awaiting_input', reason: 'land_blocked',
       land: view({ state: 'handed', reason: 'land_blocked', handedOver: false }) }))).toBeNull();
+  });
+  // The note carries what the operator must still do or know: a ticket to close, a limit, what the fixes were fixing.
+  it('words the land note', () => {
+    expect(landNote('ticket_close_unsupported')).toMatch(/Close it in Jira.$/);
+    expect(landNote('maxRunsPerItem')).toBe('Limit reached: runs per item.');
+    expect(landNote('land_checks_failed')).toBe('It was fixing a failed check.');
+    expect(landNote(null)).toBeNull();
   });
   it('says nothing before land has anything to say', () => {
     expect(landProgress(landItem({ phase: 'review', land: null }))).toBeNull();

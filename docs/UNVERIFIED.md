@@ -205,6 +205,9 @@ when it lands).
   An item at its land gate, or handed over, has no row reading, so it waits on a merged pull request until
   the gate is approved or Retry land starts one. A webhook whose read could not confirm the merge leaves a
   `work_land_observation` row that every sweep reads again (`WorkLandWebhookIT`), against a fake GitHub.
+  The read takes the FACTORY account, or the REVIEWER account when the factory is unavailable; the reviewer's
+  reader refuses a merge or a branch delete (`…aHandMergeIsReadThroughTheReviewerWhenTheFactoryIsUnavailable`,
+  `ProviderClientsLanderTest`). No live repository has had its merge read through the reviewer.
 - **Merge-queue repositories are handed over, never proven live.** A repository that requires GitHub's
   merge queue is expected to report `blocked`, which hands the item over with `land_blocked`. No test met a
   real merge queue, and nothing reads the ruleset to say a queue was the cause.
@@ -225,7 +228,10 @@ when it lands).
   nothing re-reads the base and retries. `PublishRepoTest` covers a base that did not move.
 - **Jira `close` is skipped.** A Jira source under the `close` ticket rule gets the comment, keeps its
   status, and the item notes `ticket_close_unsupported`: a close needs a per-workflow transition id that
-  nothing configures. The GitHub Issues and GitLab close are proven against fakes only.
+  nothing configures. The GitHub Issues and GitLab close are proven against fakes only. The close reads the
+  ticket rule again when it is claimed, under the repository and settings locks a save takes, so a rule saved as
+  `comment` after the first read refuses it (`WorkPostLandEffectsTest.aRuleChangedBetweenTheReadAndTheClaimDoesNotClose`).
+  The screen shows the note beside the merge, on a completed item too.
 - **Withdrawing consent after approval is proven against fakes only.** Before the merge is claimed the land
   re-reads the ticket's labels, the policy and the source, as delivery does before its permit; a change hands the
   item over with `land_policy_changed` (`WorkLandingIT.aLabelRemovedAfterApprovalIsNotMerged` and its two
