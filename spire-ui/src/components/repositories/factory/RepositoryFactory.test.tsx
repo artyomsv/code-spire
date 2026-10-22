@@ -227,7 +227,10 @@ describe('land setup', () => {
     vi.spyOn(land, 'saveLandSettings').mockResolvedValue(landSetup({ revision: 1, mergeMethod: 'squash' }));
     renderFactory();
     fireEvent.click(within(await step(6)).getByRole('button', { name: 'Change' }));
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Merge method' }), { target: { value: 'squash' } });
+    const method = await screen.findByRole('combobox', { name: 'Merge method' });
+    // The select offers only the saved method until GitHub's allowed list arrives.
+    await within(method).findByRole('option', { name: 'squash' });
+    fireEvent.change(method, { target: { value: 'squash' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save land setup' }));
     expect(await within(await step(6)).findByText(/squash/)).toBeInTheDocument();
     fireEvent.click(within(await step(6)).getByRole('button', { name: 'Change' }));

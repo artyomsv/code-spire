@@ -1,9 +1,11 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.llm.HarnessTokenReport;
+import dev.codespire.contract.port.PullRequestLander;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRole;
+import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.repository.RepositoryAccounts;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.RepositoryView;
@@ -13,8 +15,11 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -22,7 +27,7 @@ import java.util.UUID;
  *
  * <p>The item-scoped endpoints in {@code WorkPreparationResource} cannot serve this screen. They need an
  * existing work item and pass its artifact evidence first, and setup happens before the first ticket
- * exists.
+ * exists. The land setup (M4) lives here too: it is the same kind of per-repository factory setting.
  */
 @Path("/api/repositories/{repository}/factory")
 @RolesAllowed("spire-admin")
@@ -30,6 +35,7 @@ import java.util.UUID;
 public class RepositoryBuildResource {
     private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(RepositoryBuildResource.class);
     @Inject BuildDefaults defaults;
+    @Inject LandSettings landSettings;
     @Inject FactoryConfig config;
     @Inject RepositoryRegistry repositories;
     @Inject RepositoryAccounts accounts;
@@ -128,6 +134,69 @@ public class RepositoryBuildResource {
             LOG.warnf("repository %s: the forge did not confirm the requested branch (%s)",
                     repository, refusedByForge.getClass().getSimpleName());
             throw refused(502, "branch_head_unconfirmed");
+        }
+    }
+
+    /** The land setup with its values in the lower-case words the table and the screen use. */
+    public record Land(long revision, String mergeMethod, String ticketRule, int fixAttempts, String updatedBy, Instant updatedAt) {
+        static Land of(LandSettings.Settings settings) {
+            return new Land(settings.revision(), LandSettings.wire(settings.mergeMethod()), LandSettings.wire(settings.ticketRule()),
+                    settings.fixAttempts(), settings.updatedBy(), settings.updatedAt());
+        }
+    }
+
+    /**
+     * The merge methods the repository allows, as GitHub reports them to the FACTORY account.
+     *
+     * @param checked false when nothing could be read; all three are then offered, because a forge that
+     *     does not answer must not lock the setting. A method GitHub refuses is still caught before any
+     *     merge call, when the land effect reads the same flags.
+     */
+    public record LandOptions(boolean checked, List<String> allowed) {
+        static LandOptions unchecked() {
+            return new LandOptions(false, Arrays.stream(PullRequestLander.MergeMethod.values()).map(LandSettings::wire).toList());
+        }
+    }
+
+    @GET @Path("/land")
+    public Land land(@PathParam("repository") UUID repository) {
+        repositories.get(repository).orElseThrow(NotFoundException::new);
+        return Land.of(landSettings.get(repository));
+    }
+
+    @PUT @Path("/land")
+    public Land saveLand(@PathParam("repository") UUID repository, LandSettings.Input input) {
+        String actor = OidcSubjects.of(identity);
+        if (actor.isBlank()) throw new ForbiddenException("A verified operator identity is required");
+        try {
+            return Land.of(landSettings.save(repository, input, actor));
+        } catch (LandSettings.Refused refused) {
+            throw refused(switch (refused.reason()) {
+                case "repository_unknown" -> 404;
+                case "land_settings_changed" -> 409;
+                default -> 400;
+            }, refused.reason());
+        }
+    }
+
+    @GET @Path("/land/options")
+    public LandOptions landOptions(@PathParam("repository") UUID repository) {
+        RepositoryView view = repositories.get(repository).orElseThrow(NotFoundException::new);
+        Optional<ScmProvider> factory = accounts.resolve(repository, ProviderRole.FACTORY);
+        if (factory.isEmpty()) return LandOptions.unchecked();
+        // Built OUTSIDE the try, as in head(): a local client-construction fault stays a 500.
+        PullRequestLander lander = clients.pullRequestLander(factory.get());
+        if (!lander.available()) return LandOptions.unchecked();
+        try {
+            PullRequestLander.AllowedMethods methods = lander.allowedMethods(new RepoRef(view.workspace(), view.slug()));
+            if (!methods.checked()) return LandOptions.unchecked();
+            return new LandOptions(true, Arrays.stream(PullRequestLander.MergeMethod.values())
+                    .filter(methods.allowed()::contains).map(LandSettings::wire).toList());
+        } catch (RuntimeException unreachable) {
+            // Only the failure type: adapter messages carry request paths and response-body snippets.
+            LOG.warnf("repository %s: the forge did not report its merge methods (%s)",
+                    repository, unreachable.getClass().getSimpleName());
+            return LandOptions.unchecked();
         }
     }
 
