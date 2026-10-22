@@ -166,9 +166,6 @@ public class WorkSourceEffects {
     private boolean dispatchPostLand(Pending effect,WorkItemEvent item,WorkSourceRegistry.Source source) {
         if(item.generation()!=effect.generation()) { mark(effect.id(),"pending","refused",null,"work_item_changed");return false; }
         if(effect.intent().kind()==Kind.TRANSITION) {
-            if(landSettings.get(source.repositoryId()).ticketRule()!=LandSettings.TicketRule.CLOSE) {
-                mark(effect.id(),"pending","refused",null,"ticket_rule_changed");return false;
-            }
             Status comment=status(postLandId(effect.item(),effect.generation(),Kind.COMMENT));
             // A comment that will never be sent ends the close too; one still in flight defers it like any other row.
             if(comment==null || "refused".equals(comment.state())) { mark(effect.id(),"pending","refused",null,"comment_not_sent");return false; }
