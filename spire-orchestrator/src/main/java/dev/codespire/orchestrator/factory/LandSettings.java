@@ -84,7 +84,7 @@ public class LandSettings {
         if (rule == null) throw new Refused("ticket_rule_invalid");
         Integer attempts = input.fixAttempts();
         // Checked here and not only by the table, so the screen gets the rule instead of a constraint violation.
-        if (attempts == null || attempts < 0 || attempts > MAX_FIX_ATTEMPTS) throw new Refused("fix_attempts_invalid");
+        if (attempts == null) throw new Refused("fix_attempts_invalid");
         try (Connection c = dataSource.getConnection()) {
             // The repository row first, the same lock order as the build setup and the policy save.
             try (PreparedStatement ps = c.prepareStatement("SELECT id FROM repository WHERE id=? FOR UPDATE")) {
