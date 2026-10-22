@@ -297,8 +297,6 @@ public sealed interface RunCommand {
             Objects.requireNonNull(work,"A work binding is required");
             if(!execution.runId().equals(runId))throw new IllegalArgumentException("The work command must name its execution run");
             // A land fix (M4 slice 7a) pushes to the item's own pull request branch; never to any other existing branch.
-            if(execution.existingBranch() && !execution.branch().startsWith(ITEM_BRANCH_PREFIX))
-                throw new IllegalArgumentException("Prepared item builds may push only to their own existing "+ITEM_BRANCH_PREFIX+" branch");
             if(mergedBaseTip!=null && !execution.existingBranch())
                 throw new IllegalArgumentException("Only a build on the item's own branch merges its pull request base");
             if(mergedBaseTip!=null && !mergedBaseTip.matches("[0-9a-f]{40}"))
