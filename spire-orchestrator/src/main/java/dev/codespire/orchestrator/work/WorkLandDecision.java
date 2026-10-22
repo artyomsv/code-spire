@@ -28,7 +28,6 @@ final class WorkLandDecision {
     private static final Set<String> MERGEABLE = Set.of("clean", "unstable", "has_hooks");
 
     static Next checking(LandState pr, String approvedHead, AllowedMethods allowed, MergeMethod method) {
-        if (pr.merged()) return new Next.MergedFound(pr.mergeCommitSha(), pr.mergedBy());
         if ("closed".equals(pr.state())) return new Next.Closed();
         if (!Objects.equals(approvedHead, pr.headSha())) return new Next.Hand("land_head_moved");
         // Read from the repository's allow_*_merge flags, never parsed from a refusal (A5).
