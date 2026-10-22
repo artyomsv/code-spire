@@ -22,6 +22,8 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -32,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @QuarkusTest
 @TestSecurity(user="TEST-land-admin",roles="spire-admin")
 class WorkLandingIT extends WorkPreparedFixture {
-    static final String HEAD="b".repeat(40),MOVED="d".repeat(40),MERGED="e".repeat(40);
+    static final String HEAD="b".repeat(40),MOVED="d".repeat(40),MERGED="e".repeat(40),FACTORY_ID="900321";
     @Inject WorkDelivery delivery;
     @Inject WorkReview observer;
     @Inject RunResultSaga saga;
@@ -126,6 +128,18 @@ class WorkLandingIT extends WorkPreparedFixture {
     }
     int merges() {return forge.countRequestsMatching(putRequestedFor(urlPathEqualTo(pulls()+"/merge")).build()).getCount();}
     int deletes() {return forge.countRequestsMatching(deleteRequestedFor(urlPathMatching(refs())).build()).getCount();}
+    int pullReads() {return forge.countRequestsMatching(getRequestedFor(urlPathEqualTo(pulls())).build()).getCount();}
+    /** GitHub names a merger by numeric id, so the factory account's stable id must be one for its merge to be recognised. */
+    void factoryIdentity(String providerUserId) {
+        providers.update(account,new ProviderInput("TEST-work-account-"+UUID.randomUUID(),"github",forge.baseUrl(),"bearer",null,"TEST-work-token",
+                providerUserId,true,List.of(),"TEST-bot",null,"FACTORY"));
+    }
+    void append(String id,WorkItemEvent next) {
+        QuarkusTransaction.requiringNew().run(()->{
+            try(var c=dataSource.getConnection()){WorkItemTransitions.lockItem(c,id);store.appendDecision(c,store.history(id),next,"TEST-land-fixture:"+UUID.randomUUID());}
+            catch(Exception failure){throw new IllegalStateException(failure);}
+        });
+    }
 
     // --- the effect row ---
     String effect(String id,String column) throws SQLException {
@@ -166,13 +180,90 @@ class WorkLandingIT extends WorkPreparedFixture {
         assertEquals(0,merges());handed(id,"land_head_moved");
     }
     @Test void anUncertainMergeIsRecoveredByReadingNeverResent() throws Exception {
+        factoryIdentity(FACTORY_ID);
         String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
         land.drain();
         assertEquals("uncertain",effect(id,"state"));assertEquals("active",store.load(id).workflowStatus());
         // GitHub finished the merge after its edge gave up; the next pass only reads, and records the factory's merge.
-        mergedBy("900777");land.drain();
+        mergedBy(FACTORY_ID);land.drain();
         assertEquals(1,merges());landed(id);
         assertEquals(WorkLanding.FACTORY,store.load(id).progress().execution().landing().mergedBy());
+    }
+    // An uncertain merge proves nothing about who merged: GitHub names the merger, and a person's merge stays the person's (A2).
+    @Test void anUncertainMergeFoundMadeByAPersonRecordsThePerson() throws Exception {
+        factoryIdentity(FACTORY_ID);
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        mergedBy("900777");land.drain();
+        landed(id);assertEquals("900777",store.load(id).progress().execution().landing().mergedBy());
+    }
+    // The merge was pinned to the approved head, so a merge at any other head is not the factory's, whoever GitHub names.
+    @Test void anUncertainMergeFoundAtAnotherHeadIsNotTheFactorys() throws Exception {
+        factoryIdentity(FACTORY_ID);
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(okJson(pullJson("closed",true,MOVED,"unknown",FACTORY_ID))));checks(MOVED,null);
+        land.drain();
+        landed(id);
+        WorkLanding landing=store.load(id).progress().execution().landing();
+        assertEquals(FACTORY_ID,landing.mergedBy());assertEquals(MOVED,effect(id,"merged_head"));
+    }
+    // GitHub finishing a lost merge must not be overtaken by a resume: the new generation would build the merged work again (§7.9).
+    @Test void aResumeIsRefusedWhileAMergeMayHaveHappened() throws Exception {
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        control.suspend(id,"github","TEST-land-push-3","900555",HEAD);
+        assertEquals("suspended",store.load(id).workflowStatus());
+        long revision=store.history(id).size();long generation=store.load(id).generation();
+        var outcome=transitions.resumeControlled(id,revision,transitions.observe(store.load(id)),"TEST-operator","TEST-note",HEAD);
+        assertEquals(409,outcome.status());assertEquals("readmission_merge_unconfirmed",outcome.reason());
+        assertEquals(revision,store.history(id).size());assertEquals(generation,store.load(id).generation());
+        mergedBy("900777");land.drain();
+        assertEquals(1,landings(id));landed(id);
+    }
+    @Test void aReadmitIsRefusedWhileAMergeMayHaveHappened() throws Exception {
+        String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        WorkItemEvent item=store.load(id);
+        append(id,WorkItemLifecycle.state(item,"stopped","gate_rejected","GATE_RESOLVED",null,item.progress().reserve(false)));
+        long revision=store.history(id).size();
+        given().contentType("application/json").body(new WorkItemResource.Resume(revision,true))
+                .post("/api/work-items/"+id+"/resume").then().statusCode(409).body("reason",is("readmission_merge_unconfirmed"));
+        assertEquals(revision,store.history(id).size());assertEquals(1,store.load(id).generation());
+    }
+    // A read that keeps failing waits a minute between passes, so a stuck row neither hammers GitHub nor starves newer lands.
+    @Test void aPullRequestThatCannotBeReadBacksOffThenIsHanded() throws Exception {
+        String id=approved();Instant start=Instant.now();clockAt(start);
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(404).withBody("{\"message\":\"TEST-Not Found\"}")));
+        land.drain();
+        assertEquals("land_read_failed",effect(id,"reason"));assertNotNull(effect(id,"next_check_at"));
+        int reads=pullReads();
+        land.drain();
+        assertEquals(reads,pullReads(),"a backed-off row is not read again before its next check");
+        now.set(start.plus(java.time.Duration.ofHours(6)).plusSeconds(1));land.drain();
+        assertEquals(0,merges());handed(id,"land_read_failed");
+    }
+    @Test void aMissingFactoryAccountBacksOffThenIsHanded() throws Exception {
+        String id=approved();Instant start=Instant.now();clockAt(start);openAt(HEAD,"clean",null);merge(merged());
+        providers.update(account,new ProviderInput("TEST-disabled-"+UUID.randomUUID(),"github",forge.baseUrl(),"bearer",null,"TEST-work-token",
+                "TEST-bot",false,List.of(),"TEST-bot",null,"FACTORY"));
+        land.drain();
+        assertEquals("land_account_unavailable",effect(id,"reason"));assertNotNull(effect(id,"next_check_at"));
+        assertEquals("active",store.load(id).workflowStatus());
+        now.set(start.plus(java.time.Duration.ofHours(6)).plusSeconds(1));land.drain();
+        assertEquals(0,merges());handed(id,"land_account_unavailable");
+    }
+    // After the merge call the merge may have happened, so the row is never handed; it keeps reading and says why it waits.
+    @Test void anUncertainMergeThatCannotBeReadIsNeverHanded() throws Exception {
+        String id=approved();Instant start=Instant.now();clockAt(start);
+        openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));
+        land.drain();assertEquals("uncertain",effect(id,"state"));
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(502)));
+        land.drain();
+        assertEquals("land_read_failed",effect(id,"reason"));assertNotNull(effect(id,"next_check_at"));
+        now.set(start.plus(java.time.Duration.ofHours(6)).plusSeconds(1));land.drain();
+        assertEquals("uncertain",effect(id,"state"));assertEquals("land_merge_unconfirmed",effect(id,"reason"));
+        assertEquals("active",store.load(id).workflowStatus());assertEquals(1,merges());
     }
     @Test void anUncertainMergeStillOpenAtTheHeadIsCheckedAgain() throws Exception {
         String id=approved();openAt(HEAD,"clean",null);merge(aResponse().withStatus(502));branchAt(HEAD,204);
