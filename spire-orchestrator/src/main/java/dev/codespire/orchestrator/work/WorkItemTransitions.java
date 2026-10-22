@@ -219,17 +219,61 @@ public class WorkItemTransitions {
         });
     }
 
-    /** The land effect found the pull request merged (M4 land, spec §7.3). */
+    /**
+     * The land effect saw the pull request merged (M4 land, spec §7.3). Recorded once per generation and pull
+     * request, whoever saw it first (A2), and recorded on a suspended item too: the merge may have happened
+     * after a takeover, and a real merge that is never recorded is worse than a late one (Review Focus 13).
+     */
     Outcome landed(String id,UUID effect,WorkLanding landing) {
-        throw new UnsupportedOperationException("RED");
+        return underLock(id,(c,history,item)->{
+            List<WorkItemEvent> facts=history.stream().map(event->(WorkItemEvent)event.payload()).toList();
+            if(WorkItemLifecycle.landedIn(facts,item.generation(),landing.pullRequest().number()))return new Outcome(200,"landing_already_recorded",item);
+            WorkExecution execution=item.progress().execution();
+            boolean attempted=facts.stream().anyMatch(event->event.generation()==item.generation() && "PHASE_STARTED".equals(event.milestone())
+                    && "land".equals(event.phase()) && effect.equals(event.progress().attemptId()));
+            if(!attempted || !"land".equals(item.phase()) || execution==null || execution.pullRequest()==null
+                    || execution.pullRequest().number()!=landing.pullRequest().number())return new Outcome(409,"work_item_changed",item);
+            WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
+            store.appendDecision(c,history,next,"land-landed:"+effect);
+            return new Outcome(200,next.reason(),next);
+        });
     }
-    /** The land effect hands the item to the operator (spec §7.6). */
+    /** The land effect hands the item to the operator (spec §7.6), only while this land attempt is the active one. */
     Outcome landHandOff(String id,UUID effect,String reason) {
-        throw new UnsupportedOperationException("RED");
+        return underLock(id,(c,history,item)->{
+            if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
+            WorkItemEvent next=WorkItemLifecycle.landHanded(item,reason);
+            store.appendDecision(c,history,next,"land-handed:"+effect);
+            return new Outcome(200,next.reason(),next);
+        });
     }
     /** The land effect found the pull request closed without a merge (spec §7.8). */
     Outcome landClosed(String id,UUID effect) {
-        throw new UnsupportedOperationException("RED");
+        return underLock(id,(c,history,item)->{
+            if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
+            WorkItemEvent next=WorkItemLifecycle.pullRequestClosed(item);
+            store.appendDecision(c,history,next,"land-closed:"+effect);
+            return new Outcome(200,next.reason(),next);
+        });
+    }
+    private static boolean landAttempt(WorkItemEvent item,UUID effect) {
+        return "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && effect.equals(item.progress().attemptId());
+    }
+    private interface Locked {
+        Outcome apply(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException,java.io.IOException;
+    }
+    /** Local serialization only, in the same lock order as an answer; no remote authority read decides a forge fact. */
+    private Outcome underLock(String id,Locked body) {
+        WorkItemEvent reference=require(id);
+        return QuarkusTransaction.requiringNew().call(()->{
+            try(Connection c=dataSource.getConnection()) {
+                WorkSourceRegistry.Source source=sources.get(c,reference.sourceId(),true).orElseThrow(NotFoundException::new);
+                policies.get(c,source.repositoryId(),true);
+                lockItem(c,id);List<dev.codespire.contract.event.EventEnvelope> history=store.history(id);
+                return body.apply(c,history,(WorkItemEvent)history.getLast().payload());
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot record the land outcome",failure);}
+        });
     }
 
     private static boolean landed(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) {

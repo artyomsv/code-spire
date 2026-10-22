@@ -48,9 +48,32 @@ export interface WorkItemDetail extends WorkItemSummary {
    * workflow reason: an automatic failure written into that would stop the sweep retrying for ever.
    */
   preparationHealth?: { reason: string; attempts: number; lastAt: string; retryAfter: string } | null;
+  /** The latest land attempt of this generation (M4 land); absent until land is approved. */
+  land?: LandView | null;
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
   events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
     attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];
+}
+
+/** One failed or not-code check, as GitHub reported it. */
+export interface LandFailedCheck { name: string; conclusion: string; title: string; summary: string; annotations: string[] }
+
+/** The head's checks reduced to one verdict; `done` of `total` have finished. */
+export interface LandChecks { state: 'PASSED' | 'PENDING' | 'FAILED' | 'NOT_CODE'; done: number; total: number; failed: LandFailedCheck[] }
+
+/**
+ * Where the land of an approved pull request stands. `message` is GitHub's own words when it refused;
+ * `branchDeleted` is false once deleting the branch gave up (note `branch_delete_failed`), null before.
+ */
+export interface LandView {
+  state: string;
+  reason: string | null;
+  message: string | null;
+  checks: LandChecks | null;
+  method: string;
+  ticketRule: string;
+  branchDeleted: boolean | null;
+  note: string | null;
 }
 
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */

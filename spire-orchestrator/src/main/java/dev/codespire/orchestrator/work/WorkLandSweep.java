@@ -1,12 +1,349 @@
 package dev.codespire.orchestrator.work;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.port.PullRequestLander;
+import dev.codespire.contract.port.PullRequestLander.BranchDeletion;
+import dev.codespire.contract.port.PullRequestLander.LandState;
+import dev.codespire.contract.port.PullRequestLander.MergeOutcome;
+import dev.codespire.contract.scm.PullRequestRef;
+import dev.codespire.contract.scm.RepoRef;
+import dev.codespire.contract.work.WorkExecution;
+import dev.codespire.contract.work.WorkItemEvent;
+import dev.codespire.contract.work.WorkLanding;
+import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.factory.LandSettings;
+import dev.codespire.orchestrator.factory.MachineAccounts;
+import dev.codespire.orchestrator.provider.ProviderClients;
+import dev.codespire.orchestrator.provider.ScmProvider;
+import dev.codespire.orchestrator.work.WorkLandDecision.Next;
+import io.quarkus.narayana.jta.QuarkusTransaction;
+import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import javax.sql.DataSource;
 
-/** Lands an approved pull request (M4 land, spec §7.3). */
+/**
+ * Lands an approved pull request (M4 land, spec §7.3): one durable row per approved land attempt, pinned to the
+ * approved head. The merge follows a committed {@code uncertain} mark, and a merge whose answer was lost is
+ * recovered by reading the pull request, never by sending the merge again (ADR-043). The merge completes the
+ * item; the branch delete comes after it and never holds it (§7.7).
+ *
+ * <p>Every code refusal (a failed check, a conflict, a branch behind its base) is handed to the operator in this
+ * slice; the land fix loop turns those into fix runs later.
+ */
 @ApplicationScoped
 public class WorkLandSweep {
-    public void drain() {}
+    static final Duration RECHECK = Duration.ofSeconds(60), CHECKS_TIMEOUT = Duration.ofHours(6);
+    static final int CLEANUP_TRIES = 3;
+    /** The states the sweep still drains; done, handed, closed, refused and fixing are another owner's or final. */
+    static final Set<String> LIVE = Set.of("pending", "checking", "waiting_checks", "merging", "uncertain", "merged", "cleaning");
 
-    public void advance(UUID id) {}
+    @Inject DataSource dataSource;
+    @Inject WorkItemStore store;
+    @Inject WorkItemTransitions transitions;
+    @Inject WorkClock clock;
+    @Inject WorkSourceRegistry sources;
+    @Inject MachineAccounts accounts;
+    @Inject ProviderClients clients;
+    @Inject LandSettings settings;
+    @Inject ObjectMapper mapper;
+    @Inject EncryptionService encryption;
+
+    record Effect(UUID id, String item, long generation, long pullRequest, String approvedHead, String state, String mergeCommit,
+                  String mergedBy, String method, String mergedHead, int cleanupTries, Instant waitingSince) {
+        Effect at(String next) {
+            return new Effect(id, item, generation, pullRequest, approvedHead, next, mergeCommit, mergedBy, method, mergedHead, cleanupTries, waitingSince);
+        }
+    }
+
+    /** What the operator reads: GitHub's own message and the check summary. Both may quote source, so encrypted. */
+    public record Detail(String message, PullRequestLander.CheckSummary checks) {}
+
+    /** The FACTORY account's lander, the repository and the saved merge method one pass works with. */
+    private record Target(PullRequestLander lander, RepoRef repo, PullRequestLander.MergeMethod method) {}
+
+    @Scheduled(every = "${spire.work-land-interval:5s}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    public void drain() {
+        List<UUID> ids = new ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT effect_id FROM work_land_effect WHERE state = ANY(?) AND (next_check_at IS NULL OR next_check_at <= ?)"
+                        + " ORDER BY created_at LIMIT 20")) {
+            ps.setArray(1, c.createArrayOf("text", LIVE.toArray()));
+            ps.setTimestamp(2, Timestamp.from(clock.now()));
+            try (ResultSet rs = ps.executeQuery()) { while (rs.next()) ids.add(rs.getObject(1, UUID.class)); }
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+        for (UUID id : ids) advance(id);
+    }
+
+    public void advance(UUID id) {
+        Effect effect = read(id);
+        if (effect == null || !LIVE.contains(effect.state())) return;
+        WorkItemEvent item = store.load(effect.item());
+        if (item == null) return;
+        Target target = target(item);
+        if (target == null) { note(effect, "factory_account_unavailable"); return; }
+        switch (effect.state()) {
+            case "merging", "uncertain" -> recover(effect, item, target);
+            case "merged" -> record(effect, item, target);
+            case "cleaning" -> clean(effect, item, target);
+            default -> check(effect, item, target);
+        }
+    }
+
+    private Target target(WorkItemEvent item) {
+        Optional<ScmProvider> account = accounts.resolve(item.repositoryId());
+        if (account.isEmpty()) return null;
+        PullRequestLander lander = clients.pullRequestLander(account.get());
+        if (!lander.available()) return null;
+        RepoRef repo = sources.get(item.sourceId()).orElseThrow(() -> new IllegalStateException("Work source " + item.sourceId() + " is missing"))
+                .repository();
+        return new Target(lander, repo, settings.get(item.repositoryId()).mergeMethod());
+    }
+
+    /** pending, checking and waiting_checks: nothing has been sent yet, so the item must still be at this attempt. */
+    private void check(Effect effect, WorkItemEvent item, Target target) {
+        if (!atAttempt(item, effect)) { update(effect, "refused", "work_item_changed", null); return; }
+        LandState pr;
+        PullRequestLander.AllowedMethods allowed;
+        try {
+            pr = target.lander().read(target.repo(), effect.pullRequest());
+            allowed = target.lander().allowedMethods(target.repo());
+        } catch (RuntimeException unreadable) { note(effect, "land_read_failed"); return; }
+        Next next = WorkLandDecision.checking(pr, effect.approvedHead(), allowed, target.method());
+        if (next instanceof Next.Merge) merge(effect, target);
+        else if (next instanceof Next.Wait) waitForChecks(effect, pr);
+        else settle(effect, next, pr, null);
+    }
+
+    /** A found merge, a closed pull request or a hand-off. A fix is handed with its own reason until the fix loop exists. */
+    private void settle(Effect effect, Next next, LandState pr, String message) {
+        switch (next) {
+            case Next.MergedFound found -> found(effect, pr, found.mergedBy());
+            case Next.Closed closed -> {
+                WorkItemTransitions.Outcome outcome = transitions.landClosed(effect.item(), effect.id());
+                update(effect, "closed", outcome.status() == 200 ? null : "work_item_changed", null);
+            }
+            case Next.Hand hand -> hand(effect, hand.reason(), new Detail(message, pr.checks()));
+            case Next.Fix fix -> hand(effect, fix.reason(), new Detail(message, pr.checks()));
+            default -> throw new IllegalStateException("Not a settling land outcome: " + next);
+        }
+    }
+
+    private void hand(Effect effect, String reason, Detail detail) {
+        WorkItemTransitions.Outcome outcome = transitions.landHandOff(effect.item(), effect.id(), reason);
+        update(effect, "handed", outcome.status() == 200 ? reason : "work_item_changed", detail);
+    }
+
+    private void waitForChecks(Effect effect, LandState pr) {
+        Instant now = clock.now();
+        Instant since = effect.waitingSince() == null ? now : effect.waitingSince();
+        if (!now.isBefore(since.plus(CHECKS_TIMEOUT))) { hand(effect, "land_checks_timeout", new Detail(null, pr.checks())); return; }
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                UPDATE work_land_effect SET state='waiting_checks',reason=NULL,waiting_since=?,next_check_at=?,detail=?,updated_at=now()
+                WHERE effect_id=? AND state=?
+                """)) {
+            ps.setTimestamp(1, Timestamp.from(since)); ps.setTimestamp(2, Timestamp.from(now.plus(RECHECK)));
+            ps.setBytes(3, encode(effect, new Detail(null, pr.checks()))); ps.setObject(4, effect.id()); ps.setString(5, effect.state());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    private void merge(Effect effect, Target target) {
+        if (!claimMerge(effect)) return;
+        Effect sent = effect.at("uncertain");
+        MergeOutcome outcome;
+        try { outcome = target.lander().merge(target.repo(), effect.pullRequest(), effect.approvedHead(), target.method()); }
+        catch (RuntimeException lost) { note(sent, "merge_outcome_unknown"); return; }
+        switch (outcome) {
+            case MergeOutcome.Merged merged -> {
+                markMerged(sent, merged.sha(), WorkLanding.FACTORY, effect.approvedHead(), target);
+                advance(effect.id());
+            }
+            // The row stays uncertain: the next pass only reads.
+            case MergeOutcome.Uncertain uncertain -> note(sent, "merge_outcome_unknown");
+            case MergeOutcome.HeadConflict conflict -> afterConflict(sent, target);
+            case MergeOutcome.Refused refused -> afterRefusal(sent, target, refused);
+        }
+    }
+
+    /**
+     * Commits {@code uncertain} before the merge call, under the item lock, and only while the item is still at
+     * this attempt: a takeover that refused the row first wins, and a merge that was claimed is never re-sent blind.
+     */
+    private boolean claimMerge(Effect effect) {
+        return QuarkusTransaction.requiringNew().call(() -> {
+            try (Connection c = dataSource.getConnection()) {
+                WorkItemTransitions.lockItem(c, effect.item());
+                if (!atAttempt(store.load(effect.item()), effect)) return false;
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE work_land_effect SET state='uncertain',reason=NULL,next_check_at=NULL,updated_at=now() WHERE effect_id=? AND state=?")) {
+                    ps.setObject(1, effect.id()); ps.setString(2, effect.state());
+                    return ps.executeUpdate() == 1;
+                }
+            } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+        });
+    }
+
+    /** 409: the head or the base moved and nothing was merged. Same head → check again next pass; a new head is handed. */
+    private void afterConflict(Effect effect, Target target) {
+        LandState pr = readOrNull(effect, target);
+        if (pr == null) { update(effect, "checking", "land_read_failed", null); return; }
+        if (pr.merged()) { found(effect, pr, pr.mergedBy()); return; }
+        if (effect.approvedHead().equals(pr.headSha())) { update(effect, "checking", null, null); return; }
+        hand(effect, "land_head_moved", new Detail(null, pr.checks()));
+    }
+
+    /** Any other answer below 500 is definite. Re-read once: a code cause is a fix, anything else is GitHub's refusal. */
+    private void afterRefusal(Effect effect, Target target, MergeOutcome.Refused refused) {
+        LandState pr = readOrNull(effect, target);
+        if (pr != null && pr.merged()) { found(effect, pr, pr.mergedBy()); return; }
+        if (pr != null && (refused.status() == 405 || refused.status() == 422)) {
+            // The method was checked before the call, so it is not read again here (A5).
+            Next next = WorkLandDecision.checking(pr, effect.approvedHead(), new PullRequestLander.AllowedMethods(false, Set.of()), target.method());
+            if (next instanceof Next.Fix || next instanceof Next.Closed) { settle(effect, next, pr, refused.message()); return; }
+        }
+        hand(effect, "land_merge_refused", new Detail(refused.message(), pr == null ? null : pr.checks()));
+    }
+
+    /**
+     * uncertain: a merge was sent and its answer is unknown, so this only reads. Merged → recorded as the factory's;
+     * open at the approved head → back to checking, which may merge on a later pass, since the sha pin makes a second
+     * merge of other code impossible; anything else → handed. Runs on a suspended item too (Review Focus 13).
+     */
+    private void recover(Effect effect, WorkItemEvent item, Target target) {
+        LandState pr = readOrNull(effect, target);
+        if (pr == null) { note(effect, "land_read_failed"); return; }
+        if (pr.merged()) {
+            if (markMerged(effect, pr.mergeCommitSha(), WorkLanding.FACTORY, pr.headSha(), target)) advance(effect.id());
+            return;
+        }
+        if ("closed".equals(pr.state())) { settle(effect, new Next.Closed(), pr, null); return; }
+        if (effect.approvedHead().equals(pr.headSha())) {
+            if (atAttempt(item, effect)) update(effect, "checking", null, null);
+            else update(effect, "refused", "publication_held_by_human", null);
+            return;
+        }
+        hand(effect, "land_head_moved", new Detail(null, pr.checks()));
+    }
+
+    /** A merge someone else made, or one this effect's re-read found: GitHub names the merger. */
+    private void found(Effect effect, LandState pr, String mergedBy) {
+        if (markMerged(effect, pr.mergeCommitSha(), mergedBy, pr.headSha(), null)) advance(effect.id());
+    }
+
+    /** @param target the factory's merge, recorded with the saved method; null for a found merge, recorded likewise */
+    private boolean markMerged(Effect effect, String sha, String mergedBy, String head, Target target) {
+        if (sha == null || !sha.matches("[0-9a-f]{40}") || mergedBy == null || mergedBy.isBlank()) {
+            note(effect, "land_merge_unreadable");
+            return false;
+        }
+        String method = LandSettings.wire(target == null ? settings.get(store.load(effect.item()).repositoryId()).mergeMethod() : target.method());
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                UPDATE work_land_effect SET state='merged',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,updated_at=now()
+                WHERE effect_id=? AND state=?
+                """)) {
+            ps.setString(1, sha); ps.setString(2, mergedBy); ps.setString(3, method); ps.setString(4, head);
+            ps.setObject(5, effect.id()); ps.setString(6, effect.state());
+            return ps.executeUpdate() == 1;
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    /** merged: WORK_ITEM_LANDED completes the item at once (§7.7); the branch delete follows and never holds it. */
+    private void record(Effect effect, WorkItemEvent item, Target target) {
+        WorkExecution execution = item.progress().execution();
+        PullRequestRef pullRequest = execution == null ? null : execution.pullRequest();
+        if (pullRequest == null || pullRequest.number() != effect.pullRequest()) { update(effect, "done", "work_item_changed", null); return; }
+        WorkLanding landing = new WorkLanding(pullRequest, effect.mergeCommit(), effect.method(), effect.mergedBy(), clock.now());
+        WorkItemTransitions.Outcome outcome = transitions.landed(effect.item(), effect.id(), landing);
+        if (outcome.status() != 200) { update(effect, "done", outcome.reason(), null); return; }
+        update(effect, "cleaning", null, null);
+        clean(effect.at("cleaning"), store.load(effect.item()), target);
+    }
+
+    /** Delete the item branch only where it was merged; after three failed tries the operator is told (A6, A13). */
+    private void clean(Effect effect, WorkItemEvent item, Target target) {
+        String branch = item.control() == null ? null : item.control().branch();
+        String expected = effect.mergedHead() == null ? effect.approvedHead() : effect.mergedHead();
+        BranchDeletion result;
+        try { result = branch == null ? BranchDeletion.STILL_PRESENT : target.lander().deleteBranch(target.repo(), branch, expected); }
+        catch (RuntimeException fault) { result = BranchDeletion.STILL_PRESENT; }
+        if (result == BranchDeletion.DELETED || result == BranchDeletion.ABSENT) { update(effect, "done", null, null); return; }
+        int tries = effect.cleanupTries() + 1;
+        boolean exhausted = tries >= CLEANUP_TRIES;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE work_land_effect SET cleanup_tries=?,state=?,note=?,updated_at=now() WHERE effect_id=? AND state='cleaning'")) {
+            ps.setInt(1, tries); ps.setString(2, exhausted ? "done" : "cleaning"); ps.setString(3, exhausted ? "branch_delete_failed" : null);
+            ps.setObject(4, effect.id());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    private LandState readOrNull(Effect effect, Target target) {
+        try { return target.lander().read(target.repo(), effect.pullRequest()); }
+        catch (RuntimeException unreadable) { return null; }
+    }
+
+    private static boolean atAttempt(WorkItemEvent item, Effect effect) {
+        return item != null && item.generation() == effect.generation() && "land".equals(item.phase())
+                && "active".equals(item.workflowStatus()) && effect.id().equals(item.progress().attemptId());
+    }
+
+    /** A state change guarded by the state this pass read, so a stale pass never rewinds another's progress. */
+    private void update(Effect effect, String state, String reason, Detail detail) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                UPDATE work_land_effect SET state=?,reason=?,detail=COALESCE(?,detail),next_check_at=NULL,updated_at=now()
+                WHERE effect_id=? AND state=?
+                """)) {
+            ps.setString(1, state); ps.setString(2, reason); ps.setBytes(3, detail == null ? null : encode(effect, detail));
+            ps.setObject(4, effect.id()); ps.setString(5, effect.state());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    /** Why the row did not move this pass; the next pass tries again. */
+    private void note(Effect effect, String reason) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE work_land_effect SET reason=?,updated_at=now() WHERE effect_id=? AND state=?")) {
+            ps.setString(1, reason); ps.setObject(2, effect.id()); ps.setString(3, effect.state());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    private byte[] encode(Effect effect, Detail detail) {
+        try { return encryption.encrypt(mapper.writeValueAsBytes(detail), "work-land-detail:" + effect.id()); }
+        catch (IOException failure) { throw new IllegalStateException("Cannot encode the land detail", failure); }
+    }
+
+    /** The operator's view of a row's detail; null when it holds none. */
+    Detail detail(UUID effect, byte[] stored) {
+        if (stored == null) return null;
+        try { return mapper.readValue(encryption.decrypt(stored, "work-land-detail:" + effect), Detail.class); }
+        catch (IOException failure) { throw new IllegalStateException("Cannot read the land detail of " + effect, failure); }
+    }
+
+    private Effect read(UUID id) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("SELECT * FROM work_land_effect WHERE effect_id=?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                Timestamp since = rs.getTimestamp("waiting_since");
+                return new Effect(id, rs.getString("work_item_id"), rs.getLong("generation"), rs.getLong("pr_number"), rs.getString("approved_head"),
+                        rs.getString("state"), rs.getString("merge_commit"), rs.getString("merged_by"), rs.getString("method"),
+                        rs.getString("merged_head"), rs.getInt("cleanup_tries"), since == null ? null : since.toInstant());
+            }
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
 }

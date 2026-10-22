@@ -128,6 +128,7 @@ const REASONS = new Map(Object.entries({
   land_branch_behind: 'The pull request is behind its base branch, and GitHub requires it to be up to date. Update it, then retry land or stop.',
   readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',
   readmission_land_pending: 'This item waits for a decision at land. Retry land or stop it instead of re-admitting.',
+  branch_delete_failed: 'The pull request was merged, but its branch could not be deleted after three tries. Delete it on GitHub if it is still there.',
   source_unavailable: 'The work source or its serving account is unavailable.',
   phase_started: 'This phase has started.',
   phase_completed: 'This phase completed.',

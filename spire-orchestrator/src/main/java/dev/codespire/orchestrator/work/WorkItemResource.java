@@ -161,7 +161,28 @@ public class WorkItemResource {
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
                 item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
-                sweep.health(id,item.generation()).orElse(null),null);
+                sweep.health(id,item.generation()).orElse(null),land(id,item.generation(),item.repositoryId()));
+    }
+
+    @Inject WorkLandSweep landing;
+    @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;
+
+    /** The latest land attempt of this generation, its detail decrypted for the operator; null before land is approved. */
+    private LandView land(String id,long generation,UUID repository) {
+        try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(
+                "SELECT effect_id,state,reason,detail,method,note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
+            ps.setString(1,id);ps.setLong(2,generation);
+            try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next())return null;
+                dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(repository);
+                WorkLandSweep.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
+                String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
+                Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
+                return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
+                        method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note);
+            }
+        }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
 
     @Inject WorkPreparationSweep sweep;
