@@ -106,4 +106,58 @@ class WorkLandFixDecisionTest {
             assertThrows(IllegalArgumentException.class,()->WorkItemLifecycle.landHanded(atLand("auto"),reason),reason);
         assertEquals("land_fix_run_failed",WorkItemLifecycle.landHanded(atLand("auto"),"land_fix_run_failed").reason());
     }
+
+    // --- a hand-off ends the attempt it interrupts, and a fix that stops short is handed (review of slice 7b) ---
+    @Test void aHandOffFinishesTheAttemptItEnds(){
+        WorkItemEvent landing=atLand("auto");
+        assertEquals("started",landing.progress().attemptState());
+        assertEquals("completed",WorkItemLifecycle.landHanded(landing,"land_fix_attempts_exhausted").progress().attemptState(),
+                "the next land gate's approval starts another land attempt, and only one per phase may be started");
+        WorkItemEvent reviewing=landing.decision(1,landing.authority(),landing.policy(),"review","active","phase_started","PHASE_STARTED",null,
+                landing.progress().finish(0,0,0).start(UUID.randomUUID(),"review",Instant.EPOCH));
+        WorkItemEvent handed=WorkItemLifecycle.landHanded(reviewing,"land_fix_review_blocked");
+        assertEquals("completed",handed.progress().attemptState(),"a second fix's review starts another review attempt");
+        assertEquals(reviewing.progress().attemptId(),handed.progress().attemptId());assertFalse(handed.progress().reserved());
+        WorkItemEvent finished=WorkItemLifecycle.landHanded(handed,"land_blocked");
+        assertEquals(handed.progress(),finished.progress(),"a finished attempt is not finished twice");
+    }
+    /** {@code item}'s land refused, its fix built on {@code head} and verifying: the execution is no longer the approved one. */
+    List<WorkItemEvent> fixingOn(WorkItemEvent item,String head) {
+        WorkItemEvent requested=WorkItemLifecycle.landFixRequested(item,"land_checks_failed");
+        WorkItemEvent building=enter(requested,true);
+        WorkExecution built=new WorkExecution("TEST-fix-run",new WorkRunBinding("TEST-item",1,building.progress().attemptId(),"a".repeat(64)),head,null,null,PR,null);
+        WorkItemEvent verifying=building.decision(1,building.authority(),building.policy(),"verify","active","phase_started","PHASE_STARTED",null,
+                building.progress().finish(0,0,0).start(UUID.randomUUID(),"verify",Instant.EPOCH).withExecution(built));
+        return List.of(item,requested,building,verifying);
+    }
+    WorkItemEvent stopping(WorkItemEvent item,String status,String reason) {
+        return WorkItemLifecycle.state(item,status,reason,"WORK_ITEM_REFUSED",null,item.progress().reserve(false));
+    }
+    @Test void aStopDuringALandFixIsHandedOnTheHeadThatWasApproved(){
+        WorkItemEvent item=atLand("auto");List<WorkItemEvent> history=fixingOn(item,"c".repeat(40));WorkItemEvent verifying=history.getLast();
+        WorkItemEvent stopped=WorkItemLifecycle.state(verifying,"stopped","verify_stopped_by_operator","GATE_RESOLVED",null,verifying.progress().reserve(false));
+        WorkItemEvent handed=WorkItemLifecycle.landFixStopped(history,stopped);
+        assertNotNull(handed,"readmit and recheck both refuse a stopped fix, so only a hand-off leaves it a way on");
+        assertEquals("land",handed.phase());assertEquals("awaiting_input",handed.workflowStatus());assertEquals("land_fix_stopped",handed.reason());
+        assertEquals("LAND_HANDED",handed.milestone());assertNull(handed.gate());
+        assertEquals(item.progress().execution(),handed.progress().execution(),"the approved and reviewed head, never the fix's unpushed or unreviewed one");
+        assertEquals("completed",handed.progress().attemptState(),"the attempt the stop ended is finished");
+        assertEquals(verifying.progress().runs(),handed.progress().runs(),"the fix's run still counts");
+        assertFalse(WorkItemLifecycle.landFixInProgress(List.of(item,history.get(1),history.get(2),verifying,stopped,handed)));
+    }
+    @Test void everyWayAFixCanStopIsHanded(){
+        List<WorkItemEvent> history=fixingOn(atLand("auto"),"c".repeat(40));WorkItemEvent verifying=history.getLast();
+        for(List<String> stop:List.of(List.of("stopped","policy_cap_reached"),List.of("not_eligible","deliver_off"),List.of("failed","phase_failed"),
+                List.of("capability_unavailable","review_capability_unavailable"),List.of("awaiting_input","run_usage_unknown"))) {
+            WorkItemEvent handed=WorkItemLifecycle.landFixStopped(history,stopping(verifying,stop.get(0),stop.get(1)));
+            assertNotNull(handed,stop.toString());assertEquals("land_fix_stopped",handed.reason(),stop.toString());
+        }
+    }
+    @Test void onlyAStopInsideAFixIsHanded(){
+        WorkItemEvent item=atLand("auto");List<WorkItemEvent> history=fixingOn(item,"c".repeat(40));WorkItemEvent verifying=history.getLast();
+        assertNull(WorkItemLifecycle.landFixStopped(List.of(item),stopping(verifying,"stopped","policy_cap_reached")),"no fix in progress");
+        assertNull(WorkItemLifecycle.landFixStopped(history,WorkItemLifecycle.pullRequestClosed(verifying)),"a closed pull request ends the fix itself");
+        assertNull(WorkItemLifecycle.landFixStopped(history,stopping(verifying,"awaiting_input","source_unavailable")),"recheck answers an outage");
+        assertNull(WorkItemLifecycle.landFixStopped(history,verifying),"a fix still running");
+    }
 }

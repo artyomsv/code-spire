@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class WorkLandFixIT extends WorkLandFixture {
     static final String FIXED="f".repeat(40),PERSON="900123";
     @Inject WorkGateChannels channels;
+    @Inject dev.codespire.encryption.EncryptionService encryption;
     final List<RunCommand.PublishWorkRun> publications=new ArrayList<>();
     int reviewEvents=1;
 
@@ -295,14 +296,132 @@ class WorkLandFixIT extends WorkLandFixture {
     }
     @Test void readmitIsRefusedWhileALandFixIsInProgress() throws Exception {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
-        // An assembly refusal stops the fix build before any run: the pull request stays open.
-        execute("UPDATE llm_model SET pricing_mode='METERED' WHERE id=?",modelId);dispatcher.drain();
-        assertEquals("build",store.load(id).phase());assertEquals("stopped",store.load(id).workflowStatus());
+        // A tracker outage the fix waits out: recheck answers it, and the pull request stays open meanwhile.
+        WorkItemEvent fixing=store.load(id);
+        append(id,WorkItemLifecycle.state(fixing,"awaiting_input","TEST-source-unavailable","AUTHORITY_UNAVAILABLE",fixing.gate(),fixing.progress()));
         long generation=store.load(id).generation();
         WorkItemTransitions.Outcome readmit=transitions.resume(id,store.history(id).size(),true);
         assertEquals(409,readmit.status());assertEquals("readmission_land_pending",readmit.reason());
         assertEquals(generation,store.load(id).generation());
         assertTrue(resource.get(id).land().fixInProgress());
+    }
+
+    // --- a fix that stops short of its next land gate is handed, never wedged (review of slice 7b) ---
+    /** No build or review attempt of this item is left started, so the next one in this generation can start. */
+    void noAttemptLeftStarted(String id) throws SQLException {
+        assertEquals(0,count("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND state='started'",id));
+    }
+    @Test void aFixStoppedBeforeItsRunIsHandedAndCanLandAgain() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        // An assembly refusal stops the fix build before any run: the pull request stays open.
+        execute("UPDATE llm_model SET pricing_mode='METERED' WHERE id=?",modelId);dispatcher.drain();
+        handedAtLand(id,"land_fix_stopped");
+        assertEquals("handed",latestEffect(id,"state"));assertEquals("land_fix_stopped",latestEffect(id,"reason"));
+        assertTrue(latestEffect(id,"note").startsWith("model_pricing_incomplete"),"the land step names what stopped the fix");
+        WorkItemEvent item=store.load(id);
+        assertEquals(HEAD,item.progress().execution().head(),"handed on the head that was approved");
+        assertNotNull(item.progress().execution().pullRequest());
+        assertFalse(resource.get(id).land().fixInProgress());noAttemptLeftStarted(id);
+        long generation=item.generation();
+        WorkItemTransitions.Outcome readmit=transitions.resume(id,store.history(id).size(),true);
+        assertEquals(409,readmit.status());assertEquals("readmission_land_pending",readmit.reason());
+        assertEquals(generation,store.load(id).generation());
+        // Recheck reopens land until slice 8's Retry land replaces it there (amendment 3); either way a fresh gate on that head.
+        WorkItemTransitions.Outcome recheck=transitions.resume(id,store.history(id).size(),false);
+        assertEquals(200,recheck.status(),recheck.reason());
+        WorkItemEvent gated=store.load(id);
+        assertEquals("land",gated.phase());assertEquals("waiting_approval",gated.workflowStatus());assertEquals(HEAD,gated.gate().artifact());
+        approve(id);
+        assertEquals("land",store.load(id).phase());
+    }
+    @Test void aFixWhoseVerifyIsStoppedIsHandedOnTheApprovedHead() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();
+        saga.on(new RunResult.RunWorkReady(fix.runId(),fix.work(),FIXED,List.of("TEST-file"),Map.of("INPUT",7L),9));
+        verifier.drain();verifyResults.apply(failed(verifies.getLast()));
+        WorkGate gate=store.load(id).gate();
+        WorkItemTransitions.Outcome stop=transitions.answer(gate.id(),gate.version(),"TEST-stop-"+UUID.randomUUID(),false,null,"TEST-land-admin");
+        assertEquals(200,stop.status(),stop.reason());
+        handedAtLand(id,"land_fix_stopped");
+        assertEquals("verify_stopped_by_operator",latestEffect(id,"note"));
+        assertEquals(HEAD,store.load(id).progress().execution().head(),"never the fix's unpushed checkpoint");
+        assertEquals(1,count("SELECT count(*) FROM work_item_gate WHERE id=? AND state='REJECTED'",gate.id()),"the operator's answer is kept");
+        noAttemptLeftStarted(id);
+    }
+    @Test void aFixWhosePushFailsIsHanded() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();UUID attempt=built(id,fix,FIXED);
+        delivery.advance(attempt);
+        saga.on(new RunResult.RunFinished(fix.runId(),null,List.of(),List.of(),Map.of("INPUT",7L),false));
+        delivery.advance(attempt);
+        handedAtLand(id,"land_fix_stopped");
+        assertEquals("publication_failed",latestEffect(id,"note"));
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='refused'",attempt));
+        assertEquals(HEAD,store.load(id).progress().execution().head());
+        noAttemptLeftStarted(id);
+    }
+    @Test void aSecondFixAfterABlockedReviewReachesReview() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();pushed(id,fix,built(id,fix,FIXED));
+        reviewedAt(id,FIXED,true);observer.advance(id);
+        handedAtLand(id,"land_fix_review_blocked");noAttemptLeftStarted(id);
+        assertEquals(200,transitions.resume(id,store.history(id).size(),false).status());approve(id);
+        String second="9".repeat(40);
+        openAt(FIXED,"unstable","failure");land.drain();
+        assertEquals(2,fixes(id));
+        RunCommand.ExecuteWorkRun again=dispatchedFix();pushed(id,again,built(id,again,second));
+        WorkItemEvent reviewing=store.load(id);
+        assertEquals("review",reviewing.phase());assertEquals("active",reviewing.workflowStatus(),reviewing.reason());
+        assertEquals(second,reviewing.progress().execution().head());
+    }
+    @Test void anExhaustedFixCanStartAnotherLandAttempt() throws Exception {
+        fixAttempts(0);
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        handedAtLand(id,"land_fix_attempts_exhausted");noAttemptLeftStarted(id);
+        assertEquals(200,transitions.resume(id,store.history(id).size(),false).status());
+        approve(id);
+        assertEquals("land",store.load(id).phase());assertEquals("phase_started",store.load(id).reason());
+    }
+
+    // --- a kept pull request's delivery that was claimed but not completed (review of slice 7b) ---
+    /** The fix pushed and its kept pull request claimed for delivery, then the process died before delivery completed. */
+    UUID claimedNotCompleted(String id) throws Exception {
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();UUID attempt=built(id,fix,FIXED);
+        delivery.advance(attempt);
+        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        PullRequestRef kept=store.load(id).progress().execution().pullRequest();
+        executeWith("UPDATE work_delivery_effect SET state='proposing',request=? WHERE attempt_id=?",
+                encryption.encrypt(mapper.writeValueAsBytes(kept),"work-delivery-request:"+attempt),attempt);
+        return attempt;
+    }
+    @Test void aKeptPullRequestLeftProposingCompletesDelivery() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        UUID attempt=claimedNotCompleted(id);
+        delivery.advance(attempt);
+        assertEquals("review",store.load(id).phase(),store.load(id).reason());
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='delivered'",attempt));
+        assertEquals(1,pullRequestsOpened(),"the kept pull request, never a new one");
+    }
+    @Test void aHandMergeAfterAKeptPushLeavesTheItemLanded() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        UUID attempt=claimedNotCompleted(id);
+        mergedBy(PERSON);branchAt(HEAD,204);
+        channels.activity(repository,onGitHub(id,"merged",PERSON,PERSON),"TEST-hand-merge-after-kept-push");
+        landed(id);
+        delivery.advance(attempt);
+        landed(id);
+        assertEquals("WORK_ITEM_LANDED",store.load(id).milestone(),"no refusal is written over the merge");
+        assertEquals(0,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='proposing'",attempt));
+    }
+    @Test void aTakeoverAfterAKeptPushObservesThePullRequestItKept() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        UUID attempt=claimedNotCompleted(id);
+        channels.activity(repository,onGitHub(id,"push",PERSON,null),"TEST-takeover-after-kept-push");
+        assertEquals("suspended",store.load(id).workflowStatus());
+        delivery.advance(attempt);
+        assertEquals(1,count("SELECT count(*) FROM work_delivery_effect WHERE attempt_id=? AND state='delivered' AND reason='publication_observed_after_takeover'",attempt));
+        assertEquals("PUBLICATION_OBSERVED",store.load(id).milestone());
+        assertEquals("suspended",store.load(id).workflowStatus());
     }
     @Test void aFailedFixRunIsHandedNotFailed() throws Exception {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
@@ -321,6 +440,8 @@ class WorkLandFixIT extends WorkLandFixture {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         execute("UPDATE llm_model SET pricing_mode='METERED' WHERE id=?",modelId);dispatcher.drain();
         assertEquals(1,heldCommands.size(),"no fix run without a price for every token type");
-        assertEquals("model_pricing_incomplete:INPUT,CACHED_INPUT,CACHE_WRITE,OUTPUT,REASONING",store.load(id).reason());
+        WorkItemEvent refused=store.history(id).stream().map(event->(WorkItemEvent)event.payload())
+                .filter(event->"WORK_ITEM_REFUSED".equals(event.milestone())).reduce((first,second)->second).orElseThrow();
+        assertEquals("model_pricing_incomplete:INPUT,CACHED_INPUT,CACHE_WRITE,OUTPUT,REASONING",refused.reason(),"the refusal an ordinary build gets");
     }
 }

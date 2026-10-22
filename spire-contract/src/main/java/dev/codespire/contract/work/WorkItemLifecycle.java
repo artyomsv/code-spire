@@ -168,6 +168,15 @@ public final class WorkItemLifecycle {
         if(!LAND_HANDOFF_REASONS.contains(reason))throw new IllegalArgumentException("Unknown land hand-off reason "+reason);
         return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,item.progress().reserve(false));
     }
+    /**
+     * A land fix that stopped before its next land gate is handed to the operator, because its pull request is still
+     * open: readmit would build a second one beside it. Null when {@code stopped} stops no fix in progress.
+     *
+     * @param before the history {@code stopped} is appended to
+     */
+    public static WorkItemEvent landFixStopped(List<WorkItemEvent> before,WorkItemEvent stopped) {
+        return null;
+    }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
         return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));
     }
