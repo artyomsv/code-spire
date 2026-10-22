@@ -195,7 +195,8 @@ public class WorkDelivery {
             if("proposing".equals(effect.state()) && fix==null)request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
             else if("pushed".equals(effect.state())) {
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='proposing',request=?,reason=NULL WHERE attempt_id=?")) {
-                    ps.setBytes(1,request==null?null:encode(request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
+                    // A proposing row must hold its request (V70); a land fix holds the pull request it updates instead.
+                    ps.setBytes(1,encode(request==null?fix.pullRequest():request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
                 }
             } else return null;
             return new Claim(null,sink,request,fix==null?null:fix.pullRequest());
