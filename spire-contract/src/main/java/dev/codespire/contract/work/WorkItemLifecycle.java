@@ -92,7 +92,7 @@ public final class WorkItemLifecycle {
     /** The refusals a land fix answers (spec §7.5): they rewind to build instead of handing the item over. */
     public static final java.util.Set<String> LAND_FIX_REASONS=java.util.Set.of("land_checks_failed","land_conflict","land_branch_behind");
     /** The fixes that spend an attempt; a branch behind its base is merged up for free (§7.5). */
-    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of("land_checks_failed","land_conflict");
+    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of("land_checks_failed","land_conflict","land_branch_behind");
     /** What ends a land fix, beside the next land gate: the merge, a hand-off, a close, or a new generation. */
     private static final java.util.Set<String> LAND_FIX_ENDS=java.util.Set.of("WORK_ITEM_LANDED","LAND_HANDED","PULL_REQUEST_CLOSED","READMITTED");
 
