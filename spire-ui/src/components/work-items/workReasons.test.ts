@@ -37,3 +37,9 @@ describe('verify reasons (M4)', () => {
     expect(workReason(reason)).not.toBe(reason);
   });
 });
+
+describe('land setup reasons (M4 land)', () => {
+  it.each(['land_settings_changed', 'merge_method_invalid', 'ticket_rule_invalid', 'fix_attempts_invalid'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
