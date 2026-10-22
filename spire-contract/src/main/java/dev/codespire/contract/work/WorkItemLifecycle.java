@@ -103,7 +103,7 @@ public final class WorkItemLifecycle {
      */
     public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
             "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
-            "land_fix_review_blocked","land_checks_failed","land_conflict","land_branch_behind");
+            "land_fix_review_blocked","land_checks_failed","land_conflict","land_branch_behind","land_account_unavailable","land_read_failed");
 
     /**
      * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only

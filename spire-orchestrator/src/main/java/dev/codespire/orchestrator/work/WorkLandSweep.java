@@ -9,6 +9,7 @@ import dev.codespire.contract.scm.PullRequestRef;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.work.WorkExecution;
 import dev.codespire.contract.work.WorkItemEvent;
+import dev.codespire.contract.work.WorkItemLifecycle;
 import dev.codespire.contract.work.WorkLanding;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.factory.LandSettings;
@@ -46,10 +47,12 @@ import javax.sql.DataSource;
  */
 @ApplicationScoped
 public class WorkLandSweep {
-    static final Duration RECHECK = Duration.ofSeconds(60), CHECKS_TIMEOUT = Duration.ofHours(6);
+    static final Duration RECHECK = Duration.ofSeconds(60), CHECKS_TIMEOUT = Duration.ofHours(6), FAILURE_BOUND = Duration.ofHours(6);
     static final int CLEANUP_TRIES = 3;
     /** The states the sweep still drains; done, handed, closed, refused and fixing are another owner's or final. */
     static final Set<String> LIVE = Set.of("pending", "checking", "waiting_checks", "merging", "uncertain", "merged", "cleaning");
+    /** No merge has been sent from these, so a row stuck in one can be handed to the operator. */
+    static final Set<String> BEFORE_MERGE = Set.of("pending", "checking", "waiting_checks");
 
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
@@ -63,17 +66,18 @@ public class WorkLandSweep {
     @Inject EncryptionService encryption;
 
     record Effect(UUID id, String item, long generation, long pullRequest, String approvedHead, String state, String mergeCommit,
-                  String mergedBy, String method, String mergedHead, int cleanupTries, Instant waitingSince) {
+                  String mergedBy, String method, String mergedHead, int cleanupTries, Instant waitingSince, Instant failingSince) {
         Effect at(String next) {
-            return new Effect(id, item, generation, pullRequest, approvedHead, next, mergeCommit, mergedBy, method, mergedHead, cleanupTries, waitingSince);
+            return new Effect(id, item, generation, pullRequest, approvedHead, next, mergeCommit, mergedBy, method, mergedHead, cleanupTries,
+                    waitingSince, failingSince);
         }
     }
 
     /** What the operator reads: GitHub's own message and the check summary. Both may quote source, so encrypted. */
     public record Detail(String message, PullRequestLander.CheckSummary checks) {}
 
-    /** The FACTORY account's lander, the repository and the saved merge method one pass works with. */
-    private record Target(PullRequestLander lander, RepoRef repo, PullRequestLander.MergeMethod method) {}
+    /** The FACTORY account's lander and stable provider id, the repository and the saved merge method one pass works with. */
+    private record Target(PullRequestLander lander, RepoRef repo, PullRequestLander.MergeMethod method, String factoryId) {}
 
     @Scheduled(every = "${spire.work-land-interval:5s}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void drain() {
@@ -94,7 +98,7 @@ public class WorkLandSweep {
         WorkItemEvent item = store.load(effect.item());
         if (item == null) return;
         Target target = target(item);
-        if (target == null) { note(effect, "factory_account_unavailable"); return; }
+        if (target == null) { failed(effect, "land_account_unavailable"); return; }
         switch (effect.state()) {
             case "merging", "uncertain" -> recover(effect, item, target);
             case "merged" -> record(effect, item, target);
@@ -110,7 +114,7 @@ public class WorkLandSweep {
         if (!lander.available()) return null;
         RepoRef repo = sources.get(item.sourceId()).orElseThrow(() -> new IllegalStateException("Work source " + item.sourceId() + " is missing"))
                 .repository();
-        return new Target(lander, repo, settings.get(item.repositoryId()).mergeMethod());
+        return new Target(lander, repo, settings.get(item.repositoryId()).mergeMethod(), account.get().botAccountId());
     }
 
     /** pending, checking and waiting_checks: nothing has been sent yet, so the item must still be at this attempt. */
@@ -121,7 +125,7 @@ public class WorkLandSweep {
         try {
             pr = target.lander().read(target.repo(), effect.pullRequest());
             allowed = target.lander().allowedMethods(target.repo());
-        } catch (RuntimeException unreadable) { note(effect, "land_read_failed"); return; }
+        } catch (RuntimeException unreadable) { failed(effect, "land_read_failed"); return; }
         Next next = WorkLandDecision.checking(pr, effect.approvedHead(), allowed, target.method());
         if (next instanceof Next.Merge) merge(effect, target);
         else if (next instanceof Next.Wait) waitForChecks(effect, pr);
@@ -152,7 +156,7 @@ public class WorkLandSweep {
         Instant since = effect.waitingSince() == null ? now : effect.waitingSince();
         if (!now.isBefore(since.plus(CHECKS_TIMEOUT))) { hand(effect, "land_checks_timeout", new Detail(null, pr.checks())); return; }
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
-                UPDATE work_land_effect SET state='waiting_checks',reason=NULL,waiting_since=?,next_check_at=?,detail=?,updated_at=now()
+                UPDATE work_land_effect SET state='waiting_checks',reason=NULL,waiting_since=?,next_check_at=?,detail=?,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?
                 """)) {
             ps.setTimestamp(1, Timestamp.from(since)); ps.setTimestamp(2, Timestamp.from(now.plus(RECHECK)));
@@ -189,7 +193,7 @@ public class WorkLandSweep {
                 WorkItemTransitions.lockItem(c, effect.item());
                 if (!atAttempt(store.load(effect.item()), effect)) return false;
                 try (PreparedStatement ps = c.prepareStatement(
-                        "UPDATE work_land_effect SET state='uncertain',reason=NULL,next_check_at=NULL,updated_at=now() WHERE effect_id=? AND state=?")) {
+                        "UPDATE work_land_effect SET state='uncertain',reason=NULL,next_check_at=NULL,failing_since=NULL,updated_at=now() WHERE effect_id=? AND state=?")) {
                     ps.setObject(1, effect.id()); ps.setString(2, effect.state());
                     return ps.executeUpdate() == 1;
                 }
@@ -219,14 +223,16 @@ public class WorkLandSweep {
     }
 
     /**
-     * uncertain: a merge was sent and its answer is unknown, so this only reads. Merged → recorded as the factory's;
-     * open at the approved head → back to checking, which may merge on a later pass, since the sha pin makes a second
-     * merge of other code impossible; anything else → handed. Runs on a suspended item too (Review Focus 13).
+     * uncertain: a merge was sent and its answer is unknown, so this only reads. Merged → recorded as the factory's
+     * only when it is the factory's (see {@link #factoryMerge}), else as the merger GitHub names; open at the approved
+     * head → back to checking, which may merge on a later pass, since the sha pin makes a second merge of other code
+     * impossible; anything else → handed. Runs on a suspended item too (Review Focus 13).
      */
     private void recover(Effect effect, WorkItemEvent item, Target target) {
         LandState pr = readOrNull(effect, target);
-        if (pr == null) { note(effect, "land_read_failed"); return; }
+        if (pr == null) { failed(effect, "land_read_failed"); return; }
         if (pr.merged()) {
+            if (!factoryMerge(effect, item, target, pr)) { found(effect, pr, pr.mergedBy()); return; }
             if (markMerged(effect, pr.mergeCommitSha(), WorkLanding.FACTORY, pr.headSha(), target)) advance(effect.id());
             return;
         }
@@ -239,6 +245,17 @@ public class WorkLandSweep {
         hand(effect, "land_head_moved", new Detail(null, pr.checks()));
     }
 
+    /**
+     * A merge found after a lost answer is the factory's only at the approved head, which is all the sent merge could
+     * have merged, and under the factory's own id, current or recorded at the build claim. A person who merged a moved
+     * head, or the approved one, keeps the merge (anti-goal §4, A2).
+     */
+    private static boolean factoryMerge(Effect effect, WorkItemEvent item, Target target, LandState pr) {
+        String merger = pr.mergedBy();
+        if (!effect.approvedHead().equals(pr.headSha()) || merger == null || merger.isBlank()) return false;
+        return merger.equals(target.factoryId()) || item.control() != null && merger.equals(item.control().factoryActor());
+    }
+
     /** A merge someone else made, or one this effect's re-read found: GitHub names the merger. */
     private void found(Effect effect, LandState pr, String mergedBy) {
         if (markMerged(effect, pr.mergeCommitSha(), mergedBy, pr.headSha(), null)) advance(effect.id());
@@ -247,12 +264,12 @@ public class WorkLandSweep {
     /** @param target the factory's merge, recorded with the saved method; null for a found merge, recorded likewise */
     private boolean markMerged(Effect effect, String sha, String mergedBy, String head, Target target) {
         if (sha == null || !sha.matches("[0-9a-f]{40}") || mergedBy == null || mergedBy.isBlank()) {
-            note(effect, "land_merge_unreadable");
+            failed(effect, "land_merge_unreadable");
             return false;
         }
         String method = LandSettings.wire(target == null ? settings.get(store.load(effect.item()).repositoryId()).mergeMethod() : target.method());
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
-                UPDATE work_land_effect SET state='merged',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,updated_at=now()
+                UPDATE work_land_effect SET state='merged',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?
                 """)) {
             ps.setString(1, sha); ps.setString(2, mergedBy); ps.setString(3, method); ps.setString(4, head);
@@ -304,7 +321,7 @@ public class WorkLandSweep {
     /** A state change guarded by the state this pass read, so a stale pass never rewinds another's progress. */
     private void update(Effect effect, String state, String reason, Detail detail) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
-                UPDATE work_land_effect SET state=?,reason=?,detail=COALESCE(?,detail),next_check_at=NULL,updated_at=now()
+                UPDATE work_land_effect SET state=?,reason=?,detail=COALESCE(?,detail),next_check_at=NULL,failing_since=NULL,updated_at=now()
                 WHERE effect_id=? AND state=?
                 """)) {
             ps.setString(1, state); ps.setString(2, reason); ps.setBytes(3, detail == null ? null : encode(effect, detail));
@@ -318,6 +335,29 @@ public class WorkLandSweep {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "UPDATE work_land_effect SET reason=?,updated_at=now() WHERE effect_id=? AND state=?")) {
             ps.setString(1, reason); ps.setObject(2, effect.id()); ps.setString(3, effect.state());
+            ps.executeUpdate();
+        } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    /**
+     * A pass that could not read GitHub or act as the factory. The row is tried again after {@link #RECHECK}, so it
+     * neither reads the forge on every sweep nor crowds newer rows out of the drain. After {@link #FAILURE_BOUND} of
+     * failures a row with no merge sent is handed with this reason; a row past the merge call, or one that found the
+     * pull request merged but could not read the merge, is never handed, because the merge may have happened, and says
+     * {@code land_merge_unconfirmed} while it keeps reading.
+     */
+    private void failed(Effect effect, String reason) {
+        Instant now = clock.now();
+        Instant since = effect.failingSince() == null ? now : effect.failingSince();
+        boolean exhausted = !now.isBefore(since.plus(FAILURE_BOUND));
+        if (exhausted && BEFORE_MERGE.contains(effect.state()) && WorkItemLifecycle.LAND_HANDOFF_REASONS.contains(reason)) {
+            hand(effect, reason, null);
+            return;
+        }
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "UPDATE work_land_effect SET reason=?,failing_since=?,next_check_at=?,updated_at=now() WHERE effect_id=? AND state=?")) {
+            ps.setString(1, exhausted ? "land_merge_unconfirmed" : reason); ps.setTimestamp(2, Timestamp.from(since));
+            ps.setTimestamp(3, Timestamp.from(now.plus(RECHECK))); ps.setObject(4, effect.id()); ps.setString(5, effect.state());
             ps.executeUpdate();
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
     }
@@ -339,11 +379,15 @@ public class WorkLandSweep {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return null;
-                Timestamp since = rs.getTimestamp("waiting_since");
                 return new Effect(id, rs.getString("work_item_id"), rs.getLong("generation"), rs.getLong("pr_number"), rs.getString("approved_head"),
                         rs.getString("state"), rs.getString("merge_commit"), rs.getString("merged_by"), rs.getString("method"),
-                        rs.getString("merged_head"), rs.getInt("cleanup_tries"), since == null ? null : since.toInstant());
+                        rs.getString("merged_head"), rs.getInt("cleanup_tries"), instant(rs, "waiting_since"), instant(rs, "failing_since"));
             }
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
+    }
+
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp value = rs.getTimestamp(column);
+        return value == null ? null : value.toInstant();
     }
 }
