@@ -17,14 +17,22 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static io.restassured.RestAssured.given;
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
@@ -114,6 +122,53 @@ class LandSettingsTest {
         assertEquals(LandSettings.TicketRule.CLOSE, unchanged.ticketRule());
         assertEquals(5, unchanged.fixAttempts());
         assertEquals(2, settings.save(repository, new LandSettings.Input(1, "rebase", "comment", 1), "TEST-operator").revision());
+    }
+
+    /**
+     * Two operators saving at once. Without the transaction the two FOR UPDATE locks release as soon as
+     * they are taken, both reads see the same revision and the second write silently overwrites the first.
+     * A latch alone leaves which read comes first to the scheduler, so the test holds the repository row
+     * itself until both saves wait on it: released together, they would both read before either writes.
+     * Three rounds, the first inserting the row and the next two updating it; each must leave one winner.
+     */
+    @Test
+    void twoSavesAtOnceLeaveOneWinnerAndOneRefusal() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (long round = 0; round < 3; round++) {
+                long expected = round;
+                Callable<String> attempt = () -> {
+                    try { return "saved:" + settings.save(repository, new LandSettings.Input(expected, "merge", "comment", 3), "TEST-operator").revision(); }
+                    catch (LandSettings.Refused refused) { return refused.reason(); }
+                };
+                Future<String> first, second;
+                try (Connection holder = dataSource.getConnection()) {
+                    holder.setAutoCommit(false);
+                    try (PreparedStatement ps = holder.prepareStatement("SELECT id FROM repository WHERE id=? FOR UPDATE")) {
+                        ps.setObject(1, repository);
+                        ps.executeQuery().close();
+                    }
+                    first = pool.submit(attempt);
+                    second = pool.submit(attempt);
+                    await().atMost(Duration.ofSeconds(15)).until(() -> waitingOnLocks() >= 2);
+                    holder.commit();
+                }
+                List<String> answers = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+                assertEquals(1, answers.stream().filter(answer -> answer.equals("saved:" + (expected + 1))).count(), "round " + round + " answers: " + answers);
+                assertEquals(1, answers.stream().filter(answer -> answer.equals("land_settings_changed")).count(), "round " + round + " answers: " + answers);
+                assertEquals(expected + 1, settings.get(repository).revision());
+            }
+        } finally { pool.shutdownNow(); }
+    }
+
+    private long waitingOnLocks() throws SQLException {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'"
+                        + " AND pid<>pg_backend_pid()");
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            return rs.getLong(1);
+        }
     }
 
     /** Checked in code, not only by the table: a 400 that names the rule, not a constraint violation. */
