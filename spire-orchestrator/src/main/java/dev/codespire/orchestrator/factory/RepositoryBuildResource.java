@@ -191,7 +191,7 @@ public class RepositoryBuildResource {
             PullRequestLander.AllowedMethods methods = lander.allowedMethods(new RepoRef(view.workspace(), view.slug()));
             if (!methods.checked()) return LandOptions.unchecked();
             return new LandOptions(true, Arrays.stream(PullRequestLander.MergeMethod.values())
-                    .filter(methods.allowed()::contains).map(LandSettings::wire).toList());
+                    .map(LandSettings::wire).toList());
         } catch (RuntimeException unreachable) {
             // Only the failure type: adapter messages carry request paths and response-body snippets.
             LOG.warnf("repository %s: the forge did not report its merge methods (%s)",
