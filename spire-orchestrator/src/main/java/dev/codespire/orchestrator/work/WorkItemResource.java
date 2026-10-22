@@ -66,7 +66,16 @@ public class WorkItemResource {
                         * beside the workflow reason rather than inside it: an automatic failure written
                         * into the item's own reason would stop the sweep from ever picking it up again.
                         */
-                       WorkPreparationSweep.Health preparationHealth) {}
+                       WorkPreparationSweep.Health preparationHealth,
+                       /** The latest land attempt of this generation (M4 land, spec §7.10); null until land is approved. */
+                       LandView land) {}
+    /**
+     * @param message GitHub's own words when it refused, so the operator reads the cause and not a code
+     * @param checks the check summary last read, for "n of m done" and the failed names
+     * @param branchDeleted true once the branch is gone, false when deleting it gave up, null before
+     */
+    public record LandView(String state,String reason,String message,dev.codespire.contract.port.PullRequestLander.CheckSummary checks,
+                           String method,String ticketRule,Boolean branchDeleted,String note) {}
     /**
      * @param counts items per workflow status across every page, so a filter can say how many rows it
      *     holds before it is chosen, and a band can say how many items need a person
@@ -152,7 +161,7 @@ public class WorkItemResource {
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
                 item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
-                sweep.health(id,item.generation()).orElse(null));
+                sweep.health(id,item.generation()).orElse(null),null);
     }
 
     @Inject WorkPreparationSweep sweep;

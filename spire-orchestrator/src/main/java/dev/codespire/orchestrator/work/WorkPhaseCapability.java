@@ -1,5 +1,7 @@
 package dev.codespire.orchestrator.work;
 
+import dev.codespire.contract.port.PullRequestLander;
+import dev.codespire.contract.work.WorkExecution;
 import dev.codespire.contract.work.WorkItemEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -17,5 +19,8 @@ public class WorkPhaseCapability {
             case "deliver","review" -> delivery.available(item,phase);
             default -> false;
         };
+    }
+    static boolean landAvailable(String mode,WorkExecution execution,PullRequestLander lander) {
+        throw new UnsupportedOperationException("RED");
     }
 }

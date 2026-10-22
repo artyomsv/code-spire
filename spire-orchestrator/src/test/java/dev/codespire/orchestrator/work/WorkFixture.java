@@ -119,6 +119,7 @@ abstract class WorkFixture {
             for(String owned:cleanup){
                 execute("DELETE FROM work_activity_receipt WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_hold_outbox WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_land_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_verify_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_delivery_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);
@@ -141,7 +142,7 @@ abstract class WorkFixture {
             if(repository!=null){execute("DELETE FROM work_label_mapping WHERE repository_id=?",repository);execute("DELETE FROM work_repository_policy WHERE repository_id=?",repository);}
             if(profile!=null){execute("DELETE FROM autonomy_profile_version WHERE profile_id=?",profile);execute("DELETE FROM autonomy_profile WHERE id=?",profile);}
             for(UUID extra:extraProfiles){execute("DELETE FROM autonomy_profile_version WHERE profile_id=?",extra);execute("DELETE FROM autonomy_profile WHERE id=?",extra);}
-            if(repository!=null){execute("DELETE FROM repository_build_defaults WHERE repository_id=?",repository);}
+            if(repository!=null){execute("DELETE FROM repository_build_defaults WHERE repository_id=?",repository);execute("DELETE FROM repository_land_settings WHERE repository_id=?",repository);}
             if(repository!=null){execute("DELETE FROM repository_account WHERE repository_id=?",repository);execute("DELETE FROM repository WHERE id=?",repository);}
             if(account!=null)execute("DELETE FROM scm_provider WHERE id=?",account);
         } finally { if(forge!=null)forge.stop(); }

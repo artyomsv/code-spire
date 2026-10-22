@@ -219,6 +219,19 @@ public class WorkItemTransitions {
         });
     }
 
+    /** The land effect found the pull request merged (M4 land, spec §7.3). */
+    Outcome landed(String id,UUID effect,WorkLanding landing) {
+        throw new UnsupportedOperationException("RED");
+    }
+    /** The land effect hands the item to the operator (spec §7.6). */
+    Outcome landHandOff(String id,UUID effect,String reason) {
+        throw new UnsupportedOperationException("RED");
+    }
+    /** The land effect found the pull request closed without a merge (spec §7.8). */
+    Outcome landClosed(String id,UUID effect) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     private static boolean landed(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) {
         WorkExecution execution=item.progress().execution();
         return execution!=null && execution.pullRequest()!=null && WorkItemLifecycle.landedIn(
