@@ -164,7 +164,6 @@ public class RunUnitBuilder {
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
         Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
-        initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
         ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
         return new RunUnitSpec(unit.runId(), init, unit.agent(), heldPublisher(unit.publisher(), command),
                 unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
