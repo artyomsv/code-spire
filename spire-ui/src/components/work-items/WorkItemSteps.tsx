@@ -116,7 +116,7 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
 /** Where the merge stands (spec §7.10). */
 function Land({ item }: { item: Item }) {
   const text = landProgress(item);
-  return text ? <p className="factory-note work-land">{text}</p> : null;
+  return text ? <p className="factory-note">{text}</p> : null;
 }
 
 function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
