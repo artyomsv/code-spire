@@ -114,7 +114,7 @@ public class LandSettings {
                 ps.setInt(4, attempts); ps.setString(5, subject);
                 ps.executeUpdate();
             }
-            return get(c, repository, false);
+            return get(c, repository);
         } catch (SQLException failure) { throw database(failure); }
     }
 
