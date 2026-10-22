@@ -36,7 +36,7 @@ public record WorkExecution(String runId,WorkRunBinding build,String head,UUID v
     public WorkExecution verified(WorkVerification result) {
         Objects.requireNonNull(result);
         if(!result.head().equals(head))throw new IllegalArgumentException("A verification of another head cannot verify this build");
-        return new WorkExecution(runId,build,head,result.attemptId(),result,pullRequest,reviewId,landing);
+        return new WorkExecution(runId,build,head,result.attemptId(),result,pullRequest,reviewId,null);
     }
     public WorkExecution delivered(PullRequestRef ref) {return new WorkExecution(runId,build,head,verificationAttempt,verification,Objects.requireNonNull(ref),reviewId,landing);}
     public WorkExecution reviewed(String id) {return new WorkExecution(runId,build,head,verificationAttempt,verification,pullRequest,Objects.requireNonNull(id),landing);}
