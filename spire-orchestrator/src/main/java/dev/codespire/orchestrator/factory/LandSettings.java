@@ -74,7 +74,7 @@ public class LandSettings {
      * locks are released as soon as they are taken, and two operators who both read revision N would
      * both write, the second silently overwriting the first.
      */
-    // @Transactional removed for one CI run: the concurrent save test must fail without it
+    @Transactional
     public Settings save(UUID repository, Input input, String subject) {
         if (input == null) throw new Refused("land_settings_required");
         if (subject == null || subject.isBlank()) throw new Refused("operator_identity_required");
