@@ -7,6 +7,7 @@ import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 import java.sql.*;
+import java.time.Instant;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -112,6 +113,40 @@ class WorkLandWebhookIT extends WorkLandFixture {
         mergedBy(PERSON);branchAt(HEAD,204);
         channels.activity(repository,closedOnGitHub(id,"merged",PERSON,PERSON),"TEST-merge-after-takeover");
         landed(id);assertEquals(PERSON,store.load(id).progress().execution().landing().mergedBy());
+    }
+    // A merge whose read-back fails is kept and read again by the sweep, never dead-lettered with its webhook.
+    @Test void aHandMergeWhoseReadFailsIsReadAgainUntilConfirmed() throws Exception {
+        String id=atLandGate();Instant start=Instant.now();clockAt(start);branchAt(HEAD,204);
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(502)));
+        channels.activity(repository,closedOnGitHub(id,"merged",PERSON,PERSON),"TEST-hand-merge-unread");
+        assertNotNull(receipt(id,"TEST-hand-merge-unread"));assertEquals("waiting_approval",store.load(id).workflowStatus());
+        land.drain();
+        assertEquals("waiting_approval",store.load(id).workflowStatus());
+        int reads=pullReads();land.drain();
+        assertEquals(reads,pullReads(),"a backed-off observation is not read again before its next check");
+        now.set(start.plusSeconds(61));mergedBy(PERSON);
+        land.drain();
+        landed(id);assertEquals(1,landings(id));assertEquals(PERSON,store.load(id).progress().execution().landing().mergedBy());
+        land.drain();
+        assertEquals(1,deletes());assertEquals(0,merges());assertEquals("done",effect(id,"state"));
+    }
+    // The webhook says merged before the pull request read does; only the read records, so it is asked again.
+    @Test void aHandMergeTheReadDoesNotYetShowIsReadAgain() throws Exception {
+        String id=atLandGate();branchAt(HEAD,204);openAt(HEAD,"clean",null);
+        channels.activity(repository,closedOnGitHub(id,"merged",PERSON,PERSON),"TEST-hand-merge-unconfirmed");
+        assertEquals("waiting_approval",store.load(id).workflowStatus());
+        mergedBy(PERSON);
+        land.drain();
+        landed(id);assertEquals(1,landings(id));
+    }
+    @Test void anUnreadHandMergeOfARetiredItemIsNotReadAgain() throws Exception {
+        String id=atLandGate();Instant start=Instant.now();clockAt(start);
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(aResponse().withStatus(502)));
+        channels.activity(repository,closedOnGitHub(id,"merged",PERSON,PERSON),"TEST-hand-merge-retired");
+        control.retire(id,"TEST-retire","TEST retired");assertEquals("retired",store.load(id).workflowStatus());
+        int reads=pullReads();now.set(start.plusSeconds(61));
+        land.drain();now.set(start.plusSeconds(122));land.drain();
+        assertEquals(reads,pullReads());assertEquals(0,landings(id));
     }
     @Test void aCloseStopsTheItemWithoutDeletingTheBranch() throws Exception {
         String id=atLandGate();branchAt(HEAD,204);
