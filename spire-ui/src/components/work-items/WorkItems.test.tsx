@@ -541,6 +541,15 @@ it('offers no re-admission for a landed item', async () => {
 it('offers no re-admission while an item waits at land for the operator', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'land_blocked', progress: { execution: deliveredExecution(false) } })).toBe(false);
 });
+// Review of slice 8: waiting at land for any other reason still keeps the delivered pull request open, so readmit stays hidden (A8);
+// Recheck is what answers it.
+it('offers Recheck but no re-admission while an item waits at land on unknown usage', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'run_usage_unknown', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Recheck and resume' })).toBeInTheDocument();
+});
+it('offers no re-admission while an item waits at land for a capability', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) } })).toBe(false);
+});
 // M4 land fix (Review Focus 15): readmit there would build a second pull request beside the open one, and the history that says so is the server's.
 it('offers no re-admission while a land fix is in progress', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'build', workflowStatus: 'awaiting_input', reason: 'run_usage_unknown', progress: { execution: deliveredExecution(false) },

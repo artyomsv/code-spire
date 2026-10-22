@@ -75,6 +75,27 @@ class WorkLandReadmitIT extends WorkPreparedFixture {
         assertEquals("awaiting_input",store.load(id).workflowStatus());
         readmitRefused(id,"readmission_land_pending");
     }
+    // Waiting at land for any other reason still leaves the delivered pull request open; readmit would build a second beside it (A8).
+    @Test void anItemWaitingAtLandOnUnknownUsageCannotBeReadmitted() throws Exception {
+        String id=admit("autonomous",86);WorkItemEvent land=atLand(id);append(id,land);
+        append(id,WorkItemLifecycle.state(land,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",null,land.progress().finish(0,0,0)));
+        readmitRefused(id,"readmission_land_pending");
+    }
+    @Test void anItemWaitingAtLandForACapabilityCannotBeReadmitted() throws Exception {
+        String id=admit("autonomous",87);WorkItemEvent land=atLand(id);append(id,land);
+        append(id,WorkItemLifecycle.state(land,"capability_unavailable","land_capability_unavailable","CAPABILITY_UNAVAILABLE",null,land.progress().finish(0,0,0)));
+        readmitRefused(id,"readmission_land_pending");
+    }
+    // Stop ends land and leaves the pull request to the operator; re-admitting afterwards builds the work again.
+    @Test void anItemStoppedAtLandCanStillBeReadmitted() throws Exception {
+        String id=admit("autonomous",88);WorkItemEvent land=atLand(id);append(id,land);
+        WorkItemEvent handed=WorkItemLifecycle.landHanded(land,"land_blocked");append(id,handed);
+        append(id,WorkItemLifecycle.landStopped(handed));
+        long revision=store.history(id).size();
+        given().contentType("application/json").body(new WorkItemResource.Resume(revision,true))
+                .post("/api/work-items/"+id+"/resume").then().statusCode(200);
+        assertEquals(2,store.load(id).generation());
+    }
     @Test void anItemStoppedElsewhereCanStillBeReadmitted() throws Exception {
         String id=admit("autonomous",83);WorkItemEvent item=store.load(id);
         append(id,item.decision(item.policyRevision(),item.authority(),item.policy(),"plan","stopped","gate_rejected","GATE_RESOLVED",null,item.progress()));
