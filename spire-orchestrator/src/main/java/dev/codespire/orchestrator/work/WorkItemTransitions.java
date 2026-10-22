@@ -298,6 +298,14 @@ public class WorkItemTransitions {
             return new Outcome(200,next.reason(),next);
         });
     }
+    /** A person merged the pull request on GitHub (spec §7.8, A2). */
+    Outcome landedByHuman(String id,String delivery,long pullRequest,String mergedBy) {
+        return new Outcome(409,"RED",require(id));
+    }
+    /** A person closed the pull request on GitHub without merging it (spec §7.8). */
+    Outcome closedByHuman(String id,String delivery,long pullRequest) {
+        return new Outcome(409,"RED",require(id));
+    }
     private static boolean landAttempt(WorkItemEvent item,UUID effect) {
         return "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && effect.equals(item.progress().attemptId());
     }

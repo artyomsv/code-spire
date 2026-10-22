@@ -216,6 +216,19 @@ class WorkGateChannelsIT extends WorkPolicyFixture {
         channels.activity(repository,pushed,"TEST-renamed-bot");
         assertEquals("waiting_approval",store.load(itemId).workflowStatus());assertEquals("OPEN",store.load(itemId).gate().state());
     }
+    /** A10: the factory account rotated after the build claim still pushes as the bot, so its push is not takeover. */
+    @Test void aRotatedFactoryPushIsNotTakeover() throws Exception {
+        landGate();execute("UPDATE scm_provider SET bot_account_id='900777' WHERE id=?",account);
+        IntegrationEvent.RepositoryActivity pushed=push("900777","TEST-rotated-bot");
+        channels.activity(repository,pushed,"TEST-rotated-factory-push");
+        assertEquals("waiting_approval",store.load(itemId).workflowStatus());assertEquals("OPEN",store.load(itemId).gate().state());
+        assertEquals(1,count("SELECT count(*) FROM work_activity_receipt WHERE work_item_id=? AND outcome='recorded_machine'",itemId));
+    }
+    @Test void aHumanPushIsStillTakeover() throws Exception {
+        landGate();execute("UPDATE scm_provider SET bot_account_id='900777' WHERE id=?",account);
+        channels.activity(repository,push("900123","TEST-person"),"TEST-human-push-after-rotation");
+        assertEquals("suspended",store.load(itemId).workflowStatus());assertEquals("human_takeover",store.load(itemId).reason());
+    }
     @Test void humanIdSuspendsAndSupersedesGateEvenWithTheBotsDisplayName() throws Exception {
         landGate();var pushed=push("900123","TEST-bot");assertEquals("900123",pushed.actorId());
         channels.activity(repository,pushed,"TEST-human-with-bot-name");

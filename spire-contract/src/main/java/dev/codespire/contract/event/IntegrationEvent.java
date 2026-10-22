@@ -57,7 +57,10 @@ public sealed interface IntegrationEvent {
 
     /** Signed acting identity, never a commit author. Comment text is reduced to an explicit command. */
     record RepositoryActivity(RepoRef repo,String kind,String actorId,String branch,String head,long prId,
-                              String reviewId,String commentId,boolean fixCommand) implements IntegrationEvent {}
+                              String reviewId,String commentId,boolean fixCommand) implements IntegrationEvent {
+        public String mergedBy() { return null; }
+        public RepositoryActivity withMergedBy(String value) { return this; }
+    }
 
     // --- ingress (produced by spire-gateway / ScmIngress) ---
 
