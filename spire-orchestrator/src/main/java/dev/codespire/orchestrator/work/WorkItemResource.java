@@ -170,7 +170,7 @@ public class WorkItemResource {
     /** The latest land attempt of this generation, its detail decrypted for the operator; null before land is approved. */
     private LandView land(String id,long generation,UUID repository) {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(
-                "SELECT effect_id,state,reason,detail,method,note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
+                "SELECT effect_id,state,reason,detail,method,note,ticket_note FROM work_land_effect WHERE work_item_id=? AND generation=? ORDER BY created_at DESC,effect_id LIMIT 1")) {
             ps.setString(1,id);ps.setLong(2,generation);
             try(ResultSet rs=ps.executeQuery()) {
                 if(!rs.next())return null;
@@ -180,7 +180,8 @@ public class WorkItemResource {
                 Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
                 return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
                         method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note);
+                        // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }

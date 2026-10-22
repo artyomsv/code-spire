@@ -23,6 +23,10 @@ public class WorkItemTransitions {
     @Inject WorkPhaseCapability capability;
     @Inject WorkArtifacts artifacts;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
+    @Inject WorkSourceEffects effects;
+    @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;
+    @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
+    @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
         public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
@@ -225,8 +229,11 @@ public class WorkItemTransitions {
      * The land effect saw the pull request merged (M4 land, spec §7.3). Recorded once per generation and pull
      * request, whoever saw it first (A2), and recorded on a suspended item too: the merge may have happened
      * after a takeover, and a real merge that is never recorded is worse than a late one (Review Focus 13).
+     * The ticket rule's effects are enqueued in the same transaction (spec §7.7, A1).
      */
     Outcome landed(String id,UUID effect,WorkLanding landing) {
+        // Who merged is a forge read, and a forge read never runs under the item lock.
+        String handle=WorkLanding.FACTORY.equals(landing.mergedBy())?null:mergerHandle(require(id).repositoryId(),landing.mergedBy());
         return underLock(id,(c,history,item)->{
             List<WorkItemEvent> facts=history.stream().map(event->(WorkItemEvent)event.payload()).toList();
             if(WorkItemLifecycle.landedIn(facts,item.generation(),landing.pullRequest().number()))return new Outcome(200,"landing_already_recorded",item);
@@ -237,8 +244,41 @@ public class WorkItemTransitions {
                     || execution.pullRequest().number()!=landing.pullRequest().number())return new Outcome(409,"work_item_changed",item);
             WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
             store.appendDecision(c,history,next,"land-landed:"+effect);
+            ticketAfterLand(c,next,effect,landing,handle);
             return new Outcome(200,next.reason(),next);
         });
+    }
+    /**
+     * The ticket rule (spec §7.7): one comment, then under the close rule a close where the tracker can close one. A
+     * Jira ticket cannot be closed without a configured transition, so it keeps its status and the land row says so.
+     * Bound to WORK_ITEM_LANDED's revision, which the projection row holds once the decision is appended.
+     */
+    private void ticketAfterLand(Connection c,WorkItemEvent landed,UUID effect,WorkLanding landing,String handle) throws SQLException {
+        long revision;
+        try(PreparedStatement ps=c.prepareStatement("SELECT revision FROM work_item WHERE id=?")) {
+            ps.setString(1,landed.workItemId());try(ResultSet rs=ps.executeQuery()){rs.next();revision=rs.getLong(1);}
+        }
+        boolean close=landSettings.get(c,landed.repositoryId(),false).ticketRule()==dev.codespire.orchestrator.factory.LandSettings.TicketRule.CLOSE;
+        Optional<String> transition=close?WorkSourceEffects.closeTransition(sources.get(c,landed.sourceId(),false).orElseThrow(NotFoundException::new).type()):Optional.empty();
+        effects.enqueuePostLand(c,WorkSourceEffects.postLandId(landed.workItemId(),landed.generation(),WorkSourceEffects.Kind.COMMENT),landed.workItemId(),revision,
+                WorkSourceEffects.Kind.COMMENT,WorkSourceEffects.landedComment(landing,handle,transition.isPresent()));
+        if(transition.isPresent())effects.enqueuePostLand(c,WorkSourceEffects.postLandId(landed.workItemId(),landed.generation(),WorkSourceEffects.Kind.TRANSITION),
+                landed.workItemId(),revision,WorkSourceEffects.Kind.TRANSITION,transition.get());
+        else if(close)try(PreparedStatement ps=c.prepareStatement("UPDATE work_land_effect SET ticket_note='ticket_close_unsupported',updated_at=now() WHERE effect_id=?")) {
+            ps.setObject(1,effect);ps.executeUpdate();
+        }
+    }
+    /** The merger's observed handle, read through the repository's FACTORY or REVIEWER account; null when neither can say. */
+    private String mergerHandle(UUID repository,String providerUserId) {
+        Optional<dev.codespire.orchestrator.provider.ScmProvider> account=accounts.resolve(repository,dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
+                .or(()->accounts.resolve(repository,dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
+        if(account.isEmpty())return null;
+        try {
+            dev.codespire.contract.port.ActorDirectory.Result result=clients.actorDirectory(account.get()).byId(providerUserId);
+            boolean found=result.status()==dev.codespire.contract.port.ActorDirectory.Status.FOUND && result.actors().size()==1
+                    && providerUserId.equals(result.actors().getFirst().providerUserId());
+            return found?result.actors().getFirst().handle():null;
+        }catch(RuntimeException unavailable){return null;}
     }
     /** The land effect hands the item to the operator (spec §7.6), only while this land attempt is the active one. */
     Outcome landHandOff(String id,UUID effect,String reason) {

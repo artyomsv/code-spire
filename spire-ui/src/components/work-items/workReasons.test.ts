@@ -31,6 +31,12 @@ describe('workReason', () => {
   });
 });
 
+describe('ticket after land (M4)', () => {
+  it.each(['ticket_close_unsupported', 'ticket_rule_changed'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
 describe('verify reasons (M4)', () => {
   it.each(['verify_failed', 'verify_unverified', 'verify_stopped_by_operator', 'check_failed', 'no_checks_declared', 'tool_missing',
     'timed_out', 'checkpoint_missing', 'verify_could_not_run', 'verify_command_invalid', 'verify_timeout_out_of_range'])('%s has a sentence', reason => {

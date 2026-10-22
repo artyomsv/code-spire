@@ -116,7 +116,8 @@ public class WorkItemStore {
 
     private void projectExecution(Connection c,WorkItemEvent item,long revision) throws SQLException {
         if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
-            try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
+            // A post-land row tells the ticket about a merge that happened; no later decision undoes the merge (A1).
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending' AND effect_class='phase'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
