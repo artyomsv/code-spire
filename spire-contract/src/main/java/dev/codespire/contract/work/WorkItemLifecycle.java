@@ -105,7 +105,9 @@ public final class WorkItemLifecycle {
         if(!LAND_FIX_REASONS.contains(reason))throw new IllegalArgumentException("Not a land fix reason "+reason);
         if(item.progress().execution()==null || item.progress().execution().pullRequest()==null)
             throw new IllegalStateException("Only a delivered pull request can be fixed");
-        return item.decision(item.policyRevision(),item.authority(),item.policy(),"build","awaiting_input",reason,"LAND_FIX_REQUESTED",null,item.progress().reserve(false));
+        // The land attempt is over: the next land gate starts another, and only one attempt per phase may be started.
+        WorkProgress progress="land".equals(item.progress().attemptPhase())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"build","awaiting_input",reason,"LAND_FIX_REQUESTED",null,progress);
     }
     /** Whether the current generation's latest land fix has not ended yet. A verify gate inside the fix does not end it. */
     public static boolean landFixInProgress(List<WorkItemEvent> history) {

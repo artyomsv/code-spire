@@ -40,6 +40,8 @@ class WorkLandFixDecisionTest {
         assertEquals(item.progress().execution(),next.progress().execution(),"the pull request survives the rewind");
         // The fix is found again by the land attempt it came from.
         assertEquals(item.progress().attemptId(),next.progress().attemptId());
+        // Finished, so the next land gate's approval can start another land attempt (one started attempt per phase).
+        assertEquals("completed",next.progress().attemptState());
     }
     @Test void onlyTheThreeCodeRefusalsRequestAFix(){
         for(String reason:List.of("land_checks_failed","land_conflict","land_branch_behind"))
