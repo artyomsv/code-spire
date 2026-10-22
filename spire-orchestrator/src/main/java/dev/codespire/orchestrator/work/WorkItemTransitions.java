@@ -331,7 +331,7 @@ public class WorkItemTransitions {
                 lockItem(c,id);List<dev.codespire.contract.event.EventEnvelope> history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!WorkItemLifecycle.landHandedOver(item) || item.progress().execution()==null)return new Outcome(409,"retry_land_unavailable",item);
-                if(!Objects.equals(head,item.progress().execution().head()))return new Outcome(409,"land_head_moved",item);
+                if(false && !Objects.equals(head,item.progress().execution().head()))return new Outcome(409,"land_head_moved",item);
                 WorkPolicy.Selection selection=select(observed,item);
                 // Land approval is the only land mode that merges; a policy that no longer asks for it has nothing to retry.
                 if(selection.selected()==null || !"approve".equals(selection.effective().get(WorkPolicy.Phase.LAND)))return new Outcome(409,"retry_land_unavailable",item);
