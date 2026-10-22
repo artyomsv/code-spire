@@ -80,7 +80,7 @@ final class GitHubCheckReduction {
 
     /** NOT_CODE > FAILED > PENDING > PASSED: the enum is declared in that ascending order. */
     static Checks worse(Checks current, Checks entry) {
-        return entry.ordinal() > current.ordinal() ? entry : current;
+        return entry.ordinal() < current.ordinal() ? entry : current;
     }
 
     private static boolean keep(Checks entry, List<FailedCheck> failed) {
