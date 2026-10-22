@@ -34,7 +34,7 @@ final class GitHubCheckReduction {
     /** {@code annotations} is asked only for a failed check run that is kept in the capped summary. */
     static CheckSummary reduce(JsonNode statuses, List<JsonNode> checkRuns,
                                Function<JsonNode, List<String>> annotations) {
-        Checks state = Checks.PASSED;
+        Checks state = Checks.PENDING;
         int done = 0;
         int total = 0;
         List<FailedCheck> failed = new ArrayList<>();
