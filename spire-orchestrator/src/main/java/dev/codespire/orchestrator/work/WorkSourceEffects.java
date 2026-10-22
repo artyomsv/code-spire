@@ -94,11 +94,15 @@ public class WorkSourceEffects {
      * not be resolved: a stable id means nothing to a reader, so it is never printed. Under the close rule the close
      * follows, and the sentence that the status is unchanged would contradict it.
      */
-    static String landedComment(WorkLanding landing, String handle, boolean closing) {
+    static String landedCommentKeepingStatus(WorkLanding landing, String handle) {
+        return landedCommentBeforeClose(landing, handle)+" The ticket status is unchanged so testing can follow.";
+    }
+
+    /** The close that follows says the rest, so the comment does not say the status is unchanged. */
+    static String landedCommentBeforeClose(WorkLanding landing, String handle) {
         String merger = WorkLanding.FACTORY.equals(landing.mergedBy()) ? "the factory" : handle == null || handle.isBlank() ? "a person" : handle;
         String link = landing.pullRequest().url() == null ? "pull request #"+landing.pullRequest().number() : landing.pullRequest().url();
-        String merged = "Merged by "+merger+": "+link+" ("+landing.mergeCommit().substring(0,7)+").";
-        return closing ? merged : merged+" The ticket status is unchanged so testing can follow.";
+        return "Merged by "+merger+": "+link+" ("+landing.mergeCommit().substring(0,7)+").";
     }
 
     /** The transition that closes a ticket of this source type; the per-type words live in the composition root. */

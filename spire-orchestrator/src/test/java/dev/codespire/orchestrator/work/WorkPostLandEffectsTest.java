@@ -31,7 +31,7 @@ class WorkPostLandEffectsTest extends WorkFixture {
     static final PullRequestRef PR=new PullRequestRef(901,"https://forge.example.test/TEST-pull/901",false);
     static final String MERGE="abcdef0"+"1".repeat(33);
     @Inject WorkSourceEffects effects;
-    @Inject WorkItemTransitions transitions;
+    @Inject WorkLandTransitions transitions;
     @Inject LandSettings landSettings;
     UUID attempt;
 

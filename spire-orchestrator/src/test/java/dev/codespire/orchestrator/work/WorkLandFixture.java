@@ -40,6 +40,7 @@ abstract class WorkLandFixture extends WorkPreparedFixture {
     @Inject ReviewProjection reviews;
     @Inject DomainEventSink domain;
     @Inject WorkLandSweep land;
+    @Inject WorkLandTransitions landTransitions;
     @Inject LandSettings landSettings;
     @Inject WorkItemControl control;
     UUID reviewer;

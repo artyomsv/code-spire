@@ -1,6 +1,6 @@
 import type { WorkItemDetail, WorkItemSummary } from '../../api';
 import { actorLabel } from '../actorsApi';
-import { LAND_HANDOFF_REASONS, landReason, workReason } from './workReasons';
+import { landReason, workReason } from './workReasons';
 
 /**
  * Where a work item stands, in the terms the list and the detail both draw.
@@ -115,6 +115,13 @@ const FIXING: Record<string, string> = {
   land_checks_failed: 'a failed check', land_conflict: 'a conflict with the base branch', land_branch_behind: 'the branch is behind its base',
 };
 
+/** What became of the branch after the merge; null while the delete has not finished. */
+function branchWords(branchDeleted: boolean | null | undefined): string {
+  if (branchDeleted === true) return ', branch deleted';
+  if (branchDeleted === false) return ', branch not deleted';
+  return ', deleting the branch';
+}
+
 function merger(item: LandItem, mergedBy: string): string {
   if (mergedBy === 'factory') return 'the factory';
   const person = item.people?.find(candidate => candidate.providerUserId === mergedBy);
@@ -129,8 +136,7 @@ export function landProgress(item: LandItem): string | null {
   const land = item.land ?? null;
   const landing = item.progress?.execution?.landing;
   if (item.workflowStatus === 'completed' && landing) {
-    const branch = land?.branchDeleted === true ? ', branch deleted' : land?.branchDeleted === false ? ', branch not deleted' : ', deleting the branch';
-    return `Merged ${landing.mergeCommit.slice(0, 7)} by ${merger(item, landing.mergedBy)}${branch}`;
+    return `Merged ${landing.mergeCommit.slice(0, 7)} by ${merger(item, landing.mergedBy)}${branchWords(land?.branchDeleted)}`;
   }
   if (land?.fixInProgress) {
     const what = FIXING[land.reason ?? ''] ?? workReason(land.reason ?? '');
@@ -138,7 +144,7 @@ export function landProgress(item: LandItem): string | null {
   }
   if (item.phase !== 'land') return null;
   if (item.workflowStatus === 'waiting_approval' && item.gate?.state === 'OPEN' && item.gate.phase === 'land') return 'Waiting for your approval';
-  if (item.workflowStatus === 'awaiting_input' && LAND_HANDOFF_REASONS.includes(item.reason)) return `Needs you: ${landReason(item.reason, land?.message ?? null)}`;
+  if (land?.handedOver) return `Needs you: ${landReason(item.reason, land.message)}`;
   if (item.workflowStatus !== 'active' || !land) return null;
   switch (land.state) {
     case 'pending': case 'checking': return 'Checking GitHub';

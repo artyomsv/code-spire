@@ -52,12 +52,14 @@ head/policy evidence, and a new generation. Retired items cannot resume. See the
 | `LAND_HANDED` | `land / awaiting_input / <hand-off reason>`, no gate | anything else land cannot finish (below) |
 | `PULL_REQUEST_CLOSED` | `stopped / pr_closed_by_human` | a person closed the pull request unmerged, or the land effect read it closed |
 | `LAND_RETRY_REQUESTED` | `land / waiting_approval`, a fresh gate on `execution.head()` | Retry land on a handed item |
-| `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item, or on one at `land / capability_unavailable` or `land / not_eligible` |
+| `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item, on one at `land / capability_unavailable` or `land / not_eligible`, or on `land / active` while its land row has sent no merge (`pending`, `checking`, `waiting_checks`); that row is refused in the same transaction |
 
 Hand-off reasons: `land_head_moved`, `land_checks_timeout`, `land_checks_not_code`, `land_blocked`,
 `land_pr_draft`, `land_merge_refused`, `land_merge_method_not_allowed`, `land_fix_attempts_exhausted`,
 `land_item_limit_reached`, `land_fix_review_blocked`, `land_fix_run_failed`, `land_fix_stopped`,
-`land_account_unavailable`, `land_read_failed`. While a land fix is in progress (derived from history
+`land_account_unavailable`, `land_read_failed`, `land_policy_changed` (the labels, the policy revision or the
+source changed after approval, or land is no longer `approve`; re-observed under the item lock before the merge is
+claimed, as delivery re-observes before its permit). While a land fix is in progress (derived from history
 under the lock, never by the decider), the build and deliver `approve` gates are skipped; verify and land
 keep theirs. Command refusals: `readmission_landed`, `readmission_land_pending`, `retry_land_required`
 (Recheck on a handed item), `retry_land_unavailable`, and `land_head_moved` (Retry land when the pull

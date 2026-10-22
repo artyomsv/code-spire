@@ -75,6 +75,16 @@ class WorkLandDecisionTest {
         assertEquals("LAND_STOPPED",next.milestone());assertNull(next.gate());assertFalse(next.progress().reserved());
         assertEquals(handed.progress().execution(),next.progress().execution());
     }
+    // Review of the branch: Stop on a land that sent no merge yet. The caller proves that from the effect row; the decider
+    // ends the item and finishes the land attempt, so a later land in this generation is not refused as already started.
+    @Test void landStoppedBeforeMergeEndsAnActiveLand(){
+        WorkItemEvent item=atLand("approve",1);
+        WorkItemEvent next=WorkItemLifecycle.landStoppedBeforeMerge(item);
+        assertEquals("land",next.phase());assertEquals("stopped",next.workflowStatus());assertEquals("land_stopped_by_operator",next.reason());
+        assertEquals("LAND_STOPPED",next.milestone());assertEquals("completed",next.progress().attemptState());assertFalse(next.progress().reserved());
+        assertEquals(item.progress().execution(),next.progress().execution());
+        assertThrows(IllegalStateException.class,()->WorkItemLifecycle.landStoppedBeforeMerge(WorkItemLifecycle.landHanded(item,"land_blocked")));
+    }
     @Test void landStoppedFollowsOnlyAHandOff(){
         assertThrows(IllegalStateException.class,()->WorkItemLifecycle.landStopped(atLand("approve",1)));
     }

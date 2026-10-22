@@ -11,19 +11,26 @@ import { preparationEvidence, type PreparationEvidence } from './workPreparation
 
 const METHOD_WORDS: Record<string, string> = { merge: 'a merge commit', squash: 'a squash merge', rebase: 'a rebase merge' };
 
+/** What the ticket is told after the merge, under the repository's ticket rule. */
+function TicketRuleSentence({ rule }: { rule: string }) {
+  if (rule === 'close') return <p>Then it comments on the ticket that the work is merged, and closes the ticket where the tracker allows.</p>;
+  return <p>Then it comments on the ticket that the work is merged; the ticket keeps its status.</p>;
+}
+
 /** What approving a land decision will do (spec §7.10): the method, the ticket rule, the branch, and the checks when known. */
 function LandPreview({ item }: { item: WorkItemDetail }) {
   const land = item.land, pullRequest = item.progress?.execution?.pullRequest;
   const target = pullRequest ? `pull request #${pullRequest.number}` : 'the pull request';
+  if (!land) return <section className="decision-sec" aria-label="What land will do">
+    <h4>What land will do</h4>
+    <p className="prov-note">The land setup was not reported, so the method and the ticket rule are not shown. Approving merges with the repository's saved land setup.</p>
+  </section>;
   return <section className="decision-sec" aria-label="What land will do">
     <h4>What land will do</h4>
-    {land ? <>
-      <p>Merges {target} with {METHOD_WORDS[land.method] ?? land.method}, then deletes its branch.</p>
-      <p>{land.ticketRule === 'close' ? 'Then it comments on the ticket that the work is merged, and closes the ticket where the tracker allows.'
-        : 'Then it comments on the ticket that the work is merged; the ticket keeps its status.'}</p>
-      {land.checks && <p>Checks when last read: {land.checks.done} of {land.checks.total} checks done
-        {land.checks.failed.length > 0 && <> · not passed: {land.checks.failed.map(check => check.name).join(', ')}</>}</p>}
-    </> : <p className="prov-note">The land setup was not reported, so the method and the ticket rule are not shown. Approving merges with the repository's saved land setup.</p>}
+    <p>Merges {target} with {METHOD_WORDS[land.method] ?? land.method}, then deletes its branch.</p>
+    <TicketRuleSentence rule={land.ticketRule} />
+    {land.checks && <p>Checks when last read: {land.checks.done} of {land.checks.total} checks done
+      {land.checks.failed.length > 0 && <> · not passed: {land.checks.failed.map(check => check.name).join(', ')}</>}</p>}
   </section>;
 }
 

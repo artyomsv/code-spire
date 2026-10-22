@@ -18,6 +18,7 @@ public class WorkReview {
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
     @Inject WorkItemTransitions transitions;
+    @Inject WorkLandTransitions landTransitions;
     @Inject WorkSourceRegistry sources;
     @Inject WorkPolicyRegistry policies;
     @Inject ReviewProjection reviews;
@@ -62,7 +63,7 @@ public class WorkReview {
                 || !"completed".equals(detail.status()) || detail.degraded()) {waiting(item,"review_result_pending");return;}
         if(detail.openBlockers()>0) {
             // A land fix the reviewer holds goes to the operator with the review; no agent fixes findings in this loop (§6).
-            if(WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(store.history(id))))transitions.landFixReviewBlocked(id,item.progress().attemptId());
+            if(WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(store.history(id))))landTransitions.landFixReviewBlocked(id,item.progress().attemptId());
             else waiting(item,"review_blockers_open");
             return;
         }

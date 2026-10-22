@@ -224,8 +224,8 @@ class WorkLandingIT extends WorkLandFixture {
     @Test void landingIsRecordedOnce() throws Exception {
         String id=approved();UUID effect=UUID.fromString(effect(id,"effect_id"));
         WorkLanding landing=new WorkLanding(store.load(id).progress().execution().pullRequest(),MERGED,"merge",WorkLanding.FACTORY,Instant.EPOCH);
-        assertEquals(200,transitions.landed(id,effect,landing).status());
-        var again=transitions.landed(id,effect,landing);
+        assertEquals(200,landTransitions.landed(id,effect,landing).status());
+        var again=landTransitions.landed(id,effect,landing);
         assertEquals(200,again.status());assertEquals("landing_already_recorded",again.reason());
         assertEquals(1,landings(id));landed(id);
     }

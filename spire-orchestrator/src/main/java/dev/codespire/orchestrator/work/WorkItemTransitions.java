@@ -23,10 +23,6 @@ public class WorkItemTransitions {
     @Inject WorkPhaseCapability capability;
     @Inject WorkArtifacts artifacts;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
-    @Inject WorkSourceEffects effects;
-    @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;
-    @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
-    @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
         public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
@@ -55,7 +51,7 @@ public class WorkItemTransitions {
     WorkItemEvent admission(WorkItemEvent next,long historySize) {
         if(next.gate()==null && "capability_unavailable".equals(next.workflowStatus())
                 && "approve".equals(next.policy().effective().get(WorkPolicy.Phase.valueOf(next.phase().toUpperCase(Locale.ROOT)))))
-            return enter(next,historySize,false,clock.now());
+            return enter(next,historySize,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);
         return next;
     }
 
@@ -86,7 +82,7 @@ public class WorkItemTransitions {
                 if(!Objects.equals(head,expectedHead) || observed.artifacts().failure()!=null)
                     next=next.prepared(null).withMilestone("OPERATOR_RESUMED");
                 store.appendDecision(c,history,next,"operator-resume:"+UUID.randomUUID());history=store.history(id);
-                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"resume-transition:"+UUID.randomUUID());
                 return new Outcome(200,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
@@ -166,7 +162,7 @@ public class WorkItemTransitions {
                 if(expected>=0 && history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 // Derived here, under the lock, because the decider sees no history (A9).
-                boolean landFix=WorkItemLifecycle.landFixInProgress(facts(history));
+                WorkItemLifecycle.EntryMode mode=entryMode(history);boolean landFix=mode==WorkItemLifecycle.EntryMode.LAND_FIX;
                 if(result!=null) {
                     try(PreparedStatement ps=c.prepareStatement("SELECT state FROM work_phase_attempt WHERE id=? AND work_item_id=?")) {
                         ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
@@ -176,21 +172,11 @@ public class WorkItemTransitions {
                     if(!Objects.equals(result.attemptId(),item.progress().attemptId()))return new Outcome(409,"attempt_changed",item);
                     if("completed".equals(item.progress().attemptState()))return new Outcome(200,"result_already_applied",item);
                     if(!"active".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
-                    if(!validExecution(item,result,landFix))return new Outcome(409,"phase_evidence_mismatch",item);
-                } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
-                    return new Outcome(409,"explicit_readmission_required",item);
-                // A handed item goes on only with Retry land, which needs a note and the verified head (A3); recheck would reopen land with neither.
-                if(result==null && !readmit && WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
-                if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
-                // A merged pull request cannot be built again beside itself; a handed item goes on with Retry land (spec §7.9).
-                if(readmit && landed(history,item))return new Outcome(409,"readmission_landed",item);
-                // Waiting at land for any reason, a hand-off, a land that cannot merge here or one switched off, leaves the
-                // delivered pull request open: a close stops the item, so only a stopped or failed land may build again (A8).
-                if(readmit && "land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable","not_eligible").contains(item.workflowStatus()))
-                    return new Outcome(409,"readmission_land_pending",item);
-                // A land fix waiting for a person still has its pull request open; readmit would build a second one beside it.
-                if(readmit && landFix)return new Outcome(409,"readmission_land_pending",item);
-                if(readmit && mergeUnconfirmed(c,item))return new Outcome(409,"readmission_merge_unconfirmed",item);
+                    if(!validExecution(item,result,mode))return new Outcome(409,"phase_evidence_mismatch",item);
+                } else {
+                    Outcome refused=readmit?readmitRefusal(c,history,item,mode):recheckRefusal(item);
+                    if(refused!=null)return refused;
+                }
                 WorkPolicy.Selection selection=select(observed,readmit?null:item);
                 WorkItemEvent next=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),"POLICY_CHECKED",item.gate(),item.progress());
                 if(readmit) {
@@ -239,7 +225,7 @@ public class WorkItemTransitions {
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
                 else if(observed.artifacts().failure()!=null)next=state(next,"awaiting_input",observed.artifacts().failure(),"ARTIFACTS_REQUIRED",next.gate(),next.progress().reserve(false));
                 else {
-                    next=enterPrepared(c,history,next,false,clock.now(),landFix);
+                    next=enterPrepared(c,history,next,false,clock.now(),mode);
                     history=store.history(id);
                 }
                 next=decide(c,history,next,"transition:"+UUID.randomUUID());
@@ -252,169 +238,6 @@ public class WorkItemTransitions {
         });
     }
 
-    /**
-     * The land effect saw the pull request merged (M4 land, spec §7.3). Recorded once per generation and pull
-     * request, whoever saw it first (A2), and recorded on a suspended item too: the merge may have happened
-     * after a takeover, and a real merge that is never recorded is worse than a late one (Review Focus 13).
-     * The ticket rule's effects are enqueued in the same transaction (spec §7.7, A1).
-     */
-    Outcome landed(String id,UUID effect,WorkLanding landing) {
-        // Who merged is a forge read, and a forge read never runs under the item lock.
-        String handle=WorkLanding.FACTORY.equals(landing.mergedBy())?null:mergerHandle(require(id).repositoryId(),landing.mergedBy());
-        return underLock(id,(c,history,item)->{
-            List<WorkItemEvent> facts=history.stream().map(event->(WorkItemEvent)event.payload()).toList();
-            if(WorkItemLifecycle.landedIn(facts,item.generation(),landing.pullRequest().number()))return new Outcome(200,"landing_already_recorded",item);
-            WorkExecution execution=item.progress().execution();
-            boolean attempted=facts.stream().anyMatch(event->event.generation()==item.generation() && "PHASE_STARTED".equals(event.milestone())
-                    && "land".equals(event.phase()) && effect.equals(event.progress().attemptId()));
-            if(!attempted || !"land".equals(item.phase()) || execution==null || execution.pullRequest()==null
-                    || execution.pullRequest().number()!=landing.pullRequest().number())return new Outcome(409,"work_item_changed",item);
-            WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
-            store.appendDecision(c,history,next,"land-landed:"+effect);
-            ticketAfterLand(c,next,effect,landing,handle);
-            return new Outcome(200,next.reason(),next);
-        });
-    }
-    /**
-     * The ticket rule (spec §7.7): one comment, then under the close rule a close where the tracker can close one. A
-     * Jira ticket cannot be closed without a configured transition, so it keeps its status and the land row says so.
-     * Bound to WORK_ITEM_LANDED's revision, which the projection row holds once the decision is appended.
-     */
-    private void ticketAfterLand(Connection c,WorkItemEvent landed,UUID effect,WorkLanding landing,String handle) throws SQLException {
-        long revision;
-        try(PreparedStatement ps=c.prepareStatement("SELECT revision FROM work_item WHERE id=?")) {
-            ps.setString(1,landed.workItemId());try(ResultSet rs=ps.executeQuery()){rs.next();revision=rs.getLong(1);}
-        }
-        boolean close=landSettings.get(c,landed.repositoryId(),false).ticketRule()==dev.codespire.orchestrator.factory.LandSettings.TicketRule.CLOSE;
-        Optional<String> transition=close?WorkSourceEffects.closeTransition(sources.get(c,landed.sourceId(),false).orElseThrow(NotFoundException::new).type()):Optional.empty();
-        effects.enqueuePostLand(c,WorkSourceEffects.postLandId(landed.workItemId(),landed.generation(),WorkSourceEffects.Kind.COMMENT),landed.workItemId(),revision,
-                WorkSourceEffects.Kind.COMMENT,WorkSourceEffects.landedComment(landing,handle,transition.isPresent()));
-        if(transition.isPresent())effects.enqueuePostLand(c,WorkSourceEffects.postLandId(landed.workItemId(),landed.generation(),WorkSourceEffects.Kind.TRANSITION),
-                landed.workItemId(),revision,WorkSourceEffects.Kind.TRANSITION,transition.get());
-        else if(close)try(PreparedStatement ps=c.prepareStatement("UPDATE work_land_effect SET ticket_note='ticket_close_unsupported',updated_at=now() WHERE effect_id=?")) {
-            ps.setObject(1,effect);ps.executeUpdate();
-        }
-    }
-    /** The merger's observed handle, read through the repository's FACTORY or REVIEWER account; null when neither can say. */
-    private String mergerHandle(UUID repository,String providerUserId) {
-        Optional<dev.codespire.orchestrator.provider.ScmProvider> account=accounts.resolve(repository,dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
-                .or(()->accounts.resolve(repository,dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
-        if(account.isEmpty())return null;
-        try {
-            dev.codespire.contract.port.ActorDirectory.Result result=clients.actorDirectory(account.get()).byId(providerUserId);
-            boolean found=result.status()==dev.codespire.contract.port.ActorDirectory.Status.FOUND && result.actors().size()==1
-                    && providerUserId.equals(result.actors().getFirst().providerUserId());
-            return found?result.actors().getFirst().handle():null;
-        }catch(RuntimeException unavailable){return null;}
-    }
-    /** The land effect hands the item to the operator (spec §7.6), only while this land attempt is the active one. */
-    Outcome landHandOff(String id,UUID effect,String reason) {
-        return underLock(id,(c,history,item)->{
-            if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
-            WorkItemEvent next=WorkItemLifecycle.landHanded(item,reason);
-            store.appendDecision(c,history,next,"land-handed:"+effect);
-            return new Outcome(200,next.reason(),next);
-        });
-    }
-    /**
-     * Retry land (spec §7.6, A3) under the lock: only an item land handed over, only at the revision the operator saw,
-     * and only while the pull request still holds the head that was verified and reviewed, so no gate opens on a head
-     * nobody reviewed. The policy and authority are the ones observed now, so the gate binds the current policy
-     * revision. The operator, the note and the head read are recorded on the same event.
-     *
-     * @param head the pull request's head as the forge reported it, read before the lock
-     */
-    Outcome retryLandControlled(String id,long expected,Observation observed,String subject,String note,String head) {
-        return QuarkusTransaction.requiringNew().call(()->{
-            try(Connection c=dataSource.getConnection()) {
-                if(!current(c,observed))return new Outcome(503,"authority_changed_during_read",require(id));
-                lockItem(c,id);List<dev.codespire.contract.event.EventEnvelope> history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
-                if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
-                if(!WorkItemLifecycle.landHandedOver(item) || item.progress().execution()==null)return new Outcome(409,"retry_land_unavailable",item);
-                if(!Objects.equals(head,item.progress().execution().head()))return new Outcome(409,"land_head_moved",item);
-                WorkPolicy.Selection selection=select(observed,item);
-                // Land approval is the only land mode that merges; a policy that no longer asks for it has nothing to retry.
-                if(selection.selected()==null || !"approve".equals(selection.effective().get(WorkPolicy.Phase.LAND)))return new Outcome(409,"retry_land_unavailable",item);
-                WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
-                WorkItemEvent observedItem=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),
-                        item.milestone(),item.gate(),item.progress()).controlled(recorded.action(subject,note,head));
-                WorkItemEvent next=WorkItemLifecycle.retryLandGate(observedItem,item,history.size(),clock.now(),UUID.randomUUID());
-                store.appendDecision(c,history,next,"retry-land:"+UUID.randomUUID());
-                return new Outcome(200,next.reason(),next);
-            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
-            catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist retry land",failure);}
-        });
-    }
-    /**
-     * Stop on an item land handed over (spec §7.6), or one waiting at land where land cannot merge or is off, which
-     * nothing else moves on (review of slice 9): the item ends and the pull request is left as it is.
-     */
-    Outcome stopLandControlled(String id,long expected,String subject,String note) {
-        return underLock(id,(c,history,item)->{
-            if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
-            if(!WorkItemLifecycle.landStoppable(item))return new Outcome(409,"retry_land_unavailable",item);
-            WorkControl recorded=item.control()==null?new WorkControl(null,null,null,null,null,null,null,null):item.control();
-            WorkItemEvent next=WorkItemLifecycle.landStopped(item).controlled(recorded.action(subject,note,null));
-            store.appendDecision(c,history,next,"stop-land:"+UUID.randomUUID());
-            return new Outcome(200,next.reason(),next);
-        });
-    }
-    /**
-     * The land effect met a refusal code can fix (spec §7.5): a land fix is requested and build is entered on the same
-     * pull request, unless the repository's attempts are spent (a branch behind its base spends none) or a build would
-     * cross one of the item's limits; then the item is handed over, naming what it would have fixed or which limit.
-     * The effect row moves in the same transaction, so the fix's payload exists before its build can be dispatched.
-     */
-    Outcome landFix(String id,UUID effect,String reason,byte[] payload) {
-        return underLock(id,(c,history,item)->{
-            if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
-            long used=facts(history).stream().filter(event->event.generation()==item.generation() && "LAND_FIX_REQUESTED".equals(event.milestone())
-                    && WorkItemLifecycle.LAND_FIX_COUNTED.contains(event.reason())).count();
-            long counted=WorkItemLifecycle.LAND_FIX_COUNTED.contains(reason)?1:0;
-            String handOff=null,cause=null;
-            if(used+counted>landSettings.get(c,item.repositoryId(),false).fixAttempts()){handOff="land_fix_attempts_exhausted";cause=reason;}
-            else {
-                // Checked before the fix is requested, so the operator hears which limit, not policy_cap_reached deeper in build.
-                cause=item.progress().limitReached(item.policy().limits(),"build");
-                if(cause!=null)handOff="land_item_limit_reached";
-            }
-            if(handOff!=null) {
-                WorkItemEvent next=WorkItemLifecycle.landHanded(item,handOff);
-                store.appendDecision(c,history,next,"land-handed:"+effect);
-                landEffect(c,effect,"handed",handOff,cause,null);
-                return new Outcome(200,next.reason(),cause,next);
-            }
-            WorkItemEvent requested=WorkItemLifecycle.landFixRequested(item,reason);
-            store.appendDecision(c,history,requested,"land-fix:"+effect);
-            landEffect(c,effect,"fixing",reason,null,payload);
-            List<dev.codespire.contract.event.EventEnvelope> after=store.history(id);
-            WorkItemEvent next=enterPrepared(c,after,requested,false,clock.now(),true);
-            next=decide(c,store.history(id),next,"land-fix-transition:"+effect);
-            return new Outcome(200,next.reason(),next);
-        });
-    }
-    private static void landEffect(Connection c,UUID effect,String state,String reason,String note,byte[] payload) throws SQLException {
-        try(PreparedStatement ps=c.prepareStatement("""
-                UPDATE work_land_effect SET state=?,reason=?,note=COALESCE(?,note),fix_payload=COALESCE(?,fix_payload),next_check_at=NULL,failing_since=NULL,updated_at=now()
-                WHERE effect_id=? AND state IN ('pending','checking','waiting_checks','uncertain')
-                """)) {
-            ps.setString(1,state);ps.setString(2,reason);ps.setString(3,note);ps.setBytes(4,payload);ps.setObject(5,effect);
-            ps.executeUpdate();
-        }
-    }
-    /**
-     * The reviewer holds a land fix with open blockers (operator, 2026-10-21): the item is handed over with the review,
-     * and no agent fixes the findings. Outside a land fix the review step keeps waiting as before.
-     */
-    Outcome landFixReviewBlocked(String id,UUID attempt) {
-        return underLock(id,(c,history,item)->{
-            if(!"review".equals(item.phase()) || !"active".equals(item.workflowStatus()) || !Objects.equals(attempt,item.progress().attemptId())
-                    || !WorkItemLifecycle.landFixInProgress(facts(history)))return new Outcome(409,"work_item_changed",item);
-            WorkItemEvent next=WorkItemLifecycle.landHanded(item,"land_fix_review_blocked");
-            store.appendDecision(c,history,next,"land-fix-review-blocked:"+attempt);
-            return new Outcome(200,next.reason(),next);
-        });
-    }
     /**
      * Appends a decision, and when it stops a land fix in progress, the hand-off after it (review of slice 7b): the
      * fix's pull request is still open, so a stopped item would refuse readmit and recheck alike and wait for good. The
@@ -437,117 +260,43 @@ public class WorkItemTransitions {
     static List<WorkItemEvent> facts(List<dev.codespire.contract.event.EventEnvelope> history) {
         return history.stream().map(event->(WorkItemEvent)event.payload()).toList();
     }
-    /** The land effect found the pull request closed without a merge (spec §7.8). */
-    Outcome landClosed(String id,UUID effect) {
-        return underLock(id,(c,history,item)->{
-            if(!landAttempt(item,effect))return new Outcome(409,"work_item_changed",item);
-            WorkItemEvent next=WorkItemLifecycle.pullRequestClosed(item);
-            store.appendDecision(c,history,next,"land-closed:"+effect);
-            return new Outcome(200,next.reason(),next);
-        });
+    /** {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9). */
+    static WorkItemLifecycle.EntryMode entryMode(List<dev.codespire.contract.event.EventEnvelope> history) {
+        return WorkItemLifecycle.landFixInProgress(facts(history))?WorkItemLifecycle.EntryMode.LAND_FIX:WorkItemLifecycle.EntryMode.ORDINARY;
     }
     /**
-     * A person merged the pull request on GitHub (spec §7.8, A2). The webhook says a merge happened; the merge commit
-     * is read back from GitHub before anything is recorded. Recorded once per generation and pull request, whichever
-     * observer saw it first, at any phase after the pull request exists and on a suspended item too. The branch is the
-     * factory's, so the land effect still deletes it at the merged head ({@link #landingEffect}).
-     *
-     * @param mergedBy the merger GitHub named in the webhook (merged_by, never the sender); the read's when absent
+     * Why a recheck may not continue this item: it stopped or is running, so only readmission may; or land handed it
+     * over, where only Retry land goes on, with a note and the verified head (A3). Null when it may.
      */
-    Outcome landedByHuman(String id,String delivery,long pullRequest,String mergedBy) {
-        WorkItemEvent reference=require(id);
-        // Forge reads never run under the item lock.
-        dev.codespire.contract.port.PullRequestLander.LandState pr=readPullRequest(reference,pullRequest);
-        if(pr==null)return new Outcome(503,"land_read_failed",reference);
-        String merger=mergedBy==null || mergedBy.isBlank()?pr.mergedBy():mergedBy;
-        if(!pr.merged() || pr.mergeCommitSha()==null || !pr.mergeCommitSha().matches("[0-9a-f]{40}") || merger==null || merger.isBlank())
-            return new Outcome(409,"merge_not_confirmed",reference);
-        String handle=mergerHandle(reference.repositoryId(),merger);
-        return underLock(id,(c,history,item)->{
-            if("retired".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
-            List<WorkItemEvent> facts=history.stream().map(event->(WorkItemEvent)event.payload()).toList();
-            if(WorkItemLifecycle.landedIn(facts,item.generation(),pullRequest))return new Outcome(200,"landing_already_recorded",item);
-            WorkExecution execution=item.progress().execution();
-            if(execution==null || execution.pullRequest()==null || execution.pullRequest().number()!=pullRequest)return new Outcome(409,"work_item_changed",item);
-            // GitHub's pull request read does not say which method a person used, and the saved setting is no evidence of it.
-            WorkLanding landing=new WorkLanding(execution.pullRequest(),pr.mergeCommitSha(),WorkLanding.UNKNOWN_METHOD,merger,clock.now());
-            WorkItemEvent next=WorkItemLifecycle.landed(item,landing);
-            store.appendDecision(c,history,next,"land-webhook:"+delivery);
-            UUID effect=landingEffect(c,next,landing,pr.headSha()==null?execution.head():pr.headSha());
-            ticketAfterLand(c,next,effect,landing,handle);
-            return new Outcome(200,next.reason(),next);
-        });
+    private static Outcome recheckRefusal(WorkItemEvent item) {
+        if(Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
+            return new Outcome(409,"explicit_readmission_required",item);
+        if(WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
+        return null;
     }
     /**
-     * The land effect row that deletes the branch after a merge someone else made. A row already holding a merge is
-     * the effect's own observation of it, which records the same landing and only advances; a row that sent no merge
-     * yet, or whose merge answer was lost, moves to cleaning without a merge; with neither, a row starts at cleaning.
+     * Why a readmission may not start a new generation of this item, under the item lock; null when it may. The order
+     * names the strongest reason first: a merged pull request cannot be built again beside itself (spec §7.9), then
+     * anything that still holds the delivered pull request open, then a merge whose outcome is not recorded yet.
      */
-    private static UUID landingEffect(Connection c,WorkItemEvent landed,WorkLanding landing,String mergedHead) throws SQLException {
-        String item=landed.workItemId();long generation=landed.generation(),number=landing.pullRequest().number();
-        try(PreparedStatement ps=c.prepareStatement("SELECT effect_id FROM work_land_effect WHERE work_item_id=? AND generation=? AND pr_number=? AND merge_commit IS NOT NULL")) {
-            ps.setString(1,item);ps.setLong(2,generation);ps.setLong(3,number);
-            try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getObject(1,UUID.class);}
-        }
-        try(PreparedStatement ps=c.prepareStatement("""
-                UPDATE work_land_effect SET state='cleaning',reason=NULL,merge_commit=?,merged_by=?,method=?,merged_head=?,next_check_at=NULL,failing_since=NULL,updated_at=now()
-                WHERE effect_id=(SELECT effect_id FROM work_land_effect WHERE work_item_id=? AND generation=? AND pr_number=?
-                AND state IN ('pending','checking','waiting_checks','merging','uncertain') ORDER BY created_at DESC LIMIT 1) RETURNING effect_id
-                """)) {
-            ps.setString(1,landing.mergeCommit());ps.setString(2,landing.mergedBy());ps.setString(3,landing.method());ps.setString(4,mergedHead);
-            ps.setString(5,item);ps.setLong(6,generation);ps.setLong(7,number);
-            try(ResultSet rs=ps.executeQuery()){if(rs.next())return rs.getObject(1,UUID.class);}
-        }
-        UUID effect=UUID.randomUUID();
-        try(PreparedStatement ps=c.prepareStatement("""
-                INSERT INTO work_land_effect(effect_id,work_item_id,generation,item_revision,pr_number,approved_head,state,merge_commit,merged_by,method,merged_head)
-                VALUES (?,?,?,(SELECT revision FROM work_item WHERE id=?),?,?,'cleaning',?,?,?,?)
-                """)) {
-            ps.setObject(1,effect);ps.setString(2,item);ps.setLong(3,generation);ps.setString(4,item);ps.setLong(5,number);ps.setString(6,mergedHead);
-            ps.setString(7,landing.mergeCommit());ps.setString(8,landing.mergedBy());ps.setString(9,landing.method());ps.setString(10,mergedHead);
-            ps.executeUpdate();
-        }
-        return effect;
+    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,
+                                          WorkItemLifecycle.EntryMode mode) throws SQLException {
+        if(Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
+        if(landed(history,item))return new Outcome(409,"readmission_landed",item);
+        // Waiting at land for any reason, a hand-off, a land that cannot merge here or one switched off, leaves the
+        // delivered pull request open: a close stops the item, so only a stopped or failed land may build again (A8).
+        if("land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable","not_eligible").contains(item.workflowStatus()))
+            return new Outcome(409,"readmission_land_pending",item);
+        // A land fix waiting for a person still has its pull request open; readmit would build a second one beside it.
+        if(mode==WorkItemLifecycle.EntryMode.LAND_FIX)return new Outcome(409,"readmission_land_pending",item);
+        if(mergeUnconfirmed(c,item))return new Outcome(409,"readmission_merge_unconfirmed",item);
+        return null;
     }
-    /** The pull request as GitHub reports it now, read through the FACTORY or REVIEWER account; null when it cannot be read. */
-    dev.codespire.contract.port.PullRequestLander.LandState readPullRequest(WorkItemEvent item,long pullRequest) {
-        Optional<dev.codespire.orchestrator.provider.ScmProvider> account=accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.FACTORY)
-                .or(()->accounts.resolve(item.repositoryId(),dev.codespire.orchestrator.provider.ProviderRole.REVIEWER));
-        if(account.isEmpty())return null;
-        try {
-            dev.codespire.contract.port.PullRequestLander lander=clients.pullRequestLander(account.get());
-            if(!lander.available())return null;
-            return lander.read(sources.get(item.sourceId()).orElseThrow(NotFoundException::new).repository(),pullRequest);
-        }catch(RuntimeException unreadable){return null;}
-    }
-    /**
-     * A person closed the pull request on GitHub without merging it (spec §7.8): the item stops, nothing is deleted
-     * and the ticket is not told, since nothing landed. A land that has not sent its merge ends with it; one whose
-     * merge answer was lost keeps reading, and reads the same close (§7.3).
-     */
-    Outcome closedByHuman(String id,String delivery,long pullRequest) {
-        return underLock(id,(c,history,item)->{
-            if(Set.of("retired","completed").contains(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
-            if("stopped".equals(item.workflowStatus()) && "pr_closed_by_human".equals(item.reason()))return new Outcome(200,"close_already_recorded",item);
-            WorkExecution execution=item.progress().execution();
-            if(execution==null || execution.pullRequest()==null || execution.pullRequest().number()!=pullRequest)return new Outcome(409,"work_item_changed",item);
-            WorkItemEvent next=WorkItemLifecycle.pullRequestClosed(item);
-            store.appendDecision(c,history,next,"pr-closed:"+delivery);
-            try(PreparedStatement ps=c.prepareStatement(
-                    "UPDATE work_land_effect SET state='closed',reason=NULL,next_check_at=NULL,updated_at=now() WHERE work_item_id=? AND generation=? AND pr_number=? AND state IN ('pending','checking','waiting_checks')")) {
-                ps.setString(1,id);ps.setLong(2,item.generation());ps.setLong(3,pullRequest);ps.executeUpdate();
-            }
-            return new Outcome(200,next.reason(),next);
-        });
-    }
-    private static boolean landAttempt(WorkItemEvent item,UUID effect) {
-        return "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && effect.equals(item.progress().attemptId());
-    }
-    private interface Locked {
+    interface Locked {
         Outcome apply(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException,java.io.IOException;
     }
     /** Local serialization only, in the same lock order as an answer; no remote authority read decides a forge fact. */
-    private Outcome underLock(String id,Locked body) {
+    Outcome underLock(String id,Locked body) {
         WorkItemEvent reference=require(id);
         return QuarkusTransaction.requiringNew().call(()->{
             try(Connection c=dataSource.getConnection()) {
@@ -579,21 +328,21 @@ public class WorkItemTransitions {
         }
     }
 
-    private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now) {
-        return enter(item,historySize,approved,now,false);
-    }
-    private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now,boolean landFix) {
+    private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now,WorkItemLifecycle.EntryMode mode) {
         return WorkItemLifecycle.enter(item,store.load(item.workItemId()),historySize,approved,now,
-                capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID(),landFix);
+                capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID(),mode);
     }
 
-    /** Outside a land fix a build proves a fresh checkpoint with no pull request; a fix's build carries the one it fixes. */
-    private static boolean builtOn(WorkExecution proof,WorkExecution previous,boolean landFix) {
-        if(!landFix)return proof.pullRequest()==null;
+    /** Outside a land fix a build proves a fresh checkpoint, which no pull request holds yet. */
+    private static boolean builtFresh(WorkExecution proof) {
+        return proof.pullRequest()==null;
+    }
+    /** A land fix's build carries the pull request it fixes. */
+    private static boolean builtOnFixedPullRequest(WorkExecution proof,WorkExecution previous) {
         return previous!=null && previous.pullRequest()!=null && previous.pullRequest().equals(proof.pullRequest());
     }
 
-    private static boolean validExecution(WorkItemEvent item,PhaseResult result,boolean landFix) {
+    private static boolean validExecution(WorkItemEvent item,PhaseResult result,WorkItemLifecycle.EntryMode mode) {
         WorkExecution proof=result.execution(),previous=item.progress().execution();
         // Older policy-only histories carry no build execution. They cannot authorize a delivery;
         // the capability/effect checks require its evidence independently.
@@ -602,7 +351,8 @@ public class WorkItemTransitions {
             case "build" -> proof.build().workItemId().equals(item.workItemId()) && proof.build().generation()==item.generation()
                     && proof.build().buildAttemptId().equals(result.attemptId()) && item.preparation()!=null
                     && proof.build().preparationBinding().equals(item.preparation().binding())
-                    && proof.verificationAttempt()==null && proof.reviewId()==null && builtOn(proof,previous,landFix);
+                    && proof.verificationAttempt()==null && proof.reviewId()==null
+                    && (mode==WorkItemLifecycle.EntryMode.LAND_FIX?builtOnFixedPullRequest(proof,previous):builtFresh(proof));
             // The M4 result, never a bare attempt id: a success flag without an outcome verified nothing.
             case "verify" -> previous!=null && proof.verification()!=null && proof.verificationAttempt().equals(result.attemptId())
                     && proof.verification().passed()==result.successful() && proof.equals(previous.verified(proof.verification()));
@@ -614,20 +364,19 @@ public class WorkItemTransitions {
         };
     }
 
-    /** Accept fetched manual evidence through each actual policy branch; never invent an executor result. */
-    private WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
-                                        WorkItemEvent item,boolean approved,Instant now) throws SQLException,java.io.IOException {
-        return enterPrepared(c,history,item,approved,now,false);
-    }
-    /** @param landFix whether a land fix is in progress, which skips build and deliver gates (A9) */
-    private WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
-                                        WorkItemEvent item,boolean approved,Instant now,boolean landFix) throws SQLException,java.io.IOException {
-        WorkItemEvent next=enter(item,history.size(),approved,now,landFix);
+    /**
+     * Accept fetched manual evidence through each actual policy branch; never invent an executor result.
+     *
+     * @param mode {@link WorkItemLifecycle.EntryMode#LAND_FIX} while a land fix is in progress, which skips build and deliver gates (A9)
+     */
+    WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
+                                WorkItemEvent item,boolean approved,Instant now,WorkItemLifecycle.EntryMode mode) throws SQLException,java.io.IOException {
+        WorkItemEvent next=enter(item,history.size(),approved,now,mode);
         while("ARTIFACT_ACCEPTED".equals(next.milestone())) {
             store.appendDecision(c,history,next,"artifact:"+next.preparation().binding()+":"+next.phase());
             history=store.history(next.workItemId());
             next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(next.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
-            next=enter(next,history.size(),false,now,landFix);
+            next=enter(next,history.size(),false,now,mode);
         }
         return next;
     }
@@ -685,10 +434,10 @@ public class WorkItemTransitions {
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
                     if(approve) {
                         // A Retry build inside a land fix stays on its pull request (Review Focus 8).
-                        boolean landFix=WorkItemLifecycle.landFixInProgress(facts(history));
+                        WorkItemLifecycle.EntryMode mode=entryMode(history);
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
-                        next=enterPrepared(c,history,next,true,now,landFix);
+                        next=enterPrepared(c,history,next,true,now,mode);
                         history=store.history(id);
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
@@ -729,10 +478,10 @@ public class WorkItemTransitions {
             ps.setObject(1,gate);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new NotFoundException();return rs.getString(1);}
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
-    private WorkItemEvent require(String id) {
+    WorkItemEvent require(String id) {
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();return item;
     }
-    private static WorkItemEvent.Authority authority(WorkSourceRegistry.Source source) {
+    static WorkItemEvent.Authority authority(WorkSourceRegistry.Source source) {
         return new WorkItemEvent.Authority(source.accountId(),source.version().source(),source.version().account(),source.version().repository());
     }
     private static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {
@@ -798,7 +547,7 @@ public class WorkItemTransitions {
                 }
                 WorkItemEvent next=current.decision(observed.policy().revision(),authority(observed.source()),select(observed,current),"intake","awaiting_input","artifacts_registered","ARTIFACTS_REGISTERED",null,current.progress().reserve(false)).prepared(preparation);
                 store.appendDecision(c,history,next,"preparation:"+UUID.randomUUID());history=store.history(id);
-                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"prepared-transition:"+UUID.randomUUID());
                 // In THIS transaction, so a registration that rolls back does not leave the screen
                 // claiming the item is healthy. Every registration clears it, not only the sweep's:

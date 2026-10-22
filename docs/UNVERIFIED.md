@@ -226,6 +226,15 @@ when it lands).
 - **Jira `close` is skipped.** A Jira source under the `close` ticket rule gets the comment, keeps its
   status, and the item notes `ticket_close_unsupported`: a close needs a per-workflow transition id that
   nothing configures. The GitHub Issues and GitLab close are proven against fakes only.
+- **Withdrawing consent after approval is proven against fakes only.** Before the merge is claimed the land
+  re-reads the ticket's labels, the policy and the source, as delivery does before its permit; a change hands the
+  item over with `land_policy_changed` (`WorkLandingIT.aLabelRemovedAfterApprovalIsNotMerged` and its two
+  siblings). A ticket that cannot be read then holds the merge as `land_read_failed`. Stop land also ends a land
+  that has sent no merge yet (`…stopLandEndsALandStillWaitingForChecks`). None of it ran against a real tracker.
+- **A lost merge on an item taken over keeps reading for six hours.** GitHub can finish a merge after its edge gave
+  up, and the factory's own merged webhook is left to the land row, so the row keeps reading an open pull request at
+  the approved head (`…aTakeoverDuringAnUncertainMergeKeepsReadingAnOpenPullRequest`) and is refused after six
+  hours. A merge GitHub finishes later than that is not recorded, and nothing measured how late one can finish.
 - **The land timings are a guess.** Checks are re-read every 60 s and given up after 6 h
   (`land_checks_timeout`); a row that cannot read GitHub before its merge call is handed over after 6 h.
   None was measured against a real repository's check durations.

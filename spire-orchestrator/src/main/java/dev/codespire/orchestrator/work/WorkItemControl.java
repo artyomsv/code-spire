@@ -16,6 +16,7 @@ public class WorkItemControl {
     @Inject WorkSourceRegistry sources;
     @Inject WorkPolicyRegistry policies;
     @Inject WorkItemTransitions transitions;
+    @Inject WorkLandTransitions landTransitions;
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
 
@@ -52,14 +53,17 @@ public class WorkItemControl {
         if(execution==null || execution.pullRequest()==null)return new WorkItemTransitions.Outcome(409,"retry_land_unavailable",reference);
         WorkItemTransitions.Observation observed=transitions.observe(reference);
         if(observed.evidence().failure()!=null)return new WorkItemTransitions.Outcome(503,observed.evidence().failure(),reference);
-        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=transitions.readPullRequest(reference,execution.pullRequest().number());
+        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=landTransitions.readPullRequest(reference,execution.pullRequest().number());
         if(pullRequest==null || pullRequest.headSha()==null)return new WorkItemTransitions.Outcome(503,"retry_land_head_unavailable",reference);
-        return transitions.retryLandControlled(id,expected,observed,subject,note,pullRequest.headSha());
+        return landTransitions.retryLandControlled(id,expected,observed,subject,note,pullRequest.headSha());
     }
-    /** Stop on an item waiting at land (spec §7.6, review of slice 9). Nothing is read or written on the forge: the pull request stays open. */
+    /**
+     * Stop on an item waiting at land, or on a land that has sent no merge yet (spec §7.6, review of slice 9 and of the
+     * branch). Nothing is read or written on the forge: the pull request stays open.
+     */
     public WorkItemTransitions.Outcome stopLand(String id,long expected,String subject,String note) {
         landCommand(id,subject,note);
-        return transitions.stopLandControlled(id,expected,subject,note);
+        return landTransitions.stopLandControlled(id,expected,subject,note);
     }
     /** Both land commands are audited, so both need a verified operator and a note, like resume. */
     private WorkItemEvent landCommand(String id,String subject,String note) {

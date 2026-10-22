@@ -57,16 +57,23 @@ public final class WorkItemLifecycle {
     public static WorkItemEvent fold(List<WorkItemEvent> events) {
         return events.isEmpty() ? null : events.getLast();
     }
-    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
-        return enter(item,previous,historySize,approved,now,available,decisionId,false);
-    }
     /**
-     * @param landFix whether this generation's latest land fix is still in progress ({@link #landFixInProgress}). The
-     *     decider sees no history, so the caller derives it under the item lock (A9). During a fix the build and deliver
-     *     gates are skipped, because the new land approval is the one human check (operator, 2026-10-21), and a build
-     *     keeps the pull request it fixes. Verify and land keep their gates.
+     * How a phase is entered. The decider sees no history, so the caller derives it under the item lock (A9):
+     * {@link #LAND_FIX} while this generation's latest land fix is still in progress ({@link #landFixInProgress}).
      */
-    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,boolean landFix) {
+    public enum EntryMode {
+        ORDINARY,
+        /**
+         * The build and deliver gates are skipped, because the new land approval is the one human check (operator,
+         * 2026-10-21), and a build keeps the pull request it fixes. Verify and land keep their gates.
+         */
+        LAND_FIX
+    }
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
+        return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);
+    }
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,EntryMode mode) {
+        boolean landFix=mode==EntryMode.LAND_FIX;
         if(item.policy().selected()==null)return state(item,"not_eligible",item.policy().reason(),"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("complete".equals(item.phase()))return state(item,"completed","all_phases_completed","WORK_ITEM_COMPLETED",item.gate(),item.progress().reserve(false));
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
@@ -80,7 +87,7 @@ public final class WorkItemLifecycle {
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }
-        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,landFix);
+        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,mode);
         if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
             return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
@@ -149,7 +156,7 @@ public final class WorkItemLifecycle {
      */
     public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
             "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
-            "land_fix_review_blocked","land_fix_run_failed","land_fix_stopped","land_account_unavailable","land_read_failed");
+            "land_fix_review_blocked","land_fix_run_failed","land_fix_stopped","land_account_unavailable","land_read_failed","land_policy_changed");
 
     /**
      * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only
@@ -217,6 +224,17 @@ public final class WorkItemLifecycle {
         if(!landStoppable(item))throw new IllegalStateException("Only an item waiting at land can stop land, not "
                 +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
         return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",superseded(item.gate(),"land_stopped"),item.progress().reserve(false));
+    }
+    /**
+     * Stop on a land still before its merge call (review of the branch): a land waiting hours for checks is not handed
+     * over, and the operator may withdraw it. The decider cannot see the effect row, so the caller proves, under the
+     * item lock and in the same transaction, that no merge was sent and refuses the row. The land attempt is finished.
+     */
+    public static WorkItemEvent landStoppedBeforeMerge(WorkItemEvent item) {
+        if(!"land".equals(item.phase()) || !"active".equals(item.workflowStatus()))throw new IllegalStateException("Only an active land can stop before its merge, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
+        WorkProgress progress="started".equals(item.progress().attemptState())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",superseded(item.gate(),"land_stopped"),progress);
     }
     /**
      * Statuses at land where the delivered pull request is still open and nothing moves the item on: land cannot merge

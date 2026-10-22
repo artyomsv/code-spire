@@ -193,7 +193,7 @@ public class WorkItemResource {
                 sweep.health(id,item.generation()).orElse(null),land(id,item,events));
     }
 
-    @Inject WorkLandSweep landing;
+    @Inject WorkLandEffects landing;
     @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;
 
     /** The latest land attempt of this generation, its detail decrypted for the operator; null before land is approved. */
@@ -212,16 +212,22 @@ public class WorkItemResource {
                 // A land gate with no attempt yet still says what approving it will do (spec §7.10).
                 if(!attempted && !"land".equals(item.phase()))return null;
                 dev.codespire.orchestrator.factory.LandSettings.Settings saved=landSettings.get(repository);
+                boolean handedOver=dev.codespire.contract.work.WorkItemLifecycle.landHandedOver(item);
                 if(!attempted)return new LandView("not_started",null,null,null,dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()),
-                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,false,false);
-                WorkLandSweep.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
+                        dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),null,null,attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,
+                        handedOver,dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item));
+                WorkLandEffects.Detail detail=landing.detail(rs.getObject(1,UUID.class),rs.getBytes(4));
                 String state=rs.getString(2),note=rs.getString(6),method=rs.getString(5);
+                // Stop land reaches a land that sent no merge yet; the transition refuses the row of the item's own attempt.
+                boolean stoppable=dev.codespire.contract.work.WorkItemLifecycle.landStoppable(item)
+                        || "land".equals(item.phase()) && "active".equals(item.workflowStatus()) && WorkLandEffects.BEFORE_MERGE.contains(state)
+                        && rs.getObject(1,UUID.class).equals(item.progress().attemptId());
                 Boolean deleted="done".equals(state) && "branch_delete_failed".equals(note)?Boolean.FALSE:"done".equals(state) && note==null?Boolean.TRUE:null;
                 return new LandView(state,rs.getString(3),detail==null?null:detail.message(),detail==null?null:detail.checks(),
                         method==null?dev.codespire.orchestrator.factory.LandSettings.wire(saved.mergeMethod()):method,
                         // One note is shown: a branch that would not delete matters more than a ticket left open (A1).
                         dev.codespire.orchestrator.factory.LandSettings.wire(saved.ticketRule()),deleted,note==null?rs.getString(7):note,
-                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,false,false);
+                        attempt,(int)Math.min(saved.fixAttempts(),runsLeft),fixing,handedOver,stoppable);
             }
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }

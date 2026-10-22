@@ -29,8 +29,8 @@ class WorkLandFixDecisionTest {
     WorkItemEvent before(WorkItemEvent item,String phase) {
         return item.decision(item.policyRevision(),item.authority(),item.policy(),phase,"awaiting_input","phase_completed","PHASE_COMPLETED",null,item.progress().reserve(false));
     }
-    WorkItemEvent enter(WorkItemEvent item,boolean landFix) {
-        return WorkItemLifecycle.enter(item,item,7,false,Instant.EPOCH,true,UUID.randomUUID(),landFix);
+    WorkItemEvent enter(WorkItemEvent item,WorkItemLifecycle.EntryMode mode) {
+        return WorkItemLifecycle.enter(item,item,7,false,Instant.EPOCH,true,UUID.randomUUID(),mode);
     }
 
     @Test void aLandFixRewindsToBuildKeepingThePullRequest(){
@@ -53,9 +53,9 @@ class WorkLandFixDecisionTest {
     }
     @Test void theLandFixFlagAloneSkipsTheBuildGate(){
         WorkItemEvent build=before(atLand("approve"),"build");
-        WorkItemEvent fixing=enter(build,true);
+        WorkItemEvent fixing=enter(build,WorkItemLifecycle.EntryMode.LAND_FIX);
         assertEquals("active",fixing.workflowStatus());assertEquals("phase_started",fixing.reason());assertNull(fixing.gate());
-        WorkItemEvent ordinary=enter(build,false);
+        WorkItemEvent ordinary=enter(build,WorkItemLifecycle.EntryMode.ORDINARY);
         assertEquals("waiting_approval",ordinary.workflowStatus());assertEquals("build",ordinary.gate().phase());
     }
     @Test void theLandFixFlagAloneSkipsTheDeliverGate(){
@@ -65,23 +65,23 @@ class WorkLandFixDecisionTest {
         WorkPolicy.Profile profile=item.policy().selected();
         WorkPolicy.Selection selection=new WorkPolicy.Selection(profile,modes,List.of(),"policy_selected",List.of(),profile,profile.limits());
         WorkItemEvent deliver=item.decision(1,item.authority(),selection,"deliver","awaiting_input","phase_completed","PHASE_COMPLETED",null,item.progress().reserve(false));
-        WorkItemEvent fixing=enter(deliver,true);
+        WorkItemEvent fixing=enter(deliver,WorkItemLifecycle.EntryMode.LAND_FIX);
         assertEquals("active",fixing.workflowStatus());assertNull(fixing.gate());assertEquals("deliver",fixing.progress().attemptPhase());
-        WorkItemEvent ordinary=enter(deliver,false);
+        WorkItemEvent ordinary=enter(deliver,WorkItemLifecycle.EntryMode.ORDINARY);
         assertEquals("waiting_approval",ordinary.workflowStatus());assertEquals("deliver",ordinary.gate().phase());
     }
     @Test void theLandFixFlagNeverSkipsVerifyOrLand(){
         for(String phase:List.of("verify","land")) {
-            WorkItemEvent next=enter(before(atLand("approve"),phase),true);
+            WorkItemEvent next=enter(before(atLand("approve"),phase),WorkItemLifecycle.EntryMode.LAND_FIX);
             assertEquals("waiting_approval",next.workflowStatus(),phase);assertEquals(phase,next.gate().phase());
         }
     }
     @Test void aLandFixBuildStartKeepsTheExecutionAndCountsARun(){
         WorkItemEvent item=atLand("auto");WorkItemEvent build=before(item,"build");
-        WorkItemEvent fixing=enter(build,true);
+        WorkItemEvent fixing=enter(build,WorkItemLifecycle.EntryMode.LAND_FIX);
         assertEquals(item.progress().runs()+1,fixing.progress().runs());assertEquals("build",fixing.progress().attemptPhase());
         assertEquals(item.progress().execution(),fixing.progress().execution(),"the kept pull request rides the fix build");
-        assertNull(enter(build,false).progress().execution(),"an ordinary build starts from nothing");
+        assertNull(enter(build,WorkItemLifecycle.EntryMode.ORDINARY).progress().execution(),"an ordinary build starts from nothing");
     }
     WorkItemEvent gateOpened(WorkItemEvent item,String phase) {
         WorkGate gate=new WorkGate(UUID.randomUUID(),1,"OPEN",phase,item.generation(),5,1,item.authority(),"b".repeat(40),Instant.EPOCH,Instant.EPOCH.plusSeconds(60),null,null,null,null);
@@ -124,7 +124,7 @@ class WorkLandFixDecisionTest {
     /** {@code item}'s land refused, its fix built on {@code head} and verifying: the execution is no longer the approved one. */
     List<WorkItemEvent> fixingOn(WorkItemEvent item,String head) {
         WorkItemEvent requested=WorkItemLifecycle.landFixRequested(item,"land_checks_failed");
-        WorkItemEvent building=enter(requested,true);
+        WorkItemEvent building=enter(requested,WorkItemLifecycle.EntryMode.LAND_FIX);
         WorkExecution built=new WorkExecution("TEST-fix-run",new WorkRunBinding("TEST-item",1,building.progress().attemptId(),"a".repeat(64)),head,null,null,PR,null);
         WorkItemEvent verifying=building.decision(1,building.authority(),building.policy(),"verify","active","phase_started","PHASE_STARTED",null,
                 building.progress().finish(0,0,0).start(UUID.randomUUID(),"verify",Instant.EPOCH).withExecution(built));

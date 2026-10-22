@@ -50,14 +50,24 @@ public class LandSettings {
     }
 
     public Settings get(UUID repository) {
-        try (Connection c = dataSource.getConnection()) { return get(c, repository, false); }
+        try (Connection c = dataSource.getConnection()) { return get(c, repository); }
         catch (SQLException failure) { throw database(failure); }
     }
 
     /** On the caller's connection, so the land effect can read the rule inside its own transaction. */
-    public Settings get(Connection c, UUID repository, boolean lock) throws SQLException {
-        String sql = "SELECT revision,merge_method,ticket_rule,fix_attempts,updated_by,updated_at"
-                + " FROM repository_land_settings WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
+    public Settings get(Connection c, UUID repository) throws SQLException {
+        return read(c, repository, SELECT);
+    }
+
+    /** {@link #get(Connection, UUID)} holding the row until the caller's transaction ends, so a save compares a revision nobody else can move. */
+    Settings getForUpdate(Connection c, UUID repository) throws SQLException {
+        return read(c, repository, SELECT + " FOR UPDATE");
+    }
+
+    private static final String SELECT = "SELECT revision,merge_method,ticket_rule,fix_attempts,updated_by,updated_at"
+            + " FROM repository_land_settings WHERE repository_id=?";
+
+    private Settings read(Connection c, UUID repository, String sql) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, repository);
             try (ResultSet rs = ps.executeQuery()) {
@@ -91,7 +101,7 @@ public class LandSettings {
                 ps.setObject(1, repository);
                 try (ResultSet rs = ps.executeQuery()) { if (!rs.next()) throw new Refused("repository_unknown"); }
             }
-            if (get(c, repository, true).revision() != input.expectedRevision()) throw new Refused("land_settings_changed");
+            if (getForUpdate(c, repository).revision() != input.expectedRevision()) throw new Refused("land_settings_changed");
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO repository_land_settings(repository_id,merge_method,ticket_rule,fix_attempts,updated_by)
                     VALUES (?,?,?,?,?)

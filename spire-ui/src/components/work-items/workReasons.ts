@@ -135,8 +135,9 @@ const REASONS = new Map(Object.entries({
   readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',
   readmission_land_pending: 'This item waits at land, or is fixing, with its pull request still open, so re-admitting would build a second one. Recheck, retry land or stop it instead.',
   land_account_unavailable: "This repository's factory account could not be used to merge for six hours: it is missing, switched off, or has no login. Fix it on the Repositories screen, then retry land or stop.",
-  land_read_failed: 'The pull request could not be read on GitHub, and no merge was sent. After six hours of this the item waits for you: check that the repository and the pull request still exist, then retry land or stop.',
-  land_merge_unconfirmed: 'A merge was sent, but GitHub has not answered whether it happened for six hours. The factory keeps reading and will record what GitHub did; check the pull request on GitHub.',
+  land_read_failed: 'The pull request or its ticket could not be read, and no merge was sent. After six hours of this the item waits for you: check that the repository, the pull request and the ticket still exist and that the factory account can read them, then retry land or stop.',
+  land_merge_unconfirmed: 'A merge was sent, and GitHub has not confirmed whether it happened. The factory keeps reading and will record what GitHub did; check the pull request on GitHub.',
+  land_policy_changed: 'The labels, the policy or the work source changed after land was approved, so nothing was merged. Retry land asks for a new approval under the current policy; or stop.',
   land_merge_unreadable: 'GitHub reports the pull request merged but did not say by whom or at which commit. The factory reads it again shortly.',
   merge_outcome_unknown: 'The merge was sent and its answer was lost. The factory reads the pull request to find out what happened, and never sends the merge blind.',
   readmission_merge_unconfirmed: 'A merge of this pull request may already have happened, and the factory is still reading GitHub to find out. Try again once it has recorded the outcome.',
@@ -195,10 +196,13 @@ export function workRefusal(reason: string, detail: string | null): string {
   return (detail ? DETAILS.get(detail) : undefined) ?? workReason(reason);
 }
 
-/** Why land handed an item to the operator; mirrors WorkItemLifecycle.LAND_HANDOFF_REASONS. */
+/**
+ * Why land hands an item to the operator, for copy only: whether an item was handed over is the server's to say
+ * (`land.handedOver`). workReasons.test.ts reads WorkItemLifecycle.LAND_HANDOFF_REASONS so this list cannot drift.
+ */
 export const LAND_HANDOFF_REASONS: readonly string[] = ['land_head_moved', 'land_checks_timeout', 'land_checks_not_code', 'land_blocked', 'land_pr_draft',
   'land_merge_refused', 'land_merge_method_not_allowed', 'land_fix_attempts_exhausted', 'land_item_limit_reached', 'land_fix_review_blocked',
-  'land_fix_run_failed', 'land_fix_stopped', 'land_account_unavailable', 'land_read_failed'];
+  'land_fix_run_failed', 'land_fix_stopped', 'land_account_unavailable', 'land_read_failed', 'land_policy_changed'];
 
 /** Every reason land puts on an item, an effect or a refusal. */
 export const LAND_REASONS: readonly string[] = [...LAND_HANDOFF_REASONS, 'retry_land_required', 'retry_land_unavailable', 'retry_land_head_unavailable',

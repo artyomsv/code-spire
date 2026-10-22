@@ -17,7 +17,7 @@ import javax.sql.DataSource;
 /**
  * A merge made by hand that the pull request read has not confirmed (M4 land, spec §7.8): GitHub could not be read,
  * or did not show the merge yet. The webhook leaves one row in the same transaction as its receipt, and each land
- * sweep asks {@link WorkItemTransitions#landedByHuman} again until the read settles it. An uncertain observation is
+ * sweep asks {@link WorkLandTransitions#landedByHuman} again until the read settles it. An uncertain observation is
  * recovered by reading, so a transient read failure never leaves through the dead-letter topic, which nothing drains.
  */
 @ApplicationScoped
@@ -28,7 +28,7 @@ public class WorkLandObservations {
 
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
-    @Inject WorkItemTransitions transitions;
+    @Inject WorkLandTransitions transitions;
     @Inject WorkClock clock;
 
     record Observation(String item, long generation, long pullRequest, String delivery, String mergedBy) {}

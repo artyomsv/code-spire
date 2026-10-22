@@ -4,7 +4,7 @@ import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import SettingField from '../SettingField';
 import { composePreparation } from './workPreparationApi';
-import { LAND_HANDOFF_REASONS, workReason, workRefusal } from './workReasons';
+import { workReason, workRefusal } from './workReasons';
 
 interface Props {
   item: WorkItemDetail;
@@ -64,12 +64,13 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // land goes on with Retry land or Stop (spec §7.6, §7.9). The server refuses readmit and recheck there, so neither
   // is offered. Waiting at land for any other reason, such as a tracker outage, is still answered by recheck.
   // Readmit is refused at land whenever the item waits, handed or not: its delivered pull request is still open (A8).
+  // Whether the item was handed over, and whether Stop ends it, are the server's to say: it holds the reasons and the
+  // land row (review of the branch). Stop reaches a land that cannot merge here, one that is off, and one that has
+  // sent no merge yet; Retry land follows only a hand-off, since it opens a land gate.
   const landed = item.workflowStatus === 'completed' && item.progress?.execution?.landing != null;
-  const handedAtLand = item.phase === 'land' && item.workflowStatus === 'awaiting_input' && LAND_HANDOFF_REASONS.includes(item.reason);
+  const handedAtLand = item.land?.handedOver === true;
   const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable', 'not_eligible'].includes(item.workflowStatus);
-  // Land that cannot merge here, or that is off, leaves the pull request open with nothing else to move the item on, so
-  // Stop ends it there as after a hand-off. Retry land stays for a hand-off: it opens a land gate, which land here cannot.
-  const stoppableAtLand = handedAtLand || (item.phase === 'land' && ['capability_unavailable', 'not_eligible'].includes(item.workflowStatus));
+  const stoppableAtLand = item.land?.stoppable === true;
   const canResume = !handedAtLand && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
   const fixing = item.land?.fixInProgress === true;
