@@ -660,6 +660,15 @@ Not work. Written down because each has been rediscovered at least once.
   command at a time and never re-checks the cap at consumption, so N dispatches accepted while the
   window reads empty become N sequential paid runs after it has tripped. A live-run cap at dispatch
   (`SPIRE_FACTORY_MAX_LIVE_RUNS`) bounds the queue; the residual softness is the in-flight half.
+- **The land branch delete is check-then-act, not a compare-and-swap (M4 land, 2026-10-22).**
+  `GitHubPullRequestLander.deleteBranch` reads `GET /git/ref/heads/{b}`, compares the sha, then sends
+  `DELETE /git/refs/heads/{b}`, which takes no expected sha. A push landing between those two calls
+  is deleted with the branch and the method reports `DELETED` — the case a cancelled land-fix run's
+  late publisher push could hit. A push before the read is caught (`MOVED`, no delete sent). A real
+  compare-and-swap needs a git receive-pack push with the old oid (`--force-with-lease`), which the
+  orchestrator has no git transport for, or GraphQL `updateRefs` with `beforeOid`, whose availability
+  on the supported GitHub and GHES versions nobody has confirmed. Nothing may rely on the delete to
+  stop a late push (spec A6). Closing it means one of those two paths, measured live.
 
 ---
 

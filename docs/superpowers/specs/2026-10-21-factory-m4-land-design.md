@@ -126,8 +126,9 @@ what makes land `capability_unavailable` there):
 - `MergeOutcome merge(pr, expectedHeadSha, method)`: `PUT /pulls/{n}/merge` with `sha` and
   `merge_method`. Maps 200 to merged (with `sha`), 405 to `not_mergeable` (with GitHub's message),
   409 to `head_moved`, 422 to `refused` (message), and transport failure to `uncertain`.
-- `void deleteBranch(repo, branch, expectedSha)`: reads the ref first; deletes only when it points
-  at `expectedSha`; 404 and 422 (already gone, or auto-deleted by GitHub) count as done.
+- `void deleteBranch(repo, branch, expectedSha)`: reads the ref first; sends the delete only when it
+  read `expectedSha` (check-then-act, not a compare-and-swap: see A6); 404 and 422 (already gone, or
+  auto-deleted by GitHub) count as done.
   `GitHubClient` gains `DELETE`.
 
 The `mergeable_state` reading drives the decision (§7.4); the check reduction gives the fix run its
@@ -359,16 +360,24 @@ CI for every step (RED before GREEN), mutation checks on every guard, and a live
    status `pending` PENDING; `cancelled|timed_out|action_required|stale` handed with
    `land_checks_not_code` and the names. When `mergeable_state` is `clean`, pending non-required
    checks are not waited for. `mergeable_state: unknown` is treated like `mergeable == null`.
-5. **Merge outcomes (§7.2, §7.3).** `uncertain` only for I/O failures (timeout, connection reset,
-   unreadable response); every HTTP status is definite. 409: re-read; head unchanged → `checking`
+5. **Merge outcomes (§7.2, §7.3).** `uncertain` for I/O failures (timeout, connection reset,
+   unreadable response) and for any 5xx: a 502 or 504 from GitHub's edge is a lost answer, and GitHub
+   can finish the merge after the gateway gives up. Every status below 500 is definite. *(Amended
+   2026-10-22 after slice 1 review; this line first said every HTTP status was definite.)* A re-read
+   after any refusal that finds the pull request merged is recorded as `merged`, never handed.
+   409: re-read; head unchanged → `checking`
    (the base moved), head changed → `land_head_moved`. 403/404 → handed `land_merge_refused` with
    GitHub's message. A method the repository does not allow is detected in `checking` from
    `allow_*_merge`, not parsed from a 405 message.
 6. **Revocation is best effort (§7.8).** As today, cancel goes through the delivery sweep and a push
-   already running may land. The guards are the sha-pinned branch delete (which then records
-   `branch_delete_failed`) and that nothing is merged. A late build or verify result for a cancelled
-   fix run is accounted through `recordLateBuild` (`WorkItemTransitions.java:116`), never left failing
-   on `item_not_active`.
+   already running may land. The guards are the sha-pinned merge (nothing but `approved_head` is
+   merged) and the branch delete, which reads the ref first and sends no delete when the ref moved
+   (it then records `branch_delete_failed`). The delete is **not** a compare-and-swap: GitHub's
+   `DELETE /git/refs/...` takes no expected sha, so a push that lands between the read and the delete
+   is deleted with the branch and the delete reports done. That window is recorded in
+   `docs/UNVERIFIED.md` §E; nothing may rely on the delete to stop a late push. A late build or
+   verify result for a cancelled fix run is accounted through `recordLateBuild`
+   (`WorkItemTransitions.java:116`), never left failing on `item_not_active`.
 7. **Where the fix run starts (§7.5).** Like `/fix` (`FixDispatch.java:128`): clone the item branch at
    `approved_head` from the forge, `onExistingBranch(item branch)`, no dependency on a retained
    checkpoint. `approved_head` is also the publisher's expected remote head. The land-fix

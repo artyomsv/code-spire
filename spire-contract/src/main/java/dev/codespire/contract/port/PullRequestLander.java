@@ -7,12 +7,17 @@ import java.util.Set;
 
 /**
  * Lands a delivered pull request: reads its land state, reads the merge methods the repository
- * allows, merges it at an exact head and deletes its branch only at an exact sha. A forge without
- * an implementation is unavailable, which is what makes land {@code capability_unavailable} there.
+ * allows, merges it at an exact head and deletes its branch after reading it at an exact sha. A
+ * forge without an implementation is unavailable, which is what makes land
+ * {@code capability_unavailable} there.
  *
- * <p>Every HTTP status from {@link #merge} is definite; only an I/O failure is
+ * <p>A client-error answer from {@link #merge} is definite; a server error and an I/O failure are
  * {@link MergeOutcome.Uncertain}, and an uncertain merge is recovered by {@link #read}, never by
  * sending the merge again.
+ *
+ * <p>{@link #deleteBranch} is not a compare-and-swap where the forge offers none: a push landing
+ * between its read and its delete can be deleted with the branch. Callers must not rely on it to
+ * stop a late push.
  */
 public interface PullRequestLander {
     enum MergeMethod { MERGE, SQUASH, REBASE }
@@ -54,9 +59,9 @@ public interface PullRequestLander {
         record Merged(String sha) implements MergeOutcome {}
         /** 409: the head or the base moved; the caller re-reads. */
         record HeadConflict(String message) implements MergeOutcome {}
-        /** Any other HTTP status: definite, nothing was merged. */
+        /** Any other status below 500, a refused redirect included: definite, the forge merged nothing. */
         record Refused(int status, String message) implements MergeOutcome {}
-        /** I/O only: the merge may or may not have happened. */
+        /** A 5xx or an I/O failure: the merge may or may not have happened. */
         record Uncertain(String cause) implements MergeOutcome {}
     }
 

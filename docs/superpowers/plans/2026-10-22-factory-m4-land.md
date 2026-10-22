@@ -182,7 +182,7 @@ Inputs the spec implies but no slice's main path reaches. Each has its test in t
 ### Slice 1: `PullRequestLander` port and the GitHub adapter
 
 **Goal:** a forge port that reads a pull request's land state, reads the allowed merge methods, merges at an
-exact head and deletes a branch only at an exact sha. GitHub implements it; other forges do not. Nothing
+exact head and deletes a branch after reading it at an exact sha. GitHub implements it; other forges do not. Nothing
 calls it yet.
 
 **Files:**
@@ -269,7 +269,8 @@ Empty → PASSED.
   `Add the pull request lander port and its GitHub adapter` (body: what each method maps, A4/A5/A13).
 
 **Mutation guards:** reduction precedence line; empty→PASSED line; page-continuation condition; 409→HeadConflict
-mapping; I/O→Uncertain catch; sha check before `DELETE`; re-read after non-204; FACTORY role check.
+mapping; I/O→Uncertain catch; 5xx→Uncertain; sha check before `DELETE`; re-read after non-204; FACTORY
+role check; commit-status `complete` term in the `checks` return; pull-request number equality in `read`.
 
 ---
 

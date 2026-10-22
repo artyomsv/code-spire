@@ -24,10 +24,12 @@ import java.util.regex.Pattern;
  *   <li>{@link #read}: {@code GET /pulls/{n}}, then the head's {@code statuses[]} and every page of
  *   its check runs, reduced by {@link GitHubCheckReduction} (A4). Annotations are read for failed
  *   check runs only.</li>
- *   <li>{@link #merge}: {@code PUT /pulls/{n}/merge} with {@code sha} and {@code merge_method}. Every
- *   HTTP status is definite; only an I/O failure, an unreadable response included, is uncertain (A5).</li>
- *   <li>{@link #deleteBranch}: reads the ref first and deletes only at the expected sha; after any
- *   answer but 204 the ref is read again, and only its absence counts as gone (A13).</li>
+ *   <li>{@link #merge}: {@code PUT /pulls/{n}/merge} with {@code sha} and {@code merge_method}. A 4xx
+ *   is definite; a 5xx and an I/O failure, an unreadable response included, are uncertain (A5).</li>
+ *   <li>{@link #deleteBranch}: reads the ref and sends the {@code DELETE} only when it read the
+ *   expected sha; after any answer but 204 the ref is read again, and only its absence counts as gone
+ *   (A13). GitHub's ref {@code DELETE} takes no expected sha, so this is check-then-act: a push that
+ *   lands between the read and the {@code DELETE} is deleted with the branch (UNVERIFIED §E).</li>
  * </ul>
  */
 public final class GitHubPullRequestLander implements PullRequestLander {
@@ -96,6 +98,8 @@ public final class GitHubPullRequestLander implements PullRequestLander {
             return new MergeOutcome.Merged(sha);
         } catch (GitHubApiException e) {
             if (e.status() == 409) return new MergeOutcome.HeadConflict(message(e));
+            // A gateway answer is a lost answer: GitHub can finish the merge after its edge gives up.
+            if (e.status() >= 500) return new MergeOutcome.Uncertain("HTTP " + e.status());
             return new MergeOutcome.Refused(e.status(), message(e));
         } catch (UncheckedIOException e) {
             return new MergeOutcome.Uncertain(e.getMessage());
