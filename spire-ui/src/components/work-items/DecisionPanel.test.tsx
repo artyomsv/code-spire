@@ -200,6 +200,24 @@ it('says the server must report the binding when it does not', async () => {
   expect(screen.queryByText('TEST-the one step')).toBeNull();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 });
+// M4 land (spec §7.10): before approval the land gate says what approving will do.
+it('the land gate says what will happen', async () => {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'land', artifact: 'b'.repeat(40) } }]);
+  const pullRequest = { number: 901, url: 'https://TEST.example/pull/901', draft: false };
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, phase: 'land', progress: { execution: { runId: 'TEST-run',
+    build: { workItemId: 'TEST-item', generation: 2, buildAttemptId: 'TEST-attempt', preparationBinding: 'TEST-sha256' }, head: 'b'.repeat(40),
+    verificationAttempt: 'TEST-verify', pullRequest, reviewId: 'TEST-review' } },
+    land: { state: 'handed', reason: 'land_blocked', message: null, method: 'squash', ticketRule: 'close', branchDeleted: null, note: null,
+      checks: { state: 'FAILED', done: 3, total: 4, failed: [{ name: 'TEST-ci', conclusion: 'failure', title: 'TEST-title', summary: 'TEST-summary', annotations: [] }] },
+      attempt: 0, attemptsAllowed: 3, fixInProgress: false } });
+  show();
+  const preview = await screen.findByRole('region', { name: 'What land will do' });
+  expect(preview).toHaveTextContent('Merges pull request #901 with a squash merge');
+  expect(preview).toHaveTextContent('deletes its branch');
+  expect(preview).toHaveTextContent('closes the ticket');
+  expect(preview).toHaveTextContent('3 of 4 checks done');
+  expect(preview).toHaveTextContent('TEST-ci');
+});
 // A land decision binds a built commit, not the task texts, so it must not wait for them.
 it('does not hold a land decision back on the task texts', async () => {
   vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'land', artifact: 'b'.repeat(40) } }]);

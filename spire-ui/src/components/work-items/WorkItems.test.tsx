@@ -547,6 +547,33 @@ it('offers no re-admission while a land fix is in progress', async () => {
     land: { state: 'fixing', reason: 'land_checks_failed', message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
       attempt: 1, attemptsAllowed: 3, fixInProgress: true } })).toBe(false);
 });
+// M4 land slice 8 (spec §7.6, A3): a handed item goes on with Retry land or Stop, both with a note; Recheck would reopen land without one.
+function handedItem(): Detail {
+  return { ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'land_blocked', progress: { execution: deliveredExecution(false) } };
+}
+async function showHanded() {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(handedItem());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();await screen.findByText('TEST-title');await act(async () => {});
+}
+it('handed item shows Retry land and not Recheck', async () => {
+  vi.spyOn(api, 'retryLand').mockResolvedValue({ reason: 'approval_required' });
+  await showHanded();
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).toBeNull();
+  const retry = screen.getByRole('button', { name: 'Retry land' });expect(retry).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-the code owners approved' } });
+  expect(retry).toBeEnabled();fireEvent.click(retry);
+  await waitFor(() => expect(api.retryLand).toHaveBeenCalledWith(handedItem(), 'TEST-the code owners approved'));
+});
+it('handed item offers Stop with the note', async () => {
+  vi.spyOn(api, 'stopLand').mockResolvedValue({ reason: 'land_stopped_by_operator' });
+  await showHanded();
+  const stop = screen.getByRole('button', { name: 'Stop land' });expect(stop).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-merging it by hand' } });
+  fireEvent.click(stop);
+  await waitFor(() => expect(api.stopLand).toHaveBeenCalledWith(handedItem(), 'TEST-merging it by hand'));
+});
 it('still offers re-admission for a completed item that did not land', async () => {
   expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed', progress: { execution: deliveredExecution(false) } })).toBe(true);
 });

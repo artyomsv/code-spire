@@ -1,5 +1,6 @@
-import { expect, it } from 'vitest';
-import { filterById, journeyCells, nextAction, standing, type WorkItemRow } from './workJourney';
+import { describe, expect, it } from 'vitest';
+import type { LandView } from '../../api';
+import { filterById, journeyCells, landProgress, nextAction, standing, type LandItem, type WorkItemRow } from './workJourney';
 
 const ASSISTED = { INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto', VERIFY: 'auto', DELIVER: 'draft_pr', REVIEW: 'auto', LAND: 'approve' };
 function row(overrides: Partial<WorkItemRow> = {}): WorkItemRow {
@@ -68,4 +69,49 @@ it('a verify result gate waits on a person and names its decision', () => {
     gate: { id: 'TEST-verify-gate', version: 1, state: 'OPEN', phase: 'verify', generation: 1, itemRevision: 9, policyRevision: 1,
       artifact: 'TEST-digest', openedAt: '2026-10-07T00:00:00Z', expiresAt: '2026-10-08T00:00:00Z', resolver: null, channel: null, note: null } });
   expect(nextAction(waiting)?.label).toBe('Review the verify decision');
+});
+
+// M4 land (spec §7.10): the Land step says where the merge stands, in the operator's words.
+describe('land step', () => {
+  const pullRequest = { number: 901, url: 'https://github.example.test/TEST/repo/pull/901', draft: false };
+  const execution = { runId: 'TEST-run', build: { workItemId: 'TEST-item', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
+    head: 'b'.repeat(40), verificationAttempt: null, pullRequest, reviewId: 'TEST-review', landing: null };
+  const view = (overrides: Partial<LandView> = {}): LandView => ({ state: 'checking', reason: null, message: null, checks: null, method: 'squash', ticketRule: 'comment',
+    branchDeleted: null, note: null, attempt: 0, attemptsAllowed: 3, fixInProgress: false, ...overrides });
+  const landItem = (overrides: Partial<LandItem> = {}): LandItem => ({ phase: 'land', workflowStatus: 'active', reason: 'phase_started', gate: null,
+    land: view(), progress: { execution }, people: [], ...overrides });
+  const gate = { id: 'TEST-land-gate', version: 1, state: 'OPEN' as const, phase: 'land', generation: 1, itemRevision: 9, policyRevision: 1,
+    artifact: 'b'.repeat(40), openedAt: '2026-10-22T00:00:00Z', expiresAt: '2026-10-23T00:00:00Z', resolver: null, channel: null, note: null };
+
+  it('waits for your approval at an open land gate', () => {
+    expect(landProgress(landItem({ workflowStatus: 'waiting_approval', reason: 'approval_required', gate, land: view({ state: 'handed' }) }))).toBe('Waiting for your approval');
+  });
+  it('reads checking, waiting n of m and merging while the land runs', () => {
+    expect(landProgress(landItem())).toBe('Checking GitHub');
+    expect(landProgress(landItem({ land: view({ state: 'waiting_checks', checks: { state: 'PENDING', done: 2, total: 5, failed: [] } }) })))
+      .toBe('Waiting for checks (2 of 5 done)');
+    expect(landProgress(landItem({ land: view({ state: 'merging' }) }))).toBe('Merging');
+  });
+  it('says who merged, and whether the branch is gone', () => {
+    const landed = { ...execution, landing: { pullRequest, mergeCommit: 'c'.repeat(40), method: 'squash' as const, mergedBy: '900123', landedAt: '2026-10-22T12:00:00Z' } };
+    const done = landItem({ phase: 'complete', workflowStatus: 'completed', reason: 'landed', progress: { execution: landed },
+      land: view({ state: 'done', branchDeleted: true }), people: [{ providerUserId: '900123', handle: 'TEST-person', displayName: null }] });
+    expect(landProgress(done)).toBe('Merged ccccccc by @TEST-person, branch deleted');
+    const byFactory = { ...landed, landing: { ...landed.landing, mergedBy: 'factory' } };
+    expect(landProgress({ ...done, progress: { execution: byFactory }, land: view({ state: 'done', branchDeleted: false }) }))
+      .toBe('Merged ccccccc by the factory, branch not deleted');
+  });
+  it('counts a fix against the attempts allowed', () => {
+    expect(landProgress(landItem({ phase: 'build', land: view({ state: 'fixing', reason: 'land_checks_failed', attempt: 1, attemptsAllowed: 3, fixInProgress: true }) })))
+      .toBe('Fixing: a failed check, attempt 1 of 3');
+  });
+  it('says a hand-off needs you, with what GitHub said', () => {
+    const text = landProgress(landItem({ workflowStatus: 'awaiting_input', reason: 'land_blocked',
+      land: view({ state: 'handed', reason: 'land_blocked', message: 'TEST-Required review missing' }) }));
+    expect(text).toMatch(/^Needs you: GitHub requires something only a person can give/);
+    expect(text).toContain('TEST-Required review missing');
+  });
+  it('says nothing before land has anything to say', () => {
+    expect(landProgress(landItem({ phase: 'review', land: null }))).toBeNull();
+  });
 });

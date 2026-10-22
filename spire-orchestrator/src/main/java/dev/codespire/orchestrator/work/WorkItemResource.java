@@ -38,6 +38,29 @@ public class WorkItemResource {
                 :transitions.resume(id,input.expectedRevision(),input.readmit());
         return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
     }
+    /** Retry land and Stop on an item land handed to the operator (spec §7.6): both audited, so both need a note. */
+    public record LandCommand(long expectedRevision,String note) {}
+    @POST @Path("/{id}/retry-land") @RolesAllowed("spire-admin")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public jakarta.ws.rs.core.Response retryLand(@PathParam("id") String id,LandCommand input) {
+        String subject=landOperator(input);
+        var result=control.retryLand(id,input.expectedRevision(),subject,input.note());
+        return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
+    }
+    @POST @Path("/{id}/stop-land") @RolesAllowed("spire-admin")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public jakarta.ws.rs.core.Response stopLand(@PathParam("id") String id,LandCommand input) {
+        String subject=landOperator(input);
+        var result=control.stopLand(id,input.expectedRevision(),subject,input.note());
+        return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
+    }
+    /** The verified operator a land command is recorded under; the revision is checked again under the item lock. */
+    private String landOperator(LandCommand input) {
+        if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current work-item revision is required");
+        String subject=dev.codespire.orchestrator.security.OidcSubjects.of(identity);
+        if(subject.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        return subject;
+    }
     public record Profile(UUID id, String name, long version) {}
     /**
      * @param generation the attempt this entry belongs to. A re-admitted item keeps its history, so a

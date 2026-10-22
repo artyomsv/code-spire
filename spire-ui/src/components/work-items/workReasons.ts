@@ -190,3 +190,18 @@ const DETAILS = new Map(Object.entries({
 export function workRefusal(reason: string, detail: string | null): string {
   return (detail ? DETAILS.get(detail) : undefined) ?? workReason(reason);
 }
+
+/** Why land handed an item to the operator; mirrors WorkItemLifecycle.LAND_HANDOFF_REASONS. */
+export const LAND_HANDOFF_REASONS: readonly string[] = ['land_head_moved', 'land_checks_timeout', 'land_checks_not_code', 'land_blocked', 'land_pr_draft',
+  'land_merge_refused', 'land_merge_method_not_allowed', 'land_fix_attempts_exhausted', 'land_item_limit_reached', 'land_fix_review_blocked',
+  'land_fix_run_failed', 'land_fix_stopped', 'land_account_unavailable', 'land_read_failed'];
+
+/** Every reason land puts on an item, an effect or a refusal. */
+export const LAND_REASONS: readonly string[] = [...LAND_HANDOFF_REASONS, 'landed', 'pr_closed_by_human', 'land_checks_failed', 'land_conflict',
+  'land_branch_behind', 'readmission_landed', 'readmission_land_pending', 'branch_delete_failed', 'land_merge_unconfirmed', 'land_merge_unreadable',
+  'merge_outcome_unknown', 'readmission_merge_unconfirmed', 'ticket_close_unsupported', 'ticket_rule_changed', 'comment_not_sent'];
+
+export function landReason(reason: string, message: string | null): string {
+  void message;
+  return workReason(reason);
+}

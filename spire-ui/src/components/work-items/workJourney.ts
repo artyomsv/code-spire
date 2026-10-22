@@ -104,3 +104,11 @@ export function nextAction(item: WorkItemRow): NextAction | null {
   if (item.workflowStatus === 'suspended') return { label: 'Resume', to: `/work-items/${encodeURIComponent(item.id)}` };
   return null;
 }
+
+/** What the land step reads from. */
+export type LandItem = Pick<WorkItemDetail, 'phase' | 'workflowStatus' | 'reason' | 'gate' | 'land' | 'progress' | 'people'>;
+
+export function landProgress(item: LandItem): string | null {
+  void item;
+  return null;
+}

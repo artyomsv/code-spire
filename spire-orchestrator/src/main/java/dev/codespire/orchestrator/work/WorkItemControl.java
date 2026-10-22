@@ -42,6 +42,13 @@ public class WorkItemControl {
         return transitions.resumeControlled(id,expected,observed,subject,note,head);
     }
 
+    public WorkItemTransitions.Outcome retryLand(String id,long expected,String subject,String note) {
+        throw new UnsupportedOperationException("RED");
+    }
+    public WorkItemTransitions.Outcome stopLand(String id,long expected,String subject,String note) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     public void suspend(String id,String channel,String delivery,String actor,String head) {
         change(id,channel,delivery,actor,head,false);
     }

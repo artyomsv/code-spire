@@ -194,6 +194,12 @@ public final class WorkItemLifecycle {
         WorkExecution kept=current!=null && current.reviewId()!=null?current:requested.progress().execution();
         return landHanded(state(stopped,stopped.workflowStatus(),stopped.reason(),stopped.milestone(),stopped.gate(),stopped.progress().withExecution(kept)),"land_fix_stopped");
     }
+    public static WorkItemEvent retryLandGate(WorkItemEvent item,WorkItemEvent previous,long historySize,java.time.Instant now,UUID decisionId) {
+        throw new UnsupportedOperationException("RED");
+    }
+    public static WorkItemEvent landStopped(WorkItemEvent item) {
+        throw new UnsupportedOperationException("RED");
+    }
     public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
         return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));
     }

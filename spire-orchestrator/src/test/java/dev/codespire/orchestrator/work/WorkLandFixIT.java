@@ -98,6 +98,10 @@ class WorkLandFixIT extends WorkLandFixture {
         WorkItemEvent item=store.load(id);
         assertEquals("land",item.phase());assertEquals("awaiting_input",item.workflowStatus());assertEquals(reason,item.reason());
     }
+    /** Retry land as the operator, on the pull request head the test's GitHub reports. */
+    WorkItemTransitions.Outcome retryLand(String id) {
+        return control.retryLand(id,store.history(id).size(),"TEST-land-admin","TEST-retry land");
+    }
     void fixAttempts(int attempts) {
         landSettings.save(repository,new LandSettings.Input(0,"merge","comment",attempts),"TEST-land-admin");
     }
@@ -326,9 +330,11 @@ class WorkLandFixIT extends WorkLandFixture {
         WorkItemTransitions.Outcome readmit=transitions.resume(id,store.history(id).size(),true);
         assertEquals(409,readmit.status());assertEquals("readmission_land_pending",readmit.reason());
         assertEquals(generation,store.load(id).generation());
-        // Recheck reopens land until slice 8's Retry land replaces it there (amendment 3); either way a fresh gate on that head.
+        // Recheck is refused there (amendment 3); Retry land opens a fresh gate on that head.
         WorkItemTransitions.Outcome recheck=transitions.resume(id,store.history(id).size(),false);
-        assertEquals(200,recheck.status(),recheck.reason());
+        assertEquals(409,recheck.status());assertEquals("retry_land_required",recheck.reason());
+        WorkItemTransitions.Outcome retry=retryLand(id);
+        assertEquals(200,retry.status(),retry.reason());
         WorkItemEvent gated=store.load(id);
         assertEquals("land",gated.phase());assertEquals("waiting_approval",gated.workflowStatus());assertEquals(HEAD,gated.gate().artifact());
         approve(id);
@@ -365,7 +371,8 @@ class WorkLandFixIT extends WorkLandFixture {
         RunCommand.ExecuteWorkRun fix=dispatchedFix();pushed(id,fix,built(id,fix,FIXED));
         reviewedAt(id,FIXED,true);observer.advance(id);
         handedAtLand(id,"land_fix_review_blocked");noAttemptLeftStarted(id);
-        assertEquals(200,transitions.resume(id,store.history(id).size(),false).status());approve(id);
+        openAt(FIXED,"unstable","failure");
+        assertEquals(200,retryLand(id).status());approve(id);
         String second="9".repeat(40);
         openAt(FIXED,"unstable","failure");land.drain();
         assertEquals(2,fixes(id));
@@ -378,7 +385,7 @@ class WorkLandFixIT extends WorkLandFixture {
         fixAttempts(0);
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         handedAtLand(id,"land_fix_attempts_exhausted");noAttemptLeftStarted(id);
-        assertEquals(200,transitions.resume(id,store.history(id).size(),false).status());
+        assertEquals(200,retryLand(id).status());
         approve(id);
         assertEquals("land",store.load(id).phase());assertEquals("phase_started",store.load(id).reason());
     }

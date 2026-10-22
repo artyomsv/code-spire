@@ -92,6 +92,16 @@ export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, no
   return response.json();
 }
 
+export async function retryLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
+  void item; void note;
+  throw new Error('RED');
+}
+
+export async function stopLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
+  void item; void note;
+  throw new Error('RED');
+}
+
 /** Fetched for the current detail request; these fields are never workflow projection columns. */
 export interface WorkItemTracker {
   /**

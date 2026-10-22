@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { workReason, workRefusal } from './workReasons';
+import { LAND_HANDOFF_REASONS, LAND_REASONS, landReason, workReason, workRefusal } from './workReasons';
 
 /**
  * A stopped item has to say what to change. The pricing refusal carries its own payload — the token
@@ -57,5 +57,22 @@ describe('land reasons (M4)', () => {
     'branch_delete_failed', 'land_account_unavailable', 'land_read_failed', 'land_merge_unconfirmed', 'land_merge_unreadable',
     'merge_outcome_unknown', 'readmission_merge_unconfirmed'])('%s has a sentence', reason => {
     expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+// M4 land slice 8: every reason land can show reads as a sentence, and a hand-off names what GitHub said.
+describe('every land reason (M4 land)', () => {
+  it('covers Retry land, Stop and every hand-off', () => {
+    expect(LAND_REASONS).toEqual(expect.arrayContaining(['retry_land_required', 'retry_land_unavailable', 'retry_land_head_unavailable',
+      'land_stopped_by_operator', ...LAND_HANDOFF_REASONS]));
+  });
+  it.each([...LAND_REASONS])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+  it('quotes what GitHub said beside a hand-off', () => {
+    const sentence = landReason('land_blocked', 'TEST-At least 1 approving review is required');
+    expect(sentence).toContain('GitHub requires something only a person can give');
+    expect(sentence).toContain('TEST-At least 1 approving review is required');
+    expect(landReason('land_blocked', null)).toBe(workReason('land_blocked'));
   });
 });
