@@ -137,6 +137,7 @@ const REASONS = new Map(Object.entries({
   branch_delete_failed:'The pull request was merged, but its branch could not be deleted after three tries. Delete it on GitHub if it is still there.',
   ticket_close_unsupported: 'The ticket got a comment that the work is merged, but it was not closed: closing a Jira ticket needs a workflow transition the factory does not configure yet. Close it in Jira.',
   ticket_rule_changed: 'The ticket was not closed, because the repository\'s ticket rule changed to comment before the close was sent.',
+  comment_not_sent: 'The ticket was not closed, because the comment that says why could not be sent. Close it by hand if the work is done.',
   source_unavailable: 'The work source or its serving account is unavailable.',
   phase_started: 'This phase has started.',
   phase_completed: 'This phase completed.',

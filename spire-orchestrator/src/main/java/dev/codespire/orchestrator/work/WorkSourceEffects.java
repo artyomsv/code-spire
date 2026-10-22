@@ -161,7 +161,7 @@ public class WorkSourceEffects {
     /**
      * The ticket after land (A1): no policy or phase mode, and whatever the item's phase now, since it is complete by
      * then. Only the generation must still match. A close is sent while the current ticket rule is still close, and
-     * only once the comment that says why is sent.
+     * only once the comment that says why is sent; a refused or missing comment refuses it {@code comment_not_sent}.
      */
     private boolean dispatchPostLand(Pending effect,WorkItemEvent item,WorkSourceRegistry.Source source) {
         if(item.generation()!=effect.generation()) { mark(effect.id(),"pending","refused",null,"work_item_changed");return false; }
@@ -170,7 +170,9 @@ public class WorkSourceEffects {
                 mark(effect.id(),"pending","refused",null,"ticket_rule_changed");return false;
             }
             Status comment=status(postLandId(effect.item(),effect.generation(),Kind.COMMENT));
-            if(comment==null || !"sent".equals(comment.state()))return false;
+            // A comment that will never be sent ends the close too; one still in flight defers it like any other row.
+            if(comment==null || "refused".equals(comment.state())) { mark(effect.id(),"pending","refused",null,"comment_not_sent");return false; }
+            if(!"sent".equals(comment.state())) { touch(effect.id());return false; }
         }
         return send(effect,item,source,c-> {
             try(PreparedStatement ps=c.prepareStatement("SELECT generation FROM work_item WHERE id=? FOR UPDATE")) {
