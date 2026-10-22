@@ -125,6 +125,30 @@ class WorkPostLandEffectsTest extends WorkFixture {
         forge.verify(1,patchRequestedFor(urlEqualTo(path)).withRequestBody(equalToJson("{\"state\":\"closed\"}")));
         assertFalse(body.contains("unchanged"),"a ticket the rule closes is not told its status is unchanged: "+body);
     }
+    @Test void aCloseWaitingForItsCommentWaitsOutTheRecheck() throws Exception {
+        rule("close");land(WorkLanding.FACTORY);
+        forge.stubFor(post(urlEqualTo(path+"/comments")).willReturn(aResponse().withStatus(500)));
+        effects.dispatch(comment());assertEquals("uncertain",status(comment()).state());
+        executeWith("UPDATE work_tracker_outbox SET checked_at=NULL WHERE effect_id=?",close());
+        assertFalse(effects.dispatch(close()),"the close waits for the comment");
+        assertEquals("pending",status(close()).state());
+        // A waiter left at checked_at NULL would lead every sweep's batch and starve newer rows (A1).
+        assertEquals(1,count("SELECT count(*) FROM work_tracker_outbox WHERE effect_id=? AND checked_at > now()-interval '10 seconds'",close()));
+    }
+    @Test void aRefusedCommentRefusesTheClose() throws Exception {
+        rule("close");land(WorkLanding.FACTORY);
+        executeWith("UPDATE work_tracker_outbox SET state='refused',reason='source_unavailable' WHERE effect_id=?",comment());
+        assertFalse(effects.dispatch(close()));
+        assertEquals("refused",status(close()).state());assertEquals("comment_not_sent",status(close()).reason());
+        assertEquals(0,patches());
+    }
+    @Test void aMissingCommentRefusesTheClose() throws Exception {
+        rule("close");land(WorkLanding.FACTORY);
+        executeWith("DELETE FROM work_tracker_outbox WHERE effect_id=?",comment());
+        assertFalse(effects.dispatch(close()));
+        assertEquals("refused",status(close()).state());assertEquals("comment_not_sent",status(close()).reason());
+        assertEquals(0,patches());
+    }
     @Test void aRuleChangedToCommentDoesNotClose() throws Exception {
         rule("close");land(WorkLanding.FACTORY);
         effects.dispatch(comment());assertEquals("sent",status(comment()).state());

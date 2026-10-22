@@ -32,7 +32,7 @@ describe('workReason', () => {
 });
 
 describe('ticket after land (M4)', () => {
-  it.each(['ticket_close_unsupported', 'ticket_rule_changed'])('%s has a sentence', reason => {
+  it.each(['ticket_close_unsupported', 'ticket_rule_changed', 'comment_not_sent'])('%s has a sentence', reason => {
     expect(workReason(reason)).not.toBe(reason);
   });
 });
