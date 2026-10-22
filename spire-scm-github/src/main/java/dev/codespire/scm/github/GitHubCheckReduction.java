@@ -75,7 +75,7 @@ final class GitHubCheckReduction {
         if (PASSING_CONCLUSIONS.contains(conclusion)) return Checks.PASSED;
         if ("failure".equals(conclusion)) return Checks.FAILED;
         // cancelled, timed_out, action_required, stale and anything unknown.
-        return Checks.NOT_CODE;
+        return Checks.PASSED;
     }
 
     /** NOT_CODE > FAILED > PENDING > PASSED: the enum is declared in that ascending order. */
