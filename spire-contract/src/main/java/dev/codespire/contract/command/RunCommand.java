@@ -277,6 +277,7 @@ public sealed interface RunCommand {
 
     /** A distinct discriminator prevents an old worker from treating a held build as an automatic push. */
     record ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) implements RunCommand {
+        static final String ITEM_BRANCH_PREFIX="spire/work-";
         public ExecuteWorkRun(ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) {
             this(execution.runId(),execution,work);
         }
@@ -284,7 +285,9 @@ public sealed interface RunCommand {
             Objects.requireNonNull(execution,"Build execution is required");
             Objects.requireNonNull(work,"A work binding is required");
             if(!execution.runId().equals(runId))throw new IllegalArgumentException("The work command must name its execution run");
-            if(execution.existingBranch())throw new IllegalArgumentException("Prepared item builds require their own branch");
+            // A land fix (M4 slice 7a) pushes to the item's own pull request branch; never to any other existing branch.
+            if(execution.existingBranch() && !execution.branch().startsWith(ITEM_BRANCH_PREFIX))
+                throw new IllegalArgumentException("Prepared item builds may push only to their own existing "+ITEM_BRANCH_PREFIX+" branch");
         }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}

@@ -4,16 +4,21 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
+import org.eclipse.jgit.errors.MissingObjectException;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.WindowCacheConfig;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import java.io.IOException;
@@ -231,11 +236,76 @@ public final class PublishRepo implements AutoCloseable {
      * as {@code .github/workflows/**} does not match but a checkout on the forge would honour. A
      * path the gate cannot reason about is refused here rather than judged there.
      */
+    /**
+     * {@link #changesSince(String, String)} for a land fix that merged its pull request's base (M4 slice 7a).
+     *
+     * <p>Merging the base into the item branch shows every base change since divergence, so a workflow edited on
+     * the base would refuse the fix's push. A path whose tip entry equals its entry at {@code mergedBaseTip}, blob
+     * AND mode, or which both lack, is the base's and is dropped; anything the agent changed beyond that stays
+     * for the gate. The tip must be an ancestor of {@code sha}: otherwise it could name any commit and excuse
+     * paths the base never brought. {@code mergedBaseTip} comes from the orchestrator's permit, never from the
+     * workspace. Null is the two-argument behaviour.
+     *
+     * @throws BaseTipUnavailableException when the tip is missing or not merged into {@code sha}
+     */
     public ChangeSet changesSince(String baseCommit, String sha, String mergedBaseTip) throws IOException {
-        return changesSince(baseCommit, sha);
+        ChangeSet changes = changesSince(baseCommit, sha);
+        if (mergedBaseTip == null) {
+            return changes;
+        }
+        Repository repo = git.getRepository();
+        try (RevWalk walk = new RevWalk(repo)) {
+            RevCommit tip = walk.parseCommit(ObjectId.fromString(sha));
+            RevCommit base = baseTip(walk, mergedBaseTip);
+            if (!walk.isMergedInto(base, tip)) {
+                throw new BaseTipUnavailableException("the merged base tip " + mergedBaseTip
+                        + " is not an ancestor of " + sha);
+            }
+            List<ChangedPath> agents = new ArrayList<>();
+            for (ChangedPath path : changes.paths()) {
+                if (!sameEntry(repo, path.path(), tip, base)) {
+                    agents.add(path);
+                }
+            }
+            return new ChangeSet(agents);
+        }
     }
 
+    private static RevCommit baseTip(RevWalk walk, String mergedBaseTip) throws IOException {
+        try {
+            return walk.parseCommit(ObjectId.fromString(mergedBaseTip));
+        } catch (MissingObjectException | IncorrectObjectTypeException | IllegalArgumentException missing) {
+            throw new BaseTipUnavailableException("the merged base tip " + mergedBaseTip
+                    + " is not in this repository: " + missing.getMessage());
+        }
+    }
+
+    /** Whether {@code path} has the same blob and mode in both commits, or is absent from both. */
+    private static boolean sameEntry(Repository repo, String path, RevCommit tip, RevCommit base) throws IOException {
+        try (TreeWalk atTip = TreeWalk.forPath(repo, path, tip.getTree());
+             TreeWalk atBase = TreeWalk.forPath(repo, path, base.getTree())) {
+            if (atTip == null || atBase == null) {
+                return atTip == null && atBase == null;
+            }
+            return atTip.getObjectId(0).equals(atBase.getObjectId(0))
+                    && atTip.getFileMode(0).equals(atBase.getFileMode(0));
+        }
+    }
+
+    /**
+     * The sha {@code refs/heads/<branch>} points at on the remote now, or empty when the branch does not exist.
+     *
+     * <p>Read immediately before a land fix's push (M4 slice 7a), so a branch a person moved after approval is
+     * refused by name. The non-force push is the second guard.
+     */
     public Optional<String> remoteHead(String branch, GitCredential credential) throws GitAPIException {
+        String ref = Constants.R_HEADS + branch;
+        for (Ref advertised : git.lsRemote().setRemote(ORIGIN).setHeads(true)
+                .setCredentialsProvider(provider(credential)).call()) {
+            if (advertised.getName().equals(ref) && advertised.getObjectId() != null) {
+                return Optional.of(advertised.getObjectId().name());
+            }
+        }
         return Optional.empty();
     }
 

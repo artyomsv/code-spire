@@ -64,7 +64,10 @@ public final class CloneMain {
             Path workspace = Path.of(env.getOrDefault("SPIRE_WORKSPACE_DIR", DEFAULT_WORKSPACE_DIR));
             outcome = new OutcomeWriter(stdout, username, secret);
 
-            populate(remote, base, branch, workspace, new GitCredential(username, secret), username, checkpointOf(env));
+            // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge.
+            String fetchBranch = env.get("SPIRE_FETCH_BRANCH");
+            populate(remote, base, branch, workspace, new GitCredential(username, secret), username, checkpointOf(env),
+                    fetchBranch == null || fetchBranch.isBlank() ? null : fetchBranch);
             return 0;
         } catch (CheckpointMissingException missing) {
             outcome.failed("CHECKPOINT_MISSING", missing.getMessage());
@@ -106,7 +109,8 @@ public final class CloneMain {
 
     static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
                          String username, Checkpoint checkpoint, String fetchBranch) throws IOException, GitAPIException {
-        WorkspaceClone.populate(remote, base, branch, workspace, credential, username, username + "@" + IDENTITY_DOMAIN);
+        WorkspaceClone.populate(remote, base, branch, workspace, credential, username, username + "@" + IDENTITY_DOMAIN,
+                fetchBranch);
         if (checkpoint != null) CheckpointBundles.importInto(workspace, checkpoint.bundles(), checkpoint.head(), checkpoint.maxBytes());
     }
 }

@@ -1,6 +1,7 @@
 package dev.codespire.publisher;
 
 import dev.codespire.workspace.AmbiguousBundleException;
+import dev.codespire.workspace.BaseTipUnavailableException;
 import dev.codespire.workspace.BundleTooLargeException;
 import dev.codespire.workspace.ChangeSet;
 import dev.codespire.workspace.EmptyBundleException;
@@ -16,6 +17,7 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * What happens to one bundle: fetch it, diff it, gate it, push it, say so.
@@ -80,6 +82,10 @@ public final class PublishCycle {
                 return true;
             }
             changes = repo.changesSince(baseCommit, sha, publication.mergedBaseTip());
+        } catch (BaseTipUnavailableException unavailable) {
+            // Not an unreadable bundle to skip: the permit's base tip cannot excuse anything, so nothing is pushed.
+            outcome.failed("BASE_TIP_UNAVAILABLE", unavailable.getMessage());
+            return false;
         } catch (GitAPIException | IOException | BundleTooLargeException | EmptyBundleException
                  | AmbiguousBundleException | UnsafeTreePathException e) {
             // A bundle that cannot be read is not a refusal and not a push. Reported and skipped:
@@ -110,6 +116,9 @@ public final class PublishCycle {
         }
 
         try {
+            if (remoteHeadMoved()) {
+                return false;
+            }
             outcome.pushed(repo.pushRef(sha, branch, credential), changes.paths());
             published = true;
             return true;
@@ -131,6 +140,25 @@ public final class PublishCycle {
                     transport.getClass().getSimpleName() + ": " + transport.getMessage());
             return false;
         }
+    }
+
+    /**
+     * A land fix (M4 slice 7a) pushes only while the item branch still points at the approved head. Read
+     * immediately before the push, so a person's push after approval is refused by name rather than overwritten
+     * or reported as a generic divergence; the non-force push remains the second guard.
+     */
+    private boolean remoteHeadMoved() throws GitAPIException {
+        String expected = publication.expectedRemoteHead();
+        if (expected == null) {
+            return false;
+        }
+        Optional<String> remote = repo.remoteHead(branch, credential);
+        if (remote.isPresent() && remote.get().equals(expected)) {
+            return false;
+        }
+        outcome.failed("REMOTE_HEAD_MOVED", "Expected " + branch + " at " + expected + " but the remote has "
+                + remote.orElse("no such branch"));
+        return true;
     }
 
     /** No agent will produce another bundle during permitted publication. Missing work is visible. */
