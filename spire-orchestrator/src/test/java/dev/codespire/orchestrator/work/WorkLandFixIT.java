@@ -224,7 +224,9 @@ class WorkLandFixIT extends WorkLandFixture {
         WorkItemTransitions.Outcome retry=transitions.answer(failed.gate().id(),failed.gate().version(),"TEST-retry-"+UUID.randomUUID(),true,null,"TEST-land-admin");
         assertEquals(200,retry.status(),retry.reason());
         WorkItemEvent rebuilding=store.load(id);
-        assertEquals("build",rebuilding.phase());assertEquals("active",rebuilding.workflowStatus(),rebuilding.reason());assertNull(rebuilding.gate());
+        assertEquals("build",rebuilding.phase());assertEquals("active",rebuilding.workflowStatus(),rebuilding.reason());
+        // The verify gate the operator answered stays on the item, resolved; no build gate opens after it.
+        assertEquals("APPROVED",rebuilding.gate().state());assertEquals("verify",rebuilding.gate().phase());
         assertEquals(pullRequest,rebuilding.progress().execution().pullRequest(),"the retry keeps the pull request");
         RunCommand.ExecuteWorkRun again=dispatchedFix();
         assertEquals(branch,again.execution().branch());assertEquals(branch,again.execution().baseBranch());

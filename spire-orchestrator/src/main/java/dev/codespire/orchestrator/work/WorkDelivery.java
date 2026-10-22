@@ -175,10 +175,11 @@ public class WorkDelivery {
             if("pending".equals(effect.state()) && !"awaiting_delivery".equals(run.status())) {
                 stopLocked(c,history,item,effect,"held_run_not_ready");return null;
             }
-            var request=new PullRequestSink.NewPullRequest(run.branch(),run.baseBranch(),"Prepared work: "+item.issue().issueKey(),
+            // A land fix opens no pull request: its run's base is the item branch itself, which no forge takes as a base.
+            PullRequestSink.NewPullRequest request=fix!=null?null:new PullRequestSink.NewPullRequest(run.branch(),run.baseBranch(),"Prepared work: "+item.issue().issueKey(),
                     "Prepared work item: "+item.issue().link()+"\n\nBuilt commit: `"+item.progress().execution().head()+"`",
                     "draft_pr".equals(item.policy().effective().get(WorkPolicy.Phase.DELIVER)));
-            if(request.draft() && !sink.supportsDrafts()){stopLocked(c,history,item,effect,"draft_pr_unsupported");return null;}
+            if(request!=null && request.draft() && !sink.supportsDrafts()){stopLocked(c,history,item,effect,"draft_pr_unsupported");return null;}
             if("pending".equals(effect.state())) {
                 // PostgreSQL stores microseconds. Use the same exact boundary in storage and on the wire.
                 var execution=item.progress().execution();Instant issued=clock.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS),expires=issued.plusSeconds(30);
@@ -191,10 +192,10 @@ public class WorkDelivery {
                 }
                 return new Claim(command,null,null);
             }
-            if("proposing".equals(effect.state()))request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            if("proposing".equals(effect.state()) && fix==null)request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
             else if("pushed".equals(effect.state())) {
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='proposing',request=?,reason=NULL WHERE attempt_id=?")) {
-                    ps.setBytes(1,encode(request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
+                    ps.setBytes(1,request==null?null:encode(request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
                 }
             } else return null;
             return new Claim(null,sink,request,fix==null?null:fix.pullRequest());
