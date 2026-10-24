@@ -37,6 +37,19 @@ export interface WorkExecution {
   verification?: WorkVerification | null;
   pullRequest: { number: number; url: string; draft: boolean | null } | null;
   reviewId: string | null;
+  /** The merge the forge reported (M4 land); null until the item lands, absent from an older server. */
+  landing?: WorkLanding | null;
+}
+/**
+ * A merge of the item's pull request. `mergedBy` is 'factory' or the person's stable provider id. `method` is what the
+ * factory sent; 'unknown' for a merge it did not make, since the forge does not report the method a person used.
+ */
+export interface WorkLanding {
+  pullRequest: { number: number; url: string; draft: boolean | null };
+  mergeCommit: string;
+  method: 'merge' | 'squash' | 'rebase' | 'unknown';
+  mergedBy: string;
+  landedAt: string;
 }
 /**
  * A refusal is answered as `{reason, detail}`. The raw JSON used to reach the screen unchanged, so a

@@ -23,8 +23,8 @@ display choice, not the whole effective policy. Events retain applied/ignored ev
 source, account, repository and policy revisions. Humans register fetched specification and plan
 references; their versions bind later decisions. Dashboard answers, explicit tracker commands
 and supported current native PR approvals enter `ResolveGate` and persist `GATE_RESOLVED`.
-Production VERIFY and LAND remain unavailable; manual artifact acceptance does not invent an
-executor completion. Tracker status never supplies workflow status.
+VERIFY runs since M4 slice 1 (ADR-046), and LAND on GitHub since M4 slice 2 (ADR-048, below);
+manual artifact acceptance does not invent an executor completion. Tracker status never supplies workflow status.
 
 `ExecuteWorkRun` uses `cs.run-commands` and yields a durable `RunWorkReady` checkpoint without
 publishing. `PublishWorkRun` on `cs.run-control` carries the exact current delivery permit;
@@ -39,6 +39,57 @@ effects. Deliberate authorized commands are classified before generic comment ta
 requires the server-derived operator subject, expected revision and note, fresh issue/repository/
 head/policy evidence, and a new generation. Retired items cannot resume. See the
 [acceptance record](factory/M3-ACCEPTANCE.md) for measured journeys and remaining live limits.
+
+## Land (M4 slice 2, ADR-048)
+
+`WorkItemLifecycle` gains six milestones. Each is decided there and appended under
+`WorkItemTransitions.lockItem`:
+
+| Milestone | Item after it | When |
+|---|---|---|
+| `WORK_ITEM_LANDED` | `complete / completed / landed` | the land effect merged or found the merge, or a person merged on GitHub (reported by the FACTORY or the REVIEWER webhook, or found by the periodic pull request read); at most once per generation and pull request |
+| `LAND_FIX_REQUESTED` | `build / awaiting_input / <fix reason>` | `land_checks_failed` or `land_conflict` (each spends a fix attempt) or `land_branch_behind` (spends none); the execution and its pull request are kept |
+| `LAND_HANDED` | `land / awaiting_input / <hand-off reason>`, no gate | anything else land cannot finish (below) |
+| `PULL_REQUEST_CLOSED` | `stopped / pr_closed_by_human` | a person closed the pull request unmerged (reported by either webhook, or found by the periodic read), or the land effect read it closed |
+| `LAND_RETRY_REQUESTED` | `land / waiting_approval`, a fresh gate on `execution.head()` | Retry land on a handed item |
+| `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item, on one at `land / capability_unavailable` or `land / not_eligible`, or on `land / active` while its land row has sent no merge (`pending`, `checking`, `waiting_checks`); that row is refused in the same transaction |
+
+Hand-off reasons: `land_head_moved`, `land_checks_timeout`, `land_checks_not_code`, `land_blocked`,
+`land_pr_draft`, `land_merge_refused`, `land_merge_method_not_allowed`, `land_fix_attempts_exhausted`,
+`land_item_limit_reached`, `land_fix_review_blocked`, `land_fix_run_failed`, `land_fix_stopped`,
+`land_account_unavailable`, `land_read_failed`, `land_policy_changed` (the labels, the policy revision or the
+source changed after approval, or land is no longer `approve`; re-observed under the item lock before the merge is
+claimed, as delivery re-observes before its permit). While a land fix is in progress (derived from history
+under the lock, never by the decider), the build and deliver `approve` gates are skipped; verify and land
+keep theirs. Command refusals: `readmission_landed`, `readmission_land_pending`, `retry_land_required`
+(Recheck on a handed item), `retry_land_unavailable`, and `land_head_moved` (Retry land when the pull
+request's head is not the verified head). `POST /api/work-items/{id}/retry-land` and `…/stop-land` take
+`{expectedRevision, note}` from a verified operator.
+
+Wire changes, each through a wither or an enumerating constructor next to its record:
+
+- `WorkExecution.landing` is a `WorkLanding(pullRequest, mergeCommit, method, mergedBy, landedAt)`.
+  `mergedBy` is `factory` or the person's stable provider id, never a login. `method` is what the factory
+  sent with its merge, or `unknown` for a merge it did not make: GitHub's pull request read does not report
+  a person's method, and the repository's setting is no evidence of it.
+- `RepositoryActivity.mergedBy`, for kind `merged` only, is GitHub's `pull_request.merged_by.id`, not the
+  sender. GitHub's `pull_request closed` maps to kind `merged` or `closed` instead of `push`.
+- `WorkPublicationPermit.expectedRemoteHead` and `mergedBaseTip` (set together by `onExistingBranch`): a land
+  fix pushes to the item's existing branch only while the remote branch still points at the expected head,
+  and paths the merged base brought are not blamed on the agent. `ExecuteWorkRun.mergedBaseTip` carries the
+  same tip to the held build. An item build may use an existing branch only when it is its own
+  `spire/work-…` branch.
+- Publisher failure codes `REMOTE_HEAD_MOVED` (a non-fast-forward) and `BASE_TIP_UNAVAILABLE` (a gate
+  refusal: the named base tip is not an ancestor of the pushed tip).
+
+`WorkLandSweep` drains `work_land_effect` every `spire.work-land-interval` (5 s):
+`pending → checking → (waiting_checks) → merging → uncertain → merged → cleaning → done`, or `handed`,
+`fixing`, `closed`, `refused`. Checks are re-read every 60 s and given up after 6 h. `WorkLandDecision` is
+the pure reading of one `LandState`; `WorkLandApproval` claims the merge and `WorkLandCleanup` records the
+landing and deletes the branch. A merge is read through `ProviderClients.pullRequestReader`, which the
+REVIEWER account may hold when the FACTORY account is unavailable and which never merges or deletes. Land settings are served at
+`GET/PUT /api/repositories/{repository}/factory/land` (`expectedRevision` on PUT, as for build defaults)
+and the methods GitHub allows at `GET …/land/options`.
 
 ## Repository metadata and ingress channels (M3 slices 1–2, ADR-042)
 
@@ -151,7 +202,7 @@ Every event (integration or domain) is wrapped:
 |---|---|---|
 | `PullRequestEventReceived` | `spire-gateway` | repo, prId, action(`OPENED`/`UPDATED`), title, description, sourceBranch, targetBranch, **diffRefs{baseSha,startSha,headSha}** (populate what the provider gives), author{**providerUserId,username,displayName**}, htmlUrl |
 | `AuthorReplied` | `spire-gateway` | repo, prId, reviewId, **threadRef**, commentId, text, author{providerUserId,username} |
-| `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013) |
+| `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013); for a pull request a work item delivered, also the land observation (M4 land §7.8) |
 | `ManualCommandReceived` | `spire-gateway` | repo, prId, command(`review`/…), args, author{providerUserId,username} — parsed from a `/command` PR comment; the saga maps `review` → `RequestReview{force=true}` |
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |
@@ -307,6 +358,13 @@ interface PullRequestSink {                             // scm adapter — the f
   PullRequestRef open(RepoRef repo, NewPullRequest request);              // throws NothingToPropose
   Optional<PullRequestRef> findByHead(RepoRef repo, String head, String base);  // find-first, so a redelivery opens nothing
 }   // NothingToPropose normalises "the agent changed nothing", which all four forges report as a 4xx that reads like failure
+interface PullRequestLander {                           // scm adapter — the factory lands PRs (M4, GitHub only)
+  boolean available();                                  // false by default: land is capability_unavailable there
+  LandState read(RepoRef repo, long pr);                // state, merged_by, head/base, mergeable(_state), reduced checks
+  AllowedMethods allowedMethods(RepoRef repo);          // allow_*_merge; checked=false when not reported
+  MergeOutcome merge(RepoRef repo, MergeRequest request);  // (pr, expectedHead, method): Merged | HeadConflict | Refused (<500) | Uncertain (5xx, I/O)
+  BranchDeletion deleteBranch(RepoRef repo, String branch, String expectedSha);   // reads first; check-then-act, not a CAS
+}
 interface ContextProvider {                             // jira, confluence, issues, rules (shipped) / code (P3) / memory
   String source();
   boolean supports(ContextRequest req);

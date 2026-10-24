@@ -153,7 +153,7 @@ class ContractSchemaSnapshotTest {
         for(Class<?> nested:List.of(dev.codespire.contract.work.WorkRunBinding.class,dev.codespire.contract.work.WorkPublicationPermit.class,
                 dev.codespire.contract.work.WorkProgress.class,dev.codespire.contract.work.WorkExecution.class,dev.codespire.contract.scm.PullRequestRef.class,
                 dev.codespire.contract.work.WorkControl.class,dev.codespire.contract.work.WorkVerification.class,
-                dev.codespire.contract.work.WorkVerification.CheckResult.class)) {
+                dev.codespire.contract.work.WorkVerification.CheckResult.class,dev.codespire.contract.work.WorkLanding.class)) {
             lines.add("# "+nested.getSimpleName());
             lines.add(render(nested,nested.getSimpleName()));
             lines.add("");

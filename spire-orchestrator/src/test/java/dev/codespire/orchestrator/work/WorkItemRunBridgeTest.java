@@ -208,18 +208,18 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
     }
     @Test void anUnassociatedAttemptCannotBuyLateUsage() throws Exception {
         String id=build();stopBuild(id);var before=store.load(id);
-        var outcome=transitions.recordLateBuild(id,new WorkItemTransitions.PhaseResult(UUID.randomUUID(),true,9,2,1));
+        var outcome=transitions.recordLateResult(id,new WorkItemTransitions.PhaseResult(UUID.randomUUID(),true,9,2,1));
         assertEquals(409,outcome.status());assertEquals("build_attempt_missing",outcome.reason());assertEquals(before,store.load(id));
     }
     @Test void aCompletedBuildCannotBuyItsUsageAgainThroughLateRecovery() throws Exception {
         String id=build();var ready=priorBuildResult();saga.on(ready);var before=store.load(id);long revision=store.history(id).size();
-        var outcome=transitions.recordLateBuild(id,new WorkItemTransitions.PhaseResult(ready.work().buildAttemptId(),true,9,2,1));
+        var outcome=transitions.recordLateResult(id,new WorkItemTransitions.PhaseResult(ready.work().buildAttemptId(),true,9,2,1));
         assertEquals(200,outcome.status());assertEquals("result_already_applied",outcome.reason());assertEquals(before,store.load(id));
         assertEquals(revision,store.history(id).size());
     }
     @Test void aCurrentBuildMustUseNormalCompletionInsteadOfLateAccounting() throws Exception {
         String id=build();var before=store.load(id);
-        var outcome=transitions.recordLateBuild(id,new WorkItemTransitions.PhaseResult(before.progress().attemptId(),true,9,2,1));
+        var outcome=transitions.recordLateResult(id,new WorkItemTransitions.PhaseResult(before.progress().attemptId(),true,9,2,1));
         assertEquals(409,outcome.status());assertEquals("build_attempt_active",outcome.reason());assertEquals(before,store.load(id));
     }
     @Test void theProjectionIndependentlyRejectsAnotherItem() throws Exception { wrongProjection("item"); }

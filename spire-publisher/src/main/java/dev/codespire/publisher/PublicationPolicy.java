@@ -5,16 +5,38 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 
-/** Selected by a trusted executable, never by anything in the repository or handoff volume. */
-record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock) {
+/**
+ * Selected by a trusted executable, never by anything in the repository or handoff volume.
+ *
+ * <p>{@code expectedRemoteHead} and {@code mergedBaseTip} come from a land fix's permit (M4 slice 7a): the push
+ * goes to the item's existing branch only while the remote still points at the expected head, and paths whose
+ * content equals the merged base tip are the base's, not the agent's. A land fix's held build carries the same
+ * tip, from the run worker's trusted environment, because it gates the base merge first: without it the base's
+ * workflow edit is refused before any checkpoint, verify or permit exists.
+ */
+record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
+                         String expectedRemoteHead, String mergedBaseTip) {
     enum Mode { AUTOMATIC, HELD, PERMITTED }
 
     static PublicationPolicy automatic() {
-        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC());
+        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null);
     }
 
     static PublicationPolicy held() {
-        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC());
+        return held(null);
+    }
+
+    /** A held build that may have merged the base at {@code mergedBaseTip}; null when it merges nothing. */
+    static PublicationPolicy held(String mergedBaseTip) {
+        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null,
+                fullShaOrNull(mergedBaseTip));
+    }
+
+    private static String fullShaOrNull(String mergedBaseTip) {
+        if (mergedBaseTip != null && !mergedBaseTip.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("SPIRE_MERGED_BASE_TIP must be a full sha");
+        }
+        return mergedBaseTip;
     }
 
     static PublicationPolicy permitted(String head, Instant issuedAt, Instant expiresAt, Clock clock) {
@@ -25,23 +47,46 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("The publication permit needs a positive validity window");
         }
         return new PublicationPolicy(Mode.PERMITTED, head, issuedAt, expiresAt,
-                java.util.Objects.requireNonNull(clock));
+                java.util.Objects.requireNonNull(clock), null, null);
+    }
+
+    /** The same permitted policy, pushing to an existing branch expected at {@code expectedRemoteHead}. */
+    PublicationPolicy onExistingBranch(String expectedRemoteHead, String mergedBaseTip) {
+        if (mode != Mode.PERMITTED) {
+            throw new IllegalStateException("Only a permitted publisher pushes to an existing branch");
+        }
+        if (expectedRemoteHead == null || !expectedRemoteHead.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("SPIRE_EXPECTED_REMOTE_HEAD must be a full sha");
+        }
+        return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead,
+                fullShaOrNull(mergedBaseTip));
     }
 
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {
         return switch (mode) {
             case AUTOMATIC -> automatic();
-            case HELD -> held();
+            case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"));
             case PERMITTED -> {
                 try {
-                    yield permitted(Env.required(env, "SPIRE_PERMITTED_HEAD"),
+                    PublicationPolicy permit = permitted(Env.required(env, "SPIRE_PERMITTED_HEAD"),
                             Instant.parse(Env.required(env, "SPIRE_PERMIT_ISSUED_AT")),
                             Instant.parse(Env.required(env, "SPIRE_PERMIT_EXPIRES_AT")), Clock.systemUTC());
+                    String expected = optional(env, "SPIRE_EXPECTED_REMOTE_HEAD");
+                    String tip = optional(env, "SPIRE_MERGED_BASE_TIP");
+                    if (expected == null && tip != null) {
+                        throw new IllegalStateException("SPIRE_MERGED_BASE_TIP needs SPIRE_EXPECTED_REMOTE_HEAD");
+                    }
+                    yield expected == null ? permit : permit.onExistingBranch(expected, tip);
                 } catch (DateTimeParseException e) {
                     throw new IllegalStateException("Publication permit timestamps must be UTC instants");
                 }
             }
         };
+    }
+
+    private static String optional(Map<String, String> env, String name) {
+        String value = env.get(name);
+        return value == null || value.isBlank() ? null : value;
     }
 
     boolean selects(String candidate) {

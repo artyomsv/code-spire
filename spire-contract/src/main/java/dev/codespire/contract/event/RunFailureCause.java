@@ -177,6 +177,10 @@ public enum RunFailureCause {
             // Repeating the same permit cannot repair either refusal; measured usage still counts.
             Map.entry("PUBLICATION_PERMIT_EXPIRED", GATE_REFUSED),
             Map.entry("PERMITTED_HEAD_UNAVAILABLE", GATE_REFUSED),
+            // M4 land fix: the item branch moved after approval, read before the push; a stale parent by name.
+            Map.entry("REMOTE_HEAD_MOVED", NON_FAST_FORWARD),
+            // M4 land fix: the permit's merged base tip cannot excuse the base's paths, so the gate cannot pass it.
+            Map.entry("BASE_TIP_UNAVAILABLE", GATE_REFUSED),
             Map.entry("PUSH_FAILED", PUSH_TRANSPORT_FAILED),
             Map.entry("PUBLISHER_FAILED", WORKER_FAILED),
             // M4: the trusted init could not rebuild a held checkpoint, for a retried build or a verify.

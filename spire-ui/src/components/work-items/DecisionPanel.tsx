@@ -9,6 +9,31 @@ import DecisionEvidence from './DecisionEvidence';
 import * as approvalsApi from './approvalsApi';
 import { preparationEvidence, type PreparationEvidence } from './workPreparationApi';
 
+const METHOD_WORDS: Record<string, string> = { merge: 'a merge commit', squash: 'a squash merge', rebase: 'a rebase merge' };
+
+/** What the ticket is told after the merge, under the repository's ticket rule. */
+function TicketRuleSentence({ rule }: { rule: string }) {
+  if (rule === 'close') return <p>Then it comments on the ticket that the work is merged, and closes the ticket where the tracker allows.</p>;
+  return <p>Then it comments on the ticket that the work is merged; the ticket keeps its status.</p>;
+}
+
+/** What approving a land decision will do (spec §7.10): the method, the ticket rule, the branch, and the checks when known. */
+function LandPreview({ item }: { item: WorkItemDetail }) {
+  const land = item.land, pullRequest = item.progress?.execution?.pullRequest;
+  const target = pullRequest ? `pull request #${pullRequest.number}` : 'the pull request';
+  if (!land) return <section className="decision-sec" aria-label="What land will do">
+    <h4>What land will do</h4>
+    <p className="prov-note">The land setup was not reported, so the method and the ticket rule are not shown. Approving merges with the repository's saved land setup.</p>
+  </section>;
+  return <section className="decision-sec" aria-label="What land will do">
+    <h4>What land will do</h4>
+    <p>Merges {target} with {METHOD_WORDS[land.method] ?? land.method}, then deletes its branch.</p>
+    <TicketRuleSentence rule={land.ticketRule} />
+    {land.checks && <p>Checks when last read: {land.checks.done} of {land.checks.total} checks done
+      {land.checks.failed.length > 0 && <> · not passed: {land.checks.failed.map(check => check.name).join(', ')}</>}</p>}
+  </section>;
+}
+
 interface Props {
   itemId: string;
   /** The ticket title the list already read, so the panel does not read the tracker a second time. */
@@ -121,6 +146,7 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
       {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">
         <h4>What the checks found</h4><VerifyResult verification={verification} /></section>}
       <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
+      {gate.phase === 'land' && <LandPreview item={loaded.item} />}
       {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering only closes this decision. Register the current versions to get a new one.</p>}
       {orphaned && <p className="prov-error" role="alert">This decision binds a prepared task the item no longer has. Approve is not offered; answering only closes this decision.</p>}
       {unreported && <p className="prov-error" role="alert">The server does not say which prepared version these tickets belong to, so Approve is not offered. Update the orchestrator to the version this dashboard expects.</p>}

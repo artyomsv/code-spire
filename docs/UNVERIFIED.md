@@ -160,8 +160,8 @@ orchestrator JVM and provider fixture. It observes the checkpoint and one charge
 is absent. Since M4, a held build starts verify instead of stopping, and the draft/regular delivery
 tests drive the real verify flow with only the buses faked. They establish native request/response
 handling. Since 2026-10-08 live item publication, verification, a draft marked ready and its review
-are established on GitHub only (M4 verify acceptance); live merge is not, and no live tracker-artifact
-journey follows from these local proofs.
+are established on GitHub only (M4 verify acceptance); live merge is not (see the M4 land entry
+below), and no live tracker-artifact journey follows from these local proofs.
 
 **M4 verify (2026-10-07), what no test establishes.**
 - **Live on GitHub only, with file checks.** Three items on `spire-test` verified passed, failed then
@@ -180,7 +180,77 @@ journey follows from these local proofs.
 - **Seat renewal runs live once.** The first renewal (2026-10-08) took a seat whose access token had
   already expired back to working. Refresh-token rotation over many renewals, and a refused renewal, are
   established by tests against a local token endpoint only.
-- **Readmit after an approved land rebuilds delivered work.** Observed on #43; nothing guards it yet.
+
+**M4 land (2026-10-22, ADR-048), what no test establishes.** The #43 entry is resolved: readmit after
+an approved land no longer rebuilds delivered work. `WorkLandReadmitIT.aLandedItemCannotBeReadmitted`
+refuses a landed item (`readmission_landed`), and
+`WorkLandReadmitIT.anItemWaitingAtLandForACapabilityCannotBeReadmitted` refuses the `land /
+capability_unavailable` item #43 was (`readmission_land_pending`). Everything below is proven against a
+WireMock GitHub and a local origin only; no item has been merged live yet (`factory/LAND-ACCEPTANCE.md`
+when it lands).
+- **Land that cannot merge is a stop, not a path.** On GitLab and Bitbucket, and on a GitHub repository
+  with no FACTORY account or with land `auto_if_green`, every item that reaches land waits at `land /
+  capability_unavailable`; switching land `off` leaves it at `land / not_eligible / land_off`. Readmit is
+  refused at both and Retry land needs a hand-off, so Stop land is the only way on
+  (`WorkLandReadmitIT.anItemWhoseLandIsUnavailableCanBeStoppedThenReadmitted`,
+  `…anItemWhoseLandIsOffCannotBeReadmittedButCanBeStopped`). A readmit after that Stop builds the work again
+  beside the delivered pull request, which is still open; closing or reusing it is the operator's job.
+- **The merge method is a fact only for the factory's own merge.** `WorkLanding.method` is the method the
+  factory sent, kept on the row when the merge is claimed, so a lost answer recovered after the setting
+  changed records what was sent (`WorkLandingIT.anUncertainMergeRecordsTheMethodItSent`). A merge a person
+  made, or one a re-read found made by someone else, records `unknown`: GitHub's pull request read does not
+  report the method. Nothing reads back whether GitHub merged with the method that was sent.
+- **A hand merge with no FACTORY webhook is noticed by the reviewer's close or a periodic read, proven
+  against a fake GitHub only.** The live land acceptance found it stuck: on `spire-test`, which has only a
+  REVIEWER webhook, PR 65 was merged by hand while issue #64 waited at its land gate, and nothing read the
+  pull request, since no `work_land_effect` row exists before approval. The REVIEWER webhook's
+  `PullRequestClosed` for a delivered pull request now enters the same land observation as the factory's
+  `merged`/`closed` activity (`WorkPullRequestWatch.reviewerClosed`), and every 2 minutes
+  (`spire.work-pr-state-interval`) a bounded batch of 20 items at deliver, review or land with a delivered
+  pull request and no live land effect has its pull request read (`WorkPullRequestWatch.check`), so a missed
+  or absent webhook converges within minutes (`WorkLandUnwatchedIT`). A stopped item is not read
+  periodically; only a webhook reaches it. Neither path has run live; issue #64 is expected to converge
+  through the periodic read after a redeploy, and that is the first live proof. A webhook whose read could not
+  confirm the merge leaves a `work_land_observation` row that every sweep reads again (`WorkLandWebhookIT`).
+  The read takes the FACTORY account, or the REVIEWER account when the factory is unavailable; the reviewer's
+  reader refuses a merge or a branch delete (`…aHandMergeIsReadThroughTheReviewerWhenTheFactoryIsUnavailable`,
+  `ProviderClientsLanderTest`). No live repository has had its merge read through the reviewer.
+- **Merge-queue repositories are handed over, never proven live.** A repository that requires GitHub's
+  merge queue is expected to report `blocked`, which hands the item over with `land_blocked`. No test met a
+  real merge queue, and nothing reads the ruleset to say a queue was the cause.
+- **Fork pull requests.** The factory opens its pull request from the item branch in the same repository,
+  and the land read, the fix clone and the branch delete all assume that. No test lands, fixes or deletes a
+  pull request whose head lives in a fork.
+- **Revocation can lose to a running push (spec A6).** A merge or close by hand during a land fix holds
+  the fix run and revokes its publication through the delivery sweep, as takeover does; a push already
+  running may still reach the branch. The guards are the sha-pinned merge and the branch delete's read
+  (§E); no test races a real push against the revocation.
+- **`has_hooks` and `unstable` are merged on fakes only.** `WorkLandDecisionTest` merges both when the
+  check reduction passes, and sends `unstable` with a failed non-required check to a fix. No real
+  repository reporting either state has been landed.
+- **A base that moves between the land read and the fix run's clone fails closed.** The permit's
+  `mergedBaseTip` is the base the land effect read; the run unit fetches the base again when it clones.
+  If the base moved in between, the fix merges the newer base, the paths it brought after the named tip
+  count as the agent's, and a protected one among them refuses the push. The operator sees the refusal;
+  nothing re-reads the base and retries. `PublishRepoTest` covers a base that did not move.
+- **Jira `close` is skipped.** A Jira source under the `close` ticket rule gets the comment, keeps its
+  status, and the item notes `ticket_close_unsupported`: a close needs a per-workflow transition id that
+  nothing configures. The GitHub Issues and GitLab close are proven against fakes only. The close reads the
+  ticket rule again when it is claimed, under the repository and settings locks a save takes, so a rule saved as
+  `comment` after the first read refuses it (`WorkPostLandEffectsTest.aRuleChangedBetweenTheReadAndTheClaimDoesNotClose`).
+  The screen shows the note beside the merge, on a completed item too.
+- **Withdrawing consent after approval is proven against fakes only.** Before the merge is claimed the land
+  re-reads the ticket's labels, the policy and the source, as delivery does before its permit; a change hands the
+  item over with `land_policy_changed` (`WorkLandingIT.aLabelRemovedAfterApprovalIsNotMerged` and its two
+  siblings). A ticket that cannot be read then holds the merge as `land_read_failed`. Stop land also ends a land
+  that has sent no merge yet (`…stopLandEndsALandStillWaitingForChecks`). None of it ran against a real tracker.
+- **A lost merge on an item taken over keeps reading for six hours.** GitHub can finish a merge after its edge gave
+  up, and the factory's own merged webhook is left to the land row, so the row keeps reading an open pull request at
+  the approved head (`…aTakeoverDuringAnUncertainMergeKeepsReadingAnOpenPullRequest`) and is refused after six
+  hours. A merge GitHub finishes later than that is not recorded, and nothing measured how late one can finish.
+- **The land timings are a guess.** Checks are re-read every 60 s and given up after 6 h
+  (`land_checks_timeout`); a row that cannot read GitHub before its merge call is handed over after 6 h.
+  None was measured against a real repository's check durations.
 
 Result-inbox tests stage both sides of the aggregate-commit/acknowledgement boundary against real
 PostgreSQL and recover without another completion or charge. Those are staged durable-state tests.
@@ -660,6 +730,15 @@ Not work. Written down because each has been rediscovered at least once.
   command at a time and never re-checks the cap at consumption, so N dispatches accepted while the
   window reads empty become N sequential paid runs after it has tripped. A live-run cap at dispatch
   (`SPIRE_FACTORY_MAX_LIVE_RUNS`) bounds the queue; the residual softness is the in-flight half.
+- **The land branch delete is check-then-act, not a compare-and-swap (M4 land, 2026-10-22).**
+  `GitHubPullRequestLander.deleteBranch` reads `GET /git/ref/heads/{b}`, compares the sha, then sends
+  `DELETE /git/refs/heads/{b}`, which takes no expected sha. A push landing between those two calls
+  is deleted with the branch and the method reports `DELETED` — the case a cancelled land-fix run's
+  late publisher push could hit. A push before the read is caught (`MOVED`, no delete sent). A real
+  compare-and-swap needs a git receive-pack push with the old oid (`--force-with-lease`), which the
+  orchestrator has no git transport for, or GraphQL `updateRefs` with `beforeOid`, whose availability
+  on the supported GitHub and GHES versions nobody has confirmed. Nothing may rely on the delete to
+  stop a late push (spec A6). Closing it means one of those two paths, measured live.
 
 ---
 

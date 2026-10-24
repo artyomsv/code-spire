@@ -154,6 +154,16 @@ class WorkRunWorkerTest {
         assertTrue(launched.execution().prompt().endsWith(WorkRunWorker.BASE_FALLBACK_NOTE));
         assertTrue(launched.execution().prompt().startsWith(retry.execution().prompt()));
     }
+    /** A land fix's base tip is the orchestrator's, not the checkpoint's: starting from the base again keeps it. */
+    @Test void aRetryStartingFromTheBaseKeepsItsLandFixBaseTip(){
+        var e=command.execution();
+        var onItemBranch=new RunCommand.ExecuteRun(e.runId(),e.repo(),e.remoteUri(),"spire/work-TEST",e.baseCommit(),"spire/work-TEST",e.prompt(),e.harness(),e.model(),
+                e.agentImage(),e.protectedPaths(),e.maxWallClockSeconds(),e.scmCredential(),e.harnessCredential()).onExistingBranch("TEST-main");
+        var retry=new RunCommand.ExecuteWorkRun(onItemBranch.fromCheckpoint("TEST-gone",ready.head()),command.work()).withMergedBaseTip("e".repeat(40));
+        var started=worker.readableStart(retry);
+        assertNull(started.execution().startFromRunId(),"the fixture's checkpoint is gone");
+        assertEquals("e".repeat(40),started.mergedBaseTip());
+    }
     @Test void aRetryWhoseCheckpointUnitIsHereKeepsIt(){
         alsoPresent="TEST-previous";
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());

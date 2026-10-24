@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { WorkItemDetail } from '../../api';
+import { formatEventTime } from '../../format';
 import { actorLabel } from '../actorsApi';
-import { JOURNEY, journeyCells, type Cell, type JourneyPhase } from './workJourney';
+import { JOURNEY, journeyCells, landNote, landProgress, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
-  | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress'>;
+  | 'people' | 'operators' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
 
 /** Proof only from this attempt. An entry that does not say its attempt is history, never current proof. */
 const current = (item: Item, generation: number | undefined) => generation !== undefined && generation === item.generation;
@@ -65,13 +66,32 @@ function Prepared({ item, part }: { item: Item; part: 'specification' | 'plan' }
   </p>;
 }
 
+/**
+ * A recorded subject as the person it names: an operator by the name they signed in with, a forge person by handle,
+ * otherwise the id itself, so the record stays readable for an operator never seen on this dashboard.
+ */
+function personName(item: Item, subject: string | null | undefined) {
+  if (!subject) return 'an unknown actor';
+  const operator = item.operators?.find(candidate => candidate.subject === subject);
+  if (operator) return operator.displayName || operator.username || subject;
+  const person = item.people?.find(candidate => candidate.providerUserId === subject);
+  return person ? actorLabel(person) : subject;
+}
+
+const When = ({ at }: { at: string }) => <time dateTime={at}>{formatEventTime(at)}</time>;
+const latestFirst = (left: { sequence: number }, right: { sequence: number }) => right.sequence - left.sequence;
+
+/** Each decision of this attempt, latest first, with who, when and, at land, the head it approved (issue #62). */
 function Decisions({ item, phase }: { item: Item; phase: string }) {
-  const resolved = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase && current(item, event.generation));
+  const resolved = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase && current(item, event.generation)).sort(latestFirst);
   const earlier = item.events.filter(event => event.type === 'GATE_RESOLVED' && event.phase === phase && !current(item, event.generation)).length;
   const open = item.gate?.state === 'OPEN' && item.gate.phase === phase;
   return <>
     {open && <p className="factory-note">Waiting for the {phase} decision.</p>}
-    {resolved.map(event => <p key={event.sequence} className="factory-note">{phase} decision: {event.gateState} by {event.resolver}</p>)}
+    {resolved.map(event => <p key={event.sequence} className="factory-note">
+      {phase} decision: {(event.gateState ?? 'recorded').toLowerCase()} by {personName(item, event.resolver)} · <When at={event.occurredAt} />
+      {phase === 'land' && event.gateArtifact && <> · head <code>{event.gateArtifact.slice(0, 7)}</code></>}
+    </p>)}
     {earlier > 0 && <p className="prov-sub">{earlier === 1 ? '1 decision' : `${earlier} decisions`} from another attempt, in the history below</p>}
   </>;
 }
@@ -113,13 +133,34 @@ function Delivery({ item, phase }: { item: Item; phase: 'verify' | 'deliver' | '
   return <p className="factory-note"><a href={pr.url} target="_blank" rel="noreferrer">{name} #{pr.number}</a></p>;
 }
 
+/** Where the merge stands (spec §7.10), and the land row's note, which may ask the operator to act after completion. */
+function Land({ item }: { item: Item }) {
+  const text = landProgress(item);
+  const note = landNote(item.land?.note);
+  return <>
+    {text && <p className="factory-note">{text}</p>}
+    {note && <p className="factory-note">{note}</p>}
+  </>;
+}
+
+const LAND_COMMANDS = new Map([['LAND_STOPPED', 'Land stopped'], ['LAND_RETRY_REQUESTED', 'Land retry requested']]);
+
+/** Stop land and Retry land of this attempt, latest first, each with its operator, time and note (issue #66). */
+function LandCommands({ item }: { item: Item }) {
+  const commands = item.events.filter(event => LAND_COMMANDS.has(event.type) && current(item, event.generation)).sort(latestFirst);
+  return <>{commands.map(event => <p key={event.sequence} className="factory-note">
+    {LAND_COMMANDS.get(event.type)} by {personName(item, event.operator)} · <When at={event.occurredAt} />
+    {event.note && <>: <q>{event.note}</q></>}
+  </p>)}</>;
+}
+
 function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
   switch (phase) {
     case 'intake': return <Intake item={item} />;
     case 'spec': return <Prepared item={item} part="specification" />;
     case 'plan': return <><Prepared item={item} part="plan" /><Decisions item={item} phase="plan" /></>;
     case 'build': return <Build item={item} />;
-    case 'land': return <Decisions item={item} phase="land" />;
+    case 'land': return <><Land item={item} /><LandCommands item={item} /><Decisions item={item} phase="land" /></>;
     default: return <Delivery item={item} phase={phase} />;
   }
 }
@@ -132,6 +173,8 @@ function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
 export default function WorkItemSteps({ item, current: actions }: { item: Item; current: ReactNode }) {
   const cells = journeyCells(item);
   const hasCurrent = cells.some(cell => cell.startsWith('now-'));
+  // A land fix runs in the build, verify, deliver and review steps, but it is land's attempt, so the Land step says so.
+  const landSays = landProgress(item) !== null;
   return <><ol className="factory-steps work-steps" aria-label="Journey">
     {JOURNEY.map((phase, index) => {
       const cell = cells[index];
@@ -144,7 +187,7 @@ export default function WorkItemSteps({ item, current: actions }: { item: Item; 
             <span className="factory-q">{QUESTIONS[phase]}</span>
             <span className="factory-k">{phase} · {modeWords(item.effectiveModes?.[phase.toUpperCase()])}</span>
           </div>
-          {!later && <div className="factory-body">
+          {(!later || phase === 'land' && landSays) && <div className="factory-body">
             {now && <p className="work-reason">{workReason(item.reason)}</p>}
             <Evidence item={item} phase={phase} />
             {now && actions}

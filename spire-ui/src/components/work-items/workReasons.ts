@@ -33,6 +33,10 @@ const REASONS = new Map(Object.entries({
   harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
   build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
+  land_settings_changed: 'Someone else saved the land setup while this form was open. Reload it and try again.',
+  merge_method_invalid: 'The merge method must be merge, squash or rebase.',
+  ticket_rule_invalid: 'The ticket rule must be comment or close.',
+  fix_attempts_invalid: 'Fix attempts must be a whole number from 0 to 10.',
   repository_unknown: 'That repository is not registered.',
   operator_identity_required: 'Your sign-in did not carry a verified identity, so this change was not saved.',
   branch_head_unconfirmed: 'The forge did not confirm this branch. Check the branch name, and that the repository account can read it.',
@@ -107,6 +111,40 @@ const REASONS = new Map(Object.entries({
   deliver_capability_unavailable: 'Delivery is not available.',
   review_capability_unavailable: 'Review execution is not available.',
   land_capability_unavailable: 'Automatic merging is not available.',
+  landed: 'The pull request was merged, and the item is complete.',
+  pr_closed_by_human: 'Someone closed the pull request without merging it, so the item stopped.',
+  land_head_moved: 'The pull request changed after its merge was approved. Retry land to decide on what is there now, or stop.',
+  land_checks_timeout: 'The checks on the pull request did not finish in time. Look at them on GitHub, then retry land or stop.',
+  land_checks_not_code: 'A check failed for a reason a code change cannot fix, such as a cancelled or stale run. Look at it on GitHub, then retry land or stop.',
+  land_blocked: 'GitHub requires something only a person can give, such as an approving review or a resolved conversation. Give it on GitHub, then retry land or stop.',
+  land_pr_draft: 'The pull request is a draft, so GitHub will not merge it. Mark it ready for review, then retry land or stop.',
+  land_merge_refused: 'GitHub refused the merge. Its message is shown with the item; fix the cause, then retry land or stop.',
+  land_merge_method_not_allowed: 'This repository does not allow the saved merge method. Choose an allowed one in the land setup, then retry land or stop.',
+  land_fix_attempts_exhausted: 'The checks still fail after every fix attempt the land setup allows. Look at them on GitHub, then retry land or stop.',
+  land_item_limit_reached: 'A fix would go over a limit of this item. Retry land after raising the limit, or stop.',
+  land_fix_review_blocked: 'The reviewer found blockers in the fix. Read the review, then retry land or stop.',
+  land_checks_failed: 'A check failed on the pull request, so the factory builds a fix on the same pull request. Land waits for your approval again after it.',
+  land_conflict: 'The pull request conflicts with its base branch, so the factory merges the base in and resolves the conflicts on the same pull request. Land waits for your approval again after it.',
+  land_branch_behind: 'The pull request is behind its base branch, so the factory merges the base in on the same pull request. This does not count as a fix attempt; land waits for your approval again after it.',
+  land_fix_run_failed: 'The build that was fixing the pull request failed. Look at its run, then retry land or stop.',
+  land_fix_stopped: 'The fix stopped before land could be approved again; the land step names why. Fix the cause, then retry land or stop.',
+  retry_land_required: 'Land handed this item to you, so it goes on with Retry land, which records your note, or Stop. Recheck would open land again without either.',
+  retry_land_unavailable: 'Retry land is for an item land handed to you, and Stop for an item waiting at land; this item is not waiting there. Read it again.',
+  retry_land_head_unavailable: 'The pull request could not be read on GitHub, so it is unknown whether it still holds the approved head. Nothing changed; try again.',
+  land_stopped_by_operator: 'Stopped at land by an operator. The pull request stays open; re-admitting builds the work again on a new pull request.',
+  readmission_landed: 'This item was merged, so it cannot be re-admitted. Open a new ticket for further work.',
+  readmission_land_pending: 'This item waits at land, or is fixing, with its pull request still open, so re-admitting would build a second one. Recheck, retry land or stop it instead.',
+  land_account_unavailable: "This repository's factory account could not be used to merge for six hours: it is missing, switched off, or has no login. Fix it on the Repositories screen, then retry land or stop.",
+  land_read_failed: 'The pull request or its ticket could not be read, and no merge was sent. After six hours of this the item waits for you: check that the repository, the pull request and the ticket still exist and that the factory account can read them, then retry land or stop.',
+  land_merge_unconfirmed: 'A merge was sent, and GitHub has not confirmed whether it happened. The factory keeps reading and will record what GitHub did; check the pull request on GitHub.',
+  land_policy_changed: 'The labels, the policy or the work source changed after land was approved, so nothing was merged. Retry land asks for a new approval under the current policy; or stop.',
+  land_merge_unreadable: 'GitHub reports the pull request merged but did not say by whom or at which commit. The factory reads it again shortly.',
+  merge_outcome_unknown: 'The merge was sent and its answer was lost. The factory reads the pull request to find out what happened, and never sends the merge blind.',
+  readmission_merge_unconfirmed: 'A merge of this pull request may already have happened, and the factory is still reading GitHub to find out. Try again once it has recorded the outcome.',
+  branch_delete_failed:'The pull request was merged, but its branch could not be deleted after three tries. Delete it on GitHub if it is still there.',
+  ticket_close_unsupported: 'The ticket got a comment that the work is merged, but it was not closed: closing a Jira ticket needs a workflow transition the factory does not configure yet. Close it in Jira.',
+  ticket_rule_changed: 'The ticket was not closed, because the repository\'s ticket rule changed to comment before the close was sent.',
+  comment_not_sent: 'The ticket was not closed, because the comment that says why could not be sent. Close it by hand if the work is done.',
   source_unavailable: 'The work source or its serving account is unavailable.',
   phase_started: 'This phase has started.',
   phase_completed: 'This phase completed.',
@@ -156,4 +194,24 @@ const DETAILS = new Map(Object.entries({
 /** What to tell the operator about a refusal: the rule when the backend named one, else the reason. */
 export function workRefusal(reason: string, detail: string | null): string {
   return (detail ? DETAILS.get(detail) : undefined) ?? workReason(reason);
+}
+
+/**
+ * Why land hands an item to the operator, for copy only: whether an item was handed over is the server's to say
+ * (`land.handedOver`). workReasons.test.ts reads WorkItemLifecycle.LAND_HANDOFF_REASONS so this list cannot drift.
+ */
+export const LAND_HANDOFF_REASONS: readonly string[] = ['land_head_moved', 'land_checks_timeout', 'land_checks_not_code', 'land_blocked', 'land_pr_draft',
+  'land_merge_refused', 'land_merge_method_not_allowed', 'land_fix_attempts_exhausted', 'land_item_limit_reached', 'land_fix_review_blocked',
+  'land_fix_run_failed', 'land_fix_stopped', 'land_account_unavailable', 'land_read_failed', 'land_policy_changed'];
+
+/** Every reason land puts on an item, an effect or a refusal. */
+export const LAND_REASONS: readonly string[] = [...LAND_HANDOFF_REASONS, 'retry_land_required', 'retry_land_unavailable', 'retry_land_head_unavailable',
+  'land_stopped_by_operator', 'landed', 'pr_closed_by_human', 'land_checks_failed', 'land_conflict',
+  'land_branch_behind', 'readmission_landed', 'readmission_land_pending', 'branch_delete_failed', 'land_merge_unconfirmed', 'land_merge_unreadable',
+  'merge_outcome_unknown', 'readmission_merge_unconfirmed', 'ticket_close_unsupported', 'ticket_rule_changed', 'comment_not_sent'];
+
+/** A land reason, with GitHub's own words beside it when GitHub gave any: the operator acts on what GitHub said. */
+export function landReason(reason: string, message: string | null): string {
+  const sentence = workReason(reason);
+  return message ? `${sentence} GitHub said: “${message}”` : sentence;
 }

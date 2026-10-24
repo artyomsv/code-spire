@@ -57,24 +57,77 @@ public final class WorkItemLifecycle {
     public static WorkItemEvent fold(List<WorkItemEvent> events) {
         return events.isEmpty() ? null : events.getLast();
     }
+    /**
+     * How a phase is entered. The decider sees no history, so the caller derives it under the item lock (A9):
+     * {@link #LAND_FIX} while this generation's latest land fix is still in progress ({@link #landFixInProgress}).
+     */
+    public enum EntryMode {
+        ORDINARY,
+        /**
+         * The build and deliver gates are skipped, because the new land approval is the one human check (operator,
+         * 2026-10-21), and a build keeps the pull request it fixes. Verify and land keep their gates.
+         */
+        LAND_FIX
+    }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
+        return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);
+    }
+    public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId,EntryMode entry) {
+        boolean landFix=entry==EntryMode.LAND_FIX;
         if(item.policy().selected()==null)return state(item,"not_eligible",item.policy().reason(),"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if("complete".equals(item.phase()))return state(item,"completed","all_phases_completed","WORK_ITEM_COMPLETED",item.gate(),item.progress().reserve(false));
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        if("approve".equals(mode) && !approved) {
+        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
+        if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
                     now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
             return state(item,"waiting_approval","approval_required","GATE_OPENED",gate,item.progress().reserve(true));
         }
-        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId);
+        if("intake".equals(item.phase()))return enter(item.decision(item.policyRevision(),item.authority(),item.policy(),"spec",item.workflowStatus(),item.reason(),item.milestone(),item.gate(),item.progress()),previous,historySize,false,now,available,decisionId,entry);
         if(item.preparation()!=null && java.util.Set.of("spec","plan").contains(item.phase()))
             return state(item,"awaiting_input",item.phase().equals("spec")?"specification_supplied":"plan_supplied","ARTIFACT_ACCEPTED",item.gate(),item.progress().reserve(false));
         if(!available)return state(item,"capability_unavailable",item.phase()+"_capability_unavailable","CAPABILITY_UNAVAILABLE",item.gate(),item.progress().reserve(false));
-        return state(item,"active","phase_started","PHASE_STARTED",item.gate(),item.progress().start(decisionId,item.phase(),now));
+        WorkProgress started=landFix && "build".equals(item.phase())?item.progress().startKeepingExecution(decisionId,item.phase(),now)
+                :item.progress().start(decisionId,item.phase(),now);
+        return state(item,"active","phase_started","PHASE_STARTED",item.gate(),started);
+    }
+
+    /** The refusals a land fix answers (spec §7.5): they rewind to build instead of handing the item over. */
+    public static final java.util.Set<String> LAND_FIX_REASONS=java.util.Set.of("land_checks_failed","land_conflict","land_branch_behind");
+    /** The fixes that spend an attempt; a branch behind its base is merged up for free (§7.5). */
+    public static final java.util.Set<String> LAND_FIX_COUNTED=java.util.Set.of("land_checks_failed","land_conflict");
+    /** What ends a land fix, beside the next land gate: the merge, a hand-off, a close, or a new generation. */
+    private static final java.util.Set<String> LAND_FIX_ENDS=java.util.Set.of("WORK_ITEM_LANDED","LAND_HANDED","PULL_REQUEST_CLOSED","READMITTED");
+
+    /**
+     * Land was refused for a reason code can fix (spec §7.5): the item rewinds to build on the same pull request. The
+     * execution, and with it the pull request, is kept, and the progress still names the land attempt, which is how
+     * the fix's effect row is found again. Entering build is the caller's next decision.
+     */
+    public static WorkItemEvent landFixRequested(WorkItemEvent item,String reason) {
+        if(!LAND_FIX_REASONS.contains(reason))throw new IllegalArgumentException("Not a land fix reason "+reason);
+        if(item.progress().execution()==null || item.progress().execution().pullRequest()==null)
+            throw new IllegalStateException("Only a delivered pull request can be fixed");
+        // The land attempt is over: the next land gate starts another, and only one attempt per phase may be started.
+        WorkProgress progress="land".equals(item.progress().attemptPhase())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"build","awaiting_input",reason,"LAND_FIX_REQUESTED",null,progress);
+    }
+    /** Whether the current generation's latest land fix has not ended yet. A verify gate inside the fix does not end it. */
+    public static boolean landFixInProgress(List<WorkItemEvent> history) {
+        if(history.isEmpty())return false;
+        long generation=history.getLast().generation();
+        boolean fixing=false;
+        for(WorkItemEvent event:history) {
+            if(event.generation()!=generation)continue;
+            if("LAND_FIX_REQUESTED".equals(event.milestone()))fixing=true;
+            else if(LAND_FIX_ENDS.contains(event.milestone())
+                    || "GATE_OPENED".equals(event.milestone()) && event.gate()!=null && "land".equals(event.gate().phase()))fixing=false;
+        }
+        return fixing;
     }
 
     /** The reasons an open verify gate carries when it asks about a result rather than permission to run. */
@@ -94,6 +147,128 @@ public final class WorkItemLifecycle {
                 now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
         String reason=result.outcome()==WorkVerification.Outcome.FAILED?"verify_failed":"verify_unverified";
         return state(item,"waiting_approval",reason,"GATE_OPENED",gate,item.progress().reserve(true));
+    }
+
+    /**
+     * Why land handed an item to the operator (spec §7.6). The item waits at land / awaiting_input with no gate:
+     * Retry land opens a fresh one, and readmission is refused (§7.9). A failed check, a conflict and a branch behind
+     * its base are not here: they request a land fix ({@link #LAND_FIX_REASONS}).
+     */
+    public static final java.util.Set<String> LAND_HANDOFF_REASONS=java.util.Set.of("land_head_moved","land_checks_timeout","land_checks_not_code",
+            "land_blocked","land_pr_draft","land_merge_refused","land_merge_method_not_allowed","land_fix_attempts_exhausted","land_item_limit_reached",
+            "land_fix_review_blocked","land_fix_run_failed","land_fix_stopped","land_account_unavailable","land_read_failed","land_policy_changed");
+
+    /**
+     * The merge completes the item at once (§7.7): the ticket and the branch delete never hold completion. Only
+     * the land attempt finishes here; a fix build or verify still running keeps its attempt open, so its late
+     * result is accounted rather than read as already applied (§7.8).
+     */
+    public static WorkItemEvent landed(WorkItemEvent item,WorkLanding landing) {
+        WorkExecution execution=item.progress().execution();
+        if(execution==null)throw new IllegalStateException("Only a delivered execution can land");
+        WorkProgress current="land".equals(item.progress().attemptPhase())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        WorkProgress progress=current.withExecution(execution.landed(landing));
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"complete","completed","landed","WORK_ITEM_LANDED",superseded(item.gate(),"landed"),progress);
+    }
+    /**
+     * An approval resolved before the hand-off is never reused, so the item carries no gate. The attempt the hand-off
+     * interrupts (land, or a fix's review) is finished: a later land or review start in this generation would otherwise
+     * meet it still started, and only one attempt per phase may be.
+     */
+    public static WorkItemEvent landHanded(WorkItemEvent item,String reason) {
+        if(!LAND_HANDOFF_REASONS.contains(reason))throw new IllegalArgumentException("Unknown land hand-off reason "+reason);
+        WorkProgress progress="started".equals(item.progress().attemptState())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return item.decision(item.policyRevision(),item.authority(),item.policy(),"land","awaiting_input",reason,"LAND_HANDED",null,progress);
+    }
+    /** Where a stopped land fix would otherwise wait; with its pull request open, readmit and recheck both refuse each. */
+    private static final java.util.Set<String> FIX_STOP_STATUSES=java.util.Set.of("stopped","not_eligible","failed","capability_unavailable");
+    /**
+     * A land fix that stopped before its next land gate is handed to the operator, because its pull request is still
+     * open: readmit would build a second one beside it. Unless the fix's own head was reviewed, the item goes back to
+     * the execution the fix started from, the head that was verified, reviewed and approved, so nothing the fix built
+     * unpushed or pushed unreviewed reaches a land gate. Null when {@code stopped} stops no fix in progress; the stop itself stays in history before the hand-off.
+     *
+     * @param before the history {@code stopped} is appended to
+     */
+    public static WorkItemEvent landFixStopped(List<WorkItemEvent> before,WorkItemEvent stopped) {
+        if(!landFixInProgress(before) || LAND_FIX_ENDS.contains(stopped.milestone()))return null;
+        boolean stops=FIX_STOP_STATUSES.contains(stopped.workflowStatus())
+                || "awaiting_input".equals(stopped.workflowStatus()) && "run_usage_unknown".equals(stopped.reason());
+        if(!stops)return null;
+        WorkItemEvent requested=before.reversed().stream().filter(event->"LAND_FIX_REQUESTED".equals(event.milestone())).findFirst().orElseThrow();
+        WorkExecution current=stopped.progress().execution();
+        // A fix delivered and reviewed already stands on its own head, as when entering land is refused after its review.
+        WorkExecution kept=current!=null && current.reviewId()!=null?current:requested.progress().execution();
+        return landHanded(state(stopped,stopped.workflowStatus(),stopped.reason(),stopped.milestone(),stopped.gate(),stopped.progress().withExecution(kept)),"land_fix_stopped");
+    }
+    /** When and under which decision a gate opens, and how long the item's history was before it. */
+    public record GateOpening(long historySize,java.time.Instant now,UUID decisionId) {}
+    /**
+     * Retry land (spec §7.6, A3): a fresh land gate on the execution's head, the one that was verified and reviewed, never
+     * on whatever the pull request holds now; the caller refuses the retry when the two differ. The item carries the
+     * current policy revision before this is called, so the gate binds it. An approval resolved before the hand-off is
+     * not reused: the gate is new.
+     */
+    public static WorkItemEvent retryLandGate(WorkItemEvent item,WorkItemEvent previous,GateOpening opening) {
+        requireHanded(item);
+        WorkExecution execution=item.progress().execution();
+        if(execution==null || execution.pullRequest()==null)throw new IllegalStateException("Only a delivered pull request can land");
+        long eventRevision=opening.historySize()+1+(clampChanged(previous,item)?1:0);
+        java.time.Instant now=opening.now();
+        WorkGate gate=new WorkGate(opening.decisionId(),1,"OPEN","land",item.generation(),eventRevision,item.policyRevision(),item.authority(),execution.head(),
+                now,now.plusSeconds(item.policy().limits().gateTtlSeconds()),null,null,null,null);
+        return state(item,"waiting_approval","approval_required","LAND_RETRY_REQUESTED",gate,item.progress().reserve(true));
+    }
+    /**
+     * Stop at land (§7.6): the item ends there. The pull request is left as it is, so the execution is kept. A gate the
+     * item still holds is superseded, so its expiry cannot overwrite why the item ended.
+     */
+    public static WorkItemEvent landStopped(WorkItemEvent item) {
+        if(!landStoppable(item))throw new IllegalStateException("Only an item waiting at land can stop land, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
+        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",superseded(item.gate(),"land_stopped"),item.progress().reserve(false));
+    }
+    /**
+     * Stop on a land still before its merge call (review of the branch): a land waiting hours for checks is not handed
+     * over, and the operator may withdraw it. The decider cannot see the effect row, so the caller proves, under the
+     * item lock and in the same transaction, that no merge was sent and refuses the row. The land attempt is finished.
+     */
+    public static WorkItemEvent landStoppedBeforeMerge(WorkItemEvent item) {
+        if(!"land".equals(item.phase()) || !"active".equals(item.workflowStatus()))throw new IllegalStateException("Only an active land can stop before its merge, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
+        WorkProgress progress="started".equals(item.progress().attemptState())?item.progress().finish(0,0,0):item.progress().reserve(false);
+        return state(item,"stopped","land_stopped_by_operator","LAND_STOPPED",superseded(item.gate(),"land_stopped"),progress);
+    }
+    /**
+     * Statuses at land where the delivered pull request is still open and nothing moves the item on: land cannot merge
+     * on this forge or for this repository, or land is off. Readmit there would build beside the open pull request
+     * (A8), so Stop is the way out, as for a hand-off (review of slice 9).
+     */
+    public static final java.util.Set<String> LAND_STOPPABLE_STATUSES=java.util.Set.of("capability_unavailable","not_eligible");
+    /** Whether Stop land may end this item: handed over, or waiting at land in one of {@link #LAND_STOPPABLE_STATUSES}. */
+    public static boolean landStoppable(WorkItemEvent item) {
+        return landHandedOver(item) || "land".equals(item.phase()) && LAND_STOPPABLE_STATUSES.contains(item.workflowStatus());
+    }
+    /** Whether land handed this item to the operator, where Retry land and Stop are the only ways on. */
+    public static boolean landHandedOver(WorkItemEvent item) {
+        return "land".equals(item.phase()) && "awaiting_input".equals(item.workflowStatus()) && LAND_HANDOFF_REASONS.contains(item.reason());
+    }
+    private static void requireHanded(WorkItemEvent item) {
+        if(!landHandedOver(item))throw new IllegalStateException("Only an item land handed over can retry land, not "
+                +item.phase()+" / "+item.workflowStatus()+" / "+item.reason());
+    }
+    public static WorkItemEvent pullRequestClosed(WorkItemEvent item) {
+        return state(item,"stopped","pr_closed_by_human","PULL_REQUEST_CLOSED",superseded(item.gate(),"pr_closed"),item.progress().reserve(false));
+    }
+    /** An open gate on a terminal item would later expire and overwrite why it ended, so the fact supersedes it. */
+    private static WorkGate superseded(WorkGate gate,String fact) {
+        return gate!=null && "OPEN".equals(gate.state())?gate.resolve("SUPERSEDED",null,"system",fact,null):gate;
+    }
+    /** Whether this generation recorded the merge of that pull request; a later fact does not hide it. */
+    public static boolean landedIn(List<WorkItemEvent> history,long generation,long pullRequest) {
+        return history.stream().anyMatch(event->event.generation()==generation && "WORK_ITEM_LANDED".equals(event.milestone())
+                && event.progress().execution()!=null && event.progress().execution().landing()!=null
+                && event.progress().execution().landing().pullRequest().number()==pullRequest);
     }
 
     public static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {

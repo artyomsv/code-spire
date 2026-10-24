@@ -16,6 +16,8 @@ public class WorkItemControl {
     @Inject WorkSourceRegistry sources;
     @Inject WorkPolicyRegistry policies;
     @Inject WorkItemTransitions transitions;
+    @Inject WorkLandTransitions landTransitions;
+    @Inject WorkLandReads landReads;
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts accounts;
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
 
@@ -42,14 +44,60 @@ public class WorkItemControl {
         return transitions.resumeControlled(id,expected,observed,subject,note,head);
     }
 
+    /**
+     * Retry land on an item land handed over (spec §7.6, A3). The pull request's head is read through the lander before
+     * any lock, as every forge read is; the transition compares it with the verified head under the lock.
+     */
+    public WorkItemTransitions.Outcome retryLand(LandRequest request) {
+        WorkItemEvent reference=landCommand(request);
+        WorkExecution execution=reference.progress().execution();
+        if(execution==null || execution.pullRequest()==null)return new WorkItemTransitions.Outcome(409,"retry_land_unavailable",reference);
+        WorkItemTransitions.Observation observed=transitions.observe(reference);
+        if(observed.evidence().failure()!=null)return new WorkItemTransitions.Outcome(503,observed.evidence().failure(),reference);
+        dev.codespire.contract.port.PullRequestLander.LandState pullRequest=landReads.readPullRequest(reference,execution.pullRequest().number());
+        if(pullRequest==null || pullRequest.headSha()==null)return new WorkItemTransitions.Outcome(503,"retry_land_head_unavailable",reference);
+        return landTransitions.retryLandControlled(request,observed,pullRequest.headSha());
+    }
+    /**
+     * Stop on an item waiting at land, or on a land that has sent no merge yet (spec §7.6, review of slice 9 and of the
+     * branch). Nothing is read or written on the forge: the pull request stays open.
+     */
+    public WorkItemTransitions.Outcome stopLand(LandRequest request) {
+        landCommand(request);
+        return landTransitions.stopLandControlled(request);
+    }
+    /** A land command: the item, the revision the operator saw, the verified operator and their note. */
+    public record LandRequest(String id,long expected,String subject,String note) {}
+    /** Both land commands are audited, so both need a verified operator and a note, like resume. */
+    private WorkItemEvent landCommand(LandRequest request) {
+        if(request.subject()==null || request.subject().isBlank() || request.note()==null || request.note().isBlank())
+            throw new jakarta.ws.rs.BadRequestException("A verified operator and a note are required");
+        WorkItemEvent reference=store.load(request.id());
+        if(reference==null)throw new jakarta.ws.rs.NotFoundException();
+        return reference;
+    }
+
     public void suspend(String id,String channel,String delivery,String actor,String head) {
         change(id,channel,delivery,actor,head,false);
     }
     public void retire(String id,String delivery,String reason) {
         change(id,"tracker",delivery,null,null,true);
     }
+    /**
+     * The repository's CURRENT reviewer and factory identities, not only the ones recorded at build claim: a
+     * registration rotated after the claim is still the bot, and its activity is still machine activity
+     * (review of PR #196, security/H-1; M4 land, A10).
+     */
+    boolean currentMachine(UUID repository,String actor) {
+        if(actor==null || actor.isBlank())return false;
+        for(dev.codespire.orchestrator.provider.ProviderRole role:List.of(dev.codespire.orchestrator.provider.ProviderRole.REVIEWER,dev.codespire.orchestrator.provider.ProviderRole.FACTORY))
+            if(accounts.resolve(repository,role).map(account->actor.equals(account.botAccountId())).orElse(false))return true;
+        return false;
+    }
     private void change(String id,String channel,String delivery,String actor,String head,boolean retired) {
         WorkItemEvent reference=store.load(id);if(reference==null)return;
+        // Read before the locks, as every forge-account read is; tracker identities are their own namespace.
+        boolean currentBot=!retired && !"tracker".equals(channel) && currentMachine(reference.repositoryId(),actor);
         QuarkusTransaction.requiringNew().run(()->{
             try(Connection c=dataSource.getConnection()) {
                 var source=sources.get(c,reference.sourceId(),true).orElseThrow();
@@ -58,8 +106,10 @@ public class WorkItemControl {
                 var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
                 if(received(c,id,channel,delivery))return;
                 if("retired".equals(item.workflowStatus())){receipt(c,id,channel,delivery,"already_retired");return;}
+                // A completed item's ticket stays open so testing can follow (spec §7.7); activity on it is not a takeover.
+                if(!retired && "completed".equals(item.workflowStatus())){receipt(c,id,channel,delivery,"already_completed");return;}
                 // Tracker identities and SCM identities are separate namespaces even on one item.
-                if(!retired && item.control()!=null && ("tracker".equals(channel)?item.control().trackerMachine(actor):item.control().machine(actor))) {
+                if(currentBot || !retired && item.control()!=null && ("tracker".equals(channel)?item.control().trackerMachine(actor):item.control().machine(actor))) {
                     receipt(c,id,channel,delivery,"recorded_machine");return;
                 }
                 WorkGate gate=item.gate();

@@ -1,4 +1,6 @@
 import type { WorkItemDetail, WorkItemSummary } from '../../api';
+import { actorLabel } from '../actorsApi';
+import { landReason, workReason } from './workReasons';
 
 /**
  * Where a work item stands, in the terms the list and the detail both draw.
@@ -103,4 +105,68 @@ export function nextAction(item: WorkItemRow): NextAction | null {
     return { label: 'Prepare the task', to: `/work-items/${encodeURIComponent(item.id)}` };
   if (item.workflowStatus === 'suspended') return { label: 'Resume', to: `/work-items/${encodeURIComponent(item.id)}` };
   return null;
+}
+
+/** What the land step reads from. */
+export type LandItem = Pick<WorkItemDetail, 'phase' | 'workflowStatus' | 'reason' | 'gate' | 'land' | 'progress' | 'people'>;
+
+/** What a land fix is fixing, in the words the Land step uses. */
+const FIXING: Record<string, string> = {
+  land_checks_failed: 'a failed check', land_conflict: 'a conflict with the base branch', land_branch_behind: 'the branch is behind its base',
+};
+
+/** The item limit a land fix would have crossed, as the backend names it (WorkProgress.limitReached). */
+const LIMITS: Record<string, string> = {
+  usage_unknown: 'the usage of an earlier run is unknown', maxRunsPerItem: 'runs per item', maxStepsPerPlan: 'steps per plan',
+  maxWallClockSeconds: 'wall-clock time', maxCostMillicents: 'cost', maxCallsPerItem: 'calls per item',
+};
+
+/**
+ * The land row's note in words: a Jira ticket left open, a branch that would not delete, the limit a fix would have
+ * crossed, or what the spent fix attempts were fixing. Null when the row has none.
+ */
+export function landNote(note: string | null | undefined): string | null {
+  if (!note) return null;
+  if (LIMITS[note]) return `Limit reached: ${LIMITS[note]}.`;
+  if (FIXING[note]) return `It was fixing ${FIXING[note]}.`;
+  return workReason(note);
+}
+
+/** What became of the branch after the merge; null while the delete has not finished. */
+function branchWords(branchDeleted: boolean | null | undefined): string {
+  if (branchDeleted === true) return ', branch deleted';
+  if (branchDeleted === false) return ', branch not deleted';
+  return ', deleting the branch';
+}
+
+function merger(item: LandItem, mergedBy: string): string {
+  if (mergedBy === 'factory') return 'the factory';
+  const person = item.people?.find(candidate => candidate.providerUserId === mergedBy);
+  return person ? actorLabel(person) : `GitHub user ${mergedBy}`;
+}
+
+/**
+ * What the Land step says (spec §7.10): waiting for approval, checking, waiting for checks, merging, merged by whom,
+ * fixing, or needs you with GitHub's reason. Null when land has nothing to say yet.
+ */
+export function landProgress(item: LandItem): string | null {
+  const land = item.land ?? null;
+  const landing = item.progress?.execution?.landing;
+  if (item.workflowStatus === 'completed' && landing) {
+    return `Merged ${landing.mergeCommit.slice(0, 7)} by ${merger(item, landing.mergedBy)}${branchWords(land?.branchDeleted)}`;
+  }
+  if (land?.fixInProgress) {
+    const what = FIXING[land.reason ?? ''] ?? workReason(land.reason ?? '');
+    return land.reason === 'land_branch_behind' ? `Fixing: ${what}, not counted as an attempt` : `Fixing: ${what}, attempt ${land.attempt} of ${land.attemptsAllowed}`;
+  }
+  if (item.phase !== 'land') return null;
+  if (item.workflowStatus === 'waiting_approval' && item.gate?.state === 'OPEN' && item.gate.phase === 'land') return 'Waiting for your approval';
+  if (land?.handedOver) return `Needs you: ${landReason(item.reason, land.message)}`;
+  if (item.workflowStatus !== 'active' || !land) return null;
+  switch (land.state) {
+    case 'pending': case 'checking': return 'Checking GitHub';
+    case 'waiting_checks': return land.checks ? `Waiting for checks (${land.checks.done} of ${land.checks.total} done)` : 'Waiting for checks';
+    case 'merging': case 'uncertain': return 'Merging';
+    default: return null;
+  }
 }

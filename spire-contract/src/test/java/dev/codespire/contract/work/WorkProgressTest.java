@@ -20,5 +20,12 @@ class WorkProgressTest {
     @Test void negativeWallIsRejected(){assertThrows(IllegalArgumentException.class,()->WorkProgress.empty().finish(-1,0,0));}
     @Test void negativeCostIsRejected(){assertThrows(IllegalArgumentException.class,()->WorkProgress.empty().finish(0,-1,0));}
     @Test void negativeCallsAreRejected(){assertThrows(IllegalArgumentException.class,()->WorkProgress.empty().finish(0,0,-1));}
+    // A land fix builds on the pull request it fixes (M4 land, spec §7.5): the run is counted and the execution kept.
+    @Test void startKeepingExecutionCountsTheRun(){
+        WorkExecution execution=new WorkExecution("TEST-run",new WorkRunBinding("TEST-item",1,UUID.randomUUID(),"a".repeat(64)),"b".repeat(40),null,null,null);
+        WorkProgress progress=usage(1,2,3,4,5).withExecution(execution).startKeepingExecution(UUID.randomUUID(),"build",Instant.EPOCH);
+        assertEquals(2,progress.runs());assertEquals(3,progress.steps());assertTrue(progress.reserved());
+        assertEquals("started",progress.attemptState());assertEquals(execution,progress.execution());
+    }
     @Test void belowAllCapsCanProceed(){assertTrue(usage(4,19,7199,1_999_999,39).within(limits,"build"));}
 }

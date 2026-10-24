@@ -85,7 +85,7 @@ public class WorkItemStore {
         events.append(next.workItemId(), history.size(), appended);
         for (EventEnvelope envelope : appended) {
             project(c, (WorkItemEvent) envelope.payload(), envelope);
-            projectExecution(c, (WorkItemEvent) envelope.payload());
+            projectExecution(c, (WorkItemEvent) envelope.payload(), envelope.sequence() + 1);
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO work_item_outbox(effect_id,work_item_id,effect_type,payload) VALUES (?,?,'WORK_EVENT',?)")) {
                 ps.setObject(1, envelope.eventId()); ps.setString(2, next.workItemId());
                 ps.setBytes(3, encryption.encrypt(mapper.writeValueAsBytes(envelope), "work-effect:" + envelope.eventId())); ps.executeUpdate();
@@ -114,9 +114,14 @@ public class WorkItemStore {
         }
     }
 
-    private void projectExecution(Connection c,WorkItemEvent item) throws SQLException {
-        if(Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
-            try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
+    private void projectExecution(Connection c,WorkItemEvent item,long revision) throws SQLException {
+        // A merge or a close on GitHub ends the item while a land fix may be running; its pending work is refused and its
+        // running build held like a takeover's (M4 land, spec §7.8, A6).
+        boolean prEnded=Set.of("WORK_ITEM_LANDED","PULL_REQUEST_CLOSED").contains(item.milestone());
+        if(prEnded || Set.of("WORK_ITEM_REFUSED","GATE_SUPERSEDED","READMITTED","PHASE_FAILED","ARTIFACTS_REQUIRED","HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
+            // A post-land row tells the ticket about a merge that happened; no later decision undoes the merge (A1).
+            // A ticket write for a phase that happened is still true after a merge or a close, so only the other facts refuse it.
+            if(!prEnded)try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending' AND effect_class='phase'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
@@ -126,8 +131,15 @@ public class WorkItemStore {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
         }
-        if(Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone())) {
+        boolean takenOver=Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone());
+        if(prEnded || takenOver) {
             try(var ps=c.prepareStatement("UPDATE work_delivery_effect SET state='refused',reason='publication_held_by_human' WHERE work_item_id=? AND state IN ('pending','publishing','pushed')")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
+            // Only a land still before its merge call. From uncertain on the merge may have happened, and the row
+            // keeps draining by reading until it records what GitHub did (M4 land, Review Focus 13). A merge or a close
+            // moves its own land row, so only a takeover refuses it here.
+            if(takenOver)try(var ps=c.prepareStatement("UPDATE work_land_effect SET state='refused',reason='publication_held_by_human',updated_at=now() WHERE work_item_id=? AND state IN ('pending','checking','waiting_checks')")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
             try(var ps=c.prepareStatement("""
@@ -170,6 +182,14 @@ public class WorkItemStore {
             try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_verify_effect(attempt_id,work_item_id,generation,run_id,head,state) VALUES (?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {
                 ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());
                 ps.setString(4,progress.execution().runId());ps.setString(5,progress.execution().head());ps.executeUpdate();
+            }
+        // Only an approval of this execution's head starts a land: a PHASE_STARTED alone is not one (M4 land, spec §7.3).
+        if("land".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()) && progress.execution()!=null && progress.execution().pullRequest()!=null
+                && gate!=null && "land".equals(gate.phase()) && "APPROVED".equals(gate.state()) && gate.generation()==item.generation()
+                && Objects.equals(gate.artifact(),progress.execution().head()))
+            try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_land_effect(effect_id,work_item_id,generation,item_revision,pr_number,approved_head,state) VALUES (?,?,?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {
+                ps.setObject(1,progress.attemptId());ps.setString(2,item.workItemId());ps.setLong(3,item.generation());ps.setLong(4,revision);
+                ps.setLong(5,progress.execution().pullRequest().number());ps.setString(6,gate.artifact());ps.executeUpdate();
             }
         if("deliver".equals(item.phase()) && "PHASE_STARTED".equals(item.milestone()) && progress.execution()!=null)
             try(PreparedStatement ps=c.prepareStatement("INSERT INTO work_delivery_effect(attempt_id,work_item_id,generation,run_id,state) VALUES (?,?,?,?,'pending') ON CONFLICT DO NOTHING")) {

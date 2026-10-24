@@ -10,6 +10,8 @@ import PeopleStep from './PeopleStep';
 import { CeilingStep, LabelsStep } from './PolicySteps';
 import BuildStep from './BuildStep';
 import { buildDefaults, type BuildDefaults } from './buildDefaultsApi';
+import LandStep from './LandStep';
+import { landSettings, type LandSettings } from './landSettingsApi';
 
 interface Props {
   repository: Repository;
@@ -19,7 +21,7 @@ interface Props {
   onChanged: () => void;
 }
 
-interface Loaded { sources: sourcesApi.WorkSource[]; profiles: policyApi.Profile[]; policy: policyApi.Policy; build: BuildDefaults }
+interface Loaded { sources: sourcesApi.WorkSource[]; profiles: policyApi.Profile[]; policy: policyApi.Policy; build: BuildDefaults; land: LandSettings }
 
 /**
  * Everything that lets a ticket start work on one repository, in the order it has to exist. Each part
@@ -33,10 +35,11 @@ export default function RepositoryFactory({ repository, accounts, webhooks, onCh
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    Promise.all([sourcesApi.fetchWorkSources(), policyApi.profiles(), policyApi.policy(repository.id), buildDefaults(repository.id)])
-      .then(([sources, profiles, policy, build]) => {
+    Promise.all([sourcesApi.fetchWorkSources(), policyApi.profiles(), policyApi.policy(repository.id), buildDefaults(repository.id),
+      landSettings(repository.id)])
+      .then(([sources, profiles, policy, build, land]) => {
         if (!active) return;
-        setData({ sources: sources.filter(source => source.repositoryId === repository.id), profiles, policy, build }); setError('');
+        setData({ sources: sources.filter(source => source.repositoryId === repository.id), profiles, policy, build, land }); setError('');
       }).catch(failure => { if (active) setError(String(failure)); });
     return () => { active = false; };
   }, [repository.id, refresh]);
@@ -59,6 +62,7 @@ export default function RepositoryFactory({ repository, accounts, webhooks, onCh
       <CeilingStep key={`ceiling:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
       <LabelsStep key={`labels:${policyKey}`} repositoryId={repository.id} policy={data.policy} profiles={data.profiles} reload={reload} {...shared} />
       <BuildStep key={`build:${data.build.revision}`} repositoryId={repository.id} defaults={data.build} reload={reload} {...shared} />
+      <LandStep key={`land:${data.land.revision}`} repositoryId={repository.id} settings={data.land} reload={reload} {...shared} />
     </ol>
   </div>;
 }

@@ -4,8 +4,9 @@ import * as sources from '../../work-items/workSourcesApi';
 import * as policies from '../../work-items/workPolicyApi';
 import * as api from '../../../api';
 import * as build from './buildDefaultsApi';
+import * as land from './landSettingsApi';
 import RepositoryFactory from './RepositoryFactory';
-import { account, buildSetup, policy, profile, repository, source } from './factoryFixtures';
+import { account, buildSetup, landSetup, policy, profile, repository, source } from './factoryFixtures';
 
 const field = { selector: 'input,select,textarea' };
 const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
@@ -22,6 +23,8 @@ beforeEach(() => {
   vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
   vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: ['INPUT','CACHED_INPUT','CACHE_WRITE','OUTPUT','REASONING'] } });
   vi.spyOn(build, 'saveBuildDefaults').mockResolvedValue(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+  vi.spyOn(land, 'landSettings').mockResolvedValue(landSetup());
+  vi.spyOn(land, 'landOptions').mockResolvedValue({ checked: true, allowed: ['merge', 'squash', 'rebase'] });
   vi.spyOn(build, 'repositoryBranchHead').mockResolvedValue({ branch: 'main', commit: 'a'.repeat(40), account: 'FACTORY' });
   vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
     // Complete for codex: priced where this fake vendor bills, asserted where it does not.
@@ -208,6 +211,31 @@ describe('presets', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply presets' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('TEST-policy save failed');
     await waitFor(() => expect(policies.profiles).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('land setup', () => {
+  it('the Land step follows Build', async () => {
+    renderFactory();
+    expect(await step(5)).toHaveAccessibleName(/^Step 5: How it builds/);
+    expect(await step(6)).toHaveAccessibleName(/^Step 6: How it lands/);
+    expect(land.landSettings).toHaveBeenCalledWith(repository.id);
+  });
+
+  it('starts the Land form from what was saved after a save', async () => {
+    vi.mocked(land.landSettings).mockResolvedValueOnce(landSetup()).mockResolvedValue(landSetup({ revision: 1, mergeMethod: 'squash' }));
+    vi.spyOn(land, 'saveLandSettings').mockResolvedValue(landSetup({ revision: 1, mergeMethod: 'squash' }));
+    renderFactory();
+    fireEvent.click(within(await step(6)).getByRole('button', { name: 'Change' }));
+    const method = await screen.findByRole('combobox', { name: 'Merge method' });
+    // The select offers only the saved method until GitHub's allowed list arrives.
+    await within(method).findByRole('option', { name: 'squash' });
+    fireEvent.change(method, { target: { value: 'squash' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save land setup' }));
+    // Re-keyed on the new revision, so the step is a new element: look it up again rather than reuse the old one.
+    expect(await screen.findByText(/^squash · a comment on the ticket/)).toBeInTheDocument();
+    fireEvent.click(within(await step(6)).getByRole('button', { name: 'Change' }));
+    expect(await screen.findByRole('combobox', { name: 'Merge method' })).toHaveValue('squash');
   });
 });
 

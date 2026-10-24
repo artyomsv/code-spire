@@ -60,6 +60,7 @@ it('requires an operator note to resume suspended work and shows the recorded he
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'phase_started' });showDetail();
   const resume = await screen.findByRole('button', { name: 'Recheck and resume' });expect(resume).toBeDisabled();
+  expect(resume).toHaveAccessibleDescription('Write a resume note to unlock Recheck and resume.');
   expect(screen.getByText(/Operator: 900123/)).toHaveTextContent('TEST-human takeover');
   expect(screen.getByText(/Observed head:/)).toHaveTextContent('b'.repeat(40));
   fireEvent.change(screen.getByLabelText('Resume note', { selector: 'textarea' }), { target: { value: 'TEST-reviewed human changes' } });
@@ -403,10 +404,25 @@ it('re-reads the list on a timer without blanking the rows', async () => {
     render(<MemoryRouter><WorkItems /></MemoryRouter>);
     await screen.findByText('TEST-0');
     expect(api.getWorkItems).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(15_000); });
+    // An unfinished item moves in seconds while an agent works on it (live land acceptance): the list follows every 5 s.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
     await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
     expect(screen.getByText('TEST-0')).toBeInTheDocument();
     expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+  } finally { vi.useRealTimers(); }
+});
+it('re-reads a list of finished items only every 15 seconds', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'completed' }, { ...item(1), workflowStatus: 'stopped' }], total: 2, offset: 0, limit: 50 });
+    render(<MemoryRouter><WorkItems /></MemoryRouter>);
+    await screen.findByText('TEST-0');
+    // The cadence follows the rows on screen, so the effect that set it must have run before time moves.
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
   } finally { vi.useRealTimers(); }
 });
 it('says the list is stale when a re-read fails, and keeps the rows', async () => {
@@ -520,6 +536,130 @@ it('keeps re-admission reachable once every step is done', async () => {
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   showDetail();
   expect(await screen.findByRole('button', { name: 'Re-admit under current policy' })).toBeInTheDocument();
+});
+// M4 land (spec §7.9): a merged pull request cannot be built again beside itself, and a handed item goes on with Retry land.
+function deliveredExecution(landed: boolean): NonNullable<NonNullable<Detail['progress']>['execution']> {
+  const pullRequest = { number: 901, url: 'https://github.example.test/TEST/repo/pull/901', draft: false };
+  return { runId: 'TEST-run', build: { workItemId: 'TEST-item-0', generation: 1, buildAttemptId: 'TEST-attempt', preparationBinding: 'a'.repeat(64) },
+    head: 'b'.repeat(40), verificationAttempt: null, pullRequest, reviewId: 'TEST-review',
+    landing: landed ? { pullRequest, mergeCommit: 'c'.repeat(40), method: 'squash', mergedBy: 'factory', landedAt: '2026-10-22T12:00:00Z' } : null };
+}
+async function readmitOffered(value: Detail) {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(value);
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();await screen.findByText('TEST-title');await act(async () => {});
+  return screen.queryByRole('button', { name: 'Re-admit under current policy' }) != null;
+}
+it('offers no re-admission for a landed item', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'landed', progress: { execution: deliveredExecution(true) } })).toBe(false);
+});
+it('offers no re-admission while an item waits at land for the operator', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'land_blocked', progress: { execution: deliveredExecution(false) } })).toBe(false);
+});
+// Review of slice 8: waiting at land for any other reason still keeps the delivered pull request open, so readmit stays hidden (A8);
+// Recheck is what answers it.
+it('offers Recheck but no re-admission while an item waits at land on unknown usage', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason: 'run_usage_unknown', progress: { execution: deliveredExecution(false) } })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Recheck and resume' })).toBeInTheDocument();
+});
+it('offers no re-admission while an item waits at land for a capability', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) } })).toBe(false);
+});
+// M4 land fix (Review Focus 15): readmit there would build a second pull request beside the open one, and the history that says so is the server's.
+it('offers no re-admission while a land fix is in progress', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'build', workflowStatus: 'awaiting_input', reason: 'run_usage_unknown', progress: { execution: deliveredExecution(false) },
+    land: { state: 'fixing', reason: 'land_checks_failed', message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
+      attempt: 1, attemptsAllowed: 3, fixInProgress: true, handedOver: false, stoppable: false } })).toBe(false);
+});
+// M4 land slice 8 (spec §7.6, A3): a handed item goes on with Retry land or Stop, both with a note; Recheck would reopen land without one.
+/** The land view the server sends; whether the item was handed over, and whether Stop land ends it, are the server's to say. */
+function landView(state: string, handedOver: boolean, stoppable: boolean): NonNullable<Detail['land']> {
+  return { state, reason: null, message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
+    attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver, stoppable };
+}
+function handedItem(reason = 'land_blocked'): Detail {
+  return { ...detail(), phase: 'land', workflowStatus: 'awaiting_input', reason, progress: { execution: deliveredExecution(false) },
+    land: { ...landView('handed', true, true), reason } };
+}
+async function showHanded(reason = 'land_blocked') {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(handedItem(reason));
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();await screen.findByText('TEST-title');await act(async () => {});
+}
+it('handed item shows Retry land and not Recheck', async () => {
+  vi.spyOn(api, 'retryLand').mockResolvedValue({ reason: 'approval_required' });
+  await showHanded();
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).toBeNull();
+  const retry = screen.getByRole('button', { name: 'Retry land' });expect(retry).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-the code owners approved' } });
+  expect(retry).toBeEnabled();fireEvent.click(retry);
+  await waitFor(() => expect(api.retryLand).toHaveBeenCalledWith(handedItem(), 'TEST-the code owners approved'));
+});
+it('handed item offers Stop with the note', async () => {
+  vi.spyOn(api, 'stopLand').mockResolvedValue({ reason: 'land_stopped_by_operator' });
+  await showHanded();
+  const stop = screen.getByRole('button', { name: 'Stop land' });expect(stop).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-merging it by hand' } });
+  fireEvent.click(stop);
+  await waitFor(() => expect(api.stopLand).toHaveBeenCalledWith(handedItem(), 'TEST-merging it by hand'));
+});
+// Live land acceptance: Stop land looked enabled with an empty note and a click did nothing. The page says why it waits.
+it('says a land note unlocks Retry land and Stop land, and the hint leaves once it is written', async () => {
+  vi.spyOn(api, 'stopLand').mockResolvedValue({ reason: 'land_stopped_by_operator' });
+  await showHanded();
+  const stop = screen.getByRole('button', { name: 'Stop land' });
+  expect(stop).toBeDisabled();
+  expect(stop).toHaveAccessibleDescription('Write a land note to unlock Retry land and Stop land.');
+  expect(screen.getByRole('button', { name: 'Retry land' })).toHaveAccessibleDescription('Write a land note to unlock Retry land and Stop land.');
+  fireEvent.click(stop);
+  expect(api.stopLand).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: '   ' } });
+  expect(stop).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-merging it by hand' } });
+  expect(stop).toBeEnabled();
+  expect(screen.queryByText('Write a land note to unlock Retry land and Stop land.')).toBeNull();
+});
+it('names only Stop land in the hint when Retry land is not offered', async () => {
+  await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) });
+  expect(screen.getByRole('button', { name: 'Stop land' })).toHaveAccessibleDescription('Write a land note to unlock Stop land.');
+});
+// Review of slice 9: land unavailable on this forge or for this repository has no other way on, and once land is off
+// the item is not eligible at land with its pull request still open. Stop ends either; Retry land follows only a hand-off.
+it('offers Stop land but not Retry land while land is unavailable', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'capability_unavailable', reason: 'land_capability_unavailable', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+it('offers Stop land and no re-admission at land once land is off', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+// Review of the branch: the hand-off reasons are the server's. A reason the screen has no copy of still offers Retry land.
+it('offers Retry land for any reason the server says handed the item over', async () => {
+  await showHanded('TEST-land-future-reason');
+  expect(screen.getByRole('button', { name: 'Retry land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Recheck and resume' })).toBeNull();
+});
+// A land waiting hours for its checks has sent no merge, so Stop land ends it; once the merge was sent it cannot.
+it('offers Stop land but not Retry land while land waits for checks', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'active', reason: 'phase_started', progress: { execution: deliveredExecution(false) },
+    land: landView('waiting_checks', false, true) })).toBe(false);
+  expect(screen.getByRole('button', { name: 'Stop land' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry land' })).toBeNull();
+});
+it('offers no Stop land once the merge was sent', async () => {
+  await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'active', reason: 'phase_started', progress: { execution: deliveredExecution(false) },
+    land: landView('uncertain', false, false) });
+  expect(screen.queryByRole('button', { name: 'Stop land' })).toBeNull();
+});
+it('still offers re-admission for a completed item that did not land', async () => {
+  expect(await readmitOffered({ ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed', progress: { execution: deliveredExecution(false) } })).toBe(true);
 });
 // Review finding: a re-read blanked the item, which unmounted an open panel and hid the notice.
 it('keeps the item and an open panel on screen while the page re-reads', async () => {
@@ -740,8 +880,29 @@ it('reads the open work item again on its own', async () => {
     showDetail();
     await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
 
-    await act(async () => { vi.advanceTimersByTime(10_000); });
+    // An unfinished item is followed every 3 s (live land acceptance: 10 s felt stale).
+    await act(async () => { vi.advanceTimersByTime(3_000); });
 
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('reads a finished work item again only every 15 seconds', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'completed', reason: 'landed' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    // The cadence follows the item on screen, so the item must have loaded first.
+    await screen.findByRole('heading', { name: 'TEST-title' });
+    await act(async () => {});
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(12_000); });
     await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
   } finally {
     vi.useRealTimers();

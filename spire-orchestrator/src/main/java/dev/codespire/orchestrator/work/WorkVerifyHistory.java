@@ -59,10 +59,20 @@ public class WorkVerifyHistory {
 
     /** The section a retried build's prompt gains: what failed, and its output, bounded. */
     public static String promptSection(WorkVerification verification) {
-        StringBuilder section = new StringBuilder("\n\nThe previous build of this task did not pass verification.\n");
-        section.append(checkpointReadable(verification)
+        return promptSection(verification, checkpointReadable(verification)
                 ? "This build starts from that build's last commit. Fix what the checks found.\n"
                 : "Its commits could not be read, so this build starts again from the base.\n");
+    }
+
+    /** A retry inside a land fix, which never resumes a checkpoint: it starts from the approved head again (M4 land, A7). */
+    public static String landFixPromptSection(WorkVerification verification) {
+        return promptSection(verification, "This build starts again from the pull request's approved head, not from that build. "
+                + "Fix what the checks found as well.\n");
+    }
+
+    private static String promptSection(WorkVerification verification, String start) {
+        StringBuilder section = new StringBuilder("\n\nThe previous build of this task did not pass verification.\n");
+        section.append(start);
         for (WorkVerification.CheckResult check : verification.checks()) {
             section.append("\nCommand: ").append(check.command())
                     .append("\nExit code: ").append(check.exitCode() == null ? "did not run" : check.exitCode());

@@ -98,6 +98,20 @@ public class GitHubClient {
     }
 
     /**
+     * A DELETE answering its 2xx status, so a caller can tell 204 from any other success. Any non-2xx
+     * (a redirect included: a DELETE is never replayed against a Location) raises
+     * {@link GitHubApiException}; an I/O failure stays {@link UncheckedIOException}.
+     */
+    public int delete(String path) {
+        HttpResponse<String> response = execute("DELETE", path, URI.create(baseUri + path), JSON_MEDIA, null);
+        int status = response.statusCode();
+        if (status / 100 != 2) {
+            throw failure(status, "DELETE", path, response);
+        }
+        return status;
+    }
+
+    /**
      * GraphQL entry point — thread resolution has no REST equivalent. Returns the
      * {@code data} node; throws {@link GitHubApiException} when the response carries
      * top-level {@code errors}.

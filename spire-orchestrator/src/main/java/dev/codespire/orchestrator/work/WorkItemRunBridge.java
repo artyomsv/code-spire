@@ -101,6 +101,15 @@ public class WorkItemRunBridge {
     private RunResult decode(byte[] bytes,String aad) throws java.io.IOException {
         return bytes==null?null:mapper.readValue(encryption.decrypt(bytes,aad),RunResult.class);
     }
+    /**
+     * Only a land fix's build keeps an execution (M4 land, spec §7.5), so its checkpoint proves the pull request it fixes;
+     * every other build carries none. The decider still checks the pull request is the one this generation's fix keeps.
+     */
+    private dev.codespire.contract.scm.PullRequestRef keptPullRequest(String itemId,UUID attempt) {
+        dev.codespire.contract.work.WorkItemEvent item=store.load(itemId);
+        dev.codespire.contract.work.WorkExecution execution=item.progress().execution();
+        return "build".equals(item.phase()) && attempt.equals(item.progress().attemptId()) && execution!=null?execution.pullRequest():null;
+    }
     private boolean finishBuild(String itemId,UUID attempt,RunResult result,boolean success,long wall) {
         var row=runs.find(result.runId()).orElseThrow(()->new IllegalStateException("Associated run is missing"));
         // Reuse M2's cause-and-usage classification. A proven pre-agent failure bought no call;
@@ -115,10 +124,10 @@ public class WorkItemRunBridge {
                     row.cost().isKnown()?row.cost().millicents():0,1,row.cost().isKnown());
         if(result instanceof RunResult.RunWorkReady ready)usage=new WorkItemTransitions.PhaseResult(attempt,success,wall,
                 usage.costMillicents(),usage.calls(),usage.usageKnown(),new dev.codespire.contract.work.WorkExecution(
-                        ready.runId(),ready.work(),ready.head(),null,null,null));
+                        ready.runId(),ready.work(),ready.head(),null,null,keptPullRequest(itemId,attempt),null,null));
         var outcome=transitions.complete(itemId,usage);
         if(outcome.status()==409 && Set.of("attempt_changed","item_not_active").contains(outcome.reason()))
-            outcome=transitions.recordLateBuild(itemId,usage);
+            outcome=transitions.recordLateResult(itemId,usage);
         return outcome.status()==200;
     }
 }

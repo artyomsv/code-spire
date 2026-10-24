@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { workReason, workRefusal } from './workReasons';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { LAND_HANDOFF_REASONS, LAND_REASONS, landReason, workReason, workRefusal } from './workReasons';
 
 /**
  * A stopped item has to say what to change. The pricing refusal carries its own payload — the token
@@ -31,9 +33,59 @@ describe('workReason', () => {
   });
 });
 
+describe('ticket after land (M4)', () => {
+  it.each(['ticket_close_unsupported', 'ticket_rule_changed', 'comment_not_sent'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
 describe('verify reasons (M4)', () => {
   it.each(['verify_failed', 'verify_unverified', 'verify_stopped_by_operator', 'check_failed', 'no_checks_declared', 'tool_missing',
     'timed_out', 'checkpoint_missing', 'verify_could_not_run', 'verify_command_invalid', 'verify_timeout_out_of_range'])('%s has a sentence', reason => {
     expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+describe('land setup reasons (M4 land)', () => {
+  it.each(['land_settings_changed', 'merge_method_invalid', 'ticket_rule_invalid', 'fix_attempts_invalid'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+describe('land reasons (M4)', () => {
+  it.each(['landed', 'pr_closed_by_human', 'land_head_moved', 'land_checks_timeout', 'land_checks_not_code', 'land_blocked', 'land_pr_draft',
+    'land_merge_refused', 'land_merge_method_not_allowed', 'land_fix_attempts_exhausted', 'land_item_limit_reached', 'land_fix_review_blocked',
+    'land_checks_failed', 'land_conflict', 'land_branch_behind', 'land_fix_run_failed', 'land_fix_stopped', 'readmission_landed', 'readmission_land_pending',
+    'branch_delete_failed', 'land_account_unavailable', 'land_read_failed', 'land_merge_unconfirmed', 'land_merge_unreadable',
+    'merge_outcome_unknown', 'readmission_merge_unconfirmed'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+// M4 land slice 8: every reason land can show reads as a sentence, and a hand-off names what GitHub said.
+describe('every land reason (M4 land)', () => {
+  it('covers Retry land, Stop and every hand-off', () => {
+    expect(LAND_REASONS).toEqual(expect.arrayContaining(['retry_land_required', 'retry_land_unavailable', 'retry_land_head_unavailable',
+      'land_stopped_by_operator', ...LAND_HANDOFF_REASONS]));
+  });
+  it.each([...LAND_REASONS])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+  // The screen's list is copy only; the server says which reasons hand an item over. Read the contract's set so a reason
+  // added there without a sentence here fails (review of the branch).
+  it('has a sentence for every hand-off reason the contract names', () => {
+    const java = readFileSync(join(process.cwd(), '..', 'spire-contract', 'src', 'main', 'java', 'dev', 'codespire', 'contract', 'work', 'WorkItemLifecycle.java'), 'utf8');
+    const declaration = /LAND_HANDOFF_REASONS\s*=\s*java\.util\.Set\.of\(([^)]*)\)/.exec(java);
+    expect(declaration, 'WorkItemLifecycle.LAND_HANDOFF_REASONS is declared').not.toBeNull();
+    const contract = [...(declaration?.[1] ?? '').matchAll(/"([a-z_]+)"/g)].map(match => match[1]);
+    expect(contract.length).toBeGreaterThan(0);
+    expect([...LAND_HANDOFF_REASONS].sort()).toEqual([...contract].sort());
+    for (const reason of contract) expect(workReason(reason), reason).not.toBe(reason);
+  });
+  it('quotes what GitHub said beside a hand-off', () => {
+    const sentence = landReason('land_blocked', 'TEST-At least 1 approving review is required');
+    expect(sentence).toContain('GitHub requires something only a person can give');
+    expect(sentence).toContain('TEST-At least 1 approving review is required');
+    expect(landReason('land_blocked', null)).toBe(workReason('land_blocked'));
   });
 });

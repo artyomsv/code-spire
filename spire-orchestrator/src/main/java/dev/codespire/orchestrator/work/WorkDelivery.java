@@ -35,8 +35,12 @@ public class WorkDelivery {
     @Inject WorkPublicationTransport transport;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
+    @Inject WorkLandFixes landFixes;
     record Effect(UUID attempt,String item,long generation,String run,String state,Instant expires,byte[] request) {}
-    record Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request) {}
+    /** @param kept a land fix's pull request, which the push updated: delivery completes on it and opens none (M4 land) */
+    record Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request,PullRequestRef kept) {
+        Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request) {this(permit,sink,request,null);}
+    }
 
     public boolean available(WorkItemEvent item,String phase) {
         WorkExecution execution=item.progress().execution();
@@ -95,6 +99,14 @@ public class WorkDelivery {
             else if(sent instanceof RunLaunch.Uncertain)state(before,"publishing","publication_dispatch_uncertain");
             return;
         }
+        if(claim.kept()!=null) {
+            // A land fix pushed to its own pull request's branch; the pull request is reused, never opened again (§7.5).
+            WorkItemEvent current=store.load(before.item());
+            WorkItemTransitions.Outcome complete=transitions.complete(before.item(),new WorkItemTransitions.PhaseResult(before.attempt(),true,0,0,0,true,
+                    current.progress().execution().delivered(claim.kept())));
+            if(complete.status()==200)state(before,"delivered",null);
+            return;
+        }
         try {
             PullRequestRef opened="proposing".equals(before.state())
                     ?claim.sink().findByHead(observed.source().repository(),claim.request().headBranch(),claim.request().baseBranch()).orElse(null)
@@ -117,13 +129,20 @@ public class WorkDelivery {
 
     private void observeHeldProposal(Effect effect,WorkItemEvent item) {
         try {
-            var account=accounts.resolve(item.repositoryId()).orElseThrow();
-            var source=sources.get(item.sourceId()).orElseThrow();
-            var request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
-            // The write was already claimed before takeover. Recovery may only read its outcome.
-            var found=clients.pullRequestSink(account).findByHead(source.repository(),request.headBranch(),request.baseBranch());
-            if(found.isEmpty())return;
-            var pr=found.orElseThrow();runs.pullRequestOpened(effect.run(),pr.number(),pr.url());
+            byte[] stored=encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt());
+            PullRequestRef pr;
+            // A land fix's row holds the pull request its push updated; a row is proposing only after that push, so there
+            // is nothing left to find. A proposal's row holds the request it sent.
+            if(!mapper.readTree(stored).has("headBranch"))pr=mapper.readValue(stored,PullRequestRef.class);
+            else {
+                var account=accounts.resolve(item.repositoryId()).orElseThrow();
+                var source=sources.get(item.sourceId()).orElseThrow();
+                var request=mapper.readValue(stored,PullRequestSink.NewPullRequest.class);
+                // The write was already claimed before takeover. Recovery may only read its outcome.
+                var found=clients.pullRequestSink(account).findByHead(source.repository(),request.headBranch(),request.baseBranch());
+                if(found.isEmpty())return;
+                pr=found.orElseThrow();runs.pullRequestOpened(effect.run(),pr.number(),pr.url());
+            }
             QuarkusTransaction.requiringNew().run(()->{
                 try(var c=dataSource.getConnection()) {
                     sources.get(c,item.sourceId(),true);policies.get(c,item.repositoryId(),true);WorkItemTransitions.lockItem(c,item.workItemId());
@@ -155,33 +174,42 @@ public class WorkDelivery {
                 ps.setObject(1,item.repositoryId());try(ResultSet rs=ps.executeQuery()){if(!rs.next()){stopLocked(c,history,item,effect,"factory_account_unavailable");return null;}}
             }
             var account=accounts.resolve(item.repositoryId()).orElse(null);
+            // Read under the item lock, like the run dispatcher's: a land fix pushes with the lease on the approved head.
+            WorkLandFixes.Fix fix=landFixes.current(c,history).orElse(null);
             if(account==null){stopLocked(c,history,item,effect,"factory_account_unavailable");return null;}
             PullRequestSink sink=clients.pullRequestSink(account);
             var run=runs.find(effect.run()).orElseThrow();
             if("pending".equals(effect.state()) && !"awaiting_delivery".equals(run.status())) {
                 stopLocked(c,history,item,effect,"held_run_not_ready");return null;
             }
-            var request=new PullRequestSink.NewPullRequest(run.branch(),run.baseBranch(),"Prepared work: "+item.issue().issueKey(),
+            // A land fix opens no pull request: its run's base is the item branch itself, which no forge takes as a base.
+            PullRequestSink.NewPullRequest request=fix!=null?null:new PullRequestSink.NewPullRequest(run.branch(),run.baseBranch(),"Prepared work: "+item.issue().issueKey(),
                     "Prepared work item: "+item.issue().link()+"\n\nBuilt commit: `"+item.progress().execution().head()+"`",
                     "draft_pr".equals(item.policy().effective().get(WorkPolicy.Phase.DELIVER)));
-            if(request.draft() && !sink.supportsDrafts()){stopLocked(c,history,item,effect,"draft_pr_unsupported");return null;}
+            if(request!=null && request.draft() && !sink.supportsDrafts()){stopLocked(c,history,item,effect,"draft_pr_unsupported");return null;}
             if("pending".equals(effect.state())) {
                 // PostgreSQL stores microseconds. Use the same exact boundary in storage and on the wire.
                 var execution=item.progress().execution();Instant issued=clock.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS),expires=issued.plusSeconds(30);
                 var command=new RunCommand.PublishWorkRun(effect.run(),new WorkPublicationPermit(execution.build(),effect.attempt(),execution.head(),
                         issued,expires,item.policy().limits().protectedPaths().stream().sorted().toList()),credentials.packScm(effect.run(),account.botUsername(),account.secret()));
+                // The push may land only while the item branch is still at the approved head, and excuses only the base tip the land effect read.
+                if(fix!=null)command=new RunCommand.PublishWorkRun(command.runId(),command.permit().onExistingBranch(fix.approvedHead(),fix.baseTip()),command.scmCredential());
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='publishing',permit=?,permit_expires_at=?,reason=NULL WHERE attempt_id=?")) {
                     ps.setBytes(1,encode(command,"work-delivery-permit:"+effect.attempt()));ps.setTimestamp(2,Timestamp.from(expires));ps.setObject(3,effect.attempt());ps.executeUpdate();
                 }
                 return new Claim(command,null,null);
             }
-            if("proposing".equals(effect.state()))request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            if("proposing".equals(effect.state())) {
+                // A land fix's row holds the pull request its push updated: completing delivery on it is all that is left.
+                if(fix==null)request=mapper.readValue(encryption.decrypt(effect.request(),"work-delivery-request:"+effect.attempt()),PullRequestSink.NewPullRequest.class);
+            }
             else if("pushed".equals(effect.state())) {
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_delivery_effect SET state='proposing',request=?,reason=NULL WHERE attempt_id=?")) {
-                    ps.setBytes(1,encode(request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
+                    // A proposing row must hold its request (V70); a land fix holds the pull request it updates instead.
+                    ps.setBytes(1,encode(request==null?fix.pullRequest():request,"work-delivery-request:"+effect.attempt()));ps.setObject(2,effect.attempt());ps.executeUpdate();
                 }
             } else return null;
-            return new Claim(null,sink,request);
+            return new Claim(null,sink,request,fix==null?null:fix.pullRequest());
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot persist work delivery",failure);}
     }
@@ -260,8 +288,10 @@ public class WorkDelivery {
     }
     private void stopLocked(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item,Effect effect,String reason) throws SQLException,java.io.IOException {
         state(effect,"refused",reason);
+        // Only a deliver still running is stopped by its row. A merge, a close or a takeover already ended it, and a
+        // refusal written over them would hide that; a land fix's pull request can be merged before its delivery completes.
         if(item.generation()==effect.generation() && Objects.equals(item.progress().attemptId(),effect.attempt())
-                && !Set.of("suspended","retired").contains(item.workflowStatus()))
-            store.appendDecision(c,history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt());
+                && "deliver".equals(item.phase()) && "active".equals(item.workflowStatus()))
+            transitions.decide(c,new WorkItemTransitions.Decision(history,WorkItemLifecycle.state(item,"stopped",reason,"WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false)),"delivery-refused:"+effect.attempt()));
     }
 }
