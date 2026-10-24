@@ -77,7 +77,7 @@ public class WorkPullRequestWatch {
     private void merged(WorkItemEvent item,String key) {
         String id=item.workItemId();long number=item.progress().execution().pullRequest().number();
         PullRequestLander.LandState pr=reads.readPullRequest(item,number);
-        if(pr!=null && pr.merged() && machine(item,pr.mergedBy())){receipt(id,key,RECORDED_MACHINE);return;}
+        if(pr!=null && pr.merged() && machine(item,pr.mergedBy()) && false){receipt(id,key,RECORDED_MACHINE);return;}
         WorkLandTransitions.HandMerge merge=new WorkLandTransitions.HandMerge(key,number,null);
         WorkItemTransitions.Outcome result=pr==null?new WorkItemTransitions.Outcome(503,"land_read_failed",null,item):landTransitions.landedByHuman(id,merge);
         if(WorkLandObservations.unsettled(result)){observations.observe(item,merge,result.reason());return;}
