@@ -51,7 +51,7 @@ it('shows a recorded decision and the run it started', () => {
   show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: { ...gate, state: 'APPROVED', resolver: 'TEST-human' },
     builds: [{ attemptId: 'TEST-attempt', state: 'sent', runId: 'TEST-assisted-run', reason: null, generation: 1 }],
     events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human', generation: 1 }] }));
-  expect(step('Plan').getByText('plan decision: APPROVED by TEST-human')).toBeInTheDocument();
+  expect(step('Plan').getByText(/^plan decision: approved by TEST-human/)).toBeInTheDocument();
   expect(step('Plan').queryByText('Waiting for the plan decision.')).toBeNull();
   expect(step('Build').getByText('Runs recorded: 1')).toBeInTheDocument();
   expect(step('Build').getByRole('link', { name: 'Open run' })).toHaveAttribute('href', '/runs/TEST-assisted-run');
@@ -101,7 +101,7 @@ it('keeps an earlier attempt out of the current proof', () => {
   show(item({ generation: 2, phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null, progress: { execution },
     builds: [{ attemptId: 'TEST-old', state: 'sent', runId: 'TEST-old-run', reason: null, generation: 1 }],
     events: [{ sequence: 3, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human', generation: 1 }] }));
-  expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
+  expect(step('Plan').queryByText(/plan decision: approved/i)).toBeNull();
   expect(step('Plan').getByText('1 decision from another attempt, in the history below')).toBeInTheDocument();
   expect(step('Build').getByText('Runs recorded: 0')).toBeInTheDocument();
   expect(step('Build').getByText('1 dispatch from an earlier attempt')).toBeInTheDocument();
@@ -112,7 +112,7 @@ it('keeps an earlier attempt out of the current proof', () => {
 it('keeps a decision that does not name its attempt out of the current proof', () => {
   show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null,
     events: [{ sequence: 5, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: gate.openedAt, phase: 'plan', gateState: 'APPROVED', resolver: 'TEST-human' }] }));
-  expect(step('Plan').queryByText(/plan decision: APPROVED/)).toBeNull();
+  expect(step('Plan').queryByText(/plan decision: approved/i)).toBeNull();
   expect(step('Plan').getByText('1 decision from another attempt, in the history below')).toBeInTheDocument();
 });
 
@@ -155,4 +155,42 @@ it('shows the land note beside a completed merge', () => {
       attempt: 0, attemptsAllowed: 3, fixInProgress: false, handedOver: false, stoppable: false } }));
   expect(step('Land').getByText('Merged ccccccc by the factory, branch deleted')).toBeInTheDocument();
   expect(step('Land').getByText(/Close it in Jira\.$/)).toBeInTheDocument();
+});
+
+// Live land acceptance (issue #62): two approvals of the same phase read the same, and the resolver was a raw subject.
+it('shows each land decision with the head it approved and when, latest first, by name', () => {
+  const resolved = (sequence: number, head: string, occurredAt: string) => ({ sequence, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt, phase: 'land',
+    gateState: 'APPROVED', resolver: 'TEST-operator-subject', gateArtifact: head, gateChannel: 'dashboard', generation: 1 });
+  show(item({ phase: 'land', workflowStatus: 'active', reason: 'phase_started', gate: null,
+    operators: [{ subject: 'TEST-operator-subject', username: 'TEST-operator', displayName: 'TEST Operator' }],
+    events: [resolved(10, '1'.repeat(40), '2026-10-23T10:00:00Z'), resolved(20, '2'.repeat(40), '2026-10-23T11:00:00Z')] }));
+  const decisions = step('Land').getAllByText(/^land decision: approved by/);
+  expect(decisions).toHaveLength(2);
+  expect(decisions[0]).toHaveTextContent('2222222');
+  expect(decisions[1]).toHaveTextContent('1111111');
+  expect(decisions[0]).toHaveTextContent('TEST Operator');
+  expect(decisions[0]).not.toHaveTextContent('TEST-operator-subject');
+  expect(decisions[0].querySelector('time')).toHaveAttribute('dateTime', '2026-10-23T11:00:00Z');
+});
+it('keeps the resolver id when the operator was never seen on this dashboard', () => {
+  show(item({ phase: 'land', workflowStatus: 'active', reason: 'phase_started', gate: null, operators: [],
+    events: [{ sequence: 10, type: 'GATE_RESOLVED', reason: 'approval_required', occurredAt: '2026-10-23T10:00:00Z', phase: 'land',
+      gateState: 'APPROVED', resolver: 'TEST-unknown-subject', gateArtifact: '1'.repeat(40), gateChannel: 'dashboard', generation: 1 }] }));
+  expect(step('Land').getByText(/^land decision: approved by/)).toHaveTextContent('TEST-unknown-subject');
+});
+// Live land acceptance (issue #66): the note an operator gave Stop land was shown nowhere on the item.
+it('shows the note of a land command on the Land step, with who and when', () => {
+  show(item({ phase: 'land', workflowStatus: 'stopped', reason: 'land_stopped_by_operator', gate: null,
+    operators: [{ subject: 'TEST-operator-subject', username: 'TEST-operator', displayName: 'TEST Operator' }],
+    events: [{ sequence: 30, type: 'LAND_STOPPED', reason: 'land_stopped_by_operator', occurredAt: '2026-10-23T12:00:00Z', phase: 'land',
+      workflowStatus: 'stopped', operator: 'TEST-operator-subject', note: 'TEST-merging it by hand', generation: 1 }] }));
+  const command = step('Land').getByText(/^Land stopped by TEST Operator/);
+  expect(command).toHaveTextContent('TEST-merging it by hand');
+  expect(command.querySelector('time')).toHaveAttribute('dateTime', '2026-10-23T12:00:00Z');
+});
+it('shows the note of a land retry on the Land step', () => {
+  show(item({ phase: 'land', workflowStatus: 'waiting_approval', reason: 'approval_required', gate: { ...gate, phase: 'land' }, operators: [],
+    events: [{ sequence: 30, type: 'LAND_RETRY_REQUESTED', reason: 'approval_required', occurredAt: '2026-10-23T12:00:00Z', phase: 'land',
+      workflowStatus: 'waiting_approval', operator: 'TEST-operator-subject', note: 'TEST-the code owners approved', generation: 1 }] }));
+  expect(step('Land').getByText(/^Land retry requested by TEST-operator-subject/)).toHaveTextContent('TEST-the code owners approved');
 });

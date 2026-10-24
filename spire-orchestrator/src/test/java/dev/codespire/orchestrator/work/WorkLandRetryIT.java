@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -176,5 +177,31 @@ class WorkLandRetryIT extends WorkLandFixture {
         assertNotNull(preview,"a land gate with no attempt still previews the land");
         assertEquals("rebase",preview.method());assertEquals("close",preview.ticketRule());assertNull(preview.branchDeleted());
         assertNull(preview.checks());assertFalse(preview.fixInProgress());
+    }
+    /**
+     * The item says who answered or commanded land, by the name they signed in with, what each approval was for and
+     * the note each command carried (live land acceptance, issues #62 and #66). The raw subject stays beside the name.
+     */
+    @Test void theItemNamesLandOperatorsTheirNotesAndTheApprovedHeads() throws Exception {
+        executeWith("INSERT INTO operator_seen(oidc_subject,username,display_name) VALUES (?,?,?) ON CONFLICT (oidc_subject) DO UPDATE SET username=EXCLUDED.username,display_name=EXCLUDED.display_name",
+                "TEST-land-admin","TEST-land-operator","TEST Land Operator");
+        try {
+            String id=handedBlocked();
+            retry(id,"TEST-the code owners approved").statusCode(200);
+            approve(id);land.drain();
+            assertEquals("awaiting_input",store.load(id).workflowStatus(),store.load(id).reason());
+            stop(id,"TEST-merging it by hand").statusCode(200);
+            given().get("/api/work-items/"+id).then().statusCode(200)
+                    .body("events.findAll{it.type=='GATE_RESOLVED' && it.phase=='land'}.gateArtifact",everyItem(is(HEAD)))
+                    .body("events.findAll{it.type=='GATE_RESOLVED' && it.phase=='land'}.size()",is(2))
+                    .body("events.find{it.type=='LAND_RETRY_REQUESTED'}.operator",is("TEST-land-admin"))
+                    .body("events.find{it.type=='LAND_RETRY_REQUESTED'}.note",is("TEST-the code owners approved"))
+                    .body("events.find{it.type=='LAND_STOPPED'}.operator",is("TEST-land-admin"))
+                    .body("events.find{it.type=='LAND_STOPPED'}.note",is("TEST-merging it by hand"))
+                    .body("operators.find{it.subject=='TEST-land-admin'}.displayName",is("TEST Land Operator"))
+                    .body("operators.find{it.subject=='TEST-land-admin'}.username",is("TEST-land-operator"));
+        } finally {
+            executeWith("DELETE FROM operator_seen WHERE oidc_subject=?","TEST-land-admin");
+        }
     }
 }

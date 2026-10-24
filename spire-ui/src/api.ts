@@ -52,9 +52,23 @@ export interface WorkItemDetail extends WorkItemSummary {
   /** The latest land attempt of this generation (M4 land); absent until land is approved. */
   land?: LandView | null;
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
-  events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
-    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];
+  /**
+   * Each entry of the history. A resolved gate carries what it approved (`gateArtifact`, the head for land) and the
+   * channel its resolver answered on; a land command (Stop land, Retry land) carries its operator and note.
+   */
+  events: WorkItemMilestone[];
+  /** The operators this item names, as they last signed in: never an email (live land acceptance, issue #62). */
+  operators?: WorkOperator[];
 }
+
+export interface WorkItemMilestone {
+  sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
+  attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number;
+  gateArtifact?: string | null; gateChannel?: string | null; operator?: string | null; note?: string | null;
+}
+
+/** A signed-in operator: the stable OIDC subject and the names they last signed in with. */
+export interface WorkOperator { subject: string; username: string; displayName: string }
 
 /** One failed or not-code check, as GitHub reported it. */
 export interface LandFailedCheck { name: string; conclusion: string; title: string; summary: string; annotations: string[] }

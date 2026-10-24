@@ -7,7 +7,7 @@ import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
-  | 'people' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
+  | 'people' | 'operators' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
 
 /** Proof only from this attempt. An entry that does not say its attempt is history, never current proof. */
 const current = (item: Item, generation: number | undefined) => generation !== undefined && generation === item.generation;
