@@ -249,7 +249,7 @@
   .btn:hover:not(:disabled) { filter: brightness(1.06); }
   /* A disabled button used to look exactly like an enabled one, so Stop land with no note seemed to ignore the
      click (live land acceptance, 2026-10-24). Both button styles fade and refuse the pointer; hover stays still. */
-  .btn:disabled, .btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
   .content { padding: 22px 26px 40px; }
 
