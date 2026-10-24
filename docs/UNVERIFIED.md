@@ -200,11 +200,18 @@ when it lands).
   changed records what was sent (`WorkLandingIT.anUncertainMergeRecordsTheMethodItSent`). A merge a person
   made, or one a re-read found made by someone else, records `unknown`: GitHub's pull request read does not
   report the method. Nothing reads back whether GitHub merged with the method that was sent.
-- **A merge by hand with no webhook is noticed only by a land row's read.** With no webhook registered,
-  or a missed delivery, nothing observes the merge until a `work_land_effect` row reads the pull request.
-  An item at its land gate, or handed over, has no row reading, so it waits on a merged pull request until
-  the gate is approved or Retry land starts one. A webhook whose read could not confirm the merge leaves a
-  `work_land_observation` row that every sweep reads again (`WorkLandWebhookIT`), against a fake GitHub.
+- **A hand merge with no FACTORY webhook is noticed by the reviewer's close or a periodic read, proven
+  against a fake GitHub only.** The live land acceptance found it stuck: on `spire-test`, which has only a
+  REVIEWER webhook, PR 65 was merged by hand while issue #64 waited at its land gate, and nothing read the
+  pull request, since no `work_land_effect` row exists before approval. The REVIEWER webhook's
+  `PullRequestClosed` for a delivered pull request now enters the same land observation as the factory's
+  `merged`/`closed` activity (`WorkPullRequestWatch.reviewerClosed`), and every 2 minutes
+  (`spire.work-pr-state-interval`) a bounded batch of 20 items at deliver, review or land with a delivered
+  pull request and no live land effect has its pull request read (`WorkPullRequestWatch.check`), so a missed
+  or absent webhook converges within minutes (`WorkLandUnwatchedIT`). A stopped item is not read
+  periodically; only a webhook reaches it. Neither path has run live; issue #64 is expected to converge
+  through the periodic read after a redeploy, and that is the first live proof. A webhook whose read could not
+  confirm the merge leaves a `work_land_observation` row that every sweep reads again (`WorkLandWebhookIT`).
   The read takes the FACTORY account, or the REVIEWER account when the factory is unavailable; the reviewer's
   reader refuses a merge or a branch delete (`…aHandMergeIsReadThroughTheReviewerWhenTheFactoryIsUnavailable`,
   `ProviderClientsLanderTest`). No live repository has had its merge read through the reviewer.

@@ -47,10 +47,10 @@ head/policy evidence, and a new generation. Retired items cannot resume. See the
 
 | Milestone | Item after it | When |
 |---|---|---|
-| `WORK_ITEM_LANDED` | `complete / completed / landed` | the land effect merged or found the merge, or a person merged on GitHub; at most once per generation and pull request |
+| `WORK_ITEM_LANDED` | `complete / completed / landed` | the land effect merged or found the merge, or a person merged on GitHub (reported by the FACTORY or the REVIEWER webhook, or found by the periodic pull request read); at most once per generation and pull request |
 | `LAND_FIX_REQUESTED` | `build / awaiting_input / <fix reason>` | `land_checks_failed` or `land_conflict` (each spends a fix attempt) or `land_branch_behind` (spends none); the execution and its pull request are kept |
 | `LAND_HANDED` | `land / awaiting_input / <hand-off reason>`, no gate | anything else land cannot finish (below) |
-| `PULL_REQUEST_CLOSED` | `stopped / pr_closed_by_human` | a person closed the pull request unmerged, or the land effect read it closed |
+| `PULL_REQUEST_CLOSED` | `stopped / pr_closed_by_human` | a person closed the pull request unmerged (reported by either webhook, or found by the periodic read), or the land effect read it closed |
 | `LAND_RETRY_REQUESTED` | `land / waiting_approval`, a fresh gate on `execution.head()` | Retry land on a handed item |
 | `LAND_STOPPED` | `stopped / land_stopped_by_operator` | Stop on a handed item, on one at `land / capability_unavailable` or `land / not_eligible`, or on `land / active` while its land row has sent no merge (`pending`, `checking`, `waiting_checks`); that row is refused in the same transaction |
 
@@ -202,7 +202,7 @@ Every event (integration or domain) is wrapped:
 |---|---|---|
 | `PullRequestEventReceived` | `spire-gateway` | repo, prId, action(`OPENED`/`UPDATED`), title, description, sourceBranch, targetBranch, **diffRefs{baseSha,startSha,headSha}** (populate what the provider gives), author{**providerUserId,username,displayName**}, htmlUrl |
 | `AuthorReplied` | `spire-gateway` | repo, prId, reviewId, **threadRef**, commentId, text, author{providerUserId,username} |
-| `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013) |
+| `PullRequestClosed` | `spire-gateway` | repo, prId, reason(`MERGED`/`DECLINED`) — triggers the cancel saga (ADR-013); for a pull request a work item delivered, also the land observation (M4 land §7.8) |
 | `ManualCommandReceived` | `spire-gateway` | repo, prId, command(`review`/…), args, author{providerUserId,username} — parsed from a `/command` PR comment; the saga maps `review` → `RequestReview{force=true}` |
 | `PushReceived` *(P3)* | `spire-gateway` | repo, ref, commits[] |
 | `DiffFetched` | `spire-review-worker` (via `DiffSource`) | reviewId, prId, commit, changedFiles, languages[], sizeBytes, truncated — **metadata only; no diff content** (deliberate two-fetch: content is re-fetched by commit at generate time; a 404 on re-fetch means the commit was force-pushed away → treat as superseded) |

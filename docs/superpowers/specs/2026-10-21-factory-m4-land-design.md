@@ -286,8 +286,20 @@ the item. It gains two kinds: `merged` (closed with `merged: true`) and `closed`
   run is cancelled and revoked the same way. The land effect reaching a closed pull request by reading
   gives the same result, so the two paths cannot disagree (`land_pr_closed` in §7.3 means this).
 
-Without a webhook (none registered, or a missed delivery) a hand merge is noticed only when the land
-effect reads the PR. That limit is recorded in UNVERIFIED.
+A repository may have no FACTORY webhook (live land acceptance, issue #64 on `spire-test`: a hand merge
+there left the item at its land gate). Two more observers feed the same land observation, keeping the
+one-landing rule and the machine rule:
+
+- The REVIEWER webhook's `PullRequestClosed` for a pull request a work item delivered: `MERGED` lands it
+  with the merger read from the pull request through the read-only reader, `DECLINED` stops it with
+  `pr_closed_by_human`. It names no sender, so a merge by the recorded or current bot is left to the
+  land effect, and an item with a live land effect is left to that effect. A read that fails leaves a
+  `work_land_observation` row, as the factory webhook's does.
+- A periodic read (every 2 minutes, 20 items per check) of each item at deliver, review or land with a
+  delivered pull request and no live land effect, so a missed or absent webhook still converges. A
+  stopped item is not read periodically.
+
+The live proof is recorded as missing in UNVERIFIED.
 
 ### 7.9 Readmit after land
 

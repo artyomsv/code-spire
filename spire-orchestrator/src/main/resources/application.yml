@@ -515,6 +515,7 @@ spire:
     work-run-interval: "off"
     work-delivery-interval: "off"
     work-land-interval: "off"
+    work-pr-state-interval: "off"
     work-activity-interval: "off"
     work-outbox-interval: "off"
     work-effects-interval: "off"
