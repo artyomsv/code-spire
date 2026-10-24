@@ -9,6 +9,7 @@ import WorkItemActions from './WorkItemActions';
 import WorkItemPolicy from './WorkItemPolicy';
 import WorkItemPreparation from './WorkItemPreparation';
 import WorkItemSteps from './WorkItemSteps';
+import { FINISHED_POLL_MILLISECONDS, isFinished, ITEM_POLL_MILLISECONDS } from './workPolling';
 import { nextAction } from './workJourney';
 import { workReason } from './workReasons';
 import { WorkflowStatus } from './WorkItems';
@@ -17,9 +18,6 @@ import { WorkflowStatus } from './WorkItems';
  * One work item as its journey. The heading names the ticket, the steps say where it is and what a
  * person can do there, and everything else — policy, ticket text, history — folds underneath.
  */
-/** How often an open work item is read again. */
-const DETAIL_POLL_MILLISECONDS = 10_000;
-
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
@@ -38,6 +36,8 @@ export default function WorkItemDetail() {
   // replace what a later refresh already put on screen (review of PR #179).
   const reads = useRef(0);
   const panel = params.get('decide') ? 'decide' : params.get('prepare') ? 'prepare' : null;
+  // A finished item is read every 15 s; anything else every 3 s, since an agent moves it in seconds.
+  const finished = state.item?.id === id && isFinished(state.item.workflowStatus);
   useEffect(() => { setNotice(''); }, [id]);
   useEffect(() => { if (panel) { action.current++; setNotice(''); } }, [panel]);
   useEffect(() => {
@@ -72,9 +72,9 @@ export default function WorkItemDetail() {
         setState(previous => previous.item && previous.item.id !== id ? previous : { item, error: null });
       }).catch(() => { /* the last good read stays on screen; the next tick tries again */ })
         .finally(() => { polling = false; });
-    }, DETAIL_POLL_MILLISECONDS);
+    }, finished ? FINISHED_POLL_MILLISECONDS : ITEM_POLL_MILLISECONDS);
     return () => { live = false; clearInterval(timer); };
-  }, [id, panel]);
+  }, [id, panel, finished]);
 
   function reread(message = '') { setNotice(message); setRefresh(value => value + 1); }
   function start() { setNotice(''); return ++action.current; }

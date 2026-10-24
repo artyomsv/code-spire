@@ -894,7 +894,10 @@ it('reads a finished work item again only every 15 seconds', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     showDetail();
-    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
+    // The cadence follows the item on screen, so the item must have loaded first.
+    await screen.findByRole('heading', { name: 'TEST-title' });
+    await act(async () => {});
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(3_000); });
     expect(api.getWorkItem).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(12_000); });
