@@ -60,6 +60,7 @@ it('requires an operator note to resume suspended work and shows the recorded he
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'phase_started' });showDetail();
   const resume = await screen.findByRole('button', { name: 'Recheck and resume' });expect(resume).toBeDisabled();
+  expect(resume).toHaveAccessibleDescription('Write a resume note to unlock Recheck and resume.');
   expect(screen.getByText(/Operator: 900123/)).toHaveTextContent('TEST-human takeover');
   expect(screen.getByText(/Observed head:/)).toHaveTextContent('b'.repeat(40));
   fireEvent.change(screen.getByLabelText('Resume note', { selector: 'textarea' }), { target: { value: 'TEST-reviewed human changes' } });
@@ -403,10 +404,23 @@ it('re-reads the list on a timer without blanking the rows', async () => {
     render(<MemoryRouter><WorkItems /></MemoryRouter>);
     await screen.findByText('TEST-0');
     expect(api.getWorkItems).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(15_000); });
+    // An unfinished item moves in seconds while an agent works on it (live land acceptance): the list follows every 5 s.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
     await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
     expect(screen.getByText('TEST-0')).toBeInTheDocument();
     expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+  } finally { vi.useRealTimers(); }
+});
+it('re-reads a list of finished items only every 15 seconds', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'completed' }, { ...item(1), workflowStatus: 'stopped' }], total: 2, offset: 0, limit: 50 });
+    render(<MemoryRouter><WorkItems /></MemoryRouter>);
+    await screen.findByText('TEST-0');
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
   } finally { vi.useRealTimers(); }
 });
 it('says the list is stale when a re-read fails, and keeps the rows', async () => {
@@ -588,6 +602,27 @@ it('handed item offers Stop with the note', async () => {
   fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-merging it by hand' } });
   fireEvent.click(stop);
   await waitFor(() => expect(api.stopLand).toHaveBeenCalledWith(handedItem(), 'TEST-merging it by hand'));
+});
+// Live land acceptance: Stop land looked enabled with an empty note and a click did nothing. The page says why it waits.
+it('says a land note unlocks Retry land and Stop land, and the hint leaves once it is written', async () => {
+  vi.spyOn(api, 'stopLand').mockResolvedValue({ reason: 'land_stopped_by_operator' });
+  await showHanded();
+  const stop = screen.getByRole('button', { name: 'Stop land' });
+  expect(stop).toBeDisabled();
+  expect(stop).toHaveAccessibleDescription('Write a land note to unlock Retry land and Stop land.');
+  expect(screen.getByRole('button', { name: 'Retry land' })).toHaveAccessibleDescription('Write a land note to unlock Retry land and Stop land.');
+  fireEvent.click(stop);
+  expect(api.stopLand).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: '   ' } });
+  expect(stop).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Land note', { selector: 'textarea' }), { target: { value: 'TEST-merging it by hand' } });
+  expect(stop).toBeEnabled();
+  expect(screen.queryByText('Write a land note to unlock Retry land and Stop land.')).toBeNull();
+});
+it('names only Stop land in the hint when Retry land is not offered', async () => {
+  await readmitOffered({ ...detail(), phase: 'land', workflowStatus: 'not_eligible', reason: 'land_off', progress: { execution: deliveredExecution(false) },
+    land: landView('not_started', false, true) });
+  expect(screen.getByRole('button', { name: 'Stop land' })).toHaveAccessibleDescription('Write a land note to unlock Stop land.');
 });
 // Review of slice 9: land unavailable on this forge or for this repository has no other way on, and once land is off
 // the item is not eligible at land with its pull request still open. Stop ends either; Retry land follows only a hand-off.
@@ -843,8 +878,26 @@ it('reads the open work item again on its own', async () => {
     showDetail();
     await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
 
-    await act(async () => { vi.advanceTimersByTime(10_000); });
+    // An unfinished item is followed every 3 s (live land acceptance: 10 s felt stale).
+    await act(async () => { vi.advanceTimersByTime(3_000); });
 
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('reads a finished work item again only every 15 seconds', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'completed', reason: 'landed' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(12_000); });
     await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
   } finally {
     vi.useRealTimers();
