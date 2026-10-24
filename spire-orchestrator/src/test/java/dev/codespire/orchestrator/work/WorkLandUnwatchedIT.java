@@ -76,6 +76,17 @@ class WorkLandUnwatchedIT extends WorkLandFixture {
         landed(id);assertEquals(1,landings(id));
         assertEquals(WorkLanding.FACTORY,store.load(id).progress().execution().landing().mergedBy());
     }
+    /**
+     * With no land effect to defer to, the machine rule alone keeps a merge by the factory account from being recorded
+     * as a person's: the REVIEWER delivery names no sender, so the merger read from the pull request decides.
+     */
+    @Test void aMergeByTheFactoryAccountTheReviewerReportsIsNotRecordedAsAHandMerge() throws Exception {
+        factoryIdentity(FACTORY_ID);
+        String id=atLandGate();mergedBy(FACTORY_ID);
+        reviewerReports(id,IntegrationEvent.CloseReason.MERGED,"TEST-reviewer-machine-merge");
+        assertEquals(0,landings(id));assertEquals("waiting_approval",store.load(id).workflowStatus());
+        assertEquals(0L,count("SELECT count(*) FROM work_land_observation WHERE work_item_id=?",id),"nothing is kept to be recorded later");
+    }
     /** A read that fails is kept for the land sweep, as the factory webhook's merge is, and never dropped. */
     @Test void aReviewerReportedMergeWhoseReadFailsIsReadAgain() throws Exception {
         String id=atLandGate();java.time.Instant start=java.time.Instant.now();clockAt(start);branchAt(HEAD,204);
