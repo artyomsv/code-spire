@@ -65,9 +65,14 @@ public class WorkItemResource {
     /**
      * @param generation the attempt this entry belongs to. A re-admitted item keeps its history, so a
      *     decision from an earlier attempt must not read as approval of the current one.
+     * @param gateArtifact what the gate binds: the head for land, so two approvals of one phase read apart
+     * @param gateChannel where the resolver answered; a dashboard resolver is an OIDC subject, see {@link View#operators}
+     * @param operator the operator of a land command (Stop land, Retry land), null on any other entry
+     * @param note the note that land command carried
      */
     public record Milestone(long sequence, String type, String reason, Instant occurredAt,String phase,String workflowStatus,
-                            UUID attemptId,UUID gateId,String gateState,String resolver,long generation) {}
+                            UUID attemptId,UUID gateId,String gateState,String resolver,long generation,
+                            String gateArtifact,String gateChannel,String operator,String note) {}
     public record Build(UUID attemptId,String state,String runId,String reason,long generation) {}
     public record View(String id, UUID sourceId, UUID repositoryId, String repository, String issueKey, String trackerUrl,
                        long generation, String phase, String workflowStatus, String reason, Profile profile, long revision,
@@ -91,7 +96,12 @@ public class WorkItemResource {
                         */
                        WorkPreparationSweep.Health preparationHealth,
                        /** The latest land attempt of this generation (M4 land, spec §7.10); null until land is approved. */
-                       LandView land) {}
+                       LandView land,
+                       /**
+                        * The operators this history names (gate resolvers, land command operators) as they last signed
+                        * in, so the screen shows a name and not a subject. Never an email: the directory keeps none.
+                        */
+                       List<dev.codespire.orchestrator.operator.OperatorDirectory.Operator> operators) {}
     /**
      * @param message GitHub's own words when it refused, so the operator reads the cause and not a code
      * @param checks the check summary last read, for "n of m done" and the failed names
@@ -180,18 +190,14 @@ public class WorkItemResource {
         return new View(id, item.sourceId(), item.repositoryId(), source.repository().full(), item.issue().issueKey(), item.issue().link().toString(),
                 item.generation(), item.phase(), item.workflowStatus(), item.reason(),
                 selected == null ? null : new Profile(selected.id(), selected.name(), selected.version()), events.size(), events.getLast().occurredAt(),
-                item.policy().ignored(), events.stream().map(event -> {
-                    WorkItemEvent state = (WorkItemEvent) event.payload();
-                    boolean clamp = "POLICY_CLAMPED".equals(state.milestone());
-                    return new Milestone(event.sequence(), "POLICY_OBSERVED".equals(state.milestone()) ? event.eventType() : state.milestone(),
-                            clamp ? state.policy().reason() : state.reason(), event.occurredAt(),state.phase(),state.workflowStatus(),
-                            state.progress().attemptId(),state.gate()==null?null:state.gate().id(),state.gate()==null?null:state.gate().state(),state.gate()==null?null:state.gate().resolver(),state.generation());
-                }).toList(),
+                item.policy().ignored(), WorkItemMilestones.of(events),
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
                 item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
-                sweep.health(id,item.generation()).orElse(null),land(id,item,events));
+                sweep.health(id,item.generation()).orElse(null),land(id,item,events),operators.named(WorkItemMilestones.operatorSubjects(events)));
     }
+
+    @Inject dev.codespire.orchestrator.operator.OperatorDirectory operators;
 
     @Inject WorkLandEffects landing;
     @Inject dev.codespire.orchestrator.factory.LandSettings landSettings;

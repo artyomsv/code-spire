@@ -85,4 +85,27 @@ public class OperatorDirectory {
         }
         return out;
     }
+
+    /**
+     * The operators among {@code subjects} who have signed in here, for showing a name beside a recorded subject. A
+     * subject never seen here is simply absent; the caller shows the subject.
+     */
+    public List<Operator> named(java.util.Collection<String> subjects) {
+        if (subjects.isEmpty()) {
+            return List.of();
+        }
+        String sql = "SELECT oidc_subject, username, display_name FROM operator_seen WHERE oidc_subject = ANY(?)";
+        List<Operator> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setArray(1, c.createArrayOf("varchar", subjects.toArray()));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new Operator(rs.getString("oidc_subject"), rs.getString("username"), rs.getString("display_name")));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the operators " + subjects.size() + " recorded subjects name", e);
+        }
+        return out;
+    }
 }
