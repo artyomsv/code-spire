@@ -94,7 +94,7 @@ public class WorkPullRequestWatch {
     private void converge(String id) {
         WorkItemEvent item=store.load(id);
         WorkExecution execution=item==null?null:item.progress().execution();
-        if(execution==null || execution.pullRequest()==null || liveEffect(item))return;
+        if(execution==null || execution.pullRequest()==null)return;
         long number=execution.pullRequest().number();
         PullRequestLander.LandState pr=reads.readPullRequest(item,number);
         // Unreadable now: the next check reads it again.
