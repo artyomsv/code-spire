@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { resumeWorkItem, retryLand, stopLand, type WorkItemDetail } from '../../api';
 import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
@@ -24,6 +24,7 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [busy, setBusy] = useState<'resume' | 'readmit' | 'compose' | 'retry' | 'stop' | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState(''), [landNote, setLandNote] = useState('');
+  const landHintId = useId(), resumeHintId = useId();
   async function resume(readmit: boolean) {
     const number = started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
     try {
@@ -91,17 +92,27 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const canCompose = !attempted
     && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
   if (!canResume && !canReadmit && !canCompose && !stoppableAtLand) return null;
+  // A disabled button gives no reason by itself (live land acceptance: Stop land seemed to do nothing), so the
+  // note it waits for is named beside it and tied to it.
+  const landHint = stoppableAtLand && !landNote.trim()
+    ? `Write a land note to unlock ${handedAtLand ? 'Retry land and Stop land' : 'Stop land'}.` : null;
+  const resumeHint = canResume && item.workflowStatus === 'suspended' && !note.trim() ? 'Write a resume note to unlock Recheck and resume.' : null;
   return <div className="work-actions">
     {item.workflowStatus === 'suspended' && <SettingField label="Resume note" scope="work item" hint="Required. Why work may continue after a person took over; recorded with the resume.">
       <textarea aria-label="Resume note" disabled={busy !== null} value={note} onChange={event => setNote(event.target.value)} /></SettingField>}
+    {resumeHint && <p id={resumeHintId} className="prov-sub">{resumeHint}</p>}
     {stoppableAtLand && <SettingField label="Land note" scope="work item" hint="Required. Why land may be tried again, or why it stops here; recorded with the item. Stop leaves the pull request open, and re-admitting afterwards builds the work again.">
       <textarea aria-label="Land note" disabled={busy !== null} value={landNote} onChange={event => setLandNote(event.target.value)} /></SettingField>}
+    {landHint && <p id={landHintId} className="prov-sub">{landHint}</p>}
     <div className="prov-actions">
-      {handedAtLand && <button className="btn sm" type="button" disabled={busy !== null || !landNote.trim()} onClick={() => void land('retry')}>
+      {handedAtLand && <button className="btn sm" type="button" disabled={busy !== null || !landNote.trim()}
+        aria-describedby={landHint ? landHintId : undefined} onClick={() => void land('retry')}>
         {busy === 'retry' ? 'Retrying land…' : 'Retry land'}</button>}
-      {stoppableAtLand && <button className="btn-ghost danger sm" type="button" disabled={busy !== null || !landNote.trim()} onClick={() => void land('stop')}>
+      {stoppableAtLand && <button className="btn-ghost danger sm" type="button" disabled={busy !== null || !landNote.trim()}
+        aria-describedby={landHint ? landHintId : undefined} onClick={() => void land('stop')}>
         {busy === 'stop' ? 'Stopping…' : 'Stop land'}</button>}
-      {canResume && <button className="btn sm" type="button" disabled={busy !== null || item.workflowStatus === 'suspended' && !note.trim()} onClick={() => void resume(false)}>
+      {canResume && <button className="btn sm" type="button" disabled={busy !== null || item.workflowStatus === 'suspended' && !note.trim()}
+        aria-describedby={resumeHint ? resumeHintId : undefined} onClick={() => void resume(false)}>
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}
       {canReadmit && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void resume(true)}>
         {busy === 'readmit' ? 'Re-admitting…' : 'Re-admit under current policy'}</button>}

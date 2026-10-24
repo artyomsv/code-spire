@@ -246,7 +246,10 @@
     padding: 8px 14px; border-radius: 8px; cursor: pointer;
     box-shadow: var(--shadow-sm);
   }
-  .btn:hover { filter: brightness(1.06); }
+  .btn:hover:not(:disabled) { filter: brightness(1.06); }
+  /* A disabled button used to look exactly like an enabled one, so Stop land with no note seemed to ignore the
+     click (live land acceptance, 2026-10-24). Both button styles fade and refuse the pointer; hover stays still. */
+  .btn:disabled, .btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
   .content { padding: 22px 26px 40px; }
 
@@ -497,7 +500,7 @@
     background: var(--panel); color: var(--text-2); border: 1px solid var(--border);
     font-weight: 600; font-size: 12.5px; padding: 8px 13px; border-radius: 8px; cursor: pointer;
   }
-  .btn-ghost:hover { color: var(--text); border-color: var(--border-strong); }
+  .btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
 
   .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
 
@@ -1019,7 +1022,7 @@
   .prov-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
   .btn-danger { background: var(--crit); }
-  .btn-ghost.danger:hover { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
+  .btn-ghost.danger:hover:not(:disabled) { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
 
   /* ---- extension: failure error detail ---- */
   .error-detail { margin-top: 10px; }
