@@ -117,7 +117,7 @@ class WorkLandUnwatchedIT extends WorkLandFixture {
     }
     @Test void anUnmergedCloseNoWebhookReportedStopsOnThePeriodicRead() throws Exception {
         String id=atLandGate();branchAt(HEAD,204);
-        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(okJson(pullJson("closed",false,HEAD,"unknown",null))));
+        forge.stubFor(get(urlPathEqualTo(pulls())).willReturn(okJson(pullJson("closed",false,HEAD,"unknown",null))));checks(HEAD,null);
         watch.check();
         WorkItemEvent item=store.load(id);
         assertEquals("stopped",item.workflowStatus());assertEquals("pr_closed_by_human",item.reason());

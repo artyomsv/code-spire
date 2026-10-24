@@ -417,6 +417,8 @@ it('re-reads a list of finished items only every 15 seconds', async () => {
     vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'completed' }, { ...item(1), workflowStatus: 'stopped' }], total: 2, offset: 0, limit: 50 });
     render(<MemoryRouter><WorkItems /></MemoryRouter>);
     await screen.findByText('TEST-0');
+    // The cadence follows the rows on screen, so the effect that set it must have run before time moves.
+    await act(async () => {});
     await act(async () => { vi.advanceTimersByTime(5_000); });
     expect(api.getWorkItems).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(10_000); });
