@@ -81,6 +81,22 @@ class HandoffFilesTest {
                 HandoffFiles.read(dir, HandoffFiles.ARTIFACT, HandoffFiles.ARTIFACT_MAX_BYTES));
     }
 
+    /**
+     * The size is judged from the attributes, before the file is opened: an oversized file the publisher may not
+     * read is still refused as too large. Reading it first would throw AccessDenied instead, and the growth check in
+     * {@code decode} alone would hide that, since it refuses any readable oversized file just as well.
+     */
+    @Test
+    void anOversizedArtifactIsRefusedWithoutOpeningIt() throws Exception {
+        Path artifact = Files.write(dir.resolve(HandoffFiles.ARTIFACT),
+                "T".repeat(HandoffFiles.ARTIFACT_MAX_BYTES + 1).getBytes(StandardCharsets.UTF_8));
+        makeUnreadable(artifact);
+        assumeTrue(!Files.isReadable(artifact), "this user reads files whatever their permissions");
+
+        assertEquals(new HandoffFiles.Read.Refused(HandoffFiles.Refusal.TOO_LARGE),
+                HandoffFiles.read(dir, HandoffFiles.ARTIFACT, HandoffFiles.ARTIFACT_MAX_BYTES));
+    }
+
     /** The other side of the cap: exactly the cap is a valid artifact, so the comparison is strict. */
     @Test
     void anArtifactOfExactlyTheCapIsRead() throws Exception {
