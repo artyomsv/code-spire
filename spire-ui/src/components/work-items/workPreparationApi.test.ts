@@ -29,8 +29,8 @@ it('names which ticket moved when the artifacts changed', async () => {
 
 // A reason with no rule still has to read as a sentence, not as the machine word.
 it('falls back to the reason when the refusal names no rule', async () => {
-  vi.mocked(apiFetch).mockResolvedValue(refusal('preparation_unavailable'));
-  await expect(api.registerPreparation('TEST-item', input)).rejects.toThrow('preparation_unavailable');
+  vi.mocked(apiFetch).mockResolvedValue(refusal('TEST-reason-without-copy'));
+  await expect(api.registerPreparation('TEST-item', input)).rejects.toThrow('TEST-reason-without-copy');
   vi.mocked(apiFetch).mockResolvedValue(refusal('artifacts_unavailable'));
   await expect(api.registerPreparation('TEST-item', input)).rejects.toThrow('The tracker artifacts could not be read. Check the references and source account.');
 });

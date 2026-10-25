@@ -3,7 +3,6 @@ import { fetchLlmModels, type LlmModelView } from '../../../api';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
-import PreparationField from './PreparationField';
 import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
@@ -26,6 +25,8 @@ interface Props {
  */
 /** How a build pays, in the words the setup shows. */
 const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
+/** How the specification and plan are made (M4 slice 3, §6.1). */
+const PREPARATION_LABEL: Record<Preparation, string> = { composed: 'Copy the ticket as one step', generated: 'Write them with the build model' };
 /** The verify limit a setup takes when none was saved; the server bounds it by the deployment's wall clock. */
 const DEFAULT_VERIFY_SECONDS = 1800;
 const verifyLines = (text: string) => text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
@@ -132,8 +133,19 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}
         setEffort={effort => setForm(previous => ({ ...previous, effort }))} />
-      {offersGenerated && <PreparationField repositoryId={repositoryId} value={form.preparation} harness={form.harness} model={form.model}
-        payWith={form.payWith} onChange={preparation => setForm(previous => ({ ...previous, preparation }))} />}
+      {/* Shown only when the server offers generated, so a deployment that cannot write them never shows a choice it
+          would refuse. The generated option names the runner: the build's own harness, model and payment (§6.1). */}
+      {offersGenerated && <fieldset className="factory-form" aria-label="Specification and plan">
+        <legend className="field-label">Specification and plan</legend>
+        {(Object.keys(PREPARATION_LABEL) as Preparation[]).map(preparation => <label key={preparation} className="field-check">
+          <input type="radio" name={`preparation-${repositoryId}`} value={preparation} checked={form.preparation === preparation}
+            onChange={() => setForm(previous => ({ ...previous, preparation }))} />
+          <span>{PREPARATION_LABEL[preparation]}{preparation === 'generated' && <span className="prov-sub">
+            {' '}runs on {form.harness || 'the harness above'} · {form.model || 'the model above'} · {form.payWith === 'SUBSCRIPTION' ? 'seat' : 'API key'}</span>}</span></label>)}
+        {/* A20: under profiles where spec and plan run without approval, this spends before anyone is asked. */}
+        <p className="factory-note">Before the first approval this spends two short runs, and up to one automatic retry each, when the
+          specification and plan phases are set to run without approval.</p>
+      </fieldset>}
       <SettingField label="Check commands" scope="build setup" hint="One command per line, run in order on a clean copy of the build. The first failure stops the rest; only a build whose checks all pass is pushed.">
         <textarea aria-label="Check commands" rows={4} value={form.verifyCommands} placeholder="./gradlew check"
           onChange={event => setForm(previous => ({ ...previous, verifyCommands: event.target.value }))} /></SettingField>
