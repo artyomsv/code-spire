@@ -37,7 +37,7 @@ public enum RunKind {
     /** The ledger's name for this run's spend, so a run's charge row carries the run's own kind. */
     public ChargeKind chargeKind() {
         return switch (this) {
-            case BUILD -> ChargeKind.BUILD;
+            case BUILD -> ChargeKind.FIX;
             case FIX -> ChargeKind.FIX;
             case SPEC -> ChargeKind.SPEC;
             case PLAN -> ChargeKind.PLAN;
