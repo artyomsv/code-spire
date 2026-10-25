@@ -230,7 +230,7 @@ public class BuildDefaults {
     private String preparation(String typed) {
         String preparation = strip(typed);
         if (preparation == null) return null;
-        if (!PREPARATIONS.contains(preparation)) throw new Refused("preparation_invalid");
+        // mutant: membership check removed
         if (preparation.equals(GENERATED) && !generatedPreparation.enabled()) throw new Refused("generated_preparation_off");
         return preparation;
     }
