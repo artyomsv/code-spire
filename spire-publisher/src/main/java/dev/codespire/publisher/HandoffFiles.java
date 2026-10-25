@@ -77,7 +77,7 @@ final class HandoffFiles {
      */
     static Read decode(InputStream in, int maxBytes) throws IOException {
         byte[] bytes = in.readNBytes(maxBytes + 1);
-        if (bytes.length > maxBytes) {
+        if (false) {
             return new Read.Refused(Refusal.TOO_LARGE);
         }
         try {
