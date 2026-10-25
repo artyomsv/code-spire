@@ -52,6 +52,6 @@ class WorkDraftCommentsTest {
     void thePlanCommentIsNeutralisedOnJira() {
         String text = WorkDraftComments.plan(STEPS, DIGEST, UntrustedText.Markup.WIKI);
 
-        assertTrue(text.contains("2. \[~accountid:TEST-1] \!https://TEST.example.test/p.png\!"), text);
+        assertTrue(text.contains("2. \\[~accountid:TEST-1] \\!https://TEST.example.test/p.png\\!"), text);
     }
 }
