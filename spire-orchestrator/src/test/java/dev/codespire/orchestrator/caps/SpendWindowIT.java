@@ -282,8 +282,9 @@ class SpendWindowIT {
         long baselineCalls = lastHour().calls();
         String runId = "run::github:TEST-acme/app:cap-" + UUID.randomUUID() + ":1";
 
-        projection.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, "agent"),
-                "TEST-RUN-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 2_000L)), null));
+        projection.recordCharges(ChargeCall.forRun(new dev.codespire.orchestrator.llm.RunSpend(runId,
+                CallRefs.forRun(runId, "agent"), dev.codespire.orchestrator.llm.ChargeKind.BUILD, null),
+                "TEST-RUN-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 2_000L))));
 
         assertTrue(lastHour().spentMillicents() > baseline,
                 "a run's money must move the same rolling window a review's does, or the cap that"
