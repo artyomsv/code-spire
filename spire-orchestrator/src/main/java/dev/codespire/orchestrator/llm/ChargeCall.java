@@ -67,7 +67,8 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
      * @param spend the run, its key, its kind and the pool member that paid
      */
     public static ChargeCall forRun(RunSpend spend, String model, List<ChargeLine> lines) {
-        return new ChargeCall(spend.runId(), ChargeSubject.RUN, ChargeCapability.BUILD,
+        return new ChargeCall(spend.runId(), ChargeSubject.RUN,
+                spend.kind() == ChargeKind.SPEC || spend.kind() == ChargeKind.PLAN ? ChargeCapability.AUTONOMY : ChargeCapability.BUILD,
                 spend.callRef(), spend.kind(), model, lines, spend.credentialRef());
     }
 }
