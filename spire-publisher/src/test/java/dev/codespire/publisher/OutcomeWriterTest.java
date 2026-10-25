@@ -6,13 +6,18 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OutcomeWriterTest {
 
     private static final String SECRET = "TEST-secret-77b1";
+
+    /** DockerRunRuntime.MAX_LINE_CHARS: the longest outcome line the run worker receives whole. */
+    private static final int MAX_LINE_CHARS = 64 * 1024;
 
     @Test
     void theCredentialNeverReachesAFailureLine() {
@@ -63,6 +68,39 @@ class OutcomeWriterTest {
         assertTrue(lines.contains("\"event\":\"artifact\""), lines);
         assertTrue(lines.contains("\"event\":\"step_summary\""), lines);
         assertFalse(lines.contains("TEST-token"), lines);
+    }
+
+    /**
+     * The run worker receives a line longer than 64 Ki characters clipped, and skips a clipped line it cannot parse, so
+     * an artifact that grew past that bound in JSON escaping vanished as if the agent wrote nothing. Jackson escapes
+     * each C0 control character as six characters, so 20 KiB of tool output carrying colour codes was enough.
+     */
+    @Test
+    void aControlCharacterDenseArtifactUnderTheFileCapStillFitsOneLine() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));
+        String text = "\u001B".repeat(10_000) + "TEST-artifact\n".repeat(700);
+
+        writer.artifact(text);
+
+        String[] lines = captured.toString(StandardCharsets.UTF_8).split("\n");
+        assertEquals(1, lines.length);
+        assertTrue(lines[0].length() <= MAX_LINE_CHARS, "line of " + lines[0].length() + " characters");
+        assertTrue(lines[0].startsWith("{\"event\":\"artifact\""), lines[0].substring(0, 40));
+        assertTrue(lines[0].contains("TEST-artifact\\nTEST-artifact"), "the text survives without its controls");
+        assertFalse(lines[0].toLowerCase(Locale.ROOT).contains("\\u001b"), "control characters are dropped");
+    }
+
+    /** Text that escapes past one line without any control character is refused by name, not lost in transport. */
+    @Test
+    void anArtifactThatEscapesPastOneLineIsRefusedAsTooLarge() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));
+
+        writer.artifact("\"".repeat(HandoffFiles.ARTIFACT_MAX_BYTES));
+
+        assertEquals("{\"event\":\"handoff_file_refused\",\"file\":\"artifact.md\",\"why\":\"TOO_LARGE\"}",
+                captured.toString(StandardCharsets.UTF_8).strip());
     }
 
     @Test
