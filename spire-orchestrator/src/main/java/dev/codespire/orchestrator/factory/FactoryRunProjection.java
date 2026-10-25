@@ -393,14 +393,25 @@ public class FactoryRunProjection {
      * @param paidBy              {@code API_KEY} or {@code SUBSCRIPTION}: how the run pays, which decides
      *                            how it is charged. Kept apart from the credential because a re-arm
      *                            clears that and must not change this (M3.5 part F).
+     * @param stepIndex           which plan step this run builds (0-based), or null for a run that is
+     *                            not a plan step (A18). Part of the re-arm comparison, like the kind.
      */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
                             UUID harnessCredentialId, String kind, String reviewId,
-                            String findingRef, String commentId, String paidBy) {
+                            String findingRef, String commentId, String paidBy, Integer stepIndex) {
 
         public QueuedRun {
             paidBy = dev.codespire.contract.work.PayWith.normalise(paidBy);
+        }
+
+        /** A run that is not a plan step. */
+        public QueuedRun(String runId, String harness, String model, String baseBranch,
+                         String baseCommit, String branch, String pushedAs,
+                         UUID harnessCredentialId, String kind, String reviewId,
+                         String findingRef, String commentId, String paidBy) {
+            this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, paidBy, null);
         }
 
         /** Every run before M3.5 part F paid with an API key. */
@@ -409,14 +420,38 @@ public class FactoryRunProjection {
                          UUID harnessCredentialId, String kind, String reviewId,
                          String findingRef, String commentId) {
             this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, kind, reviewId, findingRef, commentId, null);
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, null, null);
         }
 
         /** The same row, paid by a signed-in subscription seat. */
         public QueuedRun paidBySubscription() {
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
                     harnessCredentialId, kind, reviewId, findingRef, commentId,
-                    dev.codespire.contract.work.PayWith.SUBSCRIPTION);
+                    dev.codespire.contract.work.PayWith.SUBSCRIPTION, stepIndex);
+        }
+
+        /**
+         * The same row, dispatched as another kind of run: a specification or plan run (M4).
+         *
+         * <p>A wither for the reason {@link #asFixFor} gives. FIX goes through that one instead, because a
+         * fix must name the review, the finding and the comment, which V54 and V56 refuse it without.
+         */
+        public QueuedRun ofKind(RunKind runKind) {
+            if (runKind == RunKind.FIX) {
+                throw new IllegalArgumentException("a fix run is recorded through asFixFor, which names "
+                        + "the review, the finding and the comment it fixes");
+            }
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, runKind.name(), reviewId, findingRef, commentId, paidBy, stepIndex);
+        }
+
+        /** The same row, recorded as building plan step {@code step} (0-based). */
+        public QueuedRun atStep(int step) {
+            if (step < 0) {
+                throw new IllegalArgumentException("a plan step is 0-based, so " + step + " names none");
+            }
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, paidBy, step);
         }
 
         /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
@@ -458,7 +493,7 @@ public class FactoryRunProjection {
                         + "it, or a redelivery of that comment buys a second run with no symptom");
             }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId, paidBy);
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId, paidBy, stepIndex);
         }
     }
 

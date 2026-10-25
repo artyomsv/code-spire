@@ -60,11 +60,10 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
      * deployment every run charge is an asserted zero, so "which key spent this" was unanswerable by
      * any other route — the money column cannot distinguish two keys that both cost nothing.
      *
-     * @param credentialRef which pool member paid, or null when the run names none
+     * @param spend the run, its key, its kind and the pool member that paid
      */
-    public static ChargeCall forRun(String runId, String callRef, String model, List<ChargeLine> lines,
-                                    String credentialRef) {
-        return new ChargeCall(runId, ChargeSubject.RUN, ChargeCapability.BUILD,
-                callRef, ChargeKind.BUILD, model, lines, credentialRef);
+    public static ChargeCall forRun(RunSpend spend, String model, List<ChargeLine> lines) {
+        return new ChargeCall(spend.runId(), ChargeSubject.RUN, ChargeCapability.BUILD,
+                spend.callRef(), ChargeKind.BUILD, model, lines, spend.credentialRef());
     }
 }

@@ -5,8 +5,10 @@ import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
+import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
+import dev.codespire.orchestrator.llm.RunSpend;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -110,8 +112,8 @@ public class RunCharges {
                     .filter(dev.codespire.contract.work.PayWith.SUBSCRIPTION::equals).isPresent();
             List<ChargeLine> lines = subscription ? pricer.priceUnmetered(usage) : pricer.priceCall(model, usage);
             String credentialRef = credential.map(UUID::toString).orElse(null);
-            ledger.recordCharges(ChargeCall.forRun(runId, CallRefs.forRun(runId, AGENT_CALL), model,
-                    lines, credentialRef));
+            ledger.recordCharges(ChargeCall.forRun(new RunSpend(runId, CallRefs.forRun(runId, AGENT_CALL),
+                    ChargeKind.BUILD, credentialRef), model, lines));
             // The terminal-status push precedes charging. FIX runs and runs that delivered nothing
             // have no later PR write to refresh their spend, so notify after the ledger commits too.
             runs.push(runId);
