@@ -19,7 +19,8 @@ import org.jboss.logging.Logger;
  * Starts the specification run of an item admitted as generated (M4 slice 3, A5, decision 10), the sibling of
  * {@link WorkPreparationSweep}: it selects items waiting at {@code spec / awaiting_input / specification_to_write}
  * whose recorded mode is {@code generated}, asks the same local questions of the build setup before anything is
- * bought, and records a refusal with the copy sweep's backoff. The start itself is
+ * bought, observes the source and the ticket as the copy sweep does, and records a refusal with the copy sweep's
+ * backoff. The start itself is
  * {@link WorkDraftTransitions#start}, under the item lock and at the revision captured here.
  */
 @ApplicationScoped
@@ -31,6 +32,7 @@ public class WorkDraftSweep {
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
     @Inject WorkDraftTransitions drafts;
+    @Inject WorkItemTransitions transitions;
     @Inject WorkPreparationSweep attempts;
     @Inject BuildDefaults defaults;
 
@@ -74,16 +76,25 @@ public class WorkDraftSweep {
         WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
         if (!waiting(item)) return "work_item_changed";
         String refused = attempts.localRefusal(defaults.get(item.repositoryId()));
-        if (refused == null) {
-            WorkItemTransitions.Outcome outcome = drafts.start(id, expectedRevision);
-            if (outcome.status() == 200) {
-                attempts.clear(id, item.generation());
-                return outcome.reason();
-            }
-            refused = outcome.reason();
+        WorkItemTransitions.Outcome outcome = refused == null ? startObserved(item, expectedRevision) : null;
+        if (outcome != null && outcome.status() == 200) {
+            attempts.clear(id, item.generation());
+            return outcome.reason();
         }
+        if (outcome != null) refused = outcome.reason();
         // Somebody else moved the item: a fact about the item, not about the factory's ability to start it.
         if (!"work_item_changed".equals(refused)) attempts.record(id, item.generation(), expectedRevision, refused);
         return refused;
+    }
+
+    /**
+     * Observes the source and the ticket, a remote read made outside any lock as the copy sweep makes it, then starts
+     * under the lock against what was observed. A disabled source or an unreadable ticket is refused before anything
+     * is bought.
+     */
+    private WorkItemTransitions.Outcome startObserved(WorkItemEvent item, long expectedRevision) {
+        WorkItemTransitions.Observation observed = transitions.observe(item.sourceId(), item.issue());
+        if (observed.evidence().failure() != null) return new WorkItemTransitions.Outcome(503, observed.evidence().failure(), item);
+        return drafts.start(item.workItemId(), expectedRevision, observed);
     }
 }

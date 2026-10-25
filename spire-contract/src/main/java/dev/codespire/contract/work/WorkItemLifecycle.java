@@ -13,7 +13,7 @@ public final class WorkItemLifecycle {
                                           long policyRevision, WorkItemEvent.Authority authority, WorkPolicy.Selection policy, WorkItemEvent previous) {
         if(previous!=null && previous.policyRevision()==policyRevision && previous.authority().equals(authority)
                 && previous.policy().equals(policy) && previous.issue().equals(issue))return previous;
-        if (previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus()) || previous.preparation() != null || previous.draft() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
+        if (keepsPlace(previous))
             return previous.decision(policyRevision,authority,policy,previous.phase(),previous.workflowStatus(),previous.reason(),
                     "POLICY_OBSERVED",previous.gate(),previous.progress());
         String intake = policy.effective().getOrDefault(WorkPolicy.Phase.INTAKE, "off");
@@ -37,12 +37,26 @@ public final class WorkItemLifecycle {
             status = "capability_unavailable";
             reason = "intake_approval_unavailable";
         } else if (policy.selected() != null) reason = "intake_off";
-        return new WorkItemEvent(id, source, repository, issue, previous == null ? 1 : previous.generation(),
+        WorkItemEvent rebuilt = new WorkItemEvent(id, source, repository, issue, previous == null ? 1 : previous.generation(),
                 policyRevision, previous != null && previous.admittedProfile() != null ? previous.admittedProfile()
                         : policy.selected(), previous != null && previous.admittedProfile() != null ? previous.admittedModes()
                         : policy.effective(), authority, policy, phase, status, reason,
                 previous != null && previous.admittedProfile() != null ? previous.admittedLimits() : policy.limits(), "POLICY_OBSERVED")
                 .controlled(previous==null?null:previous.control());
+        // A draft with nothing written is rebuilt as a composed item is, and keeps its draft (review of slice 5).
+        if (previous == null || previous.draft() == null) return rebuilt;
+        return WorkDraftLifecycle.awaitSpecification(rebuilt.drafted(previous.draft()), "POLICY_OBSERVED");
+    }
+
+    /**
+     * Whether the item holds something a policy observation must not rebuild over: a stop, a preparation, a written
+     * draft artifact, an attempt, a gate, or a later generation. A draft with nothing written is not such a thing, so a
+     * relabel or a fixed profile moves it again as it moves a composed item, with no Readmit.
+     */
+    private static boolean keepsPlace(WorkItemEvent previous) {
+        return previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus())
+                || previous.preparation() != null || previous.draft() != null && previous.draft().specification() != null
+                || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1);
     }
 
     public static boolean clampChanged(WorkItemEvent previous, WorkItemEvent next) {

@@ -27,9 +27,17 @@ public final class WorkDraftLifecycle {
     public static WorkItemEvent admitGenerated(WorkItemEvent previous, WorkItemEvent reconciled) {
         boolean admittedBefore = previous != null && previous.admittedProfile() != null;
         if (admittedBefore || reconciled.admittedProfile() == null || reconciled.draft() != null) return reconciled;
-        WorkItemEvent drafted = reconciled.drafted(WorkDraft.admitted());
+        return awaitSpecification(reconciled.drafted(WorkDraft.admitted()), "DRAFT_ADMITTED");
+    }
+
+    /**
+     * A drafted item that reaches spec through admission waits for the draft sweep instead of a copy or a permission
+     * gate (§6.5). {@link WorkItemLifecycle#reconcile} asks it too when it rebuilds an item already drafted, which
+     * {@link #admitGenerated} leaves alone.
+     */
+    static WorkItemEvent awaitSpecification(WorkItemEvent drafted, String milestone) {
         if (!"spec".equals(drafted.phase()) || !SPEC_ADMISSION_REASONS.contains(drafted.reason())) return drafted;
-        return WorkItemLifecycle.state(drafted, "awaiting_input", "specification_to_write", "DRAFT_ADMITTED", drafted.gate(),
+        return WorkItemLifecycle.state(drafted, "awaiting_input", "specification_to_write", milestone, drafted.gate(),
                 drafted.progress().reserve(false));
     }
 

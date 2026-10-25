@@ -113,7 +113,7 @@ public class WorkPreparationSweep {
                   LEFT JOIN work_item_preparation_attempt a
                          ON a.work_item_id = i.id AND a.generation = i.generation
                  WHERE i.phase = 'spec' AND i.workflow_status = 'awaiting_input'
-                   AND i.reason = 'specification_required'
+                   AND i.reason = 'specification_required' AND i.preparation_mode = 'composed'
                    AND (a.retry_after IS NULL OR a.retry_after <= now())
                  -- Never-attempted items first, then whichever has been due longest. Ordering by the
                  -- item's own age instead let a cohort of old, permanently failing rows come due again
@@ -161,7 +161,7 @@ public class WorkPreparationSweep {
      * attempt actually captured, so the two cannot disagree across the gap between them.
      */
     static boolean automatic(WorkItemEvent item) {
-        return item.preparation() == null && "spec".equals(item.phase())
+        return item.preparation() == null && item.draft() == null && "spec".equals(item.phase())
                 && "awaiting_input".equals(item.workflowStatus())
                 && "specification_required".equals(item.reason());
     }

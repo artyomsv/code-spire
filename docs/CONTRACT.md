@@ -58,8 +58,13 @@ admitted profile), so items selected before a switch stay where they are (A16). 
 `spec / awaiting_input / specification_to_write`, milestone `DRAFT_ADMITTED`. Entering spec or plan while the draft
 lacks that phase's artifact parks an ordinary entry at `specification_to_write` or `plan_to_write` (milestone
 `DRAFT_WAITING`), with no gate and no attempt; only the draft sweep enters with `EntryMode.DRAFT`, which skips the
-permission gate (the setting admits the run, A6) after off, unknown usage and the caps, and starts the attempt. A
-spec or plan gate on a drafted item binds that artifact's SHA-256 (`WorkGate.artifactOf`). Spec and plan runs count
+permission gate (the setting admits the run, A6) after off, unknown usage and the caps, and starts the attempt. The
+sweep first observes the source and the ticket; under the item lock it refuses `authority_changed_during_read` when the
+source or the policy revision moved, and enters with the policy selected again from that observation, so a disabled
+source, a removed label or an edited profile buys no run. `reconcile` keeps a drafted item where it stands only once
+the draft holds a written specification (or the item holds an attempt, a gate, a preparation, a stop or a later
+generation); a draft with nothing written is rebuilt as a composed item is, keeps its draft, and waits at
+`specification_to_write` again when the rebuild reaches spec. A spec or plan gate on a drafted item binds that artifact's SHA-256 (`WorkGate.artifactOf`). Spec and plan runs count
 toward wall clock, cost and calls, never toward runs or steps.
 
 Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
