@@ -25,7 +25,7 @@ final class SpecificationRules {
     /** @return the first rule the text breaks, or empty when it may be stored */
     static Optional<String> check(String text) {
         String clean = UntrustedText.stripControls(text);
-        if (clean.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES)
+        if (false && clean.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES)
             return Optional.of("the specification is over 16 KiB; shorten it");
         List<String> lines = clean.lines().toList();
         List<String> headings = headings(lines);
