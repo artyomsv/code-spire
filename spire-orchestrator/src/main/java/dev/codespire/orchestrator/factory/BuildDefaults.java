@@ -168,7 +168,7 @@ public class BuildDefaults {
                         model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=now(),
                         pay_with=excluded.pay_with,verify_commands=excluded.verify_commands,
                         verify_timeout_seconds=excluded.verify_timeout_seconds,
-                        preparation=CASE WHEN ?::text IS NULL THEN repository_build_defaults.preparation ELSE excluded.preparation END,
+                        preparation=CASE WHEN ?::text IS NULL THEN excluded.preparation ELSE excluded.preparation END,
                         revision=repository_build_defaults.revision+1
                     """)) {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
