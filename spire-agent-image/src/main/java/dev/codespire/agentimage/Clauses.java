@@ -39,6 +39,12 @@ public final class Clauses {
     /** DONE means "everything I produced is here", so writing it early truncates the run. */
     public static final String HANDOFF_DONE_LAST = "handoff-done-last";
 
+    /**
+     * {@code $SPIRE_ARTIFACT} and {@code $SPIRE_STEP_SUMMARY} reach the handoff as regular files before DONE, or a
+     * specification run returns nothing and a plan step's decisions are lost (M4 slice 3).
+     */
+    public static final String HANDOFF_FILES = "handoff-files";
+
     /** M4 verify runs each check as {@code /bin/sh -c <command>} in this image, overriding its entrypoint. */
     public static final String SHELL = "shell";
 

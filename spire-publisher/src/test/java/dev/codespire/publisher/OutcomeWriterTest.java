@@ -49,6 +49,36 @@ class OutcomeWriterTest {
         assertTrue(line.contains("Basic " + SecretScrub.REDACTED), line);
     }
 
+    /** The artifact and summary are model output, and a model can echo whatever reached its environment. */
+    @Test
+    void anArtifactLineIsRedacted() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8),
+                "bot", "TEST-token");
+
+        writer.artifact("x TEST-token y");
+        writer.stepSummary("{\"decisions\":[\"TEST-token\"]}");
+
+        String lines = captured.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("\"event\":\"artifact\""), lines);
+        assertTrue(lines.contains("\"event\":\"step_summary\""), lines);
+        assertFalse(lines.contains("TEST-token"), lines);
+    }
+
+    @Test
+    void theHandoffLinesCarryTheirFields() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));
+
+        writer.repositoryChanged(2);
+        writer.handoffFileRefused("artifact.md", "SYMLINK");
+
+        String lines = captured.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("{\"event\":\"repository_changed\",\"bundles\":2}"), lines);
+        assertTrue(lines.contains(
+                "{\"event\":\"handoff_file_refused\",\"file\":\"artifact.md\",\"why\":\"SYMLINK\"}"), lines);
+    }
+
     @Test
     void aWriterWithNoSecretWritesTheDetailAsIs() {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();

@@ -58,11 +58,19 @@ public interface ImageProbe {
      *                collapsed, and it made a conforming entrypoint look like three separate defects
      * @param handoff file names left on the handoff volume, empty for a plain {@link #run}
      * @param done    what became of DONE
+     * @param filesBeforeDone the handoff files ({@code artifact.md}, {@code step-summary.json}) that are regular
+     *                files, not links, and not newer than DONE; empty when there is no DONE to compare against
      */
-    record Result(String output, boolean started, List<String> handoff, Done done) {
+    record Result(String output, boolean started, List<String> handoff, Done done, List<String> filesBeforeDone) {
 
         public Result {
             handoff = List.copyOf(handoff);
+            filesBeforeDone = List.copyOf(filesBeforeDone);
+        }
+
+        /** A run that left no handoff file to compare with DONE. */
+        public Result(String output, boolean started, List<String> handoff, Done done) {
+            this(output, started, handoff, done, List.of());
         }
 
         static Result of(String output) {

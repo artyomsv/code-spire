@@ -88,9 +88,12 @@ class AgentImageVerifierTest {
     private static final String ALL_GOOD =
             "git=yes\nca=yes\nworkspace=yes\nhandoff=yes\nshell=yes\nuid=1001\n";
 
+    private static final List<String> HANDOFF_FILES = List.of("artifact.md", "step-summary.json");
+
     private static ImageProbe.Result conformingAgentRun() {
-        return new ImageProbe.Result("stdin=yes\n", true, List.of("1.bundle", "DONE"),
-                ImageProbe.Done.WRITTEN_LAST);
+        return new ImageProbe.Result("stdin=yes\n", true,
+                List.of("1.bundle", "artifact.md", "step-summary.json", "DONE"),
+                ImageProbe.Done.WRITTEN_LAST, HANDOFF_FILES);
     }
 
     private static ConformanceReport verify(ContainerConfig config, String runOutput,
@@ -370,7 +373,7 @@ class AgentImageVerifierTest {
                 ImageProbe.Result.neverStarted("could not create a probe repository"));
 
         for (String id : java.util.List.of(Clauses.PROMPT_ON_STDIN, Clauses.HANDOFF_BUNDLES,
-                Clauses.HANDOFF_DONE_LAST)) {
+                Clauses.HANDOFF_DONE_LAST, Clauses.HANDOFF_FILES)) {
             assertTrue(clause(report, id).notChecked(), id + ": " + clause(report, id).detail());
         }
         assertTrue(clause(report, Clauses.GIT).passed(),
@@ -402,6 +405,46 @@ class AgentImageVerifierTest {
         assertTrue(clause(report, Clauses.HANDOFF_BUNDLES).notChecked());
         assertTrue(clause(report, Clauses.HANDOFF_BUNDLES).detail().contains("300s"),
                 "the reason travels, or the operator cannot tell a hang from a busy daemon");
+    }
+
+    /**
+     * Presence alone is not the clause: a file copied after DONE is one the publisher may never see, because DONE is
+     * its signal to read and exit.
+     */
+    @Test
+    void handoffFilesClauseFailsWhenDoneIsWrittenFirst() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
+                new ImageProbe.Result("stdin=yes\n", true,
+                        List.of("1.bundle", "DONE", "artifact.md", "step-summary.json"),
+                        ImageProbe.Done.WRITTEN_LAST, List.of("step-summary.json")));
+
+        ConformanceReport.Verification files = clause(report, Clauses.HANDOFF_FILES);
+        assertFalse(files.passed(), files.detail());
+        assertFalse(files.notChecked(), files.detail());
+        assertTrue(files.detail().contains("artifact.md"), files.detail());
+        assertFalse(files.detail().contains("step-summary.json"), "only the file that is late: " + files.detail());
+    }
+
+    @Test
+    void handoffFilesClausePassesForTheReferenceOrder() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD, conformingAgentRun());
+
+        assertTrue(clause(report, Clauses.HANDOFF_FILES).passed(), clause(report, Clauses.HANDOFF_FILES).detail());
+    }
+
+    /** An entrypoint that never copies the files fails, naming the variables it must honour. */
+    @Test
+    void handoffFilesClauseFailsWhenTheFilesNeverArrive() {
+        ConformanceReport report = verify(
+                configWith("1001", new String[] {"/entrypoint"}, Map.of()), ALL_GOOD,
+                new ImageProbe.Result("stdin=yes\n", true, List.of("1.bundle", "DONE"),
+                        ImageProbe.Done.WRITTEN_LAST));
+
+        ConformanceReport.Verification files = clause(report, Clauses.HANDOFF_FILES);
+        assertFalse(files.passed());
+        assertTrue(files.detail().contains("SPIRE_ARTIFACT"), files.detail());
     }
 
     /** DONE never written and DONE written early fail the same clause and read differently. */

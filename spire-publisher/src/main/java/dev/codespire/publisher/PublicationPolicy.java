@@ -16,10 +16,18 @@ import java.util.Map;
  */
 record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
                          String expectedRemoteHead, String mergedBaseTip) {
-    enum Mode { AUTOMATIC, HELD, PERMITTED }
+    enum Mode { AUTOMATIC, HELD, PERMITTED, READ_ONLY }
 
     static PublicationPolicy automatic() {
         return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null);
+    }
+
+    /**
+     * A specification or plan run (M4 slice 3): it publishes nothing, and its executable holds no write credential,
+     * so even a wrong code path here has no secret to push with.
+     */
+    static PublicationPolicy readOnly() {
+        throw new UnsupportedOperationException("RED");
     }
 
     static PublicationPolicy held() {
@@ -65,6 +73,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {
         return switch (mode) {
             case AUTOMATIC -> automatic();
+            case READ_ONLY -> readOnly();
             case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"));
             case PERMITTED -> {
                 try {

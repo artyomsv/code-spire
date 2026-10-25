@@ -85,6 +85,26 @@ public final class OutcomeWriter {
         write(entry("event", "gate_refused", "blocked", describe(blocked), "changed", describe(changed)));
     }
 
+    /** The agent's specification or plan, read from the handoff (M4 slice 3). */
+    public void artifact(String text) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    /** The agent's step summary, as the JSON text it wrote; parsed and capped by the run worker. */
+    public void stepSummary(String json) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    /** A read-only run that committed anyway: {@code bundles} were left on the handoff and none was read. */
+    public void repositoryChanged(int bundles) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    /** A handoff file that was not read, and why ({@code SYMLINK}, {@code NOT_REGULAR}, ...). */
+    public void handoffFileRefused(String file, String why) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     public void failed(String cause, String detail) {
         write(entry("event", "failed", "cause", cause, "detail", scrub.clean(detail)));
     }

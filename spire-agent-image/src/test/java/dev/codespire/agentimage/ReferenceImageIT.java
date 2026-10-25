@@ -187,6 +187,30 @@ class ReferenceImageIT {
     }
 
     /**
+     * The reference entrypoint hands both files over before DONE (M4 slice 3), observed on the handoff volume a run
+     * would mount rather than inferred from the script.
+     */
+    @Test
+    void theReferenceEntrypointCopiesBothFilesBeforeDone() throws IOException {
+        ImageProbe.Result result = new DockerImageProbe(CLIENT).runAgent(buildConforming(), List.of("sh", "-c",
+                "printf 'TEST-spec' > \"$SPIRE_ARTIFACT\"; printf '{}' > \"$SPIRE_STEP_SUMMARY\""), "TEST-prompt");
+
+        assertEquals(List.of("artifact.md", "step-summary.json"), result.filesBeforeDone(), result.toString());
+    }
+
+    /**
+     * A link the agent leaves in its scratch directory is copied as the file it names, so the handoff holds a
+     * regular file and the publisher has nothing to follow.
+     */
+    @Test
+    void aSymlinkInScratchBecomesARegularFile() throws IOException {
+        ImageProbe.Result result = new DockerImageProbe(CLIENT).runAgent(buildConforming(), List.of("sh", "-c",
+                "ln -s /etc/hostname \"$SPIRE_ARTIFACT\"; printf '{}' > \"$SPIRE_STEP_SUMMARY\""), "TEST-prompt");
+
+        assertTrue(result.filesBeforeDone().contains("artifact.md"), result.toString());
+    }
+
+    /**
      * A real image that breaks ONE clause fails exactly that clause.
      *
      * <p>The negative half matters more than the positive one: a checker that passes everything is

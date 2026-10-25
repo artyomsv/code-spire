@@ -132,6 +132,38 @@ class HeldPublicationTest {
         assertEquals("2", git(f.work, "rev-list", "--count", "HEAD"), "one base and one build commit");
     }
 
+    /** The held publisher serves every plan step, and each step's summary travels beside its checkpoint (§6.8). */
+    @Test void theHeldPublisherReportsTheStepSummary() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        Files.writeString(dir.resolve(HandoffFiles.STEP_SUMMARY), "{\"decisions\":[\"TEST-decision\"]}");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+        PublisherConfig config = new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(),
+                10_000_000L, null, dir, null);
+
+        assertEquals(0, PublisherMain.publish(config, PublicationPolicy.held(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        int checkpoint = lines.indexOf("\"event\":\"checkpoint\"");
+        int summary = lines.indexOf("{\"event\":\"step_summary\",\"json\":\"{\\\"decisions\\\":[\\\"TEST-decision\\\"]}\"}");
+        assertTrue(checkpoint >= 0, lines);
+        assertTrue(summary > checkpoint, "the summary follows the final checkpoint: " + lines);
+        assertEquals("", ref(f.origin, BRANCH), "held work must never reach the real origin");
+    }
+
+    /** A step that wrote no summary still completes: no line, and no failure (§6.8 "summary_missing"). */
+    @Test void aHeldRunWithoutASummaryStillSucceeds() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+        PublisherConfig config = new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(),
+                10_000_000L, null, dir, null);
+
+        assertEquals(0, PublisherMain.publish(config, PublicationPolicy.held(), outcomes), output.toString());
+        assertFalse(output.toString().contains("step_summary"), output.toString());
+        assertFalse(output.toString().contains("handoff_file_refused"), output.toString());
+    }
+
     private PublicationPolicy permit(String head, Clock clock) {
         return PublicationPolicy.permitted(head, NOW, NOW.plusSeconds(60), clock);
     }

@@ -211,4 +211,24 @@ public final class PublisherOutcome {
     public String failureDetail() {
         return failureDetail == null ? "" : failureDetail;
     }
+
+    /** RED (M4 slice 3). */
+    public Optional<String> artifact() {
+        return Optional.empty();
+    }
+
+    /** RED (M4 slice 3). */
+    public Optional<String> stepSummary() {
+        return Optional.empty();
+    }
+
+    /** RED (M4 slice 3). */
+    public int repositoryChanged() {
+        return 0;
+    }
+
+    /** RED (M4 slice 3). */
+    public List<String> handoffRefusals() {
+        return List.of();
+    }
 }

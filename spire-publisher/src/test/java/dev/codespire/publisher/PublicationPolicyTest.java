@@ -91,6 +91,17 @@ class PublicationPolicyTest {
                 Map.of("SPIRE_MERGED_BASE_TIP", tip)).mergedBaseTip(), "only a land fix's build merges its base");
     }
 
+    @Test void readOnlyIsItsOwnMode() {
+        PublicationPolicy readOnly = PublicationPolicy.readOnly();
+        assertEquals(PublicationPolicy.Mode.READ_ONLY, readOnly.mode());
+        assertEquals(PublicationPolicy.Mode.READ_ONLY, PublicationPolicy.fromEnv(PublicationPolicy.Mode.READ_ONLY,
+                Map.of("SPIRE_PERMITTED_HEAD", HEAD, "SPIRE_MERGED_BASE_TIP", "c".repeat(40))).mode());
+        assertNull(readOnly.mergedBaseTip(), "a read-only run merges nothing");
+        assertNull(readOnly.head(), "a read-only run is permitted no head");
+        assertThrows(IllegalStateException.class, () -> readOnly.onExistingBranch("b".repeat(40), null),
+                "only a permitted publisher pushes to an existing branch");
+    }
+
     private PublicationPolicy at(Instant now) {
         return PublicationPolicy.permitted(HEAD, NOW, NOW.plusSeconds(1), Clock.fixed(now, ZoneOffset.UTC));
     }
