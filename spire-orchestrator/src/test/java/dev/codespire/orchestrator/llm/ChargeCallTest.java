@@ -9,10 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
- * A run's charge carries the run's own kind, and the capability that kind belongs to (ADR-035).
+ * A run's charge carries the run's own kind, and every run is charged to the Build capability (ADR-035).
  *
- * <p>{@code forRun} used to hard-code BUILD for both, so every fix run's ledger row said BUILD and a
- * specification or plan run would have been charged to the build capability it does not belong to.
+ * <p>{@code forRun} used to hard-code BUILD for the kind too, so every fix run's ledger row said BUILD.
+ * The capability stays BUILD for all four kinds: {@code docs/factory/PACKAGING.md} section 2 puts spec
+ * and plan in the Build pack, and Autonomy is the absence of the human, not a phase. A Build-only
+ * deployment's preparation spend recorded under Autonomy could never be corrected, since V42 never
+ * backfills the capability.
  */
 class ChargeCallTest {
 
@@ -21,11 +24,11 @@ class ChargeCallTest {
     private static final List<ChargeLine> LINES = List.of(ChargeLine.metered(TokenType.INPUT, 10, 1L));
 
     @Test
-    void specAndPlanRunsAreAutonomy() {
+    void specAndPlanRunsAreBuild() {
         for (ChargeKind kind : List.of(ChargeKind.SPEC, ChargeKind.PLAN)) {
             ChargeCall call = ChargeCall.forRun(new RunSpend(RUN_ID, CALL_REF, kind, null), "TEST-model", LINES);
 
-            assertEquals(ChargeCapability.AUTONOMY, call.capability(), kind + " is preparation, not a build");
+            assertEquals(ChargeCapability.BUILD, call.capability(), kind + " is in the Build pack (PACKAGING.md)");
             assertEquals(kind, call.kind());
             assertEquals(ChargeSubject.RUN, call.subjectKind());
         }

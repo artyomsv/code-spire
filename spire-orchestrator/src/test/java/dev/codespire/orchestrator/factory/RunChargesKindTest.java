@@ -36,21 +36,21 @@ class RunChargesKindTest {
     DataSource dataSource;
 
     @Test
-    void aSpecRunIsChargedAsSpecUnderAutonomy() {
+    void aSpecRunIsChargedAsSpecUnderBuild() {
         String runId = queue(base(runId("spec")).ofKind(RunKind.SPEC));
 
         charges.record(finished(runId));
 
-        assertEquals(List.of("SPEC", "AUTONOMY"), kindAndCapability(runId));
+        assertEquals(List.of("SPEC", "BUILD"), kindAndCapability(runId));
     }
 
     @Test
-    void aPlanRunIsChargedAsPlanUnderAutonomy() {
+    void aPlanRunIsChargedAsPlanUnderBuild() {
         String runId = queue(base(runId("plan")).ofKind(RunKind.PLAN));
 
         charges.record(finished(runId));
 
-        assertEquals(List.of("PLAN", "AUTONOMY"), kindAndCapability(runId));
+        assertEquals(List.of("PLAN", "BUILD"), kindAndCapability(runId));
     }
 
     /** Review Focus 20: every fix run's ledger row used to say BUILD. */
