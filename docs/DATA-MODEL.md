@@ -63,7 +63,7 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
-## Specification, plan and steps (M4 slice 3, orchestrator V96–V98)
+## Specification, plan and steps (M4 slice 3, orchestrator V96–V99)
 
 V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
 existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
@@ -96,6 +96,12 @@ the item no longer runs that attempt); a scheduled recovery applies any stored r
 written specification itself is a `work_item_artifact` row of kind `SPEC`, encrypted under its own id, and its ticket
 comment is a `draft` outbox row whose id is derived from the attempt, so a redelivered result enqueues nothing new; a
 takeover refuses it while it is still pending.
+
+V99 adds `work_prepare_effect.deferrals` and `retry_after`. A remote read before the claim that did not answer (the
+tracker's evidence or ticket read, or the base branch head) leaves the row `pending` with that read's reason, counts
+a deferral and sets `retry_after` 30 seconds out, doubling each time; the dispatcher drains only rows whose
+`retry_after` has passed. The fifth deferral in a row refuses the row and stops the item with the read's reason. A
+refusal the setup settles (`build_defaults_missing`, `repository_account_missing`, a changed policy) stops at once.
 
 The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
 and plan references, the revision counts, the two approvals, the base commit the specification read and the setup

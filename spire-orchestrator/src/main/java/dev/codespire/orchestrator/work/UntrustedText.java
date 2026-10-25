@@ -53,6 +53,23 @@ final class UntrustedText {
         return DATA_HEADING + " " + label + ":\n" + fence + "\n" + clean + "\n" + fence + "\n";
     }
 
+    /**
+     * A prompt section of at most {@code maxChars}: the text is cut on a character boundary and the cut is named inside
+     * the fence. The whole section is measured, fence included, because the fence outgrows the longest backtick run in
+     * what is kept; cutting only the text would let a body of backticks triple past the bound.
+     */
+    static String fenced(String label, String text, int maxChars) {
+        String clean = stripControls(text);
+        String section = fenced(label, clean);
+        int keep = clean.length();
+        while (section.length() > maxChars && keep > 0) {
+            keep = Math.max(0, keep - (section.length() - maxChars));
+            if (keep > 0 && Character.isHighSurrogate(clean.charAt(keep - 1))) keep--;
+            section = fenced(label, clean.substring(0, keep) + "\n(truncated: " + (clean.length() - keep) + " more characters)");
+        }
+        return section;
+    }
+
     /** Text placed outside a quote block on a ticket, escaped so it renders as written. */
     static String neutralise(String text, Markup markup) {
         String clean = stripControls(text);

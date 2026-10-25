@@ -34,6 +34,10 @@ import javax.sql.DataSource;
 @ApplicationScoped
 public class WorkPrepareDispatcher {
     private static final Set<String> STARTS = Set.of("PHASE_STARTED", "DRAFT_RETRY_REQUESTED");
+    /** The first wait after a remote read did not answer; each later one doubles. */
+    private static final long FIRST_BACKOFF_SECONDS = 30;
+    /** The reads in a row that may fail before the item stops with the read's own reason, about 7.5 minutes in. */
+    private static final int MAX_DEFERRALS = 5;
 
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
@@ -55,7 +59,8 @@ public class WorkPrepareDispatcher {
                 """);
         List<UUID> pending = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT attempt_id FROM work_prepare_effect WHERE state='pending' AND kind='SPEC' ORDER BY created_at LIMIT 20");
+             PreparedStatement ps = c.prepareStatement("SELECT attempt_id FROM work_prepare_effect WHERE state='pending' AND kind='SPEC'"
+                     + " AND (retry_after IS NULL OR retry_after<=now()) ORDER BY created_at LIMIT 20");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) pending.add(rs.getObject(1, UUID.class));
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
@@ -95,6 +100,7 @@ public class WorkPrepareDispatcher {
             List<EventEnvelope> history = store.history(claim.effect().itemId());
             WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
             if (!claimable(c, claim.effect(), item)) return null;
+            if (claim.remote().deferral() != null) { defer(c, claim, history); return null; }
             String refusal = refusal(claim, history, item);
             if (refusal != null) { stop(c, history, item, attempt, refusal); return null; }
             // The setup changed after it was read: the next drain reads it again, with the head of its base branch.
@@ -167,6 +173,27 @@ public class WorkPrepareDispatcher {
             ps.executeUpdate();
         }
         return prepared;
+    }
+
+    /**
+     * A remote read did not answer: the row stays pending with the read's reason and a doubling backoff, and nothing is
+     * decided. Only {@value #MAX_DEFERRALS} failures in a row stop the item, so a forge that never answers still ends it
+     * by name instead of leaving it active forever.
+     */
+    private void defer(Connection c, Claim claim, List<EventEnvelope> history) throws SQLException, java.io.IOException {
+        UUID attempt = claim.effect().attempt();
+        String reason = claim.remote().deferral();
+        int deferrals;
+        try (PreparedStatement ps = c.prepareStatement("UPDATE work_prepare_effect SET reason=?,deferrals=deferrals+1,"
+                + "retry_after=now()+?::bigint*POWER(2,deferrals)*interval '1 second',updated_at=now()"
+                + " WHERE attempt_id=? AND state='pending' RETURNING deferrals")) {
+            ps.setString(1, reason); ps.setLong(2, FIRST_BACKOFF_SECONDS); ps.setObject(3, attempt);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return;
+                deferrals = rs.getInt(1);
+            }
+        }
+        if (deferrals >= MAX_DEFERRALS) stop(c, history, (WorkItemEvent) history.getLast().payload(), attempt, reason);
     }
 
     /** The run cannot be bought: the row is refused and the item stops with the rule's own reason, as a build's does. */

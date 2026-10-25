@@ -11,8 +11,18 @@ import java.util.stream.Collectors;
  *
  * <p>An empty ticket body is allowed. A vague ticket is the case this exists for; the composed preparation's
  * {@code ticket_body_empty} refusal is not copied here.
+ *
+ * <p>Every quoted section has its own cap, so the longest prompt stays under the 64 Ki characters a dispatch accepts:
+ * a ticket longer than that is quoted cut, with the cut named, rather than refused at assembly as an unnamed build
+ * configuration fault. The caps add to 43 KiB beside about 1 KiB of instructions.
  */
 final class WorkDraftPrompts {
+    static final int MAX_TITLE_CHARS = 1024;
+    static final int MAX_BODY_CHARS = 32 * 1024;
+    static final int MAX_LABELS_CHARS = 4 * 1024;
+    static final int MAX_ERROR_CHARS = 2 * 1024;
+    static final int MAX_NOTE_CHARS = 4 * 1024;
+
     private static final String SPECIFICATION_INSTRUCTIONS = """
             Write a specification for the work the ticket below asks for. Read the repository as you need to understand
             it, and read the file .codespire at the repository root if it exists: it holds this repository's rules.
@@ -40,17 +50,19 @@ final class WorkDraftPrompts {
      * @param note what the person who asked for a revision wrote; null when nobody did
      */
     static String specification(WorkTicket ticket, String retryError, String note) {
+        String body = ticket.body() == null || ticket.body().isBlank() ? "(empty)" : ticket.body();
+        String labels = ticket.currentLabels().isEmpty() ? "(none)"
+                : ticket.currentLabels().stream().sorted().collect(Collectors.joining("\n"));
         StringBuilder prompt = new StringBuilder(SPECIFICATION_INSTRUCTIONS)
-                .append(UntrustedText.fenced("The ticket title", ticket.title()))
-                .append(UntrustedText.fenced("The ticket body", ticket.body() == null || ticket.body().isBlank() ? "(empty)" : ticket.body()))
-                .append(UntrustedText.fenced("The ticket labels", ticket.currentLabels().isEmpty() ? "(none)"
-                        : ticket.currentLabels().stream().sorted().collect(Collectors.joining("\n"))));
+                .append(UntrustedText.fenced("The ticket title", ticket.title(), MAX_TITLE_CHARS))
+                .append(UntrustedText.fenced("The ticket body", body, MAX_BODY_CHARS))
+                .append(UntrustedText.fenced("The ticket labels", labels, MAX_LABELS_CHARS));
         if (retryError != null)
             prompt.append("\nYour previous specification was refused for the reason below. Write it again and correct it.\n")
-                    .append(UntrustedText.fenced("The validation error", retryError));
+                    .append(UntrustedText.fenced("The validation error", retryError, MAX_ERROR_CHARS));
         if (note != null)
             prompt.append("\nA person asked for this specification to be revised. Take their note into account.\n")
-                    .append(UntrustedText.fenced("The revision note", note));
+                    .append(UntrustedText.fenced("The revision note", note, MAX_NOTE_CHARS));
         return prompt.toString();
     }
 }

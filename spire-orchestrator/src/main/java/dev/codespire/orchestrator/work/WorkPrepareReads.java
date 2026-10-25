@@ -14,6 +14,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
@@ -39,10 +40,20 @@ public class WorkPrepareReads {
      */
     record Effect(UUID attempt, String itemId, WorkDraftBinding.Kind kind, String retryError, String note) {}
 
-    /** The ticket, the setup and the base head read for a dispatch, or the refusal that stops it. */
-    record Reads(WorkTicket ticket, BuildDefaults.Defaults setup, String head, String refusal) {
-        static Reads refused(String reason) { return new Reads(null, null, null, reason); }
+    /**
+     * The ticket, the setup and the base head read for a dispatch; or the refusal that stops it; or the deferral of a
+     * remote read that did not answer, which the dispatcher asks again after a backoff instead of stopping the item.
+     */
+    record Reads(WorkTicket ticket, BuildDefaults.Defaults setup, String head, String refusal, String deferral) {
+        static Reads refused(String reason) { return new Reads(null, null, null, reason, null); }
+
+        static Reads deferred(String reason) { return new Reads(null, null, null, null, reason); }
     }
+
+    /** Evidence failures that a later read may not repeat: an outage, or labels that moved while they were read. */
+    private static final Set<String> TRANSIENT_EVIDENCE = Set.of("tracker_unavailable", "tracker_changed_during_read");
+    /** What {@link WorkPreparationSweep#head} names for a repository it cannot read at all; configuration settles it. */
+    private static final Set<String> NAMED_HEAD_REFUSALS = Set.of("repository_account_missing", "source_unavailable");
 
     static String errorAad(UUID attempt) { return "work-prepare-error:" + attempt; }
 
@@ -60,16 +71,31 @@ public class WorkPrepareReads {
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
     }
 
-    /** The source and policy were observed by the caller; a source or ticket that cannot be read is refused by name. */
+    /**
+     * The source and policy were observed by the caller. What the setup or a confirmed answer settles is refused by
+     * name; a tracker or forge that did not answer is deferred, as the copy sweep retries the same reads, because one
+     * network blip before anything is bought must not end the item.
+     */
     Reads read(WorkItemEvent item, WorkItemTransitions.Observation observed) {
-        if (observed.evidence().failure() != null) return Reads.refused(observed.evidence().failure());
+        String evidence = observed.evidence().failure();
+        if (evidence != null) return TRANSIENT_EVIDENCE.contains(evidence) ? Reads.deferred(evidence) : Reads.refused(evidence);
         BuildDefaults.Defaults setup = defaults.get(item.repositoryId());
         String local = sweep.localRefusal(setup);
         if (local != null) return Reads.refused(local);
-        if (!(sources.client(observed.source()).fetch(item.issue()) instanceof WorkSource.Fetch.Found found))
-            return Reads.refused("artifacts_unavailable");
-        try { return new Reads(found.ticket(), setup, sweep.head(item, setup.baseBranch()), null); }
-        catch (RuntimeException unavailable) { return Reads.refused("branch_head_unconfirmed"); }
+        WorkSource.Fetch fetched;
+        try { fetched = sources.client(observed.source()).fetch(item.issue()); }
+        catch (RuntimeException unavailable) { return Reads.deferred("artifacts_unavailable"); }
+        if (fetched instanceof WorkSource.Fetch.Unavailable) return Reads.deferred("artifacts_unavailable");
+        if (!(fetched instanceof WorkSource.Fetch.Found found)) return Reads.refused("artifacts_unavailable");
+        try { return new Reads(found.ticket(), setup, sweep.head(item, setup.baseBranch()), null, null); }
+        catch (RuntimeException unavailable) { return headRefusal(unavailable); }
+    }
+
+    /** A named configuration fault keeps its name; anything else, a forge's answer included, is a read to try again. */
+    private static Reads headRefusal(RuntimeException unavailable) {
+        String named = unavailable instanceof IllegalStateException ? unavailable.getMessage() : null;
+        if (named != null && NAMED_HEAD_REFUSALS.contains(named)) return Reads.refused(named);
+        return Reads.deferred("branch_head_unconfirmed");
     }
 
     /**

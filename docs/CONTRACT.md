@@ -49,7 +49,11 @@ is decided and never enters the held store. The orchestrator projects `RunWorkAr
 pushed ref, charges it under the run's kind, and neither proposes it nor hands it to the work-run inbox.
 `WorkPrepareDispatcher` dispatches a specification run from its `work_prepare_effect` row (slice 6): it reads the
 ticket and the head of the setup's base branch, claims the row `pending → uncertain` under the item lock, and sends;
-an uncertain send is never repeated, only M2's dispatch resolution re-arms it. `WorkDraftResults` accepts a
+an uncertain send is never repeated, only M2's dispatch resolution re-arms it. A read that did not answer (a tracker
+outage, a forge error on the branch head) leaves the row `pending` with a doubling backoff from 30 seconds; the fifth
+in a row stops the item with that read's reason. The ticket is quoted with per-section caps (title 1 KiB, body 32 KiB,
+labels 4 KiB), cut on a character boundary with the cut named, so a long ticket never exceeds the 64 Ki-character
+dispatch limit. `WorkDraftResults` accepts a
 `RunWorkArtifact` only for the row's item, generation, attempt, kind and provisional digest (otherwise the row notes
 `draft_binding_mismatch` and the result is neither projected nor charged), and claims a draft run's `RunFailed` too,
 so no draft result reaches the work-run inbox or a pull request proposal. Plan runs are dispatched from slice 7.
