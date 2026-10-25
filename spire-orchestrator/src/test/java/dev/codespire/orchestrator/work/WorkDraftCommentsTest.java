@@ -15,12 +15,12 @@ class WorkDraftCommentsTest {
     @Test
     void theSpecificationIsPostedNeutralisedOnJira() {
         String text = WorkDraftComments.specification("## Outcome\n[~accountid:TEST-1] !https://TEST.example.test/p.png! {noformat}",
-                DIGEST, UntrustedText.Markup.JIRA_WIKI);
+                DIGEST, UntrustedText.Markup.WIKI);
 
         assertTrue(text.startsWith(WorkDraftComments.SPECIFICATION_HEAD), text);
         assertTrue(text.contains(DIGEST), text);
         assertEquals(2, text.split("\\{noformat\\}", -1).length - 1, text);
-        assertTrue(text.contains("{​noformat}"), text);
+        assertTrue(text.contains("{\u200Bnoformat}"), text);
         assertTrue(text.contains("[~accountid:TEST-1] !https://TEST.example.test/p.png!"), text);
     }
 

@@ -92,7 +92,6 @@ class WorkSpecRunIT extends WorkPreparedFixture {
                 List.of(), null, BuildDefaults.GENERATED), "TEST-spec-admin");
         specApproveProfile();
         QuarkusMock.installMockForType(new WorkPrepareTransport() {
-            @Override public boolean available() { return true; }
             @Override public RunLaunch.Outcome dispatch(RunCommand.ExecuteWorkDraftRun command) {
                 try {
                     assertEquals(1, count("SELECT count(*) FROM work_prepare_effect WHERE run_id=? AND state='uncertain'", command.runId()),
@@ -266,7 +265,7 @@ class WorkSpecRunIT extends WorkPreparedFixture {
         String error = new String(bytes("SELECT validation_error FROM work_prepare_effect WHERE attempt_id=?", retry.draft().attemptId()),
                 StandardCharsets.UTF_8);
         assertFalse(error.contains("missing heading"), "the validation error is encrypted at rest");
-        assertEquals(id, store.load(id).workItemId());
+        assertState(store.load(id), "spec", "active", "phase_started");
     }
 
     @Test

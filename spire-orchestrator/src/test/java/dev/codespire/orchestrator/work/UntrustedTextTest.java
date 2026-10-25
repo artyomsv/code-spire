@@ -56,12 +56,12 @@ class UntrustedTextTest {
     @Test
     void jiraTextOutsideNoformatIsEscaped() {
         assertEquals("\\[\\~accountid:TEST-1] \\!https://TEST.example.test/p.png\\! \\{code} a\\|b",
-                UntrustedText.neutralise("[~accountid:TEST-1] !https://TEST.example.test/p.png! {code} a|b", UntrustedText.Markup.JIRA_WIKI));
+                UntrustedText.neutralise("[~accountid:TEST-1] !https://TEST.example.test/p.png! {code} a|b", UntrustedText.Markup.WIKI));
     }
 
     @Test
     void jiraQuotesCannotCloseNoformat() {
-        String quoted = UntrustedText.quoteBlock("x {noformat} [~accountid:TEST-1] {NOFORMAT}", UntrustedText.Markup.JIRA_WIKI);
+        String quoted = UntrustedText.quoteBlock("x {noformat} [~accountid:TEST-1] {NOFORMAT}", UntrustedText.Markup.WIKI);
 
         assertTrue(quoted.startsWith("{noformat}\n"), quoted);
         assertTrue(quoted.endsWith("\n{noformat}"), quoted);
@@ -72,7 +72,7 @@ class UntrustedTextTest {
 
     @Test
     void theMarkupFollowsTheSourceType() {
-        assertEquals(UntrustedText.Markup.JIRA_WIKI, UntrustedText.Markup.of(WorkSourceType.JIRA));
+        assertEquals(UntrustedText.Markup.WIKI, UntrustedText.Markup.of(WorkSourceType.JIRA));
         assertEquals(UntrustedText.Markup.MARKDOWN, UntrustedText.Markup.of(WorkSourceType.GITHUB));
         assertEquals(UntrustedText.Markup.MARKDOWN, UntrustedText.Markup.of(WorkSourceType.GITLAB));
     }

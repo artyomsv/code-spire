@@ -9,7 +9,7 @@ final class UntrustedText {
     private UntrustedText() {}
 
     enum Markup {
-        MARKDOWN, JIRA_WIKI;
+        MARKDOWN, WIKI;
 
         static Markup of(WorkSourceType type) { throw new UnsupportedOperationException("RED"); }
     }
