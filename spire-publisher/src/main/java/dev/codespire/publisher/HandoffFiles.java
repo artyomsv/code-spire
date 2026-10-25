@@ -53,7 +53,7 @@ final class HandoffFiles {
         Path file = dir.resolve(name);
         BasicFileAttributes attributes;
         try {
-            attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            attributes = Files.readAttributes(file, BasicFileAttributes.class);
         } catch (NoSuchFileException absent) {
             return new Read.Absent();
         }
