@@ -841,7 +841,7 @@ public class FactoryRunProjection {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
-            case RunResult.RunWorkArtifact artifact -> { } // RED
+            case RunResult.RunWorkArtifact artifact -> artifactWritten(artifact);
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
@@ -869,6 +869,16 @@ public class FactoryRunProjection {
                   AND
                 """ + LIVE, ready.runId(), ready.head(), ready.activeWallSeconds(), ready.runId(), ready.head(),
                 ready.work().workItemId(), ready.work().generation(), ready.work().buildAttemptId(),ready.work().preparationBinding());
+    }
+
+    /**
+     * A specification or plan run handed back its artifact (M4 slice 3): it did what it was for, and pushed nothing.
+     * The text itself is not stored here; the draft's own effect row holds it, encrypted (slice 6).
+     */
+    private void artifactWritten(RunResult.RunWorkArtifact artifact) {
+        update("UPDATE factory_run SET status = ?, pushed_ref = NULL, active_wall_seconds = ?, failure_cause = NULL,"
+                        + " failure_detail = NULL, ended_at = now() WHERE run_id = ? AND " + LIVE,
+                artifact.runId(), SUCCEEDED, artifact.activeWallSeconds(), artifact.runId());
     }
 
     private void started(String runId, String unitId) {

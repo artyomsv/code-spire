@@ -44,6 +44,7 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 # RunCommand
 CancelRun(runId: java.lang.String, reason: java.lang.String)
 ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String, reasoningEffort: java.lang.String, harnessSignIn: boolean, startFromRunId: java.lang.String, startFromHead: java.lang.String)
+ExecuteWorkDraftRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, draft: dev.codespire.contract.work.WorkDraftBinding)
 ExecuteWorkRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, work: dev.codespire.contract.work.WorkRunBinding, mergedBaseTip: java.lang.String)
 HoldWorkRun(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding)
 PublishWorkRun(runId: java.lang.String, permit: dev.codespire.contract.work.WorkPublicationPermit, scmCredential: java.lang.String)
@@ -54,6 +55,7 @@ VerifyWork(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBin
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
+RunWorkArtifact(runId: java.lang.String, draft: dev.codespire.contract.work.WorkDraftBinding, text: java.lang.String, repositoryChanged: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
 RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
 
 # RunVerification
@@ -94,3 +96,6 @@ CheckResult(command: java.lang.String, exitCode: java.lang.Integer, wallMillis: 
 
 # WorkLanding
 WorkLanding(pullRequest: dev.codespire.contract.scm.PullRequestRef, mergeCommit: java.lang.String, method: java.lang.String, mergedBy: java.lang.String, landedAt: java.time.Instant)
+
+# WorkDraftBinding
+WorkDraftBinding(workItemId: java.lang.String, generation: long, attemptId: java.util.UUID, kind: dev.codespire.contract.work.WorkDraftBinding$Kind, provisionalDigest: java.lang.String)

@@ -194,7 +194,7 @@ final class RunTokenUsage {
         return switch (result) {
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
-            case RunResult.RunWorkArtifact artifact -> null; // RED
+            case RunResult.RunWorkArtifact artifact -> artifact.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
         };

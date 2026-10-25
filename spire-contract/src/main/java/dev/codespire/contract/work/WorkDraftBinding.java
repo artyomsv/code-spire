@@ -1,5 +1,6 @@
 package dev.codespire.contract.work;
 
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -13,5 +14,11 @@ public record WorkDraftBinding(String workItemId, long generation, UUID attemptI
     public enum Kind { SPEC, PLAN }
 
     public WorkDraftBinding {
+        if (workItemId == null || workItemId.isBlank()) throw new IllegalArgumentException("A work item identity is required");
+        if (generation < 1) throw new IllegalArgumentException("A positive work generation is required");
+        Objects.requireNonNull(attemptId, "A draft attempt is required");
+        Objects.requireNonNull(kind, "A draft kind is required");
+        if (provisionalDigest == null || !provisionalDigest.matches("[0-9a-f]{64}"))
+            throw new IllegalArgumentException("A full provisional digest is required");
     }
 }

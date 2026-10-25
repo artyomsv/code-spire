@@ -34,6 +34,21 @@ independently of M1 cancellation. Ordinary `ExecuteRun` and standalone /fix reta
 publication path. Readiness and terminal results use `cs.run-results`; transcript facts remain
 on `cs.run-events` and do not become work-item domain events.
 
+`ExecuteWorkDraftRun(runId, execution, draft)` (M4 slice 3) is a specification or plan run, also on
+`cs.run-commands`. `draft` is a `WorkDraftBinding(workItemId, generation, attemptId, kind, provisionalDigest)`:
+`kind` is `SPEC` or `PLAN`, and the digest (64 hex) binds the setup revision, the ticket and the kind instead of
+a preparation binding, since none exists until both drafts are approved. The command refuses a checkpoint start, an
+existing branch, and any branch but `spire/draft-<attemptId>`, the clone's local name. The worker takes the
+ordinary execute claim and lease and launches a read-only unit: its publisher runs `spire-publish-none` with the
+handoff and no write credential. The result is `RunWorkArtifact(runId, draft, text, repositoryChanged, tokenUsage,
+activeWallSeconds)`, the artifact file scrubbed of every credential the run was given, at most 32 KiB of UTF-8;
+`repositoryChanged` is a warning that the agent committed, and those commits are discarded with the unit. A run
+that hands over no artifact, an empty one, or one the publisher refused fails as `ARTIFACT_MISSING` (not
+retryable, usage charged; orchestrator V97 widens the `failure_cause` CHECK). The unit is destroyed once the result
+is decided and never enters the held store. The orchestrator projects `RunWorkArtifact` as `succeeded` with no
+pushed ref, charges it under the run's kind, and neither proposes it nor hands it to the work-run inbox. Nothing
+dispatches one yet.
+
 Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
 effects. Deliberate authorized commands are classified before generic comment takeover. Resume
 requires the server-derived operator subject, expected revision and note, fresh issue/repository/
@@ -409,9 +424,9 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.work-integration` | Bound tracker deliveries, keyed by stable work-item identity |
 | `cs.work-events` | Durable work-item event notifications from the encrypted outbox |
 | `cs.work-dlq` | Failed tracker and factory-activity processing |
-| `cs.run-commands` | Standalone ExecuteRun and held ExecuteWorkRun, keyed by run ID |
+| `cs.run-commands` | Standalone ExecuteRun, held ExecuteWorkRun and read-only ExecuteWorkDraftRun, keyed by run ID |
 | `cs.run-control` | CancelRun, SteerRun, PublishWorkRun and HoldWorkRun; each worker consumes control independently |
-| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunFailed facts |
+| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunWorkArtifact/RunFailed facts |
 | `cs.run-events` | Bounded run transcript facts, independent of workflow decisions |
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |

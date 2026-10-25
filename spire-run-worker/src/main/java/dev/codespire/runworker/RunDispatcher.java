@@ -163,7 +163,12 @@ public class RunDispatcher {
             ack(message);
             return DONE;
         }
-        if (!(command instanceof RunCommand.ExecuteRun execute)) {
+        // A specification or plan run (M4 slice 3) takes this path's claim, lease and cancel reads like any run, and
+        // launches read-only: its unit is destroyed with its result, so it never belongs in the held store.
+        RunCommand.ExecuteWorkDraftRun draft = command instanceof RunCommand.ExecuteWorkDraftRun drafted ? drafted : null;
+        RunCommand.ExecuteRun execute = draft != null ? draft.execution()
+                : command instanceof RunCommand.ExecuteRun plain ? plain : null;
+        if (execute == null) {
             ack(message);
             return DONE;
         }
@@ -222,7 +227,7 @@ public class RunDispatcher {
         LeaseKeeper keeper = new LeaseKeeper(execute.runId(), execute.harness());
         RunResult result;
         try {
-            result = launcher.launch(execute, keeper);
+            result = draft == null ? launcher.launch(execute, keeper) : launcher.launchReadOnly(draft, keeper);
         } catch (RuntimeException e) {
             // Never let an unexpected failure leave a run with no terminal result: a run that
             // reports nothing is indistinguishable from one still working.

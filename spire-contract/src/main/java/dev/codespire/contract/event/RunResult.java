@@ -65,11 +65,22 @@ public sealed interface RunResult {
         public static final int MAX_TEXT_BYTES = 32 * 1024;
 
         public RunWorkArtifact {
+            if (runId == null || runId.isBlank()) throw new IllegalArgumentException("An artifact needs its run");
+            Objects.requireNonNull(draft, "An artifact needs its draft binding");
+            if (text == null || text.isBlank()) throw new IllegalArgumentException("An artifact needs its text");
+            int bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (bytes > MAX_TEXT_BYTES)
+                throw new IllegalArgumentException("An artifact of " + bytes + " bytes is over the " + MAX_TEXT_BYTES + " byte cap");
+            if (tokenUsage != null) {
+                if (tokenUsage.isEmpty()) throw new IllegalArgumentException("An empty usage map is not a measurement");
+                tokenUsage = Map.copyOf(tokenUsage);
+            }
+            if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
         }
 
         /** Rebuild carrying measured usage, enumerating the components once. */
         public RunWorkArtifact withUsage(Map<String, Long> usage) {
-            throw new UnsupportedOperationException("RED");
+            return new RunWorkArtifact(runId, draft, text, repositoryChanged, usage, activeWallSeconds);
         }
     }
 

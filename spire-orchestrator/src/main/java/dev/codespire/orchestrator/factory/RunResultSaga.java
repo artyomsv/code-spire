@@ -55,6 +55,8 @@ public class RunResultSaga {
             // first would let a ledger outage delay a terminal status that is already known.
             charges.record(result);
             credentials.reactTo(result);
+            // A specification or plan run pushed nothing to propose, and the work-run inbox holds no row for it.
+            if (result instanceof RunResult.RunWorkArtifact) return;
             if(workItems.accept(result))return;
             // LAST, and after the projection on purpose: it reads the row the projection just
             // wrote, it talks to a forge, and it must not delay the terminal status an operator is
