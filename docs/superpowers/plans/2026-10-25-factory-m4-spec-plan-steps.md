@@ -25,7 +25,8 @@ Each is the author's call; a reviewer may overturn any of them before its slice 
 
 1. **Dark until wired.** The orchestrator reads `spire.work.generated-preparation` (default `false`). While it
    is false, `GET /api/repositories/{repository}/factory/build/options` does not offer `generated`, `PUT` refuses it with
-   `preparation_unavailable`, and admission ignores a stored `generated`. Service tests that exercise the
+   `generated_preparation_off` (its own reason: `preparation_unavailable` is the item's refusal for one under way
+   or finished), and admission ignores a stored `generated`. Service tests that exercise the
    generated path enable it through a `QuarkusTestProfile` (`GeneratedPreparationProfile`). Slice 11 deletes the
    flag, so the shipped behaviour is governed by the repository setting alone (default `composed`).
 2. **The item records its preparation mode at admission (A16 over A5).** A5 asks the copy sweep to require the
@@ -223,7 +224,7 @@ Each is the author's call; a reviewer may overturn any of them before its slice 
   `V98__work_step_summary.sql` (slice 8), `V99__work_item_step_projection.sql` (slice 9). If a number is taken on
   master when you start, take the next free one and keep the name.
 - **Exact strings.**
-  - Setting values: `composed`, `generated`; refusals `preparation_invalid`, `preparation_unavailable`.
+  - Setting values: `composed`, `generated`; refusals `preparation_invalid`, `generated_preparation_off`.
   - Item reasons: `specification_to_write` (spec / awaiting_input, generated admission), `plan_to_write` (plan /
     awaiting_input, waiting for the draft sweep, decision 10), `spec_invalid`,
     `plan_invalid` (awaiting_input after the automatic retry), `draft_run_failed`, `specification_written`
@@ -435,7 +436,7 @@ gains `step_index`. The control is offered only when `spire.work.generated-prepa
   `kind` already names spec/plan/build/fix).
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/BuildDefaults.java` (`Defaults.preparation`,
   `Input.preparation` — null means keep the stored value; refuse unknown with `preparation_invalid`, `generated`
-  while the flag is off with `preparation_unavailable`). If the file passes 300 lines, move validation into
+  while the flag is off with `generated_preparation_off`). If the file passes 300 lines, move validation into
   `BuildDefaultsValidation`.
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/factory/RepositoryBuildResource.java`
   (options carry `preparations: ["composed"]` or `["composed","generated"]`).
@@ -443,7 +444,7 @@ gains `step_index`. The control is offered only when `spire.work.generated-prepa
   (`@ConfigProperty(name="spire.work.generated-preparation", defaultValue="false") boolean enabled`; one place
   every later slice asks).
 - Modify: `spire-ui/src/components/repositories/factory/buildDefaultsApi.ts`, `BuildStep.tsx`, `factoryFixtures.ts`.
-- Modify: `spire-ui/src/components/work-items/workReasons.ts` (`preparation_invalid`, `preparation_unavailable`).
+- Modify: `spire-ui/src/components/work-items/workReasons.ts` (`preparation_invalid`, `generated_preparation_off`; `preparation_unavailable` keeps an item-only sentence).
 - Modify: `docs/DATA-MODEL.md` (V96).
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/factory/BuildDefaultsTest.java` (extend),
   `GeneratedPreparationProfile.java` (new test profile), `BuildDefaultsGeneratedTest.java` (new, under that profile).
@@ -475,7 +476,7 @@ each, when the specification and plan phases are set to run without approval."
 | `BuildDefaultsTest.noRowReadsComposed` | repository with no row → `preparation == "composed"` | default missing or `null` |
 | `…anExistingRowMigratesComposed` | row inserted before V96 semantics (insert without the column) → `composed` | column default not `composed` |
 | `…anUnknownPreparationIsRefused` | `Input.preparation = "TEST-other"` → `Refused("preparation_invalid")`, row unchanged | value not validated (DB CHECK raises a 500 instead) |
-| `…generatedIsRefusedWhileDark` | flag off → `Refused("preparation_unavailable")` | flag not consulted |
+| `…generatedIsRefusedWhileDark` | flag off → `Refused("generated_preparation_off")` | flag not consulted |
 | `…anOmittedPreparationKeepsTheStoredOne` | save `generated` (profile on), then save with `null` → still `generated` | null overwrites with `composed` |
 | `BuildDefaultsGeneratedTest.savesGenerated` | flag on: save `generated` → read `generated`, revision +1 | |
 | `…optionsOfferGeneratedOnlyWhenOn` | flag on → `["composed","generated"]`; `BuildDefaultsTest` flag off → `["composed"]` | options hard-coded |
@@ -484,7 +485,7 @@ each, when the specification and plan phases are set to run without approval."
 | `› it warns of spend before the first approval` | the A20 sentence is shown under the generated option | copy missing |
 | `› the choice is hidden when the server does not offer it` | options `["composed"]` → no preparation control | control rendered regardless |
 | `› saving sends the chosen preparation` | choose generated, save → PUT body has `preparation: 'generated'` | field not sent |
-| `workReasons.test.ts › every new reason has a sentence` | `preparation_invalid`, `preparation_unavailable` resolve to non-fallback copy | copy missing |
+| `workReasons.test.ts › every new reason has a sentence` | `preparation_invalid`, `generated_preparation_off` resolve to non-fallback copy, and neither it nor `preparation_unavailable` speaks of the other's screen | copy missing |
 
 - [ ] RED: tests + `Defaults`/`Input` component with the column read returning `null`; push; confirm assertion
   failures in `service tests + packaging` and `dashboard`.
@@ -1455,7 +1456,8 @@ offers "Regenerate specification and plan"; the feature flag is deleted; every d
   dialog gains the checkbox for generated items only.
 - Delete: `GeneratedPreparation.java` and `GeneratedPreparationProfile`; every caller reads the repository setting
   alone; tests that used the profile run without it; `BuildDefaultsTest.generatedIsRefusedWhileDark` is removed
-  with a note in the commit body.
+  with a note in the commit body, and so is the `generated_preparation_off` refusal: its sentence in
+  `spire-ui/src/components/work-items/workReasons.ts` and its case in `workReasons.test.ts`.
 - Docs:
   - `docs/DECISIONS.md`: **ADR-049** — specification and plan are read-only harness runs on the build's harness,
     model and payment; steps build on one chain of held checkpoints; summaries and the artifact travel through the

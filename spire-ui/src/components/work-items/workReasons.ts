@@ -34,9 +34,9 @@ const REASONS = new Map(Object.entries({
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
   build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
   preparation_invalid: 'Choose how the specification and plan are made: copy the ticket as one step, or write them with the build model.',
-  // Two refusals share this word: the build setup's (generated preparation is switched off here, M4 slice 3) and
-  // the item's (it is active, suspended, completed or retired, so it cannot be prepared now).
-  preparation_unavailable: 'Not available here: this deployment does not write specifications and plans yet, so keep copying the ticket as one step; or, for a work item, it is already under way or finished and cannot be prepared now.',
+  // The build setup's refusal while generated preparation is dark (M4 slice 3); slice 11 deletes it with the flag.
+  generated_preparation_off: 'This deployment does not write specifications and plans yet. Keep copying the ticket as one step.',
+  preparation_unavailable: 'This work item is already under way or finished, so it cannot be prepared now.',
   land_settings_changed: 'Someone else saved the land setup while this form was open. Reload it and try again.',
   merge_method_invalid: 'The merge method must be merge, squash or rebase.',
   ticket_rule_invalid: 'The ticket rule must be comment or close.',
