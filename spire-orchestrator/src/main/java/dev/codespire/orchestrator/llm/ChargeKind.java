@@ -32,7 +32,8 @@ public enum ChargeKind {
     FIX,
     /**
      * A read-only factory run that writes a work item's specification (M4). Charged under the
-     * {@link ChargeCapability#AUTONOMY} capability, since preparing work is not building it. The V42
+     * {@link ChargeCapability#BUILD} capability like every run: spec and plan are in the Build pack
+     * ({@code docs/factory/PACKAGING.md} section 2), and only the kind tells them apart. The V42
      * {@code llm_charge_kind} CHECK has admitted this value since the ledger learned about runs.
      */
     SPEC,

@@ -499,8 +499,8 @@ branch; the options condition; the UI's `preparations.includes('generated')` ren
 
 ### Slice 2: charge kinds SPEC and PLAN, and the run row's kind and step
 
-**Goal:** a run's ledger row carries the run's own kind; SPEC and PLAN runs are charged under the `AUTONOMY`
-capability; `QueuedRun` writes `kind` and `step_index`. Nothing dispatches SPEC or PLAN yet.
+**Goal:** a run's ledger row carries the run's own kind; SPEC and PLAN runs are charged under the `BUILD`
+capability like every run (ADR-035, PACKAGING.md §2; spec §9 item 12); `QueuedRun` writes `kind` and `step_index`. Nothing dispatches SPEC or PLAN yet.
 
 **Files:**
 - Modify: `spire-orchestrator/src/main/java/dev/codespire/orchestrator/llm/ChargeKind.java` (`SPEC`, `PLAN`, with the
@@ -522,17 +522,16 @@ capability; `QueuedRun` writes `kind` and `step_index`. Nothing dispatches SPEC 
 - Test: `spire-orchestrator/src/test/java/dev/codespire/orchestrator/factory/FactoryRunProjectionStepTest.java` (new, service).
 
 **Interfaces — Produces:** `RunSpend`, `RunKind.chargeKind()` (BUILD→BUILD, FIX→FIX, SPEC→SPEC, PLAN→PLAN),
-`ChargeCall.forRun(RunSpend,String,List<ChargeLine>)` with capability `AUTONOMY` for SPEC/PLAN and `BUILD` for
-BUILD/FIX, `QueuedRun.atStep(int)`, `QueuedRun.ofKind(RunKind)`, `FactoryRunProjection.kindOf(String)`.
+`ChargeCall.forRun(RunSpend,String,List<ChargeLine>)` with capability `BUILD` for every run kind, `QueuedRun.atStep(int)`, `QueuedRun.ofKind(RunKind)`, `FactoryRunProjection.kindOf(String)`.
 
 **Failing tests first:**
 
 | Test | Asserts | Fails when |
 |---|---|---|
-| `ChargeCallTest.specAndPlanRunsAreAutonomy` | `forRun(new RunSpend(run,ref,SPEC,null),…)` → capability AUTONOMY, kind SPEC; same for PLAN | capability hard-coded BUILD |
+| `ChargeCallTest.specAndPlanRunsAreBuild` | `forRun(new RunSpend(run,ref,SPEC,null),…)` → capability BUILD, kind SPEC; same for PLAN | capability derived from the kind |
 | `…buildAndFixKeepTheBuildCapability` | BUILD and FIX → capability BUILD, kind as given | |
 | `…aReviewKindIsNotARunSpend` | `new RunSpend(run,ref,REVIEW,null)` throws `IllegalArgumentException` | guard missing |
-| `RunChargesKindTest.aSpecRunIsChargedAsSpecUnderAutonomy` | a `factory_run` row of kind SPEC finishing → `llm_charge.kind='SPEC'`, `capability='AUTONOMY'` | kind hard-coded; or V42 CHECK refuses it |
+| `RunChargesKindTest.aSpecRunIsChargedAsSpecUnderBuild` | a `factory_run` row of kind SPEC finishing → `llm_charge.kind='SPEC'`, `capability='BUILD'` | kind hard-coded; or V42 CHECK refuses it |
 | `…aFixRunIsChargedAsFix` | FIX row → `llm_charge.kind='FIX'` (Review Focus 20) | still BUILD |
 | `…aBuildRunIsStillChargedAsBuild` | BUILD row → `BUILD`/`BUILD` | mapping broken |
 | `FactoryRunProjectionStepTest.queuedWritesKindAndStepIndex` | `QueuedRun…ofKind(PLAN)` → row `kind='PLAN'`, `step_index` null; `ofKind(BUILD).atStep(2)` → `2` | column not bound |
@@ -541,7 +540,7 @@ BUILD/FIX, `QueuedRun.atStep(int)`, `QueuedRun.ofKind(RunKind)`, `FactoryRunProj
 - [ ] RED; push; confirm. GREEN; push; green.
 - [ ] Commits: `Add failing tests for spec and plan charge kinds`, then `Charge each run under its own kind`.
 
-**Mutation guards:** `RunKind.chargeKind` switch arms; the AUTONOMY condition in `forRun`; the RunSpend REVIEW
+**Mutation guards:** `RunKind.chargeKind` switch arms; the BUILD capability in `forRun`; the RunSpend REVIEW
 guard; `step_index` bind in `queued` and its upsert `SET`.
 
 ---

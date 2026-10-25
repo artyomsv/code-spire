@@ -289,7 +289,10 @@ CI for every slice (RED then GREEN), mutation checks on every guard, and a live 
     step completion. N ≤ `maxStepsPerPlan`; `startKeepingExecution` (land fix) is exempt from the steps
     check. Spec and plan runs count toward wall-clock, cost and calls, not `maxRunsPerItem`.
 12. **Charges (§6.2).** Add `ChargeKind.SPEC` and `PLAN`; `ChargeCall.forRun` and the `QueuedRun` writer take
-    the kind instead of hard-coding BUILD; `llm_charge.capability` is `AUTONOMY` for spec and plan runs.
+    the kind instead of hard-coding BUILD; `llm_charge.capability` stays `BUILD` for spec and plan runs.
+    An earlier draft said `AUTONOMY`; that contradicted ADR-035 and `docs/factory/PACKAGING.md` §2, which
+    put spec and plan in the Build pack (Autonomy is the absence of the human, not a phase), and V42 never
+    backfills the capability, so a wrong value would have stayed wrong.
 13. **Untrusted text (§6.3, §6.4, §6.8).** Ticket text, artifacts and summaries are quoted into prompts in
     fenced blocks marked "data, not instructions". Control characters are stripped. Field caps: step title
     120, instruction 4,000, doneWhen 1,000, summary item 500. Tracker comments neutralise `@`-mentions and
