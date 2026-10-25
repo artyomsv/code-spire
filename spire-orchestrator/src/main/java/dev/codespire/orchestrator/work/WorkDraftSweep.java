@@ -16,9 +16,10 @@ import javax.sql.DataSource;
 import org.jboss.logging.Logger;
 
 /**
- * Starts the specification run of an item admitted as generated (M4 slice 3, A5, decision 10), the sibling of
- * {@link WorkPreparationSweep}: it selects items waiting at {@code spec / awaiting_input / specification_to_write}
- * whose recorded mode is {@code generated}, asks the same local questions of the build setup before anything is
+ * Starts the specification and plan runs of an item admitted as generated (M4 slice 3, A5, decision 10), the sibling of
+ * {@link WorkPreparationSweep}: it selects items waiting at {@code spec / awaiting_input / specification_to_write} or
+ * {@code plan / awaiting_input / plan_to_write} whose recorded mode is {@code generated}, whichever way they got there
+ * (admission, an approved specification, a revision), asks the same local questions of the build setup before anything is
  * bought, observes the source and the ticket as the copy sweep does, and records a refusal with the copy sweep's
  * backoff. The start itself is
  * {@link WorkDraftTransitions#start}, under the item lock and at the revision captured here.
@@ -40,14 +41,15 @@ public class WorkDraftSweep {
     public void sweep() {
         for (String id : candidates()) {
             try { start(id); }
-            catch (RuntimeException failure) { LOG.warnf(failure, "work item %s could not start its specification", id); }
+            catch (RuntimeException failure) { LOG.warnf(failure, "work item %s could not start its specification or plan", id); }
         }
     }
 
     /** The sweep's trigger asked of the item itself, so the projection and the captured snapshot cannot disagree. */
     static boolean waiting(WorkItemEvent item) {
-        return item.draft() != null && item.preparation() == null && "spec".equals(item.phase())
-                && "awaiting_input".equals(item.workflowStatus()) && "specification_to_write".equals(item.reason());
+        if (item.draft() == null || item.preparation() != null || !"awaiting_input".equals(item.workflowStatus())) return false;
+        return "spec".equals(item.phase()) && "specification_to_write".equals(item.reason())
+                || "plan".equals(item.phase()) && "plan_to_write".equals(item.reason());
     }
 
     private List<String> candidates() {
@@ -56,8 +58,8 @@ public class WorkDraftSweep {
                 SELECT i.id FROM work_item i
                   LEFT JOIN work_item_preparation_attempt a
                          ON a.work_item_id = i.id AND a.generation = i.generation
-                 WHERE i.phase = 'spec' AND i.workflow_status = 'awaiting_input'
-                   AND i.reason = 'specification_to_write' AND i.preparation_mode = 'generated'
+                 WHERE i.workflow_status = 'awaiting_input' AND i.preparation_mode = 'generated'
+                   AND (i.phase = 'spec' AND i.reason = 'specification_to_write' OR i.phase = 'plan' AND i.reason = 'plan_to_write')
                    AND (a.retry_after IS NULL OR a.retry_after <= now())
                  ORDER BY (a.work_item_id IS NOT NULL), COALESCE(a.retry_after, i.updated_at), i.updated_at
                  LIMIT ?

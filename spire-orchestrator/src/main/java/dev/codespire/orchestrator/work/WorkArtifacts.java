@@ -29,7 +29,6 @@ public class WorkArtifacts {
         public Evidence { steps=steps==null?java.util.List.of():java.util.List.copyOf(steps); }
         public static Evidence absent() { return new Evidence(null,null,null,null); }
         static Evidence refused(String failure,String detail) { return new Evidence(failure,null,null,detail); }
-        static Evidence supplied(String specification,String instruction) { return new Evidence(null,specification,instruction,null); }
     }
     public Reference resolve(WorkSourceRegistry.Source source,String key) {
         return bounded(()-> {
@@ -66,20 +65,15 @@ public class WorkArtifacts {
                     return Evidence.refused("artifacts_changed","specification_changed");
                 if(!preparation.plan().sha256().equals(WorkPreparation.digest(plan.body())))
                     return Evidence.refused("artifacts_changed","plan_changed");
+                // A plan of steps is refused under its own reason: "single step" is no longer the rule it broke (M4 slice 3).
+                String invalid=preparation.bindingVersion()>=WorkPreparation.STEPS_BINDING?"plan_invalid":"single_step_plan_required";
                 com.fasterxml.jackson.databind.JsonNode root;
                 try { root=mapper.readTree(plan.body()); }
-                catch(com.fasterxml.jackson.core.JsonProcessingException invalid) { return Evidence.refused("single_step_plan_required","plan_not_json"); }
-                if(root==null || !root.isObject() || !root.path("schemaVersion").isInt() || root.path("schemaVersion").asInt()!=1)
-                    return Evidence.refused("single_step_plan_required","plan_schema_version");
-                if(!preparation.specification().sha256().equals(root.path("specificationSha256").asText()))
-                    return Evidence.refused("single_step_plan_required","plan_specification_mismatch");
-                if(!root.path("steps").isArray() || root.path("steps").size()!=1)
-                    return Evidence.refused("single_step_plan_required","plan_step_count");
-                var step=root.path("steps").get(0);
-                if(!step.path("id").isTextual() || step.path("id").asText().isBlank()
-                        || !step.path("instruction").isTextual() || step.path("instruction").asText().isBlank())
-                    return Evidence.refused("single_step_plan_required","plan_step_fields");
-                return Evidence.supplied(specification.body(),step.path("instruction").asText());
+                catch(com.fasterxml.jackson.core.JsonProcessingException notJson) { return Evidence.refused(invalid,"plan_not_json"); }
+                // The item's step limit was applied when the plan was accepted; a later limit does not unmake an approved plan.
+                PlanRules.Checked checked=PlanRules.check(root,new PlanRules.Bound(preparation.bindingVersion(),preparation.specification().sha256(),Long.MAX_VALUE));
+                if(!checked.valid())return Evidence.refused(invalid,checked.detail());
+                return new Evidence(null,specification.body(),checked.steps().getFirst().instruction(),null,checked.steps());
             });
         } catch(ArtifactUnavailable unavailable) { return Evidence.refused("artifacts_unavailable",null); }
     }

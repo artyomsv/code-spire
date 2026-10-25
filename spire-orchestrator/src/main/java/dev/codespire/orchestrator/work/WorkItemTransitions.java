@@ -23,6 +23,7 @@ public class WorkItemTransitions {
     @Inject WorkPhaseCapability capability;
     @Inject WorkArtifacts artifacts;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
+    @Inject WorkDraftRegistration registration;
     public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
         public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
@@ -445,7 +446,8 @@ public class WorkItemTransitions {
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
                         if(draftResult){next=WorkDraftLifecycle.approved(next);store.appendDecision(c,history,next,"draft-approved:"+gateId+":"+key);history=store.history(id);}
-                        next=enterPrepared(c,history,next,!draftResult,now,mode);
+                        // An approved plan is registered before anything builds (M4 slice 3, A4).
+                        next=draftResult?registration.afterApproval(c,history,next):enterPrepared(c,history,next,true,now,mode);
                         history=store.history(id);
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());

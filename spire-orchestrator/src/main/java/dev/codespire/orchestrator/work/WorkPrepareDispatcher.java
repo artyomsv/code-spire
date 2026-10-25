@@ -4,6 +4,7 @@ import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkItemLifecycle;
+import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.orchestrator.factory.BuildDefaults;
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.RunLaunch;
@@ -29,7 +30,8 @@ import javax.sql.DataSource;
  * DISPATCH_FAILED, re-arms an uncertain row. The ticket and the base head are read before the claim, outside any lock;
  * the claim re-checks the item, the authority, the policy the attempt was admitted under and the setup under the lock.
  *
- * <p>Plan rows wait for slice 7, which writes the plan prompt; only SPEC rows are drained here.
+ * <p>A plan run reads the approved specification from this deployment's own rows and clones the commit the specification
+ * run read, so a ticket edited after the approval changes nothing it is given (Review Focus 7).
  */
 @ApplicationScoped
 public class WorkPrepareDispatcher {
@@ -47,6 +49,7 @@ public class WorkPrepareDispatcher {
     @Inject WorkPrepareTransport transport;
     @Inject WorkPrepareReads reads;
     @Inject BuildDefaults defaults;
+    @Inject WorkItemArtifacts artifacts;
 
     /** What a claim works from: the effect row, the authority observed, and the remote reads. */
     private record Claim(WorkPrepareReads.Effect effect, WorkItemTransitions.Observation observed, WorkPrepareReads.Reads remote) {}
@@ -59,7 +62,7 @@ public class WorkPrepareDispatcher {
                 """);
         List<UUID> pending = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT attempt_id FROM work_prepare_effect WHERE state='pending' AND kind='SPEC'"
+             PreparedStatement ps = c.prepareStatement("SELECT attempt_id FROM work_prepare_effect WHERE state='pending'"
                      + " AND (retry_after IS NULL OR retry_after<=now()) ORDER BY created_at LIMIT 20");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) pending.add(rs.getObject(1, UUID.class));
@@ -148,15 +151,18 @@ public class WorkPrepareDispatcher {
         WorkPrepareReads.Reads remote = claim.remote();
         WorkDraftBinding binding = new WorkDraftBinding(item.workItemId(), item.generation(), effect.attempt(), effect.kind(),
                 WorkPrepareReads.provisionalDigest(remote.setup().revision(), remote.ticket(), effect.kind()));
-        String prompt = WorkDraftPrompts.specification(remote.ticket(), effect.retryError(), effect.note());
+        boolean plan = effect.kind() == WorkDraftBinding.Kind.PLAN;
+        String prompt = plan ? planPrompt(c, item, claim) : WorkDraftPrompts.specification(remote.ticket(), effect.retryError(), effect.note());
+        // The plan is made against the commit its specification read, which is also the base the preparation registers.
+        String base = plan ? item.draft().baseCommit() : remote.head();
         WorkDraftAssembly.Prepared prepared;
-        try { prepared = assembly.assemble(c, new WorkDraftAssembly.Request(claim.observed().source(), item, remote.setup(), prompt, remote.head(), binding)); }
+        try { prepared = assembly.assemble(c, new WorkDraftAssembly.Request(claim.observed().source(), item, remote.setup(), prompt, base, binding)); }
         catch (IllegalStateException | jakarta.ws.rs.BadRequestException unavailable) {
             stop(c, store.history(item.workItemId()), item, effect.attempt(), WorkRunAssemblyRefusals.reasonOf(unavailable));
             return null;
         }
         String runId = prepared.command().runId();
-        if (!runs.queued(prepared.row(), "Specification for work item " + item.issue().issueKey(), item.repositoryId())) {
+        if (!runs.queued(prepared.row(), (plan ? "Plan" : "Specification") + " for work item " + item.issue().issueKey(), item.repositoryId())) {
             refuse(c, effect.attempt(), "run_already_recorded");
             return null;
         }
@@ -173,6 +179,16 @@ public class WorkPrepareDispatcher {
             ps.executeUpdate();
         }
         return prepared;
+    }
+
+    /** The approved specification as stored, its digest, the setup's checks and the item's step limit (§6.4). */
+    private String planPrompt(Connection c, WorkItemEvent item, Claim claim) throws SQLException {
+        WorkPreparation.Artifact approved = item.draft().specification();
+        String specification = artifacts.read(c, item.workItemId(), approved.storedId())
+                .orElseThrow(() -> new IllegalStateException("Work item " + item.workItemId() + " names a specification it does not store"));
+        WorkDraftPrompts.PlanInput input = new WorkDraftPrompts.PlanInput(specification, approved.sha256(),
+                claim.remote().setup().verifyCommands(), item.policy().limits().maxStepsPerPlan());
+        return WorkDraftPrompts.plan(input, claim.effect().retryError(), claim.effect().note());
     }
 
     /**

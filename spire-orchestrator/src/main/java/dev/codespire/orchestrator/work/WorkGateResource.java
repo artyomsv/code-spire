@@ -20,6 +20,7 @@ public class WorkGateResource {
     @Inject SecurityIdentity identity;
     @Inject WorkGateChannels channels;
     @Inject WorkItemStore store;
+    @Inject WorkDraftTransitions drafts;
     public record View(String workItemId,String issueKey,WorkGate gate,boolean prReviewAvailable,String prReviewDetail,String trackerCommand) {}
     public record Answer(long expectedVersion,String idempotencyKey,boolean approve,String note) {}
     public record Revision(long expectedVersion,String idempotencyKey,String note) {}
@@ -45,8 +46,17 @@ public class WorkGateResource {
         var result=transitions.answer(id,input.expectedVersion(),input.idempotencyKey(),input.approve(),input.note(),subject);
         return Response.status(result.status()).entity(result.body()).build();
     }
+    /**
+     * Revise with a note (M4 slice 3, A6, decision 8): a generated item's specification or plan result gate is sent back
+     * to its run with the note. Dashboard only; a tracker command or a pull request review answers approve or reject.
+     */
     @POST @Path("/{id}/revise") @RolesAllowed("spire-admin")
     public Response revise(@PathParam("id") UUID id,Revision input) {
-        throw new UnsupportedOperationException("RED");
+        if(input==null || input.expectedVersion()<1 || input.idempotencyKey()==null || input.idempotencyKey().isBlank()
+                || input.note()==null || input.note().isBlank())throw new BadRequestException("A version, an answer identity and a note are required");
+        String subject=OidcSubjects.of(identity);
+        if(subject.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        var result=drafts.revise(new WorkDraftTransitions.Revise(id,input.expectedVersion(),input.idempotencyKey(),input.note(),subject));
+        return Response.status(result.status()).entity(result.body()).build();
     }
 }

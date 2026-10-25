@@ -27,6 +27,16 @@ export async function answer(gate: Gate, idempotencyKey: string, approve: boolea
   }
 }
 
-export async function revise(_gate: Gate, _idempotencyKey: string, _note: string): Promise<void> {
-  throw new Error('RED');
+/**
+ * Revise with a note (M4 slice 3): a specification or plan result gate goes back to its run with the note. Only the
+ * dashboard can ask for it; a refusal names its reason, such as the three revisions being used.
+ */
+export async function revise(gate: Gate, idempotencyKey: string, note: string): Promise<void> {
+  const response = await apiFetch(`/api/approvals/${encodeURIComponent(gate.id)}/revise`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedVersion: gate.version, idempotencyKey, note }) });
+  if (response.ok) return;
+  const detail = await response.text();
+  let refusal: { reason?: string } = {};
+  try { refusal = JSON.parse(detail) as typeof refusal; } catch { /* not a refusal this API shaped */ }
+  throw new Error(refusal.reason ? workRefusal(refusal.reason, null) : `${response.status}: ${detail}`);
 }

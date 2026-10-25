@@ -61,16 +61,16 @@ public final class WorkDraftLifecycle {
     }
 
     /**
-     * The written artifact is approved, by its result gate or by {@code auto}: the draft records it and the item moves
-     * to the next phase, which the caller then enters as an ordinary entry. Entering plan with no plan written parks it
-     * for the draft sweep (decision 10), so approving starts no run here.
+     * The written artifact is approved, by its result gate or by {@code auto}, and the draft records it. An approved
+     * specification moves the item to plan, which the caller then enters as an ordinary entry: with no plan written it
+     * parks for the draft sweep (decision 10), so approving starts no run here. An approved plan stays in plan until the
+     * caller registers it ({@link #registered}), which decides whether the item may build (A4).
      */
     public static WorkItemEvent approved(WorkItemEvent item) {
         String phase = item.phase();
         if (item.draft() == null || !DRAFT_PHASES.contains(phase) || item.draft().artifactFor(phase) == null)
             throw new IllegalStateException("Only a written " + phase + " can be approved");
-        String next = SPEC.equals(phase) ? PLAN : "build";
-        return item.decision(item.policyRevision(), item.authority(), item.policy(), next, "awaiting_input", "phase_completed",
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), PLAN, "awaiting_input", "phase_completed",
                 "DRAFT_APPROVED", item.gate(), item.progress().reserve(false)).drafted(item.draft().approved(phase));
     }
 
@@ -115,16 +115,41 @@ public final class WorkDraftLifecycle {
     /** Who asked for a revision, under which answer identity, and what they wrote (decision 8). */
     public record Revision(String resolver, String key, String note) {}
 
+    /**
+     * Revise with a note (§6.5, A6, decision 8): the result gate resolves REJECTED with the note, the phase's artifact is
+     * cleared (a revised specification takes its plan with it), and the item waits where the draft sweep looks. No
+     * attempt starts here: the sweep's own checks run first, and the note reaches the next run's prompt through the gate.
+     *
+     * @throws IllegalStateException {@code revision_limit_reached} after {@link WorkDraft#MAX_REVISIONS}, or when the
+     *     open gate is not a result gate
+     */
     public static WorkItemEvent revised(WorkItemEvent item, Revision revision) {
-        throw new UnsupportedOperationException("RED");
+        if (!resultGate(item, item.gate()) || !"OPEN".equals(item.gate().state()))
+            throw new IllegalStateException("Only an open specification or plan result gate can be revised");
+        String phase = item.phase();
+        WorkDraft draft = item.draft().revised(phase);
+        WorkGate rejected = item.gate().resolve("REJECTED", revision.resolver(), "dashboard", revision.key(), revision.note());
+        return WorkItemLifecycle.state(item, "awaiting_input", SPEC.equals(phase) ? "specification_to_write" : "plan_to_write", "DRAFT_REVISED",
+                rejected, item.progress().reserve(false)).drafted(draft);
     }
 
+    /**
+     * The approved specification and plan are registered as the preparation the build runs (A4): the item moves to build,
+     * which the caller then enters as an ordinary entry, so a build {@code approve} still asks first.
+     */
     public static WorkItemEvent registered(WorkItemEvent item, WorkPreparation preparation) {
-        throw new UnsupportedOperationException("RED");
+        WorkDraft draft = item.draft();
+        if (draft == null || !PLAN.equals(item.phase()) || !draft.specificationApproved() || !draft.planApproved())
+            throw new IllegalStateException("Only an approved specification and plan can be registered");
+        if (!draft.specification().equals(preparation.specification()) || !draft.plan().equals(preparation.plan()))
+            throw new IllegalArgumentException("A registered preparation carries the approved draft artifacts");
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), "build", "awaiting_input", "artifacts_registered",
+                "DRAFT_REGISTERED", item.gate(), item.progress().reserve(false)).prepared(preparation).withMilestone("DRAFT_REGISTERED");
     }
 
+    /** The approved plan cannot be registered (decision 15, or more steps than a build runs yet): the item waits in plan. */
     public static WorkItemEvent registrationRefused(WorkItemEvent item, String reason) {
-        throw new UnsupportedOperationException("RED");
+        return WorkItemLifecycle.state(item, "awaiting_input", reason, "DRAFT_REGISTRATION_REFUSED", item.gate(), item.progress().reserve(false));
     }
 
     /** Whether this gate asks about a written artifact of the item's draft, rather than permission to run (A6). */
