@@ -89,7 +89,7 @@ public final class Clauses {
     /** Every clause this checker proves, in report order. */
     public static final List<String> VERIFIED = List.of(
             ENTRYPOINT, NON_ROOT, MOUNT_POINTS, GIT, CA_CERTIFICATES, SHELL, UID_1001,
-            PROMPT_ON_STDIN, HANDOFF_BUNDLES, HANDOFF_DONE_LAST);
+            PROMPT_ON_STDIN, HANDOFF_BUNDLES, HANDOFF_DONE_LAST, HANDOFF_FILES);
 
     /**
      * Every clause the image may declare and this checker will not prove.

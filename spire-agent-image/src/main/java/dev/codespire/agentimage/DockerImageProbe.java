@@ -70,6 +70,20 @@ final class DockerImageProbe implements ImageProbe {
     /** Printed by the listing probe when there is no DONE to compare against. */
     private static final String NO_DONE = "NO-DONE";
 
+    /**
+     * Prints each handoff file that is a regular file, not a link, and no newer than DONE (M4 slice 3).
+     *
+     * <p>Compared on {@code stat -c %y}, which GNU and BusyBox both print to the nanosecond, rather than with
+     * {@code find -newer}, which BusyBox compares in whole seconds: a copy after DONE lands in the same second almost
+     * always, and the clause would never see it. A tie still passes, since a conforming entrypoint can write its last
+     * file and DONE within one tick of the file system's clock, and a false accusation is worse than a miss.
+     */
+    private static final String FILES_BEFORE_DONE = "cd " + AgentImageVerifier.HANDOFF + " && [ -f DONE ] "
+            + "&& done_at=$(stat -c %y DONE) && for f in " + String.join(" ", HandoffFilesProbe.FILES) + "; do "
+            + "[ -f \"$f\" ] && [ ! -L \"$f\" ] "
+            + "&& [ \"$(printf '%s\\n%s\\n' \"$(stat -c %y \"$f\")\" \"$done_at\" | sort | tail -n 1)\" = \"$done_at\" ] "
+            + "&& echo \"$f\"; done";
+
     private final DockerClient client;
 
     DockerImageProbe(DockerClient client) {
@@ -134,7 +148,7 @@ final class DockerImageProbe implements ImageProbe {
                 String output = runAndCollect(id, AGENT_PROBE_TIMEOUT_SECONDS);
                 return new Result(output, true,
                         listing(image, handoff, stamp, "ls -1 " + AgentImageVerifier.HANDOFF),
-                        doneOn(image, handoff, stamp));
+                        doneOn(image, handoff, stamp), listing(image, handoff, stamp, FILES_BEFORE_DONE));
             } finally {
                 destroy(id);
             }

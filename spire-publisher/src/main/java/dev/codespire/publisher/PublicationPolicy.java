@@ -27,7 +27,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
      * so even a wrong code path here has no secret to push with.
      */
     static PublicationPolicy readOnly() {
-        throw new UnsupportedOperationException("RED");
+        return new PublicationPolicy(Mode.READ_ONLY, null, null, null, Clock.systemUTC(), null, null);
     }
 
     static PublicationPolicy held() {

@@ -24,7 +24,7 @@ have passes, and the first thing that notices is a run that has already been pai
 
 ## The run-time interface
 
-These are the five variables a run sets, and the three handoff clauses below are only passable
+These are the five variables a run sets and the three your entrypoint exports, and the handoff clauses below are only passable
 by an image that honours them. An earlier version of this page listed the clauses and not the
 interface — so an image written from the contract ALONE failed three of them with nothing here
 to explain why. A contract that is not sufficient to build against is not doing its job.
@@ -37,10 +37,20 @@ to explain why. A contract that is not sufficient to build against is not doing 
 | `SPIRE_BASE_COMMIT` | The commit the workspace starts at. **Required** — a bundle is `$SPIRE_BASE_COMMIT..HEAD` and there is no safe guess, so the reference entrypoint refuses to start without it. |
 | `SPIRE_AUTOSAVE_SECONDS` | How often to checkpoint while the harness runs. A default is fine. |
 | `SPIRE_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace that the harness may write one line to: what it changed, in its own words. Your final checkpoint uses that line as its commit message; a mid-run one must not, because nothing has been summarised yet. Absent or blank falls back to a generic message. |
+| `SPIRE_ARTIFACT` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a specification or plan run writes its result. After the final checkpoint and before `DONE`, your entrypoint copies it, if it exists, to `$SPIRE_HANDOFF/artifact.md`. Capped at 32 KiB. |
+| `SPIRE_STEP_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a plan step writes its decisions as JSON. Copied, if it exists, to `$SPIRE_HANDOFF/step-summary.json` before `DONE`, like the artifact. Capped at 8 KiB. |
 
 Everything the dispatched prompt says about `SPIRE_SUMMARY` is written against this contract, so an
 image that does not export it simply gets the fallback message — no run fails over it. Keep the file
 out of the working tree for the same reason the prompt is kept out: an autosave must never commit it.
+
+`SPIRE_ARTIFACT` and `SPIRE_STEP_SUMMARY` are optional in the same way, with one difference: a
+specification or plan run whose artifact never reaches the handoff fails (`ARTIFACT_MISSING`), and a
+plan step without a summary completes with "no decisions recorded". The publisher reads both handoff
+files as **regular files only, never followed**: a link, a pipe, a directory, a file over its cap or
+text that is not UTF-8 is refused, never read. So copy the content, never the link: the reference
+entrypoint uses `head -c` (the cap plus one byte, so an oversize is still refused rather than
+truncated) into a temporary name on the handoff and renames it into place.
 
 The harness argv arrives as the container **command**, so your entrypoint receives it as
 `$@` and runs it. Everything else — committing, bundling, writing `DONE` —
@@ -136,6 +146,18 @@ early, the publisher drains and exits while the final bundle is still being writ
 reports the previous checkpoint as its result.
 
 *Verified by:* running the image and comparing modification order.
+
+### `handoff-files` — the artifact and step summary reach `/handoff` before `DONE`
+
+When the harness wrote `$SPIRE_ARTIFACT` or `$SPIRE_STEP_SUMMARY`, the entrypoint must copy each to
+`/handoff/artifact.md` and `/handoff/step-summary.json` as a regular file, before it writes `DONE`. The
+publisher reads them when `DONE` appears and then exits, so a file copied later is never read, and a
+link is refused rather than followed.
+
+*Verified by:* running the image with a stub harness that writes both files, then checking that each
+is a regular file on `/handoff` and no newer than `DONE`. Compared to the nanosecond; a tie passes,
+because a conforming entrypoint can write its last file and `DONE` within one tick of the file
+system's clock.
 
 ---
 

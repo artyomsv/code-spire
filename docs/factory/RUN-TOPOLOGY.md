@@ -200,6 +200,31 @@ has been adding entries to that list for a decade.
 > **The rule, stated once:** never run git-with-a-token inside a directory the agent could write to.
 > It is not about which pod. It is about which **directory**.
 
+### 4.4 Handoff files and the four publisher commands (M4)
+
+Two files travel beside the bundles. The harness writes `$SPIRE_ARTIFACT` (a specification or plan) and
+`$SPIRE_STEP_SUMMARY` (a plan step's decisions, JSON) in its scratch directory; after the final
+checkpoint and before `DONE` the entrypoint copies each to `/handoff/artifact.md` and
+`/handoff/step-summary.json`, as content and never as a link ([AGENT-IMAGE-CONTRACT.md](./AGENT-IMAGE-CONTRACT.md),
+clause `handoff-files`). The publisher reads them as regular files only, without following a link, capped at
+32 KiB and 8 KiB, and as UTF-8 only, and reports them as outcome lines (`artifact`, `step_summary`, or
+`handoff_file_refused` naming why). It never fails a run over them; the run worker decides.
+
+The publisher image has four sidecar commands, chosen by the run unit and never by anything in the handoff:
+
+| Command | Mode | Pushes | Credential |
+|---|---|---|---|
+| `spire-publish` | `AUTOMATIC` | every checkpoint, continuously | write |
+| `spire-publish-held` | `HELD` | nothing; reports each checkpoint and the step summary | write (clones the base) |
+| `spire-publish-permitted` | `PERMITTED` | the one permitted head | write |
+| `spire-publish-none` | `READ_ONLY` | nothing, ever; no clone | **none** |
+
+`spire-publish-none` serves specification and plan runs. It waits for `DONE`, reports the artifact and
+summary, and counts the bundles by name without reading them: a run that committed anyway is reported
+as `repository_changed`, a warning, and its change is discarded with the unit. Holding no credential
+is the guard, not the code path: with no secret in its environment it cannot push even if its code
+were wrong.
+
 ---
 
 ## 5. Continuous checkpointing

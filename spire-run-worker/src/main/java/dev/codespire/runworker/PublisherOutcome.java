@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
 import org.jboss.logging.Logger;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,7 +46,28 @@ public final class PublisherOutcome {
     /** The longest real value is RENAMED_FROM; anything longer is not a kind. */
     private static final int MAX_KIND_CHARS = 32;
 
+    /** The publisher's refusal for a file over its cap; the same word whichever side measured it. */
+    private static final String TOO_LARGE = "TOO_LARGE";
+
+    /** The publisher reports at most one refusal per handoff file; anything past this is not a real publisher. */
+    private static final int MAX_REFUSALS = 8;
+
+    /** The two handoff texts (M4 slice 3), with the publisher's caps re-checked here in UTF-8 bytes. */
+    private record HandoffText(String field, String file, int maxBytes) {
+        static final HandoffText ARTIFACT = new HandoffText("text", "artifact.md", 32 * 1024);
+
+        static final HandoffText STEP_SUMMARY = new HandoffText("json", "step-summary.json", 8 * 1024);
+    }
+
     private final Set<String> changedPaths = new LinkedHashSet<>();
+
+    private final Set<String> handoffRefusals = new LinkedHashSet<>();
+
+    private String artifact;
+
+    private String stepSummary;
+
+    private int repositoryChanged;
 
     /**
      * Keyed by path, so a path refused twice is listed once — the deduplication the set gave
@@ -112,6 +134,10 @@ public final class PublisherOutcome {
                 failedAfterPush = pushedRef != null && !NON_TERMINAL_CAUSES.contains(failureCause);
                 failedAfterCheckpoint = checkpointHead != null && !NON_TERMINAL_CAUSES.contains(failureCause);
             }
+            case "artifact" -> artifact = capped(node, HandoffText.ARTIFACT);
+            case "step_summary" -> stepSummary = capped(node, HandoffText.STEP_SUMMARY);
+            case "repository_changed" -> repositoryChanged = Math.max(0, node.path("bundles").asInt(0));
+            case "handoff_file_refused" -> refuse(node.path("file").asText(""), node.path("why").asText(""));
             default -> {
             }
         }
@@ -212,23 +238,45 @@ public final class PublisherOutcome {
         return failureDetail == null ? "" : failureDetail;
     }
 
-    /** RED (M4 slice 3). */
+    /** The specification or plan a read-only run handed over; empty when none arrived or it was over the cap. */
     public Optional<String> artifact() {
-        return Optional.empty();
+        return Optional.ofNullable(artifact);
     }
 
-    /** RED (M4 slice 3). */
+    /** The step summary's JSON text, unparsed; empty when none arrived or it was over the cap. */
     public Optional<String> stepSummary() {
-        return Optional.empty();
+        return Optional.ofNullable(stepSummary);
     }
 
-    /** RED (M4 slice 3). */
+    /** Bundles a read-only run left on the handoff: a warning, never a failure, and never published. */
     public int repositoryChanged() {
-        return 0;
+        return repositoryChanged;
     }
 
-    /** RED (M4 slice 3). */
+    /** Each handoff file the publisher refused, or this parse dropped, as {@code file:why}. */
     public List<String> handoffRefusals() {
-        return List.of();
+        return List.copyOf(handoffRefusals);
+    }
+
+    /**
+     * The last line of each kind wins, and a text over its cap is dropped and recorded as a refusal. Truncating it
+     * would turn an over-long specification into a shorter one that looks valid.
+     */
+    private String capped(JsonNode node, HandoffText kind) {
+        String text = node.path(kind.field()).asText(null);
+        if (text == null) {
+            return null;
+        }
+        if (text.getBytes(StandardCharsets.UTF_8).length > kind.maxBytes()) {
+            refuse(kind.file(), TOO_LARGE);
+            return null;
+        }
+        return text;
+    }
+
+    private void refuse(String file, String why) {
+        if (handoffRefusals.size() < MAX_REFUSALS) {
+            handoffRefusals.add(clip(file, MAX_PATH_CHARS) + ":" + clip(why, MAX_KIND_CHARS));
+        }
     }
 }

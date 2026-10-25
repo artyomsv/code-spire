@@ -69,6 +69,11 @@ public final class PublishCycle {
     PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                  long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome,
                  PublicationPolicy publication, String landingBranch) {
+        // A read-only run publishes nothing (M4 slice 3): its executable never builds a cycle, and this refusal keeps
+        // a future wiring mistake from reaching the push below with that policy.
+        if (publication.mode() == PublicationPolicy.Mode.READ_ONLY) {
+            throw new IllegalArgumentException("A read-only publisher never pushes, so it has no publish cycle");
+        }
         this.repo = repo;
         this.baseCommit = baseCommit;
         this.branch = branch;

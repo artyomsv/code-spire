@@ -85,6 +85,11 @@ public final class PublisherMain {
                 // The agent is gone; take whatever it wrote in its last moments before exiting.
                 carryOn = drain(watcher, cycle);
             }
+            if (carryOn && mode == PublicationPolicy.Mode.HELD) {
+                // A plan step's decisions travel beside its checkpoint (M4 slice 3); a missing or refused summary
+                // is reported, never a failure.
+                HandoffReport.stepSummary(config.handoffDir(), outcome);
+            }
             if (!carryOn || !cycle.finish()) {
                 exitCode = 1;
             }
