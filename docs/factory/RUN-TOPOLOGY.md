@@ -244,7 +244,9 @@ Two layers make the commits happen, because relying on a model to remember is no
 
 1. **The prompt** instructs the agent to commit after each logical step, and to write one line
    describing what it changed to the file named by `SPIRE_SUMMARY`. `RunUnitBuilder` appends this to
-   every dispatched prompt — a fix run's and a build run's alike, whatever the harness's delivery.
+   every pushing run's prompt — a fix run's and a build run's alike, whatever the harness's delivery.
+   A specification or plan run is never told to commit: its prompt ends instead with the instruction that
+   the repository is read-only and the result goes to `$SPIRE_ARTIFACT` (`AgentPrompts`).
 2. **An autosave loop in the agent container** commits anything dirty every N minutes. This is safe
    precisely because it runs in the container that holds **no token**. The FINAL autosave uses the
    summary as its commit message; a mid-run one cannot, because nothing has been summarised yet.

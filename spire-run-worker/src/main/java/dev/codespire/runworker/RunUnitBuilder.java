@@ -114,7 +114,7 @@ public class RunUnitBuilder {
     EnterpriseEnvironmentConfig enterprise;
 
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
-        return build(command, adapter, "spire-publish");
+        return build(command, adapter, Topology.CONTINUOUS);
     }
 
     /**
@@ -122,7 +122,7 @@ public class RunUnitBuilder {
      * {@code spire-publish-none} with the handoff and no write credential, so it cannot push even if its code were wrong.
      */
     public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter adapter) {
-        RunUnitSpec unit = build(draft.execution(), adapter, PublisherEnvironments.READ_ONLY_COMMAND);
+        RunUnitSpec unit = build(draft.execution(), adapter, Topology.READ_ONLY);
         return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), PublisherEnvironments.readOnly(unit.publisher()),
                 unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
     }
@@ -166,7 +166,7 @@ public class RunUnitBuilder {
     }
 
     public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
-        RunUnitSpec unit = build(command.execution(), adapter, "spire-publish-held");
+        RunUnitSpec unit = build(command.execution(), adapter, Topology.HELD);
         if (!command.execution().pushesToAnExistingBranch()) return unit;
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
@@ -190,7 +190,23 @@ public class RunUnitBuilder {
         return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
     }
 
-    private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, String publisherCommand) {
+    /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */
+    private enum Topology {
+        CONTINUOUS("spire-publish"), HELD("spire-publish-held"), READ_ONLY(PublisherEnvironments.READ_ONLY_COMMAND);
+
+        private final String publisherCommand;
+
+        Topology(String publisherCommand) {
+            this.publisherCommand = publisherCommand;
+        }
+
+        String prompt(String dispatched) {
+            return this == READ_ONLY ? AgentPrompts.withReadOnlyInstruction(dispatched)
+                    : AgentPrompts.withCommitInstruction(dispatched);
+        }
+    }
+
+    private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, Topology topology) {
         if (command.maxWallClockSeconds() > maxWallClockSeconds) {
             throw new IllegalArgumentException("the command asks for a wall clock of " + command.maxWallClockSeconds()
                     + "s, over this worker's spire.run.max-wall-clock-seconds (" + maxWallClockSeconds
@@ -218,7 +234,7 @@ public class RunUnitBuilder {
         ContainerSpec init = new ContainerSpec(publisherImage, List.of("spire-clone"), Map.copyOf(initEnv), initMounts);
 
         HarnessInvocation invocation = new HarnessInvocation(command.runId(),
-                withCommitInstruction(command.prompt()),
+                topology.prompt(command.prompt()),
                 "/workspace", command.model(), harnessEnv,
                 Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort());
 
@@ -232,7 +248,7 @@ public class RunUnitBuilder {
             // this line a STDIN arm reads an empty prompt, produces nothing, exits 0 -- and the run
             // is reported as finished having done nothing, which is exactly what the harness SPI's
             // own javadoc warns about. It is never on argv (see thePromptIsNeverInTheAgentsArgv).
-            // The invocation's prompt, not the command's: the commit instruction is appended once,
+            // The invocation's prompt, not the command's: the topology's instruction is appended once,
             // and a STDIN arm reading the raw one would be the only delivery that never asks for a
             // commit — the difference invisible until a branch came back saying "work in progress".
             agentEnv.put("SPIRE_PROMPT", invocation.prompt());
@@ -246,7 +262,7 @@ public class RunUnitBuilder {
 
         ContainerSpec publisher = new ContainerSpec(
                 publisherImage,
-                List.of(publisherCommand),
+                List.of(topology.publisherCommand),
                 PublisherEnvironments.publisherEnvironment(command, scm),
                 // Read-only, and the ONLY volume it sees. Not the workspace.
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
@@ -278,42 +294,4 @@ public class RunUnitBuilder {
         return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
                 held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
     }
-
-    /**
-     * The dispatched prompt, plus the one thing every run needs the agent to do with its work.
-     *
-     * <p><b>RUN-TOPOLOGY §"Two layers make the commits happen" describes a layer that did not
-     * exist.</b> It says the prompt instructs the agent to commit and the autosave backstops it;
-     * nothing anywhere told an agent to commit. So the autosave was the only writer, and every
-     * branch the factory has ever pushed carries its constant message — {@code autosave: work in
-     * progress} — describing nothing, on work a human is asked to review.
-     *
-     * <p><b>Appended HERE rather than in the prompt builders</b>, for three reasons. A fix run's
-     * prompt is built by {@code FixPrompt}, but a BUILD run's is the caller's text verbatim, so
-     * there is no second place to put it that covers both. It is delivery-agnostic: it rides
-     * {@code command.prompt()} whether the arm takes stdin or argv. And it lands AFTER the Kafka
-     * hop, so it cannot push a dispatch past {@code MAX_PROMPT_CHARS} and make a record unroutable.
-     *
-     * <p>The summary is the belt to the commit's braces: an agent that commits properly never needs
-     * it, and one that forgets still leaves a sentence behind instead of a constant.
-     */
-    static String withCommitInstruction(String prompt) {
-        return prompt + COMMIT_INSTRUCTION;
-    }
-
-    /**
-     * Deliberately does not name a path. {@code SPIRE_SUMMARY} is exported by the agent image's
-     * entrypoint, which owns where the file lives; naming the path here would put the same literal
-     * in two repositories' worth of places, free to disagree.
-     */
-    private static final String COMMIT_INSTRUCTION = """
-
-
-            ---
-            Commit your work as you go. Give each commit a message that says what changed and why.
-
-            When you have finished, write ONE line describing what you changed to the file named by
-            the SPIRE_SUMMARY environment variable. Anything you leave uncommitted is committed for
-            you, and that line becomes its message — without it the commit says only "work in
-            progress", which tells a reviewer nothing.""";
 }
