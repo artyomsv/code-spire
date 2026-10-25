@@ -106,14 +106,14 @@ public class WorkPreparationSweep {
      * {@code build_defaults_missing}, because an item stuck for a reason nobody is told about is the
      * defect this slice exists to remove; the backoff keeps the cost of saying so down.
      */
-    private List<String> candidates() {
+    List<String> candidates() {
         List<String> ids = new ArrayList<>();
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 SELECT i.id FROM work_item i
                   LEFT JOIN work_item_preparation_attempt a
                          ON a.work_item_id = i.id AND a.generation = i.generation
                  WHERE i.phase = 'spec' AND i.workflow_status = 'awaiting_input'
-                   AND i.reason = 'specification_required' AND i.preparation_mode = 'composed'
+                   AND i.reason = 'specification_required'
                    AND (a.retry_after IS NULL OR a.retry_after <= now())
                  -- Never-attempted items first, then whichever has been due longest. Ordering by the
                  -- item's own age instead let a cohort of old, permanently failing rows come due again
@@ -160,8 +160,8 @@ public class WorkPreparationSweep {
      * <p>{@code candidates()} asks the same question of the projection; this asks it of the snapshot the
      * attempt actually captured, so the two cannot disagree across the gap between them.
      */
-    private static boolean automatic(WorkItemEvent item) {
-        return item.preparation() == null && item.draft() == null && "spec".equals(item.phase())
+    static boolean automatic(WorkItemEvent item) {
+        return item.preparation() == null && "spec".equals(item.phase())
                 && "awaiting_input".equals(item.workflowStatus())
                 && "specification_required".equals(item.reason());
     }

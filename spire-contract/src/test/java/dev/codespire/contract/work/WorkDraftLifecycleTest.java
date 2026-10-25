@@ -135,6 +135,78 @@ class WorkDraftLifecycleTest {
         assertNull(next.progress().attemptId());
     }
 
+    static String state(WorkItemEvent item) {
+        return item.phase() + " / " + item.workflowStatus() + " / " + item.reason();
+    }
+
+    /** Nothing written, no attempt, no gate: a removed label stops the draft as it stops a composed item. */
+    @Test
+    void aRemovedLabelStopsADraftWithNothingWritten() {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent drafted = admit(profile);
+
+        WorkItemEvent next = observe(2, unselected(profile), drafted);
+
+        assertEquals("intake / not_eligible / no_eligible_label", state(next));
+        assertEquals(drafted.draft(), next.draft());
+    }
+
+    /** The sweep refused the unlabelled draft; the label coming back drafts it again, with no Readmit. */
+    @Test
+    void aRelabelAfterTheSweepsRefusalDraftsAgain() {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent drafted = admit(profile);
+        WorkItemEvent refused = enter(observe(2, unselected(profile), drafted), false, WorkItemLifecycle.EntryMode.DRAFT);
+        assertEquals("not_eligible", refused.workflowStatus());
+
+        WorkItemEvent next = observe(3, selected(profile), refused);
+
+        assertEquals("spec / awaiting_input / specification_to_write", state(next));
+        assertEquals(drafted.draft(), next.draft());
+        assertEquals(drafted.admittedProfile(), next.admittedProfile());
+    }
+
+    @Test
+    void specOffThenOnDraftsAgain() {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent drafted = admit(profile);
+        WorkItemEvent refused = enter(observe(2, selected(profile("auto", "off", "approve")), drafted), false,
+                WorkItemLifecycle.EntryMode.DRAFT);
+        assertEquals("not_eligible / spec_off", refused.workflowStatus() + " / " + refused.reason());
+
+        WorkItemEvent next = observe(3, selected(profile), refused);
+
+        assertEquals("spec / awaiting_input / specification_to_write", state(next));
+        assertEquals(drafted.draft(), next.draft());
+    }
+
+    /** Drafted at intake_off (admission drafts whatever the phase), then re-evaluated once the profile is fixed. */
+    @Test
+    void aDraftAdmittedWithIntakeOffIsReevaluated() {
+        WorkItemEvent drafted = admit(profile("off", "auto", "auto"));
+        assertEquals("intake / not_eligible / intake_off", state(drafted));
+        assertNotNull(drafted.draft());
+
+        WorkItemEvent next = observe(2, selected(profile("auto", "auto", "auto")), drafted);
+
+        assertEquals("spec / awaiting_input / specification_to_write", state(next));
+        assertEquals(drafted.draft(), next.draft());
+    }
+
+    /** A written specification is worth keeping: the item stays where it stands, as a composed preparation does. */
+    @Test
+    void aWrittenSpecificationKeepsTheItem() {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent drafted = admit(profile);
+        WorkItemEvent written = at(drafted, "spec", "waiting_approval", "approval_required")
+                .drafted(drafted.draft().withSpecification(new WorkDraft.Written(WorkDraftTest.stored('a'), "c".repeat(40), 1)));
+
+        WorkItemEvent next = observe(2, unselected(profile), written);
+
+        assertEquals("spec / waiting_approval / approval_required", state(next));
+        assertEquals(written.draft(), next.draft());
+    }
+
     @Test
     void aPolicyChangeKeepsTheDraft() {
         WorkPolicy.Profile profile = profile("auto", "approve", "approve");

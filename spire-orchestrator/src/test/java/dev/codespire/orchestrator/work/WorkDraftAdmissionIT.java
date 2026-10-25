@@ -3,12 +3,14 @@ package dev.codespire.orchestrator.work;
 import dev.codespire.contract.event.WorkItemIds;
 import dev.codespire.contract.work.WorkGate;
 import dev.codespire.contract.work.WorkItemEvent;
+import dev.codespire.contract.work.WorkItemLifecycle;
 import dev.codespire.contract.work.WorkPolicy;
 import dev.codespire.contract.work.WorkPolicyLimits;
 import dev.codespire.orchestrator.factory.BuildDefaults;
 import dev.codespire.worksource.WorkIssueLocation;
 import dev.codespire.worksource.WorkIssueRef;
 import dev.codespire.worksource.WorkSourceType;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
@@ -80,11 +82,20 @@ class WorkDraftAdmissionIT extends WorkPreparedFixture {
 
     /** One observation of a ticket, labelled or not, as the scanner or a webhook would make it. */
     private String observe(int number, String label) throws Exception {
+        WorkIssueLocation location = ticket(number, label);
+        WorkSourceRegistry.Source sourceRow = sources.get(source).orElseThrow();
+        String id = WorkItemIds.of(sourceRow.scm(), sourceRow.forgeOrigin(), sourceRow.repository(), location.ref());
+        extraItems.add(id);
+        WorkEvidence evidence = WorkEvidence.collect(() -> sources.client(sourceRow), location, null);
+        assertNull(evidence.failure());
+        store.reconcile(sourceRow, policies.get(repository).revision(), evidence, "TEST-draft-observation-" + UUID.randomUUID());
+        return id;
+    }
+
+    /** The ticket as the forge now answers it, labelled or not, without observing it. */
+    private WorkIssueLocation ticket(int number, String label) {
         WorkIssueRef ref = new WorkIssueRef(WorkSourceType.GITHUB, forge.baseUrl(), "10001", Long.toString(50000 + number));
         WorkIssueLocation location = new WorkIssueLocation(ref, Integer.toString(number), URI.create(forge.baseUrl() + "/" + scope + "/issues/" + number));
-        WorkSourceRegistry.Source sourceRow = sources.get(source).orElseThrow();
-        String id = WorkItemIds.of(sourceRow.scm(), sourceRow.forgeOrigin(), sourceRow.repository(), ref);
-        extraItems.add(id);
         var ticket = mapper.createObjectNode().put("id", 50000 + number).put("number", number).put("repository_url", forge.baseUrl() + "/repos/" + scope)
                 .put("html_url", location.link().toString()).put("title", "TEST-ticket: make the TEST-widget faster").put("body", "TEST-body")
                 .put("state", "open");
@@ -99,10 +110,7 @@ class WorkDraftAdmissionIT extends WorkPreparedFixture {
         String endpoint = "/repos/" + scope + "/issues/" + number;
         forge.stubFor(get(urlEqualTo(endpoint)).willReturn(okJson(ticket.toString())));
         forge.stubFor(get(urlEqualTo(endpoint + "/timeline?per_page=100&page=1")).willReturn(okJson(timeline.toString())));
-        WorkEvidence evidence = WorkEvidence.collect(() -> sources.client(sourceRow), location, null);
-        assertNull(evidence.failure());
-        store.reconcile(sourceRow, policies.get(repository).revision(), evidence, "TEST-draft-observation-" + UUID.randomUUID());
-        return id;
+        return location;
     }
 
     private String mode(String id) throws SQLException {
@@ -231,6 +239,81 @@ class WorkDraftAdmissionIT extends WorkPreparedFixture {
 
         assertNull(store.load(id).preparation());
         assertState(store.load(id), "spec", "awaiting_input", "specification_to_write");
+    }
+
+    /**
+     * A drafted item standing at the copy sweep's own reason, so its reason filter excludes nothing and each draft guard
+     * is the only one that can: the mode filter in the query, and the draft in the trigger.
+     */
+    private String draftAtTheCopyReason(int number) throws Exception {
+        preparingWith(BuildDefaults.GENERATED);
+        String id = admit("autonomous", number);
+        WorkItemEvent drafted = store.load(id);
+        WorkItemEvent misplaced = WorkItemLifecycle.state(drafted, "awaiting_input", "specification_required", "TEST-DRAFT-AT-COPY-REASON",
+                null, drafted.progress());
+        QuarkusTransaction.requiringNew().run(() -> {
+            try (Connection c = dataSource.getConnection()) {
+                WorkItemTransitions.lockItem(c, id);
+                store.appendDecision(c, store.history(id), misplaced, "TEST-draft-at-copy-reason:" + UUID.randomUUID());
+            } catch (SQLException | java.io.IOException failure) { throw new IllegalStateException(failure); }
+        });
+        assertEquals("generated", mode(id));
+        assertState(store.load(id), "spec", "awaiting_input", "specification_required");
+        return id;
+    }
+
+    @Test
+    void theCopySweepPreparesNoDraftAtItsOwnReason() throws Exception {
+        String id = draftAtTheCopyReason(70);
+
+        copySweep.sweep();
+
+        assertNull(store.load(id).preparation());
+        assertNotNull(store.load(id).draft());
+    }
+
+    @Test
+    void theCopySweepSelectsNoGeneratedItem() throws Exception {
+        String id = draftAtTheCopyReason(71);
+
+        assertFalse(copySweep.candidates().contains(id));
+    }
+
+    @Test
+    void theCopyTriggerRejectsADraft() throws Exception {
+        String id = draftAtTheCopyReason(72);
+
+        assertFalse(WorkPreparationSweep.automatic(store.load(id)));
+    }
+
+    /** The source, its repository or its account switched off after admission: nothing is bought for it. */
+    @Test
+    void theDraftSweepStartsNothingForADisabledSource() throws Exception {
+        preparingWith(BuildDefaults.GENERATED);
+        String id = admit("autonomous", 73);
+        executeWith("UPDATE work_source SET enabled=false,revision=revision+1 WHERE id=?", source);
+
+        draftSweep.sweep();
+
+        assertState(store.load(id), "spec", "awaiting_input", "specification_to_write");
+        assertNull(store.load(id).progress().attemptId());
+        assertEquals(0, effects(id));
+        assertEquals("source_unavailable", copySweep.health(id, 1).map(WorkPreparationSweep.Health::reason).orElse(null));
+    }
+
+    /** The label was removed after the last observation: the start selects from the tracker as it reads now. */
+    @Test
+    void theDraftSweepSelectsThePolicyFromTheTicketAsItReadsNow() throws Exception {
+        preparingWith(BuildDefaults.GENERATED);
+        String id = observe(74, "TEST-autonomous");
+        assertState(store.load(id), "spec", "awaiting_input", "specification_to_write");
+        ticket(74, null);
+
+        draftSweep.sweep();
+
+        assertEquals("not_eligible", store.load(id).workflowStatus());
+        assertNull(store.load(id).progress().attemptId());
+        assertEquals(0, effects(id));
     }
 
     @Test
