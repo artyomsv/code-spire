@@ -13,14 +13,20 @@ public class WorkArtifacts {
     @Inject WorkSourceRegistry sources;
     @Inject ObjectMapper mapper;
     @Inject WorkItemArtifacts stored;
+    /** One plan step (M4 slice 3, §6.4). A version-1 plan carries only an id and an instruction; its title is the id. */
+    public record Step(String id,String title,String instruction,String doneWhen) {}
     public record Reference(WorkPreparation.Artifact artifact,String title) {}
     /**
      * A refusal carries the coarse {@code failure} other code keys on, plus the {@code detail} that
      * names which rule refused it. Three separate plan rules shared one reason, so an operator was
      * told "single_step_plan_required" for invalid JSON, for a stale specification digest and for a
      * second step alike, and had to guess which one they had hit.
+     *
+     * @param steps every step of the plan, in order; {@code instruction} is the first one's until steps are built one by one
      */
-    public record Evidence(String failure,String specification,String instruction,String detail) {
+    public record Evidence(String failure,String specification,String instruction,String detail,java.util.List<Step> steps) {
+        public Evidence(String failure,String specification,String instruction,String detail) { this(failure,specification,instruction,detail,java.util.List.of()); }
+        public Evidence { steps=steps==null?java.util.List.of():java.util.List.copyOf(steps); }
         public static Evidence absent() { return new Evidence(null,null,null,null); }
         static Evidence refused(String failure,String detail) { return new Evidence(failure,null,null,detail); }
         static Evidence supplied(String specification,String instruction) { return new Evidence(null,specification,instruction,null); }

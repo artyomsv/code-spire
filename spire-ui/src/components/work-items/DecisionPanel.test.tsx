@@ -293,3 +293,45 @@ it('a spec gate on another specification is not approvable', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('The specification changed after this decision was opened');
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 });
+
+// A generated item's plan gate asks about the written plan (M4 slice 3, A6), and offers Revise beside Approve and Reject.
+const planSha = 'd'.repeat(64);
+function planGate(revisions: number) {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'plan', artifact: planSha } }]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, phase: 'plan', reason: 'plan_written', preparation: null });
+  vi.spyOn(draft, 'workDraft').mockResolvedValue({
+    specification: { text: '## Outcome\nTEST-written outcome', sha256: writtenSha, comment: null },
+    plan: { text: '{}', sha256: planSha, comment: null, steps: [{ id: 'TEST-s1', title: 'TEST-step-1', instruction: 'TEST-instruction', doneWhen: 'TEST-done-1' }] },
+    revisions: { specification: 0, plan: revisions }, ticketLink: 'https://TEST.example/issues/42' });
+  vi.spyOn(api, 'revise').mockResolvedValue();
+}
+it('a plan gate shows the steps as evidence', async () => {
+  planGate(0);
+  show();
+  expect(await screen.findByRole('list', { name: 'Plan steps' })).toHaveTextContent('TEST-step-1');
+  expect(await approvable()).toBeEnabled();
+});
+it('Revise needs a note and hides after three', async () => {
+  planGate(1);
+  show();
+  const revise = await screen.findByRole('button', { name: 'Revise with a note' });
+  expect(revise).toBeDisabled();
+  expect(screen.getByText('1 of 3 revisions used')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Decision note', { selector: 'textarea' }), { target: { value: 'TEST-split the step' } });
+  expect(revise).toBeEnabled();
+  fireEvent.click(revise);
+  await waitFor(() => expect(decided).toHaveBeenCalledWith('Asked for a new plan. The factory writes it with your note.'));
+  expect(api.revise).toHaveBeenCalledWith(expect.objectContaining({ id: row.gate.id, phase: 'plan' }), expect.any(String), 'TEST-split the step');
+  cleanup();
+
+  planGate(3);
+  show();
+  expect(await screen.findByText(/All 3 revisions are used/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revise with a note' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+});
+it('offers no Revise on a permission decision', async () => {
+  show();
+  await approvable();
+  expect(screen.queryByRole('button', { name: 'Revise with a note' })).toBeNull();
+});

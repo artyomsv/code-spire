@@ -26,3 +26,7 @@ export async function answer(gate: Gate, idempotencyKey: string, approve: boolea
     throw new Error(`${response.status}: ${detail}`);
   }
 }
+
+export async function revise(_gate: Gate, _idempotencyKey: string, _note: string): Promise<void> {
+  throw new Error('RED');
+}

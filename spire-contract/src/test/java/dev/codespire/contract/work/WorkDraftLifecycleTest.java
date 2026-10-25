@@ -438,4 +438,119 @@ class WorkDraftLifecycleTest {
         assertEquals("not_eligible", next.workflowStatus());
         assertEquals("spec_off", next.reason());
     }
+
+    static final WorkDraftLifecycle.Revision REVISION = new WorkDraftLifecycle.Revision("TEST-operator", "TEST-revise-key", "TEST-note");
+
+    WorkItemEvent specGate() {
+        return WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(started(profile("auto", "approve", "approve")), WRITTEN, USAGE), OPENING);
+    }
+
+    /** Spec auto and plan approve: the plan run written, its result gate open. */
+    WorkItemEvent planGate() {
+        WorkItemEvent atPlan = WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(started(profile("auto", "auto", "approve")), WRITTEN, USAGE), OPENING);
+        WorkItemEvent running = enter(atPlan, false, WorkItemLifecycle.EntryMode.DRAFT);
+        assertEquals("plan / active / phase_started", state(running));
+        WorkDraft.Written plan = new WorkDraft.Written(WorkDraftTest.stored('b'), "c".repeat(40), 2);
+        return WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(running, plan, USAGE), OPENING);
+    }
+
+    /** Revise parks the item where the draft sweep looks, and starts nothing itself (decision 8). */
+    @Test
+    void reviseParksForTheSweep() {
+        WorkItemEvent gated = specGate();
+
+        WorkItemEvent next = WorkDraftLifecycle.revised(gated, REVISION);
+
+        assertEquals("spec / awaiting_input / specification_to_write", state(next));
+        assertEquals("DRAFT_REVISED", next.milestone());
+        assertEquals("REJECTED", next.gate().state());
+        assertEquals("TEST-note", next.gate().note());
+        assertEquals("dashboard", next.gate().channel());
+        assertEquals(1, next.draft().specificationRevisions());
+        assertNull(next.draft().specification());
+        assertEquals(gated.progress().attemptId(), next.progress().attemptId(), "no attempt is started");
+        assertNotEquals("started", next.progress().attemptState());
+        assertFalse(next.progress().reserved());
+    }
+
+    @Test
+    void revisingThePlanParksAtPlanToWrite() {
+        WorkItemEvent next = WorkDraftLifecycle.revised(planGate(), REVISION);
+
+        assertEquals("plan / awaiting_input / plan_to_write", state(next));
+        assertEquals(1, next.draft().planRevisions());
+        assertNull(next.draft().plan());
+        assertNotNull(next.draft().specification(), "the approved specification stays");
+    }
+
+    /** Approving a new specification would invalidate a plan made from the old one (§6.5); revising it discards that plan at once. */
+    @Test
+    void revisingTheSpecificationDiscardsThePlan() {
+        WorkItemEvent gated = specGate();
+        WorkItemEvent withPlan = gated.drafted(gated.draft().withPlan(WorkDraftTest.stored('d'), 1));
+
+        WorkItemEvent next = WorkDraftLifecycle.revised(withPlan, REVISION);
+
+        assertNull(next.draft().plan());
+        assertNull(next.draft().specification());
+    }
+
+    @Test
+    void theFourthRevisionIsRefused() {
+        WorkItemEvent gated = specGate();
+        WorkDraft used = new WorkDraft(WorkDraft.GENERATED, gated.draft().specification(), null, WorkDraft.MAX_REVISIONS, 0, false, false,
+                gated.draft().baseCommit(), gated.draft().setupRevision());
+
+        assertThrows(IllegalStateException.class, () -> WorkDraftLifecycle.revised(gated.drafted(used), REVISION));
+    }
+
+    @Test
+    void onlyAResultGateCanBeRevised() {
+        WorkItemEvent parked = admit(profile("auto", "approve", "approve"));
+
+        assertThrows(IllegalStateException.class, () -> WorkDraftLifecycle.revised(parked, REVISION));
+    }
+
+    /** An approved plan waits in plan for its registration, which decides whether the item may build (A4). */
+    @Test
+    void approvingThePlanWaitsForRegistration() {
+        WorkItemEvent next = WorkDraftLifecycle.approved(planGate());
+
+        assertEquals("plan / awaiting_input / phase_completed", state(next));
+        assertEquals("DRAFT_APPROVED", next.milestone());
+        assertTrue(next.draft().planApproved());
+        assertNull(next.preparation());
+    }
+
+    static WorkPreparation preparation(WorkDraft draft) {
+        return new WorkPreparation(draft.specification(), draft.plan(), "main", draft.baseCommit(), "codex", "TEST-model",
+                "system:draft@" + draft.setupRevision(), WorkPreparation.STEPS_BINDING, null, null, List.of("TEST-check"), 60);
+    }
+
+    @Test
+    void aRegisteredPlanMovesToBuild() {
+        WorkItemEvent approved = WorkDraftLifecycle.approved(planGate());
+
+        WorkItemEvent next = WorkDraftLifecycle.registered(approved, preparation(approved.draft()));
+
+        assertEquals("build / awaiting_input / artifacts_registered", state(next));
+        assertEquals("DRAFT_REGISTERED", next.milestone());
+        assertEquals(WorkPreparation.STEPS_BINDING, next.preparation().bindingVersion());
+        assertEquals(approved.draft(), next.draft());
+    }
+
+    @Test
+    void aPlanCannotRegisterBeforeItIsApproved() {
+        WorkItemEvent gated = planGate();
+
+        assertThrows(IllegalStateException.class, () -> WorkDraftLifecycle.registered(gated, preparation(gated.draft())));
+    }
+
+    @Test
+    void aRefusedRegistrationWaitsInPlan() {
+        WorkItemEvent next = WorkDraftLifecycle.registrationRefused(WorkDraftLifecycle.approved(planGate()), "draft_setup_changed");
+
+        assertEquals("plan / awaiting_input / draft_setup_changed", state(next));
+        assertNull(next.preparation());
+    }
 }

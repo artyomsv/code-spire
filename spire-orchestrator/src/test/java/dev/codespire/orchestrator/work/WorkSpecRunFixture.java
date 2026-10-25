@@ -71,22 +71,29 @@ abstract class WorkSpecRunFixture extends WorkPreparedFixture {
                 .willReturn(okJson("{\"name\":\"main\",\"commit\":{\"sha\":\"" + HEAD + "\"}}")));
     }
 
-    /** Intake auto, spec approve, plan auto, under the label TEST-spec-approve. */
+    /**
+     * Two draft profiles beside the fixture's own: TEST-spec-approve (spec approve, plan auto) and TEST-plan-approve
+     * (spec auto, plan approve). Every other phase is auto.
+     */
     private void specApproveProfile() {
+        Map<String, WorkPolicyRegistry.Pin> mapping = new HashMap<>();
+        profiles.forEach((name, profile) -> mapping.put("TEST-" + name, new WorkPolicyRegistry.Pin(profile.id(), 1)));
+        mapping.put("TEST-spec-approve", new WorkPolicyRegistry.Pin(draftProfile("approve", "auto").id(), 1));
+        mapping.put("TEST-plan-approve", new WorkPolicyRegistry.Pin(draftProfile("auto", "approve").id(), 1));
+        policies.save(repository, new WorkPolicyRegistry.Input(policies.get(repository).revision(),
+                new WorkPolicyRegistry.Pin(profiles.get("autonomous").id(), 1), mapping));
+    }
+
+    private WorkPolicy.Profile draftProfile(String spec, String plan) {
         EnumMap<WorkPolicy.Phase, String> modes = new EnumMap<>(WorkPolicy.Phase.class);
         for (WorkPolicy.Phase phase : WorkPolicy.Phase.values()) modes.put(phase, switch (phase) {
-            case DELIVER -> "pr"; case LAND -> "auto_if_green"; case SPEC -> "approve"; default -> "auto";
+            case DELIVER -> "pr"; case LAND -> "auto_if_green"; case SPEC -> spec; case PLAN -> plan; default -> "auto";
         });
         UUID id = UUID.randomUUID();
         extraProfiles.add(id);
-        WorkPolicy.Profile created = policies.createVersion(new WorkPolicy.Profile(id, "TEST-spec-approve-" + id, 1,
+        return policies.createVersion(new WorkPolicy.Profile(id, "TEST-draft-" + spec + "-" + plan + "-" + id, 1,
                 1_600_000_000 + Math.abs(id.hashCode() % 100_000_000),
                 modes, new WorkPolicyLimits(3600, 5, 20, 7200, 2_000_000, 40, Set.of("TEST-sensitive/**"))));
-        Map<String, WorkPolicyRegistry.Pin> mapping = new HashMap<>();
-        profiles.forEach((name, profile) -> mapping.put("TEST-" + name, new WorkPolicyRegistry.Pin(profile.id(), 1)));
-        mapping.put("TEST-spec-approve", new WorkPolicyRegistry.Pin(created.id(), 1));
-        policies.save(repository, new WorkPolicyRegistry.Input(policies.get(repository).revision(),
-                new WorkPolicyRegistry.Pin(profiles.get("autonomous").id(), 1), mapping));
     }
 
     String issuePath(int number) { return "/repos/" + scope + "/issues/" + number; }

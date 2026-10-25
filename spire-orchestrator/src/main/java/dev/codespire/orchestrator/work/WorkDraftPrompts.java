@@ -45,6 +45,10 @@ final class WorkDraftPrompts {
 
     private WorkDraftPrompts() {}
 
+    record PlanInput(String specification, String specificationSha256, java.util.List<String> verifyCommands, long maxSteps) {}
+
+    static String plan(PlanInput input, String retryError, String note) { throw new UnsupportedOperationException("RED"); }
+
     /**
      * @param retryError why the previous artifact was refused, for the one automatic retry; null on a first run
      * @param note what the person who asked for a revision wrote; null when nobody did

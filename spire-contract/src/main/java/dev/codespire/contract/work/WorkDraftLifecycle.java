@@ -112,6 +112,21 @@ public final class WorkDraftLifecycle {
         return WorkItemLifecycle.state(item, "awaiting_input", "draft_run_failed", "DRAFT_RUN_FAILED", item.gate(), usage.finish(item.progress()));
     }
 
+    /** Who asked for a revision, under which answer identity, and what they wrote (decision 8). */
+    public record Revision(String resolver, String key, String note) {}
+
+    public static WorkItemEvent revised(WorkItemEvent item, Revision revision) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent registered(WorkItemEvent item, WorkPreparation preparation) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent registrationRefused(WorkItemEvent item, String reason) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     /** Whether this gate asks about a written artifact of the item's draft, rather than permission to run (A6). */
     public static boolean resultGate(WorkItemEvent item, WorkGate gate) {
         return gate != null && item.draft() != null && DRAFT_PHASES.contains(gate.phase()) && gate.phase().equals(item.phase())

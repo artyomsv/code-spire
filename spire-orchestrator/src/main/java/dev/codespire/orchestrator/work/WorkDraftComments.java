@@ -19,6 +19,11 @@ import java.sql.SQLException;
 @ApplicationScoped
 public class WorkDraftComments {
     static final String SPECIFICATION_HEAD = "Specification written by the factory";
+    static final String PLAN_HEAD = "Plan written by the factory";
+
+    static String plan(java.util.List<WorkArtifacts.Step> steps, String sha256, UntrustedText.Markup markup) {
+        throw new UnsupportedOperationException("RED");
+    }
 
     @Inject WorkSourceEffects effects;
     @Inject WorkSourceRegistry sources;

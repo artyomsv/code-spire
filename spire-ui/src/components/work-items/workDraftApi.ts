@@ -5,9 +5,12 @@ import { workRefusal } from './workReasons';
 export interface DraftComment { state: string; ref: string | null }
 /** A specification or plan the factory wrote (M4 slice 3), decrypted for an operator who may read the item. */
 export interface WrittenArtifact { text: string; sha256: string; comment: DraftComment | null }
+/** One step of a plan the factory wrote: what to change, and how anyone can tell it is done. */
+export interface PlanStep { id: string; title: string; instruction: string; doneWhen: string }
+export interface WrittenPlan extends WrittenArtifact { steps: PlanStep[] }
 export interface WorkDraftView {
   specification: WrittenArtifact | null;
-  plan: WrittenArtifact | null;
+  plan: WrittenPlan | null;
   revisions: { specification: number; plan: number };
   /** The ticket, linked while the comment has no link of its own. */
   ticketLink: string;

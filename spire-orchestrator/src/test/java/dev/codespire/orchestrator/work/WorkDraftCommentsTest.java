@@ -32,4 +32,26 @@ class WorkDraftCommentsTest {
         assertFalse(text.contains("&lt;"), text);
         assertTrue(text.contains("on the dashboard"), text);
     }
+
+    static final java.util.List<WorkArtifacts.Step> STEPS = java.util.List.of(
+            new WorkArtifacts.Step("TEST-s1", "@TEST-user <b>x</b>", "TEST-instruction", "TEST-done"),
+            new WorkArtifacts.Step("TEST-s2", "[~accountid:TEST-1] !https://TEST.example.test/p.png!", "TEST-instruction", "TEST-done"));
+
+    /** The step titles are a list outside any quote block, so each is neutralised for the tracker's markup (A13). */
+    @Test
+    void thePlanCommentIsNeutralisedOnMarkdown() {
+        String text = WorkDraftComments.plan(STEPS, DIGEST, UntrustedText.Markup.MARKDOWN);
+
+        assertTrue(text.startsWith(WorkDraftComments.PLAN_HEAD), text);
+        assertTrue(text.contains(DIGEST), text);
+        assertTrue(text.contains("1. @\u200BTEST-user &lt;b>x&lt;/b>"), text);
+        assertFalse(text.contains("<b>"), text);
+    }
+
+    @Test
+    void thePlanCommentIsNeutralisedOnJira() {
+        String text = WorkDraftComments.plan(STEPS, DIGEST, UntrustedText.Markup.WIKI);
+
+        assertTrue(text.contains("2. \[~accountid:TEST-1] \!https://TEST.example.test/p.png\!"), text);
+    }
 }

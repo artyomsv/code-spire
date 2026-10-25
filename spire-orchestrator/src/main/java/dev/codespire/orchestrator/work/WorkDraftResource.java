@@ -36,7 +36,9 @@ public class WorkDraftResource {
     public record Written(String text, String sha256, Comment comment) {}
     public record Revisions(int specification, int plan) {}
     /** @param ticketLink the ticket, which the screen links while the comment has no address of its own */
-    public record View(Written specification, Written plan, Revisions revisions, String ticketLink) {}
+    /** The plan as written, and its steps in order. */
+    public record Plan(String text, String sha256, Comment comment, List<WorkArtifacts.Step> steps) {}
+    public record View(Written specification, Plan plan, Revisions revisions, String ticketLink) {}
 
     @GET
     public View read(@PathParam("id") String id) {
