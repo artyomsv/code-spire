@@ -49,6 +49,19 @@ is decided and never enters the held store. The orchestrator projects `RunWorkAr
 pushed ref, charges it under the run's kind, and neither proposes it nor hands it to the work-run inbox. Nothing
 dispatches one yet.
 
+`WorkItemEvent` gains the component `draft` (`WorkDraft`, M4 slice 3, A4), carried by every wither:
+`mode` (`generated`), the stored `specification` and `plan` references (`STORED` only), the revision counts (at most
+3 per phase), the two approvals, the `baseCommit` the specification read and the `setupRevision` it was written
+under. When the orchestrator's `spire.work.generated-preparation` is on and the repository prepares `generated`,
+`WorkDraftLifecycle.admitGenerated` records it on an item not admitted before (never observed, or observed with no
+admitted profile), so items selected before a switch stay where they are (A16). Such an item in spec waits at
+`spec / awaiting_input / specification_to_write`, milestone `DRAFT_ADMITTED`. Entering spec or plan while the draft
+lacks that phase's artifact parks an ordinary entry at `specification_to_write` or `plan_to_write` (milestone
+`DRAFT_WAITING`), with no gate and no attempt; only the draft sweep enters with `EntryMode.DRAFT`, which skips the
+permission gate (the setting admits the run, A6) after off, unknown usage and the caps, and starts the attempt. A
+spec or plan gate on a drafted item binds that artifact's SHA-256 (`WorkGate.artifactOf`). Spec and plan runs count
+toward wall clock, cost and calls, never toward runs or steps.
+
 Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
 effects. Deliberate authorized commands are classified before generic comment takeover. Resume
 requires the server-derived operator subject, expected revision and note, fresh issue/repository/

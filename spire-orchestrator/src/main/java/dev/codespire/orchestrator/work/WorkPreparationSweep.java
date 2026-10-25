@@ -36,6 +36,11 @@ import org.jboss.logging.Logger;
  * compared under lock, the item's revision, status, attempts and open gate are checked, and the
  * decision is appended in one transaction. A sweep that loses a race is refused exactly as a second
  * operator would be.
+ *
+ * <p>It copies only items admitted as {@code composed} (M4 slice 3, A5). The ITEM's recorded mode decides, not the
+ * repository's setting now: a switch applies only to items admitted after it (A16), so an item admitted composed is
+ * still copied after its repository switches to generated, and one admitted generated, which {@link WorkDraftSweep}
+ * starts, is never copied after a switch back.
  */
 @ApplicationScoped
 public class WorkPreparationSweep {
@@ -108,7 +113,7 @@ public class WorkPreparationSweep {
                   LEFT JOIN work_item_preparation_attempt a
                          ON a.work_item_id = i.id AND a.generation = i.generation
                  WHERE i.phase = 'spec' AND i.workflow_status = 'awaiting_input'
-                   AND i.reason = 'specification_required'
+                   AND i.reason = 'specification_required' AND i.preparation_mode = 'composed'
                    AND (a.retry_after IS NULL OR a.retry_after <= now())
                  -- Never-attempted items first, then whichever has been due longest. Ordering by the
                  -- item's own age instead let a cohort of old, permanently failing rows come due again
@@ -156,7 +161,7 @@ public class WorkPreparationSweep {
      * attempt actually captured, so the two cannot disagree across the gap between them.
      */
     private static boolean automatic(WorkItemEvent item) {
-        return item.preparation() == null && "spec".equals(item.phase())
+        return item.preparation() == null && item.draft() == null && "spec".equals(item.phase())
                 && "awaiting_input".equals(item.workflowStatus())
                 && "specification_required".equals(item.reason());
     }
@@ -200,23 +205,8 @@ public class WorkPreparationSweep {
                            List<dev.codespire.contract.event.EventEnvelope> history, long expectedRevision,
                            WorkItemEvent item, long generation) {
         BuildDefaults.Defaults setup = defaults.get(item.repositoryId());
-        if (!setup.set()) return refuse(id, generation, expectedRevision, "build_defaults_missing");
-        // What the dispatch will ask, asked before an approval is opened on it. Without this, disabling
-        // a model after the setup was saved still produced a decision whose build was already refused.
-        boolean subscription = dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(setup.payWith());
-        try {
-            // A subscription is not priced per token, so the price list neither enables nor blocks it.
-            if (!subscription && models.isDisabled(setup.model())) return refuse(id, generation, expectedRevision, "model_disabled");
-            var unpriced = subscription ? java.util.List.<dev.codespire.contract.review.TokenType>of()
-                    : pricer.unpricedTypes(setup.model(), setup.harness());
-            if (!unpriced.isEmpty()) return refuse(id, generation, expectedRevision, "model_pricing_incomplete:"
-                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
-            // The setup was checked against the image it was saved for; the harness may run another now.
-            var cannotRun = catalogues.refusal(setup.harness(), setup.model(), setup.effort());
-            if (cannotRun.isPresent()) return refuse(id, generation, expectedRevision, cannotRun.get());
-        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unavailable) {
-            return refuse(id, generation, expectedRevision, "catalogue_unavailable");
-        }
+        String local = localRefusal(setup);
+        if (local != null) return refuse(id, generation, expectedRevision, local);
 
         var observed = transitions.observe(item.sourceId(), item.issue());
         if (observed.evidence().failure() != null) return refuse(id, generation, expectedRevision, observed.evidence().failure());
@@ -267,6 +257,30 @@ public class WorkPreparationSweep {
         // The reason is the workflow's own: a plan gate opens as approval_required, an autonomous item
         // goes straight on. Both are prepared; only the sentence differs.
         return new Result(true, outcome.reason());
+    }
+
+    /**
+     * What the dispatch will ask, asked before an approval is opened on it, from the database alone. Without this,
+     * disabling a model after the setup was saved still produced a decision whose build was already refused. The
+     * draft sweep asks the same before it starts a specification run (M4 slice 3).
+     *
+     * @return the refusal, or null when the setup may run
+     */
+    String localRefusal(BuildDefaults.Defaults setup) {
+        if (!setup.set()) return "build_defaults_missing";
+        boolean subscription = dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(setup.payWith());
+        try {
+            // A subscription is not priced per token, so the price list neither enables nor blocks it.
+            if (!subscription && models.isDisabled(setup.model())) return "model_disabled";
+            var unpriced = subscription ? java.util.List.<dev.codespire.contract.review.TokenType>of()
+                    : pricer.unpricedTypes(setup.model(), setup.harness());
+            if (!unpriced.isEmpty()) return "model_pricing_incomplete:"
+                    + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(","));
+            // The setup was checked against the image it was saved for; the harness may run another now.
+            return catalogues.refusal(setup.harness(), setup.model(), setup.effort()).orElse(null);
+        } catch (dev.codespire.orchestrator.llm.LlmModelRegistry.CatalogueUnavailable unavailable) {
+            return "catalogue_unavailable";
+        }
     }
 
     /** The head of the default base branch, through the repository's own account (decision 2A). */
@@ -329,7 +343,7 @@ public class WorkPreparationSweep {
      * <p>The generation is the one the attempt BEGAN in. Re-reading it here would let a slow attempt
      * impose its obsolete reason and backoff on a generation that was re-admitted while it ran.
      */
-    private void record(String id, long generation, long expectedRevision, String reason) {
+    void record(String id, long generation, long expectedRevision, String reason) {
         // The WHERE is the whole point, and it guards BOTH branches: when the item has moved on, the
         // SELECT yields no row, no insert is attempted, and no conflict update runs either.
         //
@@ -360,7 +374,7 @@ public class WorkPreparationSweep {
     }
 
     /** A prepared generation has nothing left to report. */
-    private void clear(String id, long generation) {
+    void clear(String id, long generation) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
                 "DELETE FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=?")) {
             ps.setString(1, id); ps.setLong(2, generation); ps.executeUpdate();

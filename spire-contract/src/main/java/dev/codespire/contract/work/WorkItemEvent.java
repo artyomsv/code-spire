@@ -53,25 +53,26 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
 
     public WorkItemEvent withMilestone(String value) {
         return new WorkItemEvent(workItemId, sourceId, repositoryId, issue, generation, policyRevision, admittedProfile,
-                admittedModes, authority, policy, phase, workflowStatus, reason, admittedLimits, value, gate, progress,preparation,control,null);
+                admittedModes, authority, policy, phase, workflowStatus, reason, admittedLimits, value, gate, progress,preparation,control,draft);
     }
 
     public WorkItemEvent decision(long revision, Authority observed, WorkPolicy.Selection selection, String nextPhase,
                                   String status, String why, String event, WorkGate nextGate, WorkProgress nextProgress) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,revision,admittedProfile,admittedModes,
-                observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,null);
+                observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,draft);
     }
+    /** Carries the draft unchanged; what readmission keeps of it is slice 11's decision. */
     public WorkItemEvent readmit() {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
-                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false),preparation,control,null);
+                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false),preparation,control,draft);
     }
     public WorkItemEvent controlled(WorkControl value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
-                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,value,null);
+                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,value,draft);
     }
     public WorkItemEvent prepared(WorkPreparation value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
-                authority,policy,phase,workflowStatus,reason,admittedLimits,"ARTIFACTS_REGISTERED",gate,progress,value,control,null);
+                authority,policy,phase,workflowStatus,reason,admittedLimits,"ARTIFACTS_REGISTERED",gate,progress,value,control,draft);
     }
     /** The generated item's draft (M4 slice 3, A4); the milestone is the decision's that records it. */
     public WorkItemEvent drafted(WorkDraft value) {

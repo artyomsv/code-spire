@@ -63,7 +63,7 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
-## Specification, plan and steps (M4 slice 3, orchestrator V96–V97)
+## Specification, plan and steps (M4 slice 3, orchestrator V96–V98)
 
 V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
 existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
@@ -74,6 +74,22 @@ run built. There is no `phase` column: verify is not a run, and `kind` already n
 V97 replaces the `factory_run_failure_cause_closed` CHECK with V46's set plus `ARTIFACT_MISSING`: a specification
 or plan run that handed over no artifact. A run that did hand one over is `succeeded` with a null `pushed_ref`; the
 artifact's text is not stored on `factory_run`.
+
+V98 adds `work_prepare_effect`, one row per specification or plan attempt (`attempt_id`), inserted with the
+`PHASE_STARTED` that enters spec or plan for an item carrying a draft (`WorkDraftProjection`, `ON CONFLICT DO
+NOTHING`). `kind` is `SPEC` or `PLAN`; `state` runs `pending`, `uncertain`, `sent`, `done`, or ends `refused` (the
+invalidating milestones refuse a pending row with `work_item_invalidated`, as for the run and verify effects).
+`provisional_digest` and `setup_revision` are written by the dispatcher's claim; `note`, `validation_error` and
+`result_payload` are Tink-encrypted under AADs naming the attempt. V98 also adds `work_item.preparation_mode`
+(`composed`, `generated`), projected from the item's draft: the mode it was admitted under, which the copy sweep
+(`composed`) and the draft sweep (`generated`) select on, so a repository switched later changes only items admitted
+after the switch (A16). It widens the V93 `work_tracker_outbox.effect_class` CHECK with `draft`: a ticket comment
+carrying a written specification or plan, bound to the generation and the draft attempt, never the item revision.
+The plan named this migration V97; slice 4 took that number for `ARTIFACT_MISSING`.
+
+The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
+and plan references, the revision counts, the two approvals, the base commit the specification read and the setup
+revision. It holds references only; the text is stored encrypted, as a composed task's is.
 
 ## M3 repository ownership (ADR-042, slices 1–2)
 

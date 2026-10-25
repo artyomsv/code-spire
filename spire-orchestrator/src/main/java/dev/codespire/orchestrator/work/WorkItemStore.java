@@ -23,6 +23,9 @@ public class WorkItemStore {
     @Inject WorkItemTransitions transitions;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
+    @Inject GeneratedPreparation generatedPreparation;
+    @Inject dev.codespire.orchestrator.factory.BuildDefaults buildDefaults;
+    @Inject WorkDraftProjection drafts;
 
     public List<EventEnvelope> history(String id) {
         if (!id.matches("work-v1-[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid work item id");
@@ -67,6 +70,9 @@ public class WorkItemStore {
                     if(rs.next())next=next.controlled(new WorkControl(null,null,null,null,null,null,null,null,rs.getString(1)));
                 }
             }
+            // Before admission, so a drafted item is never turned into a spec permission gate (M4 slice 3, A16).
+            if (generatedPreparation.enabled() && dev.codespire.orchestrator.factory.BuildDefaults.GENERATED.equals(buildDefaults.get(c, current.repositoryId(), false).preparation()))
+                next = WorkDraftLifecycle.admitGenerated(previous, next);
             next = transitions.admission(next, history.size());
             if (next.equals(previous)) { sources.health(current.id(), "healthy"); return id; }
             appendDecision(c, history, next, deliveryId);
@@ -130,6 +136,9 @@ public class WorkItemStore {
             try(PreparedStatement ps=c.prepareStatement("UPDATE work_verify_effect SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending'")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_prepare_effect SET state='refused',reason='work_item_invalidated',updated_at=now() WHERE work_item_id=? AND state='pending'")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
         }
         boolean takenOver=Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone());
         if(prEnded || takenOver) {
@@ -153,6 +162,7 @@ public class WorkItemStore {
         try(PreparedStatement ps=c.prepareStatement("UPDATE work_item SET slot_reserved=? WHERE id=?")) {
             ps.setBoolean(1,item.progress().reserved());ps.setString(2,item.workItemId());ps.executeUpdate();
         }
+        drafts.project(c,item);
         WorkGate gate=item.gate();
         if(gate!=null)try(PreparedStatement ps=c.prepareStatement("""
                 INSERT INTO work_item_gate(id,work_item_id,generation,phase,state,version,item_revision,policy_revision,artifact,

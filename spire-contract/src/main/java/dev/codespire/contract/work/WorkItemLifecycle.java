@@ -13,7 +13,7 @@ public final class WorkItemLifecycle {
                                           long policyRevision, WorkItemEvent.Authority authority, WorkPolicy.Selection policy, WorkItemEvent previous) {
         if(previous!=null && previous.policyRevision()==policyRevision && previous.authority().equals(authority)
                 && previous.policy().equals(policy) && previous.issue().equals(issue))return previous;
-        if (previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus()) || previous.preparation() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
+        if (previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus()) || previous.preparation() != null || previous.draft() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
             return previous.decision(policyRevision,authority,policy,previous.phase(),previous.workflowStatus(),previous.reason(),
                     "POLICY_OBSERVED",previous.gate(),previous.progress());
         String intake = policy.effective().getOrDefault(WorkPolicy.Phase.INTAKE, "off");
@@ -86,6 +86,8 @@ public final class WorkItemLifecycle {
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
+        WorkItemEvent drafted=WorkDraftLifecycle.enter(item,new WorkDraftLifecycle.Entry(entry==EntryMode.DRAFT,available,decisionId,now));
+        if(drafted!=null)return drafted;
         boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
         if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);

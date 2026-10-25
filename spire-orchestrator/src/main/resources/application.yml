@@ -508,6 +508,7 @@ spire:
   spire:
     work-gate-expiry-interval: "off"
     work-preparation-interval: "off"
+    work-draft-interval: "off"
     harness-catalogue-interval: "off"
     harness-sign-in-retry-interval: "off"
     seat-renewal-interval: "off"

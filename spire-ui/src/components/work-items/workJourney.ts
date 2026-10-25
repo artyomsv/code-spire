@@ -87,6 +87,7 @@ export interface NextAction {
   to: string;
 }
 
+// specification_to_write and plan_to_write are not here: the factory writes those drafts itself (M4 slice 3).
 const PREPARATION_REASONS = new Set(['specification_required', 'artifacts_changed', 'artifacts_unavailable', 'single_step_plan_required',
   'artifacts_changed_requires_new_decision']);
 

@@ -15,6 +15,9 @@ const REASONS = new Map(Object.entries({
   already_prepared: 'This task is already prepared.',
   work_item_unknown: 'That work item no longer exists.',
   specification_required: 'A specification is required before work can continue.',
+  // Generated preparation (M4 slice 3): the factory writes these itself, so nobody is asked to prepare the task.
+  specification_to_write: 'The factory will write the specification with the build model, from this ticket and the repository.',
+  plan_to_write: 'The factory will write the plan with the build model, from the approved specification.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',
   base_branch_blank: 'A base branch is required.',
