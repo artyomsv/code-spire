@@ -231,7 +231,7 @@ public class BuildDefaults {
         String preparation = strip(typed);
         if (preparation == null) return null;
         if (!PREPARATIONS.contains(preparation)) throw new Refused("preparation_invalid");
-        if (preparation.equals(GENERATED) && !generatedPreparation.enabled()) throw new Refused("generated_preparation_off");
+        // mutant: flag check removed
         return preparation;
     }
 
