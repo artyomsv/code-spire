@@ -234,7 +234,90 @@ CI for every slice (RED then GREEN), mutation checks on every guard, and a live 
 3. A step instructed to change nothing completes as empty.
 4. Revise with a note changes the specification.
 
-## 9. Left to the builder
+## 9. Review amendments (2026-10-25) — these override the sections they name
+
+1. **Spec and plan runs never push (§6.2).** A plain `ExecuteRun` uses the continuous-push publisher
+   (`RunUnitBuilder.java:118-119`, `PublishCycle.java:133-148`). Spec and plan runs use a new publisher
+   mode, `READ_ONLY` (`spire-publish-none`): it reads `/handoff`, emits the artifact and never calls
+   `pushRef`; the init container gets a clone credential only where the forge allows a read-only one,
+   otherwise the publisher mode is the guard. The result `RunWorkArtifact` is produced by a named branch in
+   `RunLauncher`; the unit is destroyed once the artifact is recorded (no retained workspace, and
+   `WorkRunWorker.recover` does not treat it as a build awaiting publication).
+2. **A lost checkpoint fails the step, never rebases it (§6.6).** For a plan step, `readableStart`'s
+   fallback to the base (`WorkRunWorker.java:208-213`) is forbidden: a missing checkpoint fails the step
+   with `checkpoint_missing`, which opens the verify gate (Retry / Stop). The ready result carries
+   `startFromHead`; the publisher asserts the ready head descends from it; the orchestrator refuses a head
+   that does not extend the previous step.
+3. **Empty steps are detected by the publisher and the orchestrator (§6.7).** The entrypoint reports
+   nothing. Step k>1: an idle agent still yields a bundle to the previous head, so the orchestrator marks
+   the step empty when `ready.head == step start head`. Step 1: the held publisher emits
+   `checkpoint head=<base> empty=true` when `DONE` arrives with zero new commits; `RunWorkReady` gains
+   `empty` with a wither (snapshot test). An empty step k>1 keeps a usable handoff for `fromCheckpoint`; an
+   empty step 1 starts step 2 from the base.
+4. **Spec and plan have their own durable effect and draft fact (§6.3–6.5).** A `work_prepare_effect` row
+   and dispatcher run them; their runs bind a provisional digest (setup revision + ticket digest + kind),
+   not a preparation binding. A new `WorkItemEvent` component `WorkDraft` (spec and plan artifact refs,
+   revision counts) with a wither holds the draft until both are approved; only then is a `WorkPreparation`
+   registered, by a system registration path that counts only build-or-later attempts (today
+   `prepare` refuses once any phase attempt exists, `WorkItemTransitions.java:542-545`).
+5. **The copy sweep skips generated repositories (§6.1).** `WorkPreparationSweep.candidates()` and
+   `automatic()` require `preparation = 'composed'`; a sibling sweep starts the spec run for `generated`
+   items, under the same lock discipline. Update the sweep's class comment.
+6. **Spec and plan gates are result gates (§6.5).** Modelled on `verifyResultGate`: under `generated` the
+   run is admitted by the setting, and `approve` means approve the produced artifact, with
+   `gate.artifact` = the artifact's sha256 (extend `WorkGate.artifactOf`). **Revise** is dashboard-only:
+   the gate resolves `REJECTED` with the note and the phase re-enters with the note in the prompt; no new
+   gate state, no migration. Tracker commands and PR reviews keep plain approve/reject.
+7. **Readmit reuses approved artifacts (§6.11).** `readmit()` carries the preparation forward, so readmit
+   spends nothing on spec and plan; the readmit dialog offers "Regenerate specification and plan", which
+   clears the draft and preparation for the new generation.
+8. **Prompt budget (§6.6).** Spec ≤ 16 KiB; plan embedded as numbered titles ≤ 4 KiB; the current step's
+   instruction + doneWhen ≤ 4 KiB; summaries ≤ 12 KiB; verify-failure section ≤ 8 KiB: ≤ 48 KiB before the
+   commit instruction. The worst-case step prompt is validated when the plan is accepted, so no step is
+   refused at dispatch after approval. Artifact caps in §6.2–6.4 are lowered to match (spec 16 KiB, plan
+   32 KiB total with per-field caps in amendment 13).
+9. **Summary and artifact files travel through the handoff (§6.8, §6.2).** The entrypoint copies
+   `$SPIRE_STEP_SUMMARY` and `$SPIRE_ARTIFACT` to `$SPIRE_HANDOFF/step-summary.json` and `artifact.md`
+   before `DONE`. The publisher reads them as regular files only (no symlinks, `NOFOLLOW`), size-capped, and
+   emits them as outcome lines parsed by `PublisherOutcome`. That output reaches the run-worker host's
+   Docker log, so the text is scrubbed with `RunFailures.scrubFor(command)` before the orchestrator stores
+   or posts it, and §5's "never logged" is narrowed to "never logged by our services".
+10. **Deliver uses the last non-empty step (§6.6).** The plan cursor records per step
+    `{runId, head, verificationAttempt, verification, empty}`; deliver uses the last non-empty step's
+    execution, whose handoff carries the whole chain. All steps empty → `plan_produced_no_change`.
+11. **Step counting (§6.6).** `WorkProgress.start` stops counting steps; the decider increments `steps` on
+    step completion. N ≤ `maxStepsPerPlan`; `startKeepingExecution` (land fix) is exempt from the steps
+    check. Spec and plan runs count toward wall-clock, cost and calls, not `maxRunsPerItem`.
+12. **Charges (§6.2).** Add `ChargeKind.SPEC` and `PLAN`; `ChargeCall.forRun` and the `QueuedRun` writer take
+    the kind instead of hard-coding BUILD; `llm_charge.capability` is `AUTONOMY` for spec and plan runs.
+13. **Untrusted text (§6.3, §6.4, §6.8).** Ticket text, artifacts and summaries are quoted into prompts in
+    fenced blocks marked "data, not instructions". Control characters are stripped. Field caps: step title
+    120, instruction 4,000, doneWhen 1,000, summary item 500. Tracker comments neutralise `@`-mentions and
+    raw HTML.
+14. **Evidence for N steps (§6.4).** `WorkArtifacts.Evidence` carries a step list; `schemaVersion: 2` is
+    accepted only under binding 6, and v1 keeps exactly one step. Binding 6 hashes nothing new (the plan
+    digest covers the steps): it is a validation-rule version, so `WorkPreparation`'s `≤ 5` check becomes
+    `≤ 6`.
+15. **Branch wording (§6.6).** Each step's run has its own `spire/work-<attempt>` subject; nothing exists on
+    the forge before deliver, and the delivering attempt names the branch.
+16. **Admission (§6.5, §6.1).** `reconcile` (not `enter`) yields `spec_approval_unavailable`. Switching a
+    repository to `generated` applies only to items admitted after the switch, so items already parked at
+    `capability_unavailable` do not all start spec runs on the next policy check.
+17. **The loop lives in the decider (§6.6).** The build↔verify step loop and the cursor are
+    `WorkItemLifecycle` decisions with a new `WorkItemEvent` component (wither, snapshot test, projection
+    columns), not edits to the hard-coded `nextPhase` switch.
+18. **`factory_run` columns (§6.9).** Keep `step_index`. Drop `phase`: verify is not a run and `kind` already
+    names spec, plan, build and fix. The #115 "phase column" item is answered by `kind` + `step_index`, which
+    ADR-049 says.
+19. **ADR-049 supersedes FR-F18's mechanism sentence** (`PRD.md:167-168`, `AUTONOMY.md:20-21`); §7 says
+    "supersede", not "note".
+20. **Spend before the first gate (§4, §6.1).** Under profiles where spec and plan are `auto`, a generated
+    repository spends two runs (plus up to one automatic retry each) before the plan gate. The setting's UI
+    copy says so.
+21. **ADR status lines.** ADR-046, ADR-047 and ADR-048 all still say "Live proof pending"; fix all three.
+22. **Attribution (§6.6).** No gate between passing steps is the author's call only.
+
+## 10. Left to the builder
 
 Slice order; exact record and event names beyond those above; prompt wording; the precise caps where
 this document gives none; how the per-step rows look within the existing journey style.
