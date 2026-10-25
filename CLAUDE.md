@@ -40,20 +40,21 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..048. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`, M4 slice 2 land accepted 2026-10-25 in `LAND-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..048. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-10-18**. Delivery history is in docs/HISTORY.md; the
+Measured on **2026-10-25**. Delivery history is in docs/HISTORY.md; the
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
 proving slices and reviews, the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
 the live proof of "one ticket to a build", the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
-the live proof of verify, and the [GitHub reviews acceptance record](docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md)
-the live proof of forge-native reviews. **M3, M3.5 and M4 slice 1 are on master; GitHub reviews are
-accepted on PR #196.** An item now builds, verifies, delivers a PR, gets a GitHub review with a
-verdict, and stops at the land gate; land (ADR-048) is built and awaits live acceptance.
+the live proof of verify, the [GitHub reviews acceptance record](docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md)
+the live proof of forge-native reviews, and the [land acceptance record](docs/factory/LAND-ACCEPTANCE.md)
+the live proof of land. **M3, M3.5, M4 slices 1 and 2 and GitHub reviews are on master.** On GitHub an
+item now builds, verifies, delivers a PR, gets a review with a verdict, and on an approved land is
+merged, its branch deleted and its ticket told. Next is M4's specification, plan and step continuity.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -138,19 +139,22 @@ verdict, and stops at the land gate; land (ADR-048) is built and awaits live acc
   with 3 inline comments, #56 commented with the merge box untouched, and the re-run on PR 55
   dismissed its hold. The proof fixed the inline read-back endpoint and the re-run review reuse.
 
-- **M4 slice 2: land is built on `feat/m4-land` (PR #243, ADR-048), live acceptance pending.** On GitHub
-  an approved land merges the pull request at the approved head, deletes the item branch and comments on
-  the ticket (closing it is a per-repository choice). A code refusal loops through a land fix to a new land
-  gate; anything else is handed to the operator. A merge or close by hand completes or stops the item.
+- **M4 slice 2: land is delivered** (accepted 2026-10-25, PR #243 merged as `1e237631`, ADR-048). On
+  GitHub an approved land merges the pull request at the approved head through a durable
+  `work_land_effect` row, deletes the item branch and comments on the ticket (closing it is a
+  per-repository rule). A code refusal loops through a land fix to a new land gate; anything else is
+  handed to the operator (Retry land or Stop land). A merge or close by hand completes or stops the item,
+  noticed by the factory webhook, the reviewer's close or a 2-minute pull request read. Live on
+  `spire-test`: #58 merged with its ticket left open, #60 merged and closed, #62's conflict fixed and
+  merged on a new gate, #64 and #68 merged by hand and completed, #66 blocked by a ruleset and handed
+  over. The proof fixed hand merges unseen without a FACTORY webhook, and four dashboard defects.
 
 **Limits that remain:**
 
-- **Land is built but not accepted live (ADR-048).** On GitHub an approved land merges at the
-  approved head through a durable `work_land_effect` row; a lost merge answer is recovered by reading,
-  never re-sent. A failed check, a conflict or a branch behind its base loops through a land fix on
-  the same pull request; anything else hands the item to the operator (Retry land or Stop land).
-  Readmit is refused after a landing and while an item waits at land. All of it is proven against a
-  WireMock GitHub only; no item has been merged live (docs/UNVERIFIED.md, the M4 land entry).
+- **Some land paths are proven against a WireMock GitHub only:** the failing-check land fix, a check
+  that is not code, exhausted fix attempts, Retry land, uncertain-merge recovery, a failed branch
+  delete and the Jira close skip. A hand merge records the method as `unknown`. Land `auto_if_green`
+  is unwired; GitLab and Bitbucket cannot land (docs/UNVERIFIED.md, the M4 land entry).
 - **Live item publication is GitHub only.** Marking a draft ready is refused on GitLab and
   Bitbucket. GitLab and Bitbucket reviews are posted as comments; GitHub gets a pull request review
   (ADR-047).

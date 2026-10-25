@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## The software factory — M0 to M3.5, M4 verify and GitHub reviews delivered, land built (updated 2026-10-22)
+## The software factory — M0 to M3.5, M4 verify and land, and GitHub reviews delivered (updated 2026-10-25)
 
 The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
 item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
@@ -26,11 +26,12 @@ each shipped and what the build taught that the design had wrong, [`HISTORY.md`]
 delivery log, and the [M3](factory/M3-ACCEPTANCE.md) and [M3.5](factory/M35-ACCEPTANCE.md) acceptance
 records. **M4 slice 1, verify, is accepted (2026-10-08, [record](factory/M4-VERIFY-ACCEPTANCE.md)), and GitHub
 reviews are accepted (2026-10-18, PR #196, [record](factory/GITHUB-REVIEWS-ACCEPTANCE.md)).** An item now builds,
-verifies, delivers a pull request, gets a GitHub review with a verdict, and stops at the land gate.
-**Land is built** on `feat/m4-land` (PR #243, ADR-048) and awaits its live acceptance: on GitHub an
-approved land merges the pull request at the approved head, a refusal caused by code loops through
-build, verify, delivery and review to a new land gate, anything else is handed to the operator, and a
-merge by hand completes the item.
+verifies, delivers a pull request, gets a GitHub review with a verdict, and on an approved land is merged.
+**M4 slice 2, land, is accepted** (2026-10-25, PR #243, ADR-048, [record](factory/LAND-ACCEPTANCE.md)): on
+GitHub an approved land merges the pull request at the approved head, deletes the branch and tells the
+ticket; a refusal caused by code loops through build, verify, delivery and review to a new land gate,
+anything else is handed to the operator, and a merge by hand completes the item. **Next is the rest of
+M4:** the specification, the multi-step plan and step continuity.
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates.
 
