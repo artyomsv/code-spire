@@ -35,6 +35,9 @@ public class RunResultSaga {
     @Inject
     dev.codespire.orchestrator.work.WorkItemRunBridge workItems;
 
+    @Inject
+    dev.codespire.orchestrator.work.WorkDraftResults drafts;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {

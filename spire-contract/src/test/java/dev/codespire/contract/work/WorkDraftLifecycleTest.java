@@ -296,6 +296,123 @@ class WorkDraftLifecycleTest {
         assertEquals("policy_cap_reached", next.reason());
     }
 
+    static final WorkDraft.Written WRITTEN = new WorkDraft.Written(WorkDraftTest.stored('a'), "c".repeat(40), 1);
+    static final WorkDraftLifecycle.RunUsage USAGE = new WorkDraftLifecycle.RunUsage(5, 0, 1, true);
+    static final WorkItemLifecycle.GateOpening OPENING = new WorkItemLifecycle.GateOpening(6, Instant.EPOCH, UUID.randomUUID());
+
+    WorkItemEvent started(WorkPolicy.Profile profile) {
+        WorkItemEvent started = enter(admit(profile), false, WorkItemLifecycle.EntryMode.DRAFT);
+        assertEquals("spec / active / phase_started", state(started));
+        return started;
+    }
+
+    @Test
+    void specApproveOpensAResultGateOnTheArtifact() {
+        WorkItemEvent written = WorkDraftLifecycle.written(started(profile("auto", "approve", "approve")), WRITTEN, USAGE);
+        assertEquals("DRAFT_ARTIFACT_WRITTEN", written.milestone());
+        assertEquals("completed", written.progress().attemptState());
+        assertEquals(WRITTEN.artifact(), written.draft().specification());
+
+        WorkItemEvent next = WorkDraftLifecycle.afterWritten(written, OPENING);
+
+        assertEquals("spec / waiting_approval / specification_written", state(next));
+        assertEquals("GATE_OPENED", next.milestone());
+        assertEquals("spec", next.gate().phase());
+        assertEquals("a".repeat(64), next.gate().artifact());
+        assertEquals(OPENING.historySize() + 1, next.gate().itemRevision());
+        assertTrue(WorkDraftLifecycle.resultGate(next, next.gate()));
+    }
+
+    @Test
+    void specAutoMovesToPlan() {
+        WorkItemEvent written = WorkDraftLifecycle.written(started(profile("auto", "auto", "auto")), WRITTEN, USAGE);
+
+        WorkItemEvent next = WorkDraftLifecycle.afterWritten(written, OPENING);
+
+        assertEquals("DRAFT_APPROVED", next.milestone());
+        assertEquals("plan", next.phase());
+        assertTrue(next.draft().specificationApproved());
+        assertNull(next.gate());
+        WorkItemEvent parked = enter(next, false, WorkItemLifecycle.EntryMode.ORDINARY);
+        assertEquals("plan / awaiting_input / plan_to_write", state(parked));
+        assertNull(parked.gate());
+    }
+
+    @Test
+    void approvingAResultGateMovesToPlan() {
+        WorkItemEvent gated = WorkDraftLifecycle.afterWritten(
+                WorkDraftLifecycle.written(started(profile("auto", "approve", "auto")), WRITTEN, USAGE), OPENING);
+
+        WorkItemEvent next = WorkDraftLifecycle.approved(gated);
+
+        assertEquals("plan", next.phase());
+        assertEquals("DRAFT_APPROVED", next.milestone());
+        assertTrue(next.draft().specificationApproved());
+        assertFalse(next.progress().reserved());
+    }
+
+    @Test
+    void aPermissionGateIsNotAResultGate() {
+        WorkGate gate = new WorkGate(UUID.randomUUID(), 1, "OPEN", "spec", 1, 2, 1, authority, null, Instant.EPOCH,
+                Instant.EPOCH.plusSeconds(60), null, null, null, null);
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+        WorkItemEvent waiting = WorkItemLifecycle.state(drafted, "waiting_approval", "approval_required", "GATE_OPENED", gate, drafted.progress());
+
+        assertFalse(WorkDraftLifecycle.resultGate(waiting, gate));
+    }
+
+    @Test
+    void anInvalidSpecificationRetriesInANewAttempt() {
+        WorkItemEvent started = started(profile("auto", "approve", "approve"));
+        UUID retry = UUID.randomUUID();
+
+        WorkItemEvent next = WorkDraftLifecycle.retryRequested(started, USAGE, new WorkDraftLifecycle.Restart(retry, Instant.EPOCH));
+
+        assertEquals("spec / active / phase_started", state(next));
+        assertEquals("DRAFT_RETRY_REQUESTED", next.milestone());
+        assertEquals(retry, next.progress().attemptId());
+        assertEquals("started", next.progress().attemptState());
+        assertEquals(5, next.progress().wallSeconds());
+        assertEquals(1, next.progress().calls());
+        assertEquals(0, next.progress().runs());
+    }
+
+    @Test
+    void aRetryPastTheCapsStops() {
+        WorkItemEvent started = started(profile("auto", "approve", "approve"));
+        WorkItemEvent spent = WorkItemLifecycle.state(started, started.workflowStatus(), started.reason(), started.milestone(), null,
+                started.progress().account(7195, 0, 0));
+
+        WorkItemEvent next = WorkDraftLifecycle.retryRequested(spent, USAGE, new WorkDraftLifecycle.Restart(UUID.randomUUID(), Instant.EPOCH));
+
+        assertEquals("spec / stopped / policy_cap_reached", state(next));
+    }
+
+    @Test
+    void aSecondInvalidSpecificationWaits() {
+        WorkItemEvent next = WorkDraftLifecycle.invalid(started(profile("auto", "approve", "approve")), USAGE);
+
+        assertEquals("spec / awaiting_input / spec_invalid", state(next));
+        assertEquals("completed", next.progress().attemptState());
+        assertNull(next.draft().specification());
+    }
+
+    @Test
+    void aFailedSpecRunWaitsNotFails() {
+        WorkItemEvent next = WorkDraftLifecycle.runFailed(started(profile("auto", "approve", "approve")), USAGE);
+
+        assertEquals("spec / awaiting_input / draft_run_failed", state(next));
+        assertEquals("completed", next.progress().attemptState());
+    }
+
+    @Test
+    void anUnknownUsageIsRecordedAsUnknown() {
+        WorkItemEvent next = WorkDraftLifecycle.runFailed(started(profile("auto", "approve", "approve")),
+                new WorkDraftLifecycle.RunUsage(5, 0, 1, false));
+
+        assertTrue(next.progress().usageUnknown());
+    }
+
     @Test
     void specOffStaysOff() {
         WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));

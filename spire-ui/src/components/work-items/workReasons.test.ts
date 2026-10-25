@@ -115,3 +115,9 @@ describe('draft reasons (M4 slice 3)', () => {
     expect(workReason('plan_to_write')).toContain('factory');
   });
 });
+
+describe('specification run reasons (M4 slice 3)', () => {
+  it.each(['spec_invalid', 'draft_run_failed', 'specification_written', 'draft_binding_mismatch'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});

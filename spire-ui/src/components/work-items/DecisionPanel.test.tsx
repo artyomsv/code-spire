@@ -5,6 +5,7 @@ import * as gateway from '../../api';
 import * as auth from '../../auth';
 import * as api from './approvalsApi';
 import * as preparation from './workPreparationApi';
+import * as draft from './workDraftApi';
 import DecisionPanel from './DecisionPanel';
 import PastDecisions from './PastDecisions';
 
@@ -269,4 +270,26 @@ it('Retry build answers approve, and Stop answers reject', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
   await waitFor(() => expect(decided).toHaveBeenCalledWith('Stopped after verification.'));
   expect(api.answer).toHaveBeenLastCalledWith(resultGateRow.gate, expect.any(String), false, expect.any(String));
+});
+
+// A generated item's spec gate asks about the written specification (M4 slice 3, A6), so that text is the evidence.
+const writtenSha = 'b'.repeat(64);
+function specGate(sha256: string) {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'spec', artifact: writtenSha } }]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, phase: 'spec', reason: 'specification_written', preparation: null });
+  vi.spyOn(draft, 'workDraft').mockResolvedValue({ specification: { text: '## Outcome\nTEST-written outcome', sha256, comment: { state: 'sent', ref: null } },
+    plan: null, revisions: { specification: 0, plan: 0 }, ticketLink: 'https://TEST.example/issues/42' });
+}
+it('a spec gate shows the specification as evidence', async () => {
+  specGate(writtenSha);
+  show();
+  expect(await screen.findByLabelText('Specification text')).toHaveTextContent('TEST-written outcome');
+  expect(await approvable()).toBeEnabled();
+  expect(screen.queryByText(/binds a prepared task the item no longer has/)).toBeNull();
+});
+it('a spec gate on another specification is not approvable', async () => {
+  specGate('c'.repeat(64));
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('The specification changed after this decision was opened');
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
 });

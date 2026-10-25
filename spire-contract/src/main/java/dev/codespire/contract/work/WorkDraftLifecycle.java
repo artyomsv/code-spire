@@ -12,6 +12,40 @@ public final class WorkDraftLifecycle {
     /** Where a fresh admission reaches spec before anything is written: spec auto, or spec approve (§6.5). */
     private static final Set<String> SPEC_ADMISSION_REASONS = Set.of("specification_required", "spec_approval_unavailable");
 
+    /** What a draft run spent, as the orchestrator measured it; unknown usage blocks further work, as a build's does. */
+    public record RunUsage(long wallSeconds, long costMillicents, long calls, boolean known) {}
+
+    /** The new attempt an automatic retry starts, and when. */
+    public record Restart(UUID attemptId, Instant now) {}
+
+    public static WorkItemEvent written(WorkItemEvent item, WorkDraft.Written written, RunUsage usage) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent afterWritten(WorkItemEvent written, WorkItemLifecycle.GateOpening opening) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent approved(WorkItemEvent item) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent retryRequested(WorkItemEvent item, RunUsage usage, Restart restart) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent invalid(WorkItemEvent item, RunUsage usage) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent runFailed(WorkItemEvent item, RunUsage usage) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static boolean resultGate(WorkItemEvent item, WorkGate gate) {
+        return true;
+    }
+
     /** How {@link WorkItemLifecycle#enter} was asked to enter a phase, as this class needs it. */
     public record Entry(boolean draftRun, boolean available, UUID decisionId, Instant now) {}
 

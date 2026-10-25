@@ -54,6 +54,12 @@ class RunResultSagaTest {
         saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
             @Override public boolean accept(RunResult result) { return false; }
         };
+        // Standalone runs are no draft runs either. Both methods the saga reaches are overridden: the real ones read
+        // work_prepare_effect, a database call from a plain unit test (CLAUDE.md, saga test fakes).
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
+            @Override public boolean accept(RunResult result) { return false; }
+        };
         // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
         // reads the run's row to find which pool member to mark, so leaving it null is an NPE and
         // leaving it real is a database call from a unit test.
@@ -159,6 +165,61 @@ class RunResultSagaTest {
         assertEquals(List.of(artifact), charges.charged);
         assertTrue(proposed.isEmpty(), "an artifact pushed nothing to propose");
         assertTrue(continued.isEmpty(), "a draft run has no work-run row to continue");
+    }
+
+    /**
+     * A draft run's result (M4 slice 3) belongs to the draft inbox alone: after the projection and the charge, neither
+     * the work-run bridge nor the pull request proposal sees it, a failure included.
+     */
+    @Test
+    void aDraftResultGoesNoFurtherThanItsInbox() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> drafted = new ArrayList<>();
+        List<RunResult> continued = new ArrayList<>();
+        List<RunResult> proposed = new ArrayList<>();
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
+            @Override public boolean accept(RunResult result) {
+                assertEquals(List.of(result), projection.applied);
+                assertEquals(List.of(result), charges.charged);
+                drafted.add(result);
+                return true;
+            }
+        };
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override public boolean accept(RunResult result) { continued.add(result); return false; }
+        };
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override public void propose(RunResult result) { proposed.add(result); }
+        };
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L));
+
+        saga.on(failed);
+
+        assertEquals(List.of(failed), drafted);
+        assertTrue(continued.isEmpty(), "a draft run has no work-run row");
+        assertTrue(proposed.isEmpty(), "a draft run is never proposed");
+    }
+
+    /** A draft result whose binding is not the effect row's is neither projected nor charged nor applied. */
+    @Test
+    void aForeignDraftBindingStopsTheResult() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> drafted = new ArrayList<>();
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return false; }
+            @Override public boolean accept(RunResult result) { drafted.add(result); return true; }
+        };
+
+        saga.on(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L)));
+
+        assertTrue(projection.applied.isEmpty());
+        assertTrue(charges.charged.isEmpty());
+        assertTrue(drafted.isEmpty());
     }
 
     @Test
