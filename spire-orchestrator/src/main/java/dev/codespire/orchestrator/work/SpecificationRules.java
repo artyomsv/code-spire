@@ -61,7 +61,7 @@ final class SpecificationRules {
         for (String line : lines) {
             Matcher heading = HEADING.matcher(line);
             if (heading.matches()) inside = CRITERIA.equals(heading.group(1));
-            else if (inside && LIST_ITEM.matcher(line).matches()) return true;
+            else return true;
         }
         return false;
     }
