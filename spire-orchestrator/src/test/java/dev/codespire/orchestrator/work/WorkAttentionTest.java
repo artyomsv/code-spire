@@ -32,6 +32,26 @@ class WorkAttentionTest extends WorkPolicyFixture {
         transitions.resume(itemId,store.history(itemId).size(),true);assertFalse(attention("WORK_APPROVAL_EXPIRED",issue.issueKey()));
         assertEquals("EXPIRED",transitions.gateFromHistory(itemId,gate.id()).state());
     }
+    void append(WorkItemEvent next) {
+        io.quarkus.narayana.jta.QuarkusTransaction.requiringNew().run(()->{
+            try(var c=dataSource.getConnection()){WorkItemTransitions.lockItem(c,itemId);store.appendDecision(c,store.history(itemId),next,"TEST-attention:"+UUID.randomUUID());}
+            catch(Exception failure){throw new IllegalStateException(failure);}
+        });
+    }
+    // M4 land (spec §7.10): an item land handed over has no open gate, so only this row says a person is needed.
+    @Test void aHandedItemNeedsTheOperator() throws Exception {
+        configureHigh();intake.accept(signed("900123"));WorkItemEvent item=store.load(itemId);
+        WorkExecution execution=new WorkExecution("TEST-land-run",new WorkRunBinding(itemId,item.generation(),UUID.randomUUID(),"a".repeat(64)),"b".repeat(40),null,null,
+                new dev.codespire.contract.scm.PullRequestRef(901,"https://forge.example.test/TEST-pull/901",false),"TEST-review");
+        WorkItemEvent land=item.decision(item.policyRevision(),item.authority(),item.policy(),"land","active","phase_started","PHASE_STARTED",null,
+                item.progress().start(UUID.randomUUID(),"land",Instant.EPOCH).withExecution(execution));
+        append(land);assertFalse(attention("WORK_LAND_HANDED",issue.issueKey()));
+        WorkItemEvent handed=WorkItemLifecycle.landHanded(land,"land_blocked");
+        append(handed);assertTrue(attention("WORK_LAND_HANDED",issue.issueKey()));
+        // Waiting at land for a tracker that cannot be read is not a hand-off; recheck answers it.
+        append(WorkItemLifecycle.state(handed,"awaiting_input","source_unavailable","AUTHORITY_UNAVAILABLE",null,handed.progress()));
+        assertFalse(attention("WORK_LAND_HANDED",issue.issueKey()));
+    }
     @Test void trackerRecoveryRemovesItsSourceHealthCondition() throws Exception {
         String name=sources.get(source).orElseThrow().name();
         forge.stubFor(get(urlEqualTo(path)).willReturn(aResponse().withStatus(503)));

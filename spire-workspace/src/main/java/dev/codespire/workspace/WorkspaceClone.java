@@ -5,6 +5,9 @@ import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefUpdate;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 
@@ -31,7 +34,23 @@ import java.util.Objects;
  */
 public final class WorkspaceClone {
 
+    /** Where a kept base branch lives once the remote is gone; outside {@code refs/remotes} on purpose. */
+    public static final String BASE_REF_PREFIX = "refs/spire-base/";
+
     private WorkspaceClone() {
+    }
+
+    private static void keepBase(Repository repository, String baseBranch) throws IOException {
+        Ref tracked = repository.exactRef(Constants.R_REMOTES + "origin/" + baseBranch);
+        if (tracked == null || tracked.getObjectId() == null) {
+            throw new IllegalArgumentException("the remote has no branch " + baseBranch + " to merge from");
+        }
+        RefUpdate update = repository.updateRef(BASE_REF_PREFIX + baseBranch);
+        update.setNewObjectId(tracked.getObjectId());
+        RefUpdate.Result result = update.update();
+        if (result != RefUpdate.Result.NEW && result != RefUpdate.Result.FORCED) {
+            throw new IOException("could not keep the base branch " + baseBranch + ": " + result);
+        }
     }
 
     /**
@@ -41,6 +60,17 @@ public final class WorkspaceClone {
      */
     public static void populate(String remoteUri, String baseCommit, String branch, Path workspace,
                                 GitCredential credential, String authorName, String authorEmail)
+            throws GitAPIException, IOException {
+        populate(remoteUri, baseCommit, branch, workspace, credential, authorName, authorEmail, null);
+    }
+
+    /**
+     * The same, keeping the remote's {@code baseBranch} as {@value #BASE_REF_PREFIX}{@code <baseBranch>} (M4 slice
+     * 7a). A land fix merges its pull request's base, and removing {@code origin} deletes every
+     * {@code refs/remotes/origin/*} ref, so the base is copied out of that namespace first. Null keeps nothing.
+     */
+    public static void populate(String remoteUri, String baseCommit, String branch, Path workspace,
+                                GitCredential credential, String authorName, String authorEmail, String baseBranch)
             throws GitAPIException, IOException {
         Objects.requireNonNull(remoteUri, "remoteUri");
         Objects.requireNonNull(credential, "credential");
@@ -85,6 +115,7 @@ public final class WorkspaceClone {
             config.setString("user", null, "email", authorEmail);
             config.save();
 
+            if (baseBranch != null) keepBase(git.getRepository(), baseBranch);
             git.remoteRemove().setRemoteName("origin").call();
         }
     }

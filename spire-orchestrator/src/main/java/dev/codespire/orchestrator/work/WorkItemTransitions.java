@@ -51,7 +51,7 @@ public class WorkItemTransitions {
     WorkItemEvent admission(WorkItemEvent next,long historySize) {
         if(next.gate()==null && "capability_unavailable".equals(next.workflowStatus())
                 && "approve".equals(next.policy().effective().get(WorkPolicy.Phase.valueOf(next.phase().toUpperCase(Locale.ROOT)))))
-            return enter(next,historySize,false,clock.now());
+            return enter(next,historySize,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);
         return next;
     }
 
@@ -67,6 +67,9 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!"suspended".equals(item.workflowStatus()))return new Outcome(409,"resume_requires_suspended_item",item);
+                // Resume starts a new generation too, so a merged pull request refuses it as readmission does (spec §7.9).
+                if(landed(history,item))return new Outcome(409,"readmission_landed",item);
+                if(mergeUnconfirmed(c,item))return new Outcome(409,"readmission_merge_unconfirmed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 var p=item.progress();
                 var fresh=new WorkProgress(null,null,null,false,null,p.runs(),p.steps(),p.wallSeconds(),p.costMillicents(),p.calls(),p.usageUnknown(),null);
@@ -79,7 +82,7 @@ public class WorkItemTransitions {
                 if(!Objects.equals(head,expectedHead) || observed.artifacts().failure()!=null)
                     next=next.prepared(null).withMilestone("OPERATOR_RESUMED");
                 store.appendDecision(c,history,next,"operator-resume:"+UUID.randomUUID());history=store.history(id);
-                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"resume-transition:"+UUID.randomUUID());
                 return new Outcome(200,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
@@ -109,27 +112,40 @@ public class WorkItemTransitions {
             return new Outcome(409,"phase_evidence_mismatch",item);
         // Verify time counts toward the item's wall clock (spec §3.4), so a long verify shortens what a retry may use.
         long wallSeconds=(verification.checks().stream().mapToLong(WorkVerification.CheckResult::wallMillis).sum()+999)/1000;
-        return complete(id,new PhaseResult(verification.attemptId(),verification.passed(),wallSeconds,0,0,true,execution.verified(verification)));
+        PhaseResult phaseResult=new PhaseResult(verification.attemptId(),verification.passed(),wallSeconds,0,0,true,execution.verified(verification));
+        Outcome outcome=complete(id,phaseResult);
+        // A verify that finished after a hand merge or a close still ran (A6): its time is the item's, not a failure.
+        if(outcome.status()==409 && Set.of("item_not_active","attempt_changed").contains(outcome.reason()))return recordLateResult(id,phaseResult);
+        return outcome;
     }
 
-    /** A stopped or superseded build still bought usage. Account it once without authorizing a phase. */
-    Outcome recordLateBuild(String id,PhaseResult result) {
+    /**
+     * A stopped or superseded build, or a verify that finished after the item landed or stopped, still bought usage.
+     * Account it once without authorizing a phase.
+     */
+    Outcome recordLateResult(String id,PhaseResult result) {
         return QuarkusTransaction.requiringNew().call(()->{
             try(Connection c=dataSource.getConnection()) {
                 lockItem(c,id);var history=store.history(id);var item=(WorkItemEvent)history.getLast().payload();
                 String key="late-build-result:"+result.attemptId();
                 if(history.stream().anyMatch(event->key.equals(event.correlationId())))return new Outcome(200,"late_result_already_accounted",item);
-                try(PreparedStatement ps=c.prepareStatement("SELECT a.state FROM work_phase_attempt a JOIN work_run_effect b ON b.attempt_id=a.id WHERE a.id=? AND a.work_item_id=? AND a.phase='build'")) {
+                String phase;
+                try(PreparedStatement ps=c.prepareStatement("""
+                        SELECT a.state,a.phase FROM work_phase_attempt a WHERE a.id=? AND a.work_item_id=?
+                          AND (a.phase='build' AND EXISTS (SELECT 1 FROM work_run_effect b WHERE b.attempt_id=a.id)
+                            OR a.phase='verify' AND EXISTS (SELECT 1 FROM work_verify_effect v WHERE v.attempt_id=a.id))
+                        """)) {
                     ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
                         if(!rs.next())return new Outcome(409,"build_attempt_missing",item);
                         if("completed".equals(rs.getString(1)))return new Outcome(200,"result_already_applied",item);
+                        phase=rs.getString(2);
                     }
                 }
                 if("active".equals(item.workflowStatus()) && Objects.equals(result.attemptId(),item.progress().attemptId()))
                     return new Outcome(409,"build_attempt_active",item);
                 WorkProgress progress=item.progress().account(result.wallSeconds(),result.costMillicents(),result.calls());
                 if(!result.usageKnown())progress=progress.unknownUsage();
-                var next=state(item,item.workflowStatus(),item.reason(),"LATE_BUILD_RESULT",item.gate(),progress);
+                var next=state(item,item.workflowStatus(),item.reason(),"verify".equals(phase)?"LATE_VERIFY_RESULT":"LATE_BUILD_RESULT",item.gate(),progress);
                 store.appendDecision(c,history,next,key);
                 return new Outcome(200,"late_result_accounted",next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
@@ -145,6 +161,8 @@ public class WorkItemTransitions {
                 var history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
                 if(expected>=0 && history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
+                // Derived here, under the lock, because the decider sees no history (A9).
+                WorkItemLifecycle.EntryMode mode=entryMode(history);boolean landFix=mode==WorkItemLifecycle.EntryMode.LAND_FIX;
                 if(result!=null) {
                     try(PreparedStatement ps=c.prepareStatement("SELECT state FROM work_phase_attempt WHERE id=? AND work_item_id=?")) {
                         ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
@@ -154,10 +172,11 @@ public class WorkItemTransitions {
                     if(!Objects.equals(result.attemptId(),item.progress().attemptId()))return new Outcome(409,"attempt_changed",item);
                     if("completed".equals(item.progress().attemptState()))return new Outcome(200,"result_already_applied",item);
                     if(!"active".equals(item.workflowStatus()))return new Outcome(409,"item_not_active",item);
-                    if(!validExecution(item,result))return new Outcome(409,"phase_evidence_mismatch",item);
-                } else if(!readmit && Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
-                    return new Outcome(409,"explicit_readmission_required",item);
-                if(readmit && Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
+                    if(!validExecution(item,result,mode))return new Outcome(409,"phase_evidence_mismatch",item);
+                } else {
+                    Outcome refused=readmit?readmitRefusal(c,history,item):recheckRefusal(item);
+                    if(refused!=null)return refused;
+                }
                 WorkPolicy.Selection selection=select(observed,readmit?null:item);
                 WorkItemEvent next=item.decision(observed.policy().revision(),authority(observed.source()),selection,item.phase(),item.workflowStatus(),item.reason(),"POLICY_CHECKED",item.gate(),item.progress());
                 if(readmit) {
@@ -178,7 +197,7 @@ public class WorkItemTransitions {
                     if(next.policy().selected()==null || "off".equals(next.policy().effective().getOrDefault(WorkPolicy.Phase.VERIFY,"off"))) {
                         next=state(next,"not_eligible",next.policy().selected()==null?next.policy().reason():"verify_off","WORK_ITEM_REFUSED",
                                 next.gate(),finished.reserve(false));
-                        store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
+                        next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                         return new Outcome(200,next.reason(),next);
                     }
                     next=WorkItemLifecycle.verifyResultGate(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),finished),
@@ -190,9 +209,15 @@ public class WorkItemTransitions {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
                     if(result.execution()!=null)progress=progress.withExecution(result.execution());
                     if(!result.usageKnown())progress=progress.unknownUsage();
+                    if(!result.successful() && landFix && "build".equals(item.phase())) {
+                        // A failed fix run fails the fix, not the item: its pull request is still open (Review Focus 16).
+                        next=WorkItemLifecycle.landHanded(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),progress),"land_fix_run_failed");
+                        store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
+                        return new Outcome(200,next.reason(),next);
+                    }
                     next=state(next,result.successful()?"awaiting_input":"failed",result.successful()?"phase_completed":"phase_failed",
                             result.successful()?"PHASE_COMPLETED":"PHASE_FAILED",next.gate(),progress);
-                    store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
+                    next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
                     next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
@@ -200,10 +225,10 @@ public class WorkItemTransitions {
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
                 else if(observed.artifacts().failure()!=null)next=state(next,"awaiting_input",observed.artifacts().failure(),"ARTIFACTS_REQUIRED",next.gate(),next.progress().reserve(false));
                 else {
-                    next=enterPrepared(c,history,next,false,clock.now());
+                    next=enterPrepared(c,history,next,false,clock.now(),mode);
                     history=store.history(id);
                 }
-                store.appendDecision(c,history,next,"transition:"+UUID.randomUUID());
+                next=decide(c,new Decision(history,next,"transition:"+UUID.randomUUID()));
                 // The rule travels only when the artifacts are what stopped the item; an authority
                 // outage checked first owns the reason, and naming a plan rule there would mislead.
                 String detail=observed.evidence().failure()==null && observed.artifacts().failure()!=null?observed.artifacts().detail():null;
@@ -213,12 +238,116 @@ public class WorkItemTransitions {
         });
     }
 
-    private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now) {
-        return WorkItemLifecycle.enter(item,store.load(item.workItemId()),historySize,approved,now,
-                capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID());
+    /**
+     * Appends a decision, and when it stops a land fix in progress, the hand-off after it (review of slice 7b): the
+     * fix's pull request is still open, so a stopped item would refuse readmit and recheck alike and wait for good. The
+     * stop stays in history, and the fix's land row is handed with the stop's reason as its note.
+     *
+     * @return the item as it now stands
+     */
+    WorkItemEvent decide(Connection c,Decision decision) throws SQLException,java.io.IOException {
+        List<dev.codespire.contract.event.EventEnvelope> history=decision.history();
+        WorkItemEvent next=decision.next();
+        String cause=decision.cause();
+        store.appendDecision(c,history,next,cause);
+        List<WorkItemEvent> before=facts(history);
+        WorkItemEvent handed=WorkItemLifecycle.landFixStopped(before,next);
+        if(handed==null)return next;
+        store.appendDecision(c,store.history(next.workItemId()),handed,cause+":land-fix-stopped");
+        UUID effect=before.reversed().stream().filter(event->"LAND_FIX_REQUESTED".equals(event.milestone())).findFirst().orElseThrow().progress().attemptId();
+        try(PreparedStatement ps=c.prepareStatement("UPDATE work_land_effect SET state='handed',reason='land_fix_stopped',note=?,updated_at=now() WHERE effect_id=? AND state='fixing'")) {
+            ps.setString(1,next.reason());ps.setObject(2,effect);ps.executeUpdate();
+        }
+        return handed;
+    }
+    /** A decision to append: the history it was made from, the item it records and the cause it is recorded under. */
+    record Decision(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent next,String cause) {}
+    static List<WorkItemEvent> facts(List<dev.codespire.contract.event.EventEnvelope> history) {
+        return history.stream().map(event->(WorkItemEvent)event.payload()).toList();
+    }
+    /** {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9). */
+    static WorkItemLifecycle.EntryMode entryMode(List<dev.codespire.contract.event.EventEnvelope> history) {
+        return WorkItemLifecycle.landFixInProgress(facts(history))?WorkItemLifecycle.EntryMode.LAND_FIX:WorkItemLifecycle.EntryMode.ORDINARY;
+    }
+    /**
+     * Why a recheck may not continue this item: it stopped or is running, so only readmission may; or land handed it
+     * over, where only Retry land goes on, with a note and the verified head (A3). Null when it may.
+     */
+    private static Outcome recheckRefusal(WorkItemEvent item) {
+        if(Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
+            return new Outcome(409,"explicit_readmission_required",item);
+        if(WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
+        return null;
+    }
+    /**
+     * Why a readmission may not start a new generation of this item, under the item lock; null when it may. The order
+     * names the strongest reason first: a merged pull request cannot be built again beside itself (spec §7.9), then
+     * anything that still holds the delivered pull request open, then a merge whose outcome is not recorded yet.
+     */
+    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
+        WorkItemLifecycle.EntryMode mode=entryMode(history);
+        if(Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
+        if(landed(history,item))return new Outcome(409,"readmission_landed",item);
+        // Waiting at land for any reason, a hand-off, a land that cannot merge here or one switched off, leaves the
+        // delivered pull request open: a close stops the item, so only a stopped or failed land may build again (A8).
+        if("land".equals(item.phase()) && Set.of("awaiting_input","capability_unavailable","not_eligible").contains(item.workflowStatus()))
+            return new Outcome(409,"readmission_land_pending",item);
+        // A land fix waiting for a person still has its pull request open; readmit would build a second one beside it.
+        if(mode==WorkItemLifecycle.EntryMode.LAND_FIX)return new Outcome(409,"readmission_land_pending",item);
+        if(mergeUnconfirmed(c,item))return new Outcome(409,"readmission_merge_unconfirmed",item);
+        return null;
+    }
+    interface Locked {
+        Outcome apply(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException,java.io.IOException;
+    }
+    /** Local serialization only, in the same lock order as an answer; no remote authority read decides a forge fact. */
+    Outcome underLock(String id,Locked body) {
+        WorkItemEvent reference=require(id);
+        return QuarkusTransaction.requiringNew().call(()->{
+            try(Connection c=dataSource.getConnection()) {
+                WorkSourceRegistry.Source source=sources.get(c,reference.sourceId(),true).orElseThrow(NotFoundException::new);
+                policies.get(c,source.repositoryId(),true);
+                lockItem(c,id);List<dev.codespire.contract.event.EventEnvelope> history=store.history(id);
+                return body.apply(c,history,(WorkItemEvent)history.getLast().payload());
+            }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
+            catch(java.io.IOException failure){throw new IllegalStateException("Cannot record the land outcome",failure);}
+        });
     }
 
-    private static boolean validExecution(WorkItemEvent item,PhaseResult result) {
+    private static boolean landed(List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) {
+        WorkExecution execution=item.progress().execution();
+        return execution!=null && execution.pullRequest()!=null && WorkItemLifecycle.landedIn(
+                history.stream().map(dev.codespire.contract.event.EventEnvelope::payload).filter(WorkItemEvent.class::isInstance).map(WorkItemEvent.class::cast).toList(),item.generation(),execution.pullRequest().number());
+    }
+
+    /**
+     * Whether this generation sent a merge whose outcome is not recorded yet (M4 land, review of slice 4). The land
+     * effect records it only within this generation, so a resume or readmit now would leave a merge GitHub finished
+     * unrecorded and build the merged work again beside it (spec §7.9). It clears once the effect records the merge
+     * (then readmission_landed refuses) or proves none happened.
+     */
+    private static boolean mergeUnconfirmed(Connection c,WorkItemEvent item) throws SQLException {
+        try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM work_land_effect WHERE work_item_id=? AND generation=? AND state IN ('merging','uncertain','merged','cleaning')")) {
+            ps.setString(1,item.workItemId());ps.setLong(2,item.generation());
+            try(ResultSet rs=ps.executeQuery()){return rs.next();}
+        }
+    }
+
+    private WorkItemEvent enter(WorkItemEvent item,long historySize,boolean approved,Instant now,WorkItemLifecycle.EntryMode mode) {
+        return WorkItemLifecycle.enter(item,store.load(item.workItemId()),historySize,approved,now,
+                capability.available(item,"intake".equals(item.phase())?"spec":item.phase()),UUID.randomUUID(),mode);
+    }
+
+    /** Outside a land fix a build proves a fresh checkpoint, which no pull request holds yet. */
+    private static boolean builtFresh(WorkExecution proof) {
+        return proof.pullRequest()==null;
+    }
+    /** A land fix's build carries the pull request it fixes. */
+    private static boolean builtOnFixedPullRequest(WorkExecution proof,WorkExecution previous) {
+        return previous!=null && previous.pullRequest()!=null && previous.pullRequest().equals(proof.pullRequest());
+    }
+
+    private static boolean validExecution(WorkItemEvent item,PhaseResult result,WorkItemLifecycle.EntryMode mode) {
         WorkExecution proof=result.execution(),previous=item.progress().execution();
         // Older policy-only histories carry no build execution. They cannot authorize a delivery;
         // the capability/effect checks require its evidence independently.
@@ -227,7 +356,8 @@ public class WorkItemTransitions {
             case "build" -> proof.build().workItemId().equals(item.workItemId()) && proof.build().generation()==item.generation()
                     && proof.build().buildAttemptId().equals(result.attemptId()) && item.preparation()!=null
                     && proof.build().preparationBinding().equals(item.preparation().binding())
-                    && proof.verificationAttempt()==null && proof.pullRequest()==null && proof.reviewId()==null;
+                    && proof.verificationAttempt()==null && proof.reviewId()==null
+                    && (mode==WorkItemLifecycle.EntryMode.LAND_FIX?builtOnFixedPullRequest(proof,previous):builtFresh(proof));
             // The M4 result, never a bare attempt id: a success flag without an outcome verified nothing.
             case "verify" -> previous!=null && proof.verification()!=null && proof.verificationAttempt().equals(result.attemptId())
                     && proof.verification().passed()==result.successful() && proof.equals(previous.verified(proof.verification()));
@@ -239,15 +369,19 @@ public class WorkItemTransitions {
         };
     }
 
-    /** Accept fetched manual evidence through each actual policy branch; never invent an executor result. */
-    private WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
-                                        WorkItemEvent item,boolean approved,Instant now) throws SQLException,java.io.IOException {
-        WorkItemEvent next=enter(item,history.size(),approved,now);
+    /**
+     * Accept fetched manual evidence through each actual policy branch; never invent an executor result.
+     *
+     * @param mode {@link WorkItemLifecycle.EntryMode#LAND_FIX} while a land fix is in progress, which skips build and deliver gates (A9)
+     */
+    WorkItemEvent enterPrepared(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,
+                                WorkItemEvent item,boolean approved,Instant now,WorkItemLifecycle.EntryMode mode) throws SQLException,java.io.IOException {
+        WorkItemEvent next=enter(item,history.size(),approved,now,mode);
         while("ARTIFACT_ACCEPTED".equals(next.milestone())) {
             store.appendDecision(c,history,next,"artifact:"+next.preparation().binding()+":"+next.phase());
             history=store.history(next.workItemId());
             next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(next.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
-            next=enter(next,history.size(),false,now);
+            next=enter(next,history.size(),false,now,mode);
         }
         return next;
     }
@@ -295,7 +429,7 @@ public class WorkItemTransitions {
                     // Immutable profile pins and the policy binding above fix the vectors. Re-observe every current applier.
                     if(!selection.applied().equals(current.policy().applied())) {
                         next=state(current,"stopped","labels_changed_requires_new_decision","GATE_SUPERSEDED",gate.resolve("SUPERSEDED",resolver,channel,key,note),current.progress().reserve(false));
-                        store.appendDecision(c,history,next,"gate-labels:"+gateId+":"+key);
+                        next=decide(c,new Decision(history,next,"gate-labels:"+gateId+":"+key));
                         return new Outcome(409,next.reason(),next);
                     }
                     // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
@@ -304,14 +438,16 @@ public class WorkItemTransitions {
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
                     if(approve) {
+                        // A Retry build inside a land fix stays on its pull request (Review Focus 8).
+                        WorkItemLifecycle.EntryMode mode=entryMode(history);
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
-                        next=enterPrepared(c,history,next,true,now);
+                        next=enterPrepared(c,history,next,true,now,mode);
                         history=store.history(id);
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
                 }
-                store.appendDecision(c,history,next,"gate:"+gateId+":"+key);
+                next=decide(c,new Decision(history,next,"gate:"+gateId+":"+key));
                 return new Outcome(status,next.reason(),next);
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode gate decision",failure);}
@@ -329,7 +465,7 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);WorkItemEvent item=(WorkItemEvent)history.getLast().payload();
                 WorkGate gate=item.gate();
                 if(gate==null || !gate.id().equals(gateId) || !"OPEN".equals(gate.state()) || clock.now().isBefore(gate.expiresAt()))return;
-                store.appendDecision(c,history,expire(item,gate),"gate-expiry:"+gateId);
+                decide(c,new Decision(history,expire(item,gate),"gate-expiry:"+gateId));
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
             catch(java.io.IOException failure){throw new IllegalStateException("Cannot encode gate expiry",failure);}
         });
@@ -347,10 +483,10 @@ public class WorkItemTransitions {
             ps.setObject(1,gate);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new NotFoundException();return rs.getString(1);}
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
     }
-    private WorkItemEvent require(String id) {
+    WorkItemEvent require(String id) {
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();return item;
     }
-    private static WorkItemEvent.Authority authority(WorkSourceRegistry.Source source) {
+    static WorkItemEvent.Authority authority(WorkSourceRegistry.Source source) {
         return new WorkItemEvent.Authority(source.accountId(),source.version().source(),source.version().account(),source.version().repository());
     }
     private static WorkItemEvent state(WorkItemEvent item,String status,String reason,String milestone,WorkGate gate,WorkProgress progress) {
@@ -416,7 +552,7 @@ public class WorkItemTransitions {
                 }
                 WorkItemEvent next=current.decision(observed.policy().revision(),authority(observed.source()),select(observed,current),"intake","awaiting_input","artifacts_registered","ARTIFACTS_REGISTERED",null,current.progress().reserve(false)).prepared(preparation);
                 store.appendDecision(c,history,next,"preparation:"+UUID.randomUUID());history=store.history(id);
-                next=enterPrepared(c,history,next,false,clock.now());history=store.history(id);
+                next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"prepared-transition:"+UUID.randomUUID());
                 // In THIS transaction, so a registration that rolls back does not leave the screen
                 // claiming the item is healthy. Every registration clears it, not only the sweep's:

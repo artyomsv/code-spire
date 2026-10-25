@@ -48,7 +48,7 @@ import java.util.Set;
  */
 record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, String branch,
                        List<String> protectedPaths, long bundleMaxBytes, GitCredential credential,
-                       Path handoffDir) {
+                       Path handoffDir, String landingBranch) {
 
     /** Every branch the factory pushes lives here. */
     static final String BRANCH_NAMESPACE = "spire/";
@@ -66,7 +66,22 @@ record PublisherConfig(String remoteUri, String baseBranch, String baseCommit, S
                 globs(env.get("SPIRE_PROTECTED_PATHS")),
                 bundleMaxBytes(Env.required(env, "SPIRE_BUNDLE_MAX_BYTES")),
                 new GitCredential(Env.required(env, "SPIRE_GIT_USERNAME"), Env.required(env, "SPIRE_GIT_SECRET")),
-                Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR)));
+                Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR)),
+                landingBranch(env));
+    }
+
+    /**
+     * The branch an existing-branch push lands on: the pull request's destination. The gate also judges what that
+     * landing changes, against the destination as this process's own clone holds it, because a head that merged
+     * the destination can revert it without differing from the head it started from (review of M4 slice 7a).
+     * Null in namespace mode; {@link #branch} has already refused an existing-branch push without one.
+     */
+    private static String landingBranch(Map<String, String> env) {
+        String destination = env.get("SPIRE_PROTECTED_BRANCH");
+        if (!MODE_EXISTING.equals(mode(env)) || destination == null || destination.isBlank()) {
+            return null;
+        }
+        return destination.strip();
     }
 
     /** The two branch shapes this process will push (ADR-040). Absent means this one. */

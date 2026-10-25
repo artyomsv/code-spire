@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.work.WorkPublicationPermit;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
@@ -19,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Turns a command into the three-container run unit of ADR-039.
@@ -156,7 +158,28 @@ public class RunUnitBuilder {
     }
 
     public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
-        return build(command.execution(), adapter, "spire-publish-held");
+        RunUnitSpec unit = build(command.execution(), adapter, "spire-publish-held");
+        if (!command.execution().pushesToAnExistingBranch()) return unit;
+        // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
+        // The trusted init keeps that base under refs/spire-base, because removing origin drops every
+        // remote-tracking ref. The agent still receives no remote and no credential.
+        Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
+        initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
+        ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
+        return new RunUnitSpec(unit.runId(), init, unit.agent(), heldPublisher(unit.publisher(), command),
+                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+    }
+
+    /**
+     * The held gate sees the base merge before any permit exists, so it excuses the same orchestrator-issued base
+     * tip the permit will; without it a base that edited a workflow is refused before any checkpoint. The agent
+     * never receives the tip.
+     */
+    private static ContainerSpec heldPublisher(ContainerSpec publisher, RunCommand.ExecuteWorkRun command) {
+        if (command.mergedBaseTip() == null) return publisher;
+        Map<String, String> env = new HashMap<>(publisher.environment());
+        env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
+        return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
     }
 
     private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, String publisherCommand) {
@@ -240,11 +263,41 @@ public class RunUnitBuilder {
         env.put("SPIRE_PROTECTED_PATHS", String.join(",", paths));
         env.put("SPIRE_PERMITTED_HEAD", request.permit().head());
         env.put("SPIRE_PERMIT_ISSUED_AT", request.permit().issuedAt().toString());
+        env.putAll(existingBranchEnvironment(original, request.permit()));
         env.put("SPIRE_PERMIT_EXPIRES_AT", request.permit().expiresAt().toString());
         ContainerSpec publisher = new ContainerSpec(held.publisher().image(), List.of("spire-publish-permitted"),
                 env, held.publisher().mounts());
         return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
                 held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
+    }
+
+    /**
+     * The land-fix half of a permit (M4 slice 7a). An existing-branch run publishes only with an expected remote
+     * head, and only the head it was built from: the run cloned that commit, so any other expectation would
+     * approve a push over work the run never saw. A new-branch run has no remote head to expect.
+     */
+    private static Map<String, String> existingBranchEnvironment(RunCommand.ExecuteWorkRun original,
+                                                                 WorkPublicationPermit permit) {
+        RunCommand.ExecuteRun execution = original.execution();
+        if (execution.pushesToAnExistingBranch() != permit.pushesToExistingBranch()) {
+            throw new IllegalArgumentException("A push to an existing branch needs an expected remote head, and only "
+                    + "an existing-branch run may carry one");
+        }
+        if (!permit.pushesToExistingBranch()) return Map.of();
+        if (!execution.baseCommit().equals(permit.expectedRemoteHead())) {
+            throw new IllegalArgumentException("The permit expects " + permit.expectedRemoteHead()
+                    + " but the run was built from " + execution.baseCommit());
+        }
+        // The checkpoint was gated with the held build's tip; another tip would widen or narrow the exclusion
+        // after the fact.
+        if (!Objects.equals(original.mergedBaseTip(), permit.mergedBaseTip())) {
+            throw new IllegalArgumentException("The permit excuses the base tip " + permit.mergedBaseTip()
+                    + " but the held build was gated with " + original.mergedBaseTip());
+        }
+        Map<String, String> env = new HashMap<>();
+        env.put("SPIRE_EXPECTED_REMOTE_HEAD", permit.expectedRemoteHead());
+        if (permit.mergedBaseTip() != null) env.put("SPIRE_MERGED_BASE_TIP", permit.mergedBaseTip());
+        return env;
     }
 
     /**

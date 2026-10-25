@@ -62,7 +62,8 @@ public final class PublisherMain {
                 Files.createTempDirectory("spire-publish-clone-"), config.credential())) {
 
             PublishCycle cycle = new PublishCycle(repo, config.baseCommit(), config.branch(),
-                    config.protectedPaths(), config.bundleMaxBytes(), config.credential(), outcome, publication);
+                    config.protectedPaths(), config.bundleMaxBytes(), config.credential(), outcome, publication,
+                    config.landingBranch());
 
             HandoffWatcher watcher = new HandoffWatcher(config.handoffDir());
             boolean carryOn = true;

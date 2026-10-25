@@ -113,4 +113,15 @@ describe('stylesheet contract', () => {
     const css = readFileSync(join(SRC, 'index.css'), 'utf8');
     expect(css).toMatch(/html:has\(\.panel-overlay\)\s*\{[^}]*overflow:\s*hidden/);
   });
+
+  /** Live land acceptance (2026-10-24): a disabled Stop land looked exactly like an enabled one, so a click on it
+   *  seemed to do nothing. Both button styles must look disabled, and must not light up on hover. */
+  it('makes a disabled button look disabled', () => {
+    const css = readFileSync(join(SRC, 'index.css'), 'utf8');
+    expect(css.length).toBeGreaterThan(0);
+    for (const button of ['btn', 'btn-ghost']) {
+      expect(css).toMatch(new RegExp(String.raw`\.${button}:disabled[^{]*\{[^}]*opacity:\s*0?\.\d+[^}]*cursor:\s*not-allowed`));
+      expect(css).toMatch(new RegExp(String.raw`\.${button}:hover:not\(:disabled\)`));
+    }
+  });
 });

@@ -126,6 +126,18 @@ public class ProviderClients {
         };
     }
 
+    /**
+     * The tracker transition that closes a ticket after land (M4 land, spec §7.7), in the words each adapter's
+     * {@code transition} accepts. Empty where closing needs a per-workflow transition id nothing configures yet.
+     */
+    public static java.util.Optional<String> closeTransition(dev.codespire.worksource.WorkSourceType type) {
+        return switch (type) {
+            case GITHUB -> java.util.Optional.of("closed");
+            case GITLAB -> java.util.Optional.of("close");
+            case JIRA -> java.util.Optional.empty();
+        };
+    }
+
     public boolean compatibleWorkAccount(dev.codespire.worksource.WorkSourceType type, ScmProvider account) {
         return supportsWorkAccount(type, account.type(), account.authKind());
     }
@@ -375,6 +387,48 @@ public class ProviderClients {
             case "gitlab" -> new GitLabPullRequestSink(new GitLabClient(gitlabConfig(provider), mapper));
             default -> throw new IllegalStateException(
                     "Cannot open a pull request on provider type: " + provider.type());
+        };
+    }
+
+    /**
+     * A client that merges a delivered pull request and deletes its branch. Like
+     * {@link #pullRequestSink}, only the FACTORY account may hold it: the reviewer's token is not
+     * provisioned for a merge, and a merge recorded as the reviewer would misattribute it. Land is
+     * GitHub only; every other forge gets a lander that is not {@code available()}.
+     */
+    public dev.codespire.contract.port.PullRequestLander pullRequestLander(ScmProvider provider) {
+        if (provider.role() != ProviderRole.FACTORY) {
+            throw new IllegalArgumentException("a pull request is landed by the FACTORY account; "
+                    + "this was handed the " + provider.role() + " provider " + provider.id());
+        }
+        return landerFor(provider);
+    }
+
+    /**
+     * A client that only reads a delivered pull request's land state, for observing a merge someone made. A read
+     * needs no merge rights, so the REVIEWER account may hold it when the FACTORY account is unavailable; its
+     * {@code merge}, {@code allowedMethods} and {@code deleteBranch} refuse whatever the role, so the reviewer's
+     * token never merges or deletes. A CONTEXT account is refused: it is not bound to read pull requests.
+     */
+    public dev.codespire.contract.port.PullRequestLander pullRequestReader(ScmProvider provider) {
+        if (provider.role() != ProviderRole.FACTORY && provider.role() != ProviderRole.REVIEWER) {
+            throw new IllegalArgumentException("a pull request's land state is read by the FACTORY or REVIEWER account; "
+                    + "this was handed the " + provider.role() + " provider " + provider.id());
+        }
+        dev.codespire.contract.port.PullRequestLander lander = landerFor(provider);
+        return new dev.codespire.contract.port.PullRequestLander() {
+            @Override public boolean available() { return lander.available(); }
+
+            @Override public LandState read(dev.codespire.contract.scm.RepoRef repo, long pullRequest) {
+                return lander.read(repo, pullRequest);
+            }
+        };
+    }
+
+    private dev.codespire.contract.port.PullRequestLander landerFor(ScmProvider provider) {
+        return switch (provider.type()) {
+            case "github" -> new dev.codespire.scm.github.GitHubPullRequestLander(new GitHubClient(githubConfig(provider), mapper));
+            default -> new dev.codespire.contract.port.PullRequestLander() {};
         };
     }
 

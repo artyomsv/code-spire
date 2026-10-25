@@ -24,5 +24,7 @@ export const profile: Profile = { id: 'TEST-profile', name: 'TEST-assisted', ver
 export const policy = (overrides: Partial<Policy> = {}): Policy => ({ revision: 7, ceiling: profile, mappings: { 'TEST-work': profile }, ...overrides });
 export const buildSetup = (overrides: Partial<import('./buildDefaultsApi').BuildDefaults> = {}): import('./buildDefaultsApi').BuildDefaults => ({
   revision: 0, baseBranch: null, harness: null, model: null, updatedBy: null, updatedAt: null, ...overrides });
+export const landSetup = (overrides: Partial<import('./landSettingsApi').LandSettings> = {}): import('./landSettingsApi').LandSettings => ({
+  revision: 0, mergeMethod: 'merge', ticketRule: 'comment', fixAttempts: 3, updatedBy: null, updatedAt: null, ...overrides });
 export const issueHook: WebhookRepoView = { id: 'TEST-hook', repositoryId: repository.id, eventKind: 'ISSUE', sourceId: 'TEST-source', forgeOrigin: repository.forgeOrigin,
   providerType: 'github', scope: 'repo', target: 'TEST-owner/TEST-repo', webhookKey: 'TEST-key', hasSecret: true, enabled: true, createdAt: '2026-09-15T00:00:00Z' };

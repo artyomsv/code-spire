@@ -7,6 +7,7 @@ import dev.codespire.contract.event.RepositoryDelivery;
 import dev.codespire.contract.event.RepositoryEventKind;
 import dev.codespire.orchestrator.pipeline.IntegrationSaga;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
+import dev.codespire.orchestrator.work.WorkPullRequestWatch;
 import io.smallrye.reactive.messaging.annotations.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -22,6 +23,7 @@ public class RepositoryIngressConsumer {
     @Inject RepositoryRegistry repositories;
     @Inject UnregisteredRepositoryEvents unregistered;
     @Inject IntegrationSaga reviews;
+    @Inject WorkPullRequestWatch workPullRequests;
     @Inject @Channel("repository-activity-out") Emitter<RepositoryDelivery> activities;
 
     @Incoming("repository-in") @Blocking
@@ -46,6 +48,10 @@ public class RepositoryIngressConsumer {
                 && !dev.codespire.contract.event.ReviewIds.parse(reply.reviewId()).repo().equals(delivery.repo())) return;
         if (delivery.eventKind() == RepositoryEventKind.REVIEWER) {
             reviews.onRepository(delivery.event(), repository.id());
+            // A repository may have no FACTORY webhook; the reviewer's close then is the only report of a hand merge or close
+            // of a pull request the factory delivered (live land acceptance, issue #64).
+            if (delivery.event() instanceof dev.codespire.contract.event.IntegrationEvent.PullRequestClosed closed)
+                workPullRequests.reviewerClosed(repository.id(), closed, delivery.deliveryId());
         } else if (delivery.eventKind() == RepositoryEventKind.FACTORY) {
             KafkaSends.sendAndAwait(activities, repository.id().toString(), delivery, "Repository activity");
         }

@@ -9,6 +9,7 @@ import { fetchWorkSources, rescanWorkSource } from './workSourcesApi';
 import { workReason } from './workReasons';
 import { FILTERS, filterById, nextAction } from './workJourney';
 import { useTicketTitles } from './useTicketTitles';
+import { FINISHED_POLL_MILLISECONDS, isFinished, LIST_POLL_MILLISECONDS } from './workPolling';
 import WorkItemTable from './WorkItemTable';
 import DecisionPanel from './DecisionPanel';
 import PastDecisions from './PastDecisions';
@@ -16,8 +17,6 @@ import PastDecisions from './PastDecisions';
 // Re-exported so the screens that already import it from here keep one import path.
 export { workReason };
 
-/** How often the list re-reads while it is on screen. Work moves in minutes; a person should not press F5. */
-const POLL_MILLISECONDS = 15_000;
 const PAGE_SIZE = 50;
 
 const STATES = new Map(Object.entries({
@@ -75,14 +74,20 @@ export default function WorkItems() {
 
   useEffect(() => { void load(true); }, [load]);
   useEffect(() => { if (refresh > 0) void latest.current(false); }, [refresh]);
+  // A read still out when the page goes is dropped; only unmounting does this, never a change of cadence,
+  // which would leave the read marked in flight for ever.
+  useEffect(() => () => { sequence.current++; }, []);
+
+  const rows = page?.items ?? [];
+  // The list re-reads every 5 s while it holds unfinished work, or nothing yet, and every 15 s once all of it has finished.
+  const settled = rows.length > 0 && rows.every(row => isFinished(row.workflowStatus));
   useEffect(() => {
     // A poll never overlaps a read still out: each would supersede the last, and on a server slower
     // than the interval no answer would ever be shown.
-    const timer = setInterval(() => { if (document.visibilityState === 'visible' && !inFlight.current) void latest.current(false); }, POLL_MILLISECONDS);
-    return () => { clearInterval(timer); sequence.current++; };
-  }, []);
-
-  const rows = page?.items ?? [];
+    const timer = setInterval(() => { if (document.visibilityState === 'visible' && !inFlight.current) void latest.current(false); },
+      settled ? FINISHED_POLL_MILLISECONDS : LIST_POLL_MILLISECONDS);
+    return () => { clearInterval(timer); };
+  }, [settled]);
   const titles = useTicketTitles(rows.map(row => row.id));
   const needsFilter = filterById('needs-you');
   const needs = countOf(page, needsFilter.statuses);

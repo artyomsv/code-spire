@@ -438,10 +438,19 @@ The design is [the M3.5 specification](../superpowers/specs/2026-09-16-factory-m
 **Goal:** the factory handles work that is bigger than one prompt.
 
 **Slice 1, verify: accepted 2026-10-08 ([record](./M4-VERIFY-ACCEPTANCE.md)).** GitHub reviews followed on
-PR #196 (accepted 2026-10-18, [record](./GITHUB-REVIEWS-ACCEPTANCE.md)); land is the next slice. The operator's checks run on a clean
+PR #196 (accepted 2026-10-18, [record](./GITHUB-REVIEWS-ACCEPTANCE.md)); land is slice 2, below. The operator's checks run on a clean
 copy of the checkpoint, with passed, failed and unverified outcomes, a result gate (Retry build or
 Stop), and a retry that starts from the failed checkpoint (ADR-046). The plan coordinator, with
 automatic retries, specifications and multi-step plans, comes in later slices.
+
+**Slice 2, land: implemented on `feat/m4-land` (PR #243, ADR-048), live acceptance pending.** An approved
+land merges the delivered pull request at exactly the approved head with the repository's merge method,
+deletes the item branch, tells the ticket (a comment by default; closing is a per-repository choice) and
+completes the item. A refusal caused by code (a failed check, a conflict, a branch behind its base) runs a
+land fix on the same pull request, through verify, delivery and review, to a new land gate, within the
+repository's fix attempts (default 3). Any other refusal, or a spent budget, hands the item to the operator
+with GitHub's reason, and the operator retries land or stops it. A merge or close by hand on GitHub is
+recognised, and a landed item cannot be readmitted. GitHub only; `auto_if_green` stays unwired.
 
 **Delivers.** The `spec` phase — a vague ticket refined into outcome, context and acceptance
 criteria, written back to the tracker. The `plan` phase — decomposition into ordered vertical slices,

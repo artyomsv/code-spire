@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import { workReason } from './components/work-items/workReasons';
 import type { Preparation, WorkBuild, WorkExecution } from './components/work-items/workPreparationApi';
 
 export type WorkWorkflowStatus = 'not_eligible' | 'awaiting_input' | 'capability_unavailable' | 'active' | 'waiting_approval' | 'stopped' | 'suspended' | 'retired' | 'completed' | 'failed';
@@ -48,9 +49,56 @@ export interface WorkItemDetail extends WorkItemSummary {
    * workflow reason: an automatic failure written into that would stop the sweep retrying for ever.
    */
   preparationHealth?: { reason: string; attempts: number; lastAt: string; retryAfter: string } | null;
+  /** The latest land attempt of this generation (M4 land); absent until land is approved. */
+  land?: LandView | null;
   ignoredLabels: { label: string; reason: string; actorId: string | null; origin: string }[];
-  events: { sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
-    attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number }[];
+  /**
+   * Each entry of the history. A resolved gate carries what it approved (`gateArtifact`, the head for land) and the
+   * channel its resolver answered on; a land command (Stop land, Retry land) carries its operator and note.
+   */
+  events: WorkItemMilestone[];
+  /** The operators this item names, as they last signed in: never an email (live land acceptance, issue #62). */
+  operators?: WorkOperator[];
+}
+
+export interface WorkItemMilestone {
+  sequence: number; type: string; reason: string; occurredAt: string; phase?: string; workflowStatus?: string;
+  attemptId?: string | null; gateId?: string | null; gateState?: string | null; resolver?: string | null; generation?: number;
+  gateArtifact?: string | null; gateChannel?: string | null; operator?: string | null; note?: string | null;
+}
+
+/** A signed-in operator: the stable OIDC subject and the names they last signed in with. */
+export interface WorkOperator { subject: string; username: string; displayName: string }
+
+/** One failed or not-code check, as GitHub reported it. */
+export interface LandFailedCheck { name: string; conclusion: string; title: string; summary: string; annotations: string[] }
+
+/** The head's checks reduced to one verdict; `done` of `total` have finished. */
+export interface LandChecks { state: 'PASSED' | 'PENDING' | 'FAILED' | 'NOT_CODE'; done: number; total: number; failed: LandFailedCheck[] }
+
+/**
+ * Where the land of an approved pull request stands. `message` is GitHub's own words when it refused;
+ * `branchDeleted` is false once deleting the branch gave up (note `branch_delete_failed`), null before.
+ */
+export interface LandView {
+  state: string;
+  reason: string | null;
+  message: string | null;
+  checks: LandChecks | null;
+  method: string;
+  ticketRule: string;
+  branchDeleted: boolean | null;
+  note: string | null;
+  /** Counted fix attempts of this generation (a branch behind its base is not counted). */
+  attempt: number;
+  /** The smaller of the repository's fix attempts and the runs this item has left. */
+  attemptsAllowed: number;
+  /** A land fix is building, verifying, delivering or being reviewed; readmit would open a second pull request. */
+  fixInProgress: boolean;
+  /** Land handed the item to the operator: Retry land and Stop land are the ways on. The server decides, from its own reasons. */
+  handedOver: boolean;
+  /** Stop land may end the item now: handed over, waiting at land with nothing to move it, or a land that has sent no merge yet. */
+  stoppable: boolean;
 }
 
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */
@@ -61,6 +109,32 @@ export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, no
     body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
   if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
   return response.json();
+}
+
+/**
+ * Retry land or Stop on an item land handed to the operator (spec §7.6). Both are audited, so both carry a note,
+ * and a refusal such as "the pull request moved" is said in words.
+ */
+async function landCommand(item: WorkItemSummary, action: 'retry-land' | 'stop-land', note: string): Promise<WorkItemOutcome> {
+  const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expectedRevision: item.revision, note }) });
+  if (!response.ok) {
+    const body = await response.text();
+    let reason: string | undefined;
+    try { reason = (JSON.parse(body) as { reason?: string }).reason; } catch { /* not a refusal the API shaped */ }
+    throw new Error(reason ? workReason(reason) : `${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+/** A fresh land gate on the head that was verified and reviewed; refused when the pull request moved since. */
+export async function retryLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
+  return landCommand(item, 'retry-land', note);
+}
+
+/** Ends a handed item. The pull request stays open. */
+export async function stopLand(item: WorkItemSummary, note: string): Promise<WorkItemOutcome> {
+  return landCommand(item, 'stop-land', note);
 }
 
 /** Fetched for the current detail request; these fields are never workflow projection columns. */

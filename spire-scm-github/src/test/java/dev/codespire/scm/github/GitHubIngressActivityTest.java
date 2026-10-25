@@ -44,6 +44,27 @@ class GitHubIngressActivityTest {
         ((ObjectNode)root.path("comment")).put("body","TEST says /fix");
         assertFalse(((RepositoryActivity)events(root,"issue_comment").getFirst()).fixCommand());
     }
+    /** A pull request closed on GitHub, merged or not, at the item branch's head. */
+    ObjectNode closed(String action,boolean merged)throws Exception {
+        ObjectNode root=payload().put("action",action);
+        ObjectNode pr=root.putObject("pull_request").put("number",42).put("merged",merged);pr.putObject("head").put("ref","TEST-work").put("sha","b".repeat(40));
+        if(merged){pr.put("merge_commit_sha","e".repeat(40));pr.putObject("merged_by").put("id",900456).put("login","TEST-merger");}
+        return root;
+    }
+    // The sender is whoever closed it; the merger is merged_by, which is what the landing records (A2).
+    @Test void aMergedCloseIsMergedWithTheMergerId()throws Exception {
+        RepositoryActivity activity=(RepositoryActivity)events(closed("closed",true),"pull_request").getFirst();
+        assertEquals("merged",activity.kind());assertEquals("900456",activity.mergedBy());assertEquals("900123",activity.actorId());
+        assertEquals(42,activity.prId());assertEquals("refs/heads/TEST-work",activity.branch());assertEquals("b".repeat(40),activity.head());
+    }
+    @Test void anUnmergedCloseIsClosed()throws Exception {
+        RepositoryActivity activity=(RepositoryActivity)events(closed("closed",false),"pull_request").getFirst();
+        assertEquals("closed",activity.kind());assertNull(activity.mergedBy());assertEquals("900123",activity.actorId());
+    }
+    @Test void synchronizeIsStillPush()throws Exception {
+        RepositoryActivity activity=(RepositoryActivity)events(closed("synchronize",false),"pull_request").getFirst();
+        assertEquals("push",activity.kind());assertNull(activity.mergedBy());assertEquals(42,activity.prId());
+    }
     @Test void issueCommentOutsideAPullRequestIsNotScmTakeover()throws Exception {
         var root=payload().put("action","created");root.putObject("issue").put("number",42);root.putObject("comment").put("id",18).put("body","TEST hello");
         assertTrue(events(root,"issue_comment").isEmpty());

@@ -188,6 +188,22 @@ class PublisherConfigTest {
     }
 
     /**
+     * A push to a pull request's own branch is judged on what landing it on the destination changes too, and
+     * the publisher reads that destination from its own clone, so it needs the name.
+     */
+    @Test
+    void existingModeLandsOnTheProtectedBranch() {
+        Map<String, String> env = env();
+        env.put("SPIRE_BRANCH_MODE", "existing");
+        env.put("SPIRE_BRANCH_BASE", "spire/work-TEST");
+        env.put("SPIRE_BRANCH", "spire/work-TEST");
+        env.put("SPIRE_PROTECTED_BRANCH", " TEST-main ");
+
+        assertEquals("TEST-main", PublisherConfig.fromEnv(env).landingBranch());
+        assertNull(PublisherConfig.fromEnv(env()).landingBranch(), "only an existing-branch push is judged on its landing");
+    }
+
+    /**
      * The default is unchanged, and that is asserted rather than assumed. An absent mode must mean
      * the M0 behaviour: a mode that silently defaulted to {@code existing} would lift the floor for
      * every run ever dispatched.

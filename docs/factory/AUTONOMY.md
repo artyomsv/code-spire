@@ -23,13 +23,23 @@ intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► 
 | **verify** | the repository's own back-pressure runs — *harness* | pass / fail / **unverified** (fails the step, never the item) |
 | **deliver** | push and open a pull request | pull request URL |
 | **review** | the existing reviewer reviews the delivered pull request | findings, reconciled across rounds |
-| **land** | merge and close the work item | merged, or handed to a human |
+| **land** | merge the delivered pull request at the approved head, delete its branch, tell the ticket | merged, or handed to a human |
 
 Delivery precedes review because the existing reviewer consumes an actual pushed pull request
 (ADR-045). M3's [prepared task handoff](PREPARED-TASKS.md) accepts existing specification and
 single-step plan references; generation and verification remain M4 capabilities. Slice 8a proves
 the plan/build policy boundary with an explicit test transport. Production item builds remain
 unavailable until slice 8b supplies the publication hold; missing phases never report completion.
+
+Land's "merged, or handed to a human" is literal on GitHub since M4 slice 2 (ADR-048). An approved land
+merges at exactly the head the gate approved, with the repository's merge method. A refusal caused by code (a
+failed check, a conflict, a branch behind its base) goes back through build, verify, deliver and review to a
+new land gate, within the repository's fix attempts; the build and deliver gates are skipped on that loop
+because the new land approval is the human check. Anything else is handed to the operator with GitHub's
+reason, and the operator retries land or stops the item. The ticket gets a comment and keeps its status
+unless the repository chose to close it. Other forges, and a GitHub repository with no FACTORY account or
+with `auto_if_green`, end at `land / capability_unavailable`; the operator stops the item there, and a
+readmit after that builds beside the pull request that is still open.
 
 ### Why steps are vertical slices
 
@@ -235,6 +245,10 @@ automation for that work item until an operator resumes it.
 The reasoning is not politeness. An agent that races a human produces conflicting commits, duplicate
 review requests and a reviewer bot arguing with a maintainer in a public thread. The prior art is
 explicit that a repository's reputation is a safety control, not a growth throttle.
+
+Two things are not takeover (ADR-048). A person merging or closing the pull request on GitHub is a fact
+about the item: a merge completes it with that person as merger, a close stops it. And the factory's own
+pushes and merge, from the recorded or the current bot identity, belong to the land effect.
 
 ## 5. The push gate
 
