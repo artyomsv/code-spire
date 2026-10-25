@@ -28,6 +28,8 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.*;
@@ -285,6 +287,35 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
         WorkItemEvent item = store.load(id);
         assertState(item, "plan", "awaiting_input", "draft_setup_changed");
         assertNull(item.preparation());
+        assertEquals(0, milestones(id, "DRAFT_REGISTERED"));
+    }
+
+    /**
+     * A setup saved between the specification and the plan dispatch names other coordinates than the commit the
+     * specification read: the plan run is not bought, so no plan is made from one branch's commit for another branch.
+     */
+    @Test
+    void aSetupChangeBeforeThePlanRunRefusesIt() throws Exception {
+        String id = started("spec-approve", 138);
+        saga.on(artifact(dispatched(), SPEC));
+        assertState(store.load(id), "spec", "waiting_approval", "specification_written");
+        forge.stubFor(get(urlEqualTo("/repos/" + scope + "/branches/develop"))
+                .willReturn(okJson("{\"name\":\"develop\",\"commit\":{\"sha\":\"" + "e".repeat(40) + "\"}}")));
+        BuildDefaults.Defaults setup = defaults.get(repository);
+        defaults.save(repository, new BuildDefaults.Input(setup.revision(), "develop", "codex", model, null, null, List.of(), null,
+                BuildDefaults.GENERATED), "TEST-spec-admin");
+        assertEquals(200, answer(id, true, null).status());
+        draftSweep.sweep();
+        assertState(store.load(id), "plan", "active", "phase_started");
+        int before = draftRuns.size();
+
+        prepare.drain();
+
+        assertEquals(before, draftRuns.size(), "no plan run is bought");
+        WorkItemEvent item = store.load(id);
+        assertState(item, "plan", "stopped", "draft_setup_changed");
+        assertNull(item.preparation());
+        assertEquals("refused", effectState(planAttempt(id)));
         assertEquals(0, milestones(id, "DRAFT_REGISTERED"));
     }
 
