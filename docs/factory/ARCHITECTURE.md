@@ -263,7 +263,7 @@ generation, planning and verification remain outside this implementation.
 | Work-item decisions | `WorkItemEvent` with milestone, policy, preparation, gate, progress and control facts; `ResolveGate` unifies answer channels | Implemented work-item aggregate. Review `DomainEvent` remains separate. `factory_run` and `llm_charge` retain run/execution truth; M3 deliberately adds no run aggregate |
 
 Work-item state carries explicit refusal/wait reasons and never turns a missing executor into
-success. Production LAND remains unavailable; VERIFY runs the operator's checks (ADR-046). The [acceptance record](M3-ACCEPTANCE.md)
+success. VERIFY runs the operator's checks (ADR-046); LAND merges an approved GitHub pull request at the approved head (ADR-048, [record](LAND-ACCEPTANCE.md)). The [acceptance record](M3-ACCEPTANCE.md)
 separates supported local journeys from the standalone live /fix proof and remaining live gaps.
 
 ## 7. Data
