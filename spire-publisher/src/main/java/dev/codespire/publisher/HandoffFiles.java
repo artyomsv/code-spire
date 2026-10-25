@@ -63,7 +63,7 @@ final class HandoffFiles {
         if (!attributes.isRegularFile()) {
             return new Read.Refused(Refusal.NOT_REGULAR);
         }
-        if (attributes.size() > maxBytes) {
+        if (attributes.size() >= maxBytes) {
             return new Read.Refused(Refusal.TOO_LARGE);
         }
         try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
