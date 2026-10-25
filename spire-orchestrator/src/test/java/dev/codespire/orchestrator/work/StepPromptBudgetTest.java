@@ -38,12 +38,12 @@ class StepPromptBudgetTest {
     @Test
     void theWorstStepDecides() {
         List<WorkArtifacts.Step> steps = new ArrayList<>(List.of(step(1, "TEST-small"), step(2, "TEST-small")));
-        WorkArtifacts.Step large = step(3, "y".repeat(4000));
+        WorkArtifacts.Step large = step(3, "y".repeat(4100));
         steps.add(large);
         steps.add(step(4, "TEST-small"));
         long titles = IntStream.range(0, steps.size()).mapToLong(i -> ((i + 1) + ". " + steps.get(i).title() + "\n").length()).sum();
 
-        assertEquals(SPEC_16_KIB.length() + titles + 4000 + large.doneWhen().length() + StepPromptBudget.SUMMARIES_BYTES + StepPromptBudget.VERIFY_BYTES,
+        assertEquals(SPEC_16_KIB.length() + titles + 4100 + large.doneWhen().length() + StepPromptBudget.SUMMARIES_BYTES + StepPromptBudget.VERIFY_BYTES,
                 StepPromptBudget.worstCase(SPEC_16_KIB, steps));
         Optional<String> refused = StepPromptBudget.refusal(SPEC_16_KIB, steps);
         assertTrue(refused.orElseThrow().contains("largest step"), refused.orElseThrow());
