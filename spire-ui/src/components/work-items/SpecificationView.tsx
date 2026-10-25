@@ -23,7 +23,7 @@ function CommentLine({ comment, ticketLink }: { comment: DraftComment | null; ti
  * is shown as text exactly as stored: never parsed as Markdown, never set as HTML.
  */
 export default function SpecificationView({ specification, ticketLink }: Props) {
-  return <div className="draft-specification">
+  return <div>
     <p className="prov-sub">Specification — written by the factory · digest <code>{specification.sha256.slice(0, 12)}</code></p>
     <pre className="decision-quote" aria-label="Specification text">{specification.text}</pre>
     <CommentLine comment={specification.comment} ticketLink={ticketLink} />

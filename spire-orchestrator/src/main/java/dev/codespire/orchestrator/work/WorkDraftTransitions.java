@@ -116,8 +116,12 @@ public class WorkDraftTransitions {
     /** The one automatic retry: a new attempt, whose effect row carries the refused attempt and the error, encrypted. */
     private WorkItemTransitions.Outcome retry(Locked locked, DraftResult result, String error) throws SQLException, java.io.IOException {
         UUID next = UUID.randomUUID();
+        // The refused attempt is recorded completed first: one attempt of a phase is started at a time (V87).
+        store.appendDecision(locked.c(), locked.history(), WorkDraftLifecycle.artifactRefused(locked.item(), result.usage()),
+                "draft-refused:" + result.attempt());
         WorkItemEvent retried = WorkDraftLifecycle.retryRequested(locked.item(), result.usage(), new WorkDraftLifecycle.Restart(next, clock.now()));
-        WorkItemTransitions.Outcome outcome = decided(locked, retried, "draft-retry:" + result.attempt());
+        WorkItemTransitions.Outcome outcome = decided(new Locked(locked.c(), store.history(locked.item().workItemId()), locked.item()), retried,
+                "draft-retry:" + result.attempt());
         if (!"DRAFT_RETRY_REQUESTED".equals(retried.milestone())) return outcome;
         try (PreparedStatement ps = locked.c().prepareStatement("UPDATE work_prepare_effect SET retry_of=?,validation_error=?,updated_at=now() WHERE attempt_id=?")) {
             ps.setObject(1, result.attempt());

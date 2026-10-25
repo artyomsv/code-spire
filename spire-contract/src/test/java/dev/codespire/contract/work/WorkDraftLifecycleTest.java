@@ -377,6 +377,19 @@ class WorkDraftLifecycleTest {
         assertEquals(0, next.progress().runs());
     }
 
+    /** The refused attempt is recorded completed before the retry starts another: one started attempt per phase (V87). */
+    @Test
+    void aRefusedArtifactFinishesItsAttempt() {
+        WorkItemEvent started = started(profile("auto", "approve", "approve"));
+
+        WorkItemEvent refused = WorkDraftLifecycle.artifactRefused(started, USAGE);
+
+        assertEquals("DRAFT_ARTIFACT_REFUSED", refused.milestone());
+        assertEquals(started.progress().attemptId(), refused.progress().attemptId());
+        assertEquals("completed", refused.progress().attemptState());
+        assertEquals(5, refused.progress().wallSeconds());
+    }
+
     @Test
     void aRetryPastTheCapsStops() {
         WorkItemEvent started = started(profile("auto", "approve", "approve"));

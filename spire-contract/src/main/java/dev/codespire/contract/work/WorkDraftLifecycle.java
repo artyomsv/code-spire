@@ -89,6 +89,16 @@ public final class WorkDraftLifecycle {
                 finished.start(restart.attemptId(), phase, restart.now()));
     }
 
+    /**
+     * The first artifact was refused: the attempt is finished with its usage before {@link #retryRequested} starts the
+     * next one, so the refused attempt is recorded completed and only one attempt of the phase is ever started.
+     */
+    public static WorkItemEvent artifactRefused(WorkItemEvent item, RunUsage usage) {
+        String phase = requireRunning(item);
+        return WorkItemLifecycle.state(item, "active", SPEC.equals(phase) ? "spec_invalid" : "plan_invalid", "DRAFT_ARTIFACT_REFUSED",
+                item.gate(), usage.finish(item.progress()));
+    }
+
     /** The retry's artifact was refused too: the item waits for a person, never fails (FR-F20). */
     public static WorkItemEvent invalid(WorkItemEvent item, RunUsage usage) {
         String phase = requireRunning(item);

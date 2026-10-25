@@ -21,14 +21,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A specification or plan run's artifact (M4 slice 3), through the real result consumer: the run row finishes
- * with nothing pushed, and its spend is charged under the run's own kind.
+ * A specification or plan run's artifact (M4 slice 3): the run row finishes with nothing pushed, and its spend is
+ * charged under the run's own kind. Through the real result consumer, an artifact no draft effect row dispatched is
+ * neither projected nor charged (slice 6): the binding check runs before both.
  */
 @QuarkusTest
 class RunWorkArtifactProjectionTest {
 
     @Inject
     RunResultSaga saga;
+
+    @Inject
+    RunCharges charges;
 
     @Inject
     FactoryRunProjection projection;
@@ -38,16 +42,36 @@ class RunWorkArtifactProjectionTest {
 
     @Test
     void anArtifactResultFinishesTheRun() {
-        String runId = "run::github:TEST-WS/TEST-REPO:TEST-spec-" + UUID.randomUUID() + ":1";
-        UUID attempt = UUID.randomUUID();
-        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL", "main",
-                "TESTSHA0", "spire/draft-" + attempt, "TEST-bot", null).ofKind(RunKind.SPEC), null, null));
+        String runId = queuedSpecRun();
+        RunResult artifact = artifact(runId);
 
-        saga.on(new RunResult.RunWorkArtifact(runId, new WorkDraftBinding("TEST-item", 1, attempt,
-                WorkDraftBinding.Kind.SPEC, "d".repeat(64)), "TEST-specification", false, Map.of("INPUT", 10L), 4));
+        projection.apply(artifact);
+        charges.record(artifact);
 
         assertEquals(Arrays.asList("succeeded", null, "4"), row(runId), "finished, with nothing pushed");
         assertEquals(List.of("SPEC"), chargeKinds(runId));
+    }
+
+    @Test
+    void anArtifactNoDraftEffectDispatchedIsNeitherProjectedNorCharged() {
+        String runId = queuedSpecRun();
+
+        saga.on(artifact(runId));
+
+        assertEquals("queued", row(runId).getFirst());
+        assertEquals(List.of(), chargeKinds(runId));
+    }
+
+    private String queuedSpecRun() {
+        String runId = "run::github:TEST-WS/TEST-REPO:TEST-spec-" + UUID.randomUUID() + ":1";
+        assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-MODEL", "main",
+                "TESTSHA0", "spire/draft-" + UUID.randomUUID(), "TEST-bot", null).ofKind(RunKind.SPEC), null, null));
+        return runId;
+    }
+
+    private static RunResult artifact(String runId) {
+        return new RunResult.RunWorkArtifact(runId, new WorkDraftBinding("TEST-item", 1, UUID.randomUUID(),
+                WorkDraftBinding.Kind.SPEC, "d".repeat(64)), "TEST-specification", false, Map.of("INPUT", 10L), 4);
     }
 
     private List<String> row(String runId) {
