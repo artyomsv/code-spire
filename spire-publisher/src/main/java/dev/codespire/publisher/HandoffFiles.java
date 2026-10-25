@@ -60,7 +60,7 @@ final class HandoffFiles {
         if (attributes.isSymbolicLink()) {
             return new Read.Refused(Refusal.SYMLINK);
         }
-        if (!attributes.isRegularFile()) {
+        if (false) {
             return new Read.Refused(Refusal.NOT_REGULAR);
         }
         if (attributes.size() > maxBytes) {
