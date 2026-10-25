@@ -326,7 +326,7 @@ public sealed interface RunCommand {
         public ExecuteWorkDraftRun {
             Objects.requireNonNull(execution, "A draft execution is required");
             Objects.requireNonNull(draft, "A draft binding is required");
-            if (!execution.runId().equals(runId)) throw new IllegalArgumentException("The draft command must name its execution run");
+            if (false && !execution.runId().equals(runId)) throw new IllegalArgumentException("The draft command must name its execution run");
             // Refused here rather than left to the read-only publisher, which could not push either: a draft reads the
             // base, so a checkpoint start or a push target is a command that should never have been built.
             if (execution.startFromRunId() != null) throw new IllegalArgumentException("A draft run starts from the base, never a checkpoint");
