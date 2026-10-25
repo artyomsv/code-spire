@@ -1,6 +1,7 @@
 package dev.codespire.contract.work;
 
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -8,42 +9,116 @@ import java.util.UUID;
 public final class WorkDraftLifecycle {
     private WorkDraftLifecycle() {}
 
-    private static final Set<String> DRAFT_PHASES = Set.of("spec", "plan");
+    private static final String SPEC = "spec", PLAN = "plan";
+    private static final Set<String> DRAFT_PHASES = Set.of(SPEC, PLAN);
     /** Where a fresh admission reaches spec before anything is written: spec auto, or spec approve (§6.5). */
     private static final Set<String> SPEC_ADMISSION_REASONS = Set.of("specification_required", "spec_approval_unavailable");
 
+    /** The reasons a spec or plan gate carries when it asks about a written artifact rather than permission (A6). */
+    public static final Set<String> RESULT_REASONS = Set.of("specification_written", "plan_written");
+
     /** What a draft run spent, as the orchestrator measured it; unknown usage blocks further work, as a build's does. */
-    public record RunUsage(long wallSeconds, long costMillicents, long calls, boolean known) {}
+    public record RunUsage(long wallSeconds, long costMillicents, long calls, boolean known) {
+        WorkProgress finish(WorkProgress progress) {
+            WorkProgress finished = progress.finish(wallSeconds, costMillicents, calls);
+            return known ? finished : finished.unknownUsage();
+        }
+    }
 
     /** The new attempt an automatic retry starts, and when. */
     public record Restart(UUID attemptId, Instant now) {}
 
+    /**
+     * A draft run's artifact was accepted (§6.3): the attempt is finished with its usage and the draft records the
+     * artifact. A new specification clears any plan and both approvals ({@link WorkDraft#withSpecification}). What
+     * follows, a result gate or the approval, is {@link #afterWritten}, a decision of its own.
+     */
     public static WorkItemEvent written(WorkItemEvent item, WorkDraft.Written written, RunUsage usage) {
-        throw new UnsupportedOperationException("RED");
+        String phase = requireRunning(item);
+        WorkDraft draft = SPEC.equals(phase) ? item.draft().withSpecification(written)
+                : item.draft().withPlan(written.artifact(), written.setupRevision());
+        WorkItemEvent finished = WorkItemLifecycle.state(item, "awaiting_input", resultReason(phase), "DRAFT_ARTIFACT_WRITTEN",
+                item.gate(), usage.finish(item.progress()));
+        return finished.drafted(draft);
     }
 
+    /**
+     * Under {@code approve} a result gate opens on the artifact's digest, modelled on the verify result gate: the run
+     * was admitted by the setting, so the person approves what it wrote (A6). Under {@code auto} the artifact is
+     * approved at once. A phase switched {@code off} while the run worked stops there.
+     */
     public static WorkItemEvent afterWritten(WorkItemEvent written, WorkItemLifecycle.GateOpening opening) {
-        throw new UnsupportedOperationException("RED");
+        String phase = written.phase();
+        String mode = written.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(phase.toUpperCase(Locale.ROOT)), "off");
+        if ("off".equals(mode))
+            return WorkItemLifecycle.state(written, "not_eligible", phase + "_off", "WORK_ITEM_REFUSED", written.gate(), written.progress().reserve(false));
+        if (!"approve".equals(mode)) return approved(written);
+        Instant now = opening.now();
+        WorkGate gate = new WorkGate(opening.decisionId(), 1, "OPEN", phase, written.generation(), opening.historySize() + 1,
+                written.policyRevision(), written.authority(), WorkGate.artifactOf(written), now,
+                now.plusSeconds(written.policy().limits().gateTtlSeconds()), null, null, null, null);
+        return WorkItemLifecycle.state(written, "waiting_approval", resultReason(phase), "GATE_OPENED", gate, written.progress().reserve(true));
     }
 
+    /**
+     * The written artifact is approved, by its result gate or by {@code auto}: the draft records it and the item moves
+     * to the next phase, which the caller then enters as an ordinary entry. Entering plan with no plan written parks it
+     * for the draft sweep (decision 10), so approving starts no run here.
+     */
     public static WorkItemEvent approved(WorkItemEvent item) {
-        throw new UnsupportedOperationException("RED");
+        String phase = item.phase();
+        if (item.draft() == null || !DRAFT_PHASES.contains(phase) || item.draft().artifactFor(phase) == null)
+            throw new IllegalStateException("Only a written " + phase + " can be approved");
+        String next = SPEC.equals(phase) ? PLAN : "build";
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), next, "awaiting_input", "phase_completed",
+                "DRAFT_APPROVED", item.gate(), item.progress().reserve(false)).drafted(item.draft().approved(phase));
     }
 
+    /**
+     * The first artifact was refused by validation: one automatic retry in a new attempt, its spend checked against the
+     * caps as an entry would check it (§6.3). It counts no build run.
+     */
     public static WorkItemEvent retryRequested(WorkItemEvent item, RunUsage usage, Restart restart) {
-        throw new UnsupportedOperationException("RED");
+        String phase = requireRunning(item);
+        WorkProgress finished = usage.finish(item.progress());
+        if (finished.usageUnknown())
+            return WorkItemLifecycle.state(item, "awaiting_input", "run_usage_unknown", "WORK_ITEM_REFUSED", item.gate(), finished);
+        if (!finished.within(item.policy().limits(), phase))
+            return WorkItemLifecycle.state(item, "stopped", "policy_cap_reached", "WORK_ITEM_REFUSED", item.gate(), finished);
+        return WorkItemLifecycle.state(item, "active", "phase_started", "DRAFT_RETRY_REQUESTED", item.gate(),
+                finished.start(restart.attemptId(), phase, restart.now()));
     }
 
+    /** The retry's artifact was refused too: the item waits for a person, never fails (FR-F20). */
     public static WorkItemEvent invalid(WorkItemEvent item, RunUsage usage) {
-        throw new UnsupportedOperationException("RED");
+        String phase = requireRunning(item);
+        return WorkItemLifecycle.state(item, "awaiting_input", SPEC.equals(phase) ? "spec_invalid" : "plan_invalid", "DRAFT_INVALID",
+                item.gate(), usage.finish(item.progress()));
     }
 
+    /** The run itself failed (decision 6): the item waits at draft_run_failed, never at failed (FR-F20). */
     public static WorkItemEvent runFailed(WorkItemEvent item, RunUsage usage) {
-        throw new UnsupportedOperationException("RED");
+        requireRunning(item);
+        return WorkItemLifecycle.state(item, "awaiting_input", "draft_run_failed", "DRAFT_RUN_FAILED", item.gate(), usage.finish(item.progress()));
     }
 
+    /** Whether this gate asks about a written artifact of the item's draft, rather than permission to run (A6). */
     public static boolean resultGate(WorkItemEvent item, WorkGate gate) {
-        return true;
+        return gate != null && item.draft() != null && DRAFT_PHASES.contains(gate.phase()) && gate.phase().equals(item.phase())
+                && item.draft().artifactFor(gate.phase()) != null && RESULT_REASONS.contains(item.reason());
+    }
+
+    private static String resultReason(String phase) {
+        return SPEC.equals(phase) ? "specification_written" : "plan_written";
+    }
+
+    /** A draft result applies only to the running attempt of a drafted spec or plan; the caller checks the attempt. */
+    private static String requireRunning(WorkItemEvent item) {
+        String phase = item.phase();
+        if (item.draft() == null || !DRAFT_PHASES.contains(phase) || !"active".equals(item.workflowStatus()))
+            throw new IllegalStateException("A draft result applies to a running spec or plan, not "
+                    + phase + " / " + item.workflowStatus() + " / " + item.reason());
+        return phase;
     }
 
     /** How {@link WorkItemLifecycle#enter} was asked to enter a phase, as this class needs it. */

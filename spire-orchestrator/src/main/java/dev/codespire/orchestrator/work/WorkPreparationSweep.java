@@ -283,8 +283,8 @@ public class WorkPreparationSweep {
         }
     }
 
-    /** The head of the default base branch, through the repository's own account (decision 2A). */
-    private String head(WorkItemEvent item, String branch) {
+    /** The head of the default base branch, through the repository's own account (decision 2A); a draft run reads it too. */
+    String head(WorkItemEvent item, String branch) {
         var account = accounts.resolve(item.repositoryId(), ProviderRole.FACTORY)
                 .or(() -> accounts.resolve(item.repositoryId(), ProviderRole.REVIEWER))
                 .orElseThrow(() -> new IllegalStateException("repository_account_missing"));

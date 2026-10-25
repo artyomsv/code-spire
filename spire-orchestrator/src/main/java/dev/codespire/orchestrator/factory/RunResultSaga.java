@@ -51,14 +51,17 @@ public class RunResultSaga {
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
-            if(!workItems.acceptsBinding(result))return;
+            // A draft artifact bound to another attempt is refused here too, before it can be projected or charged (M4 slice 3).
+            if(!workItems.acceptsBinding(result) || !drafts.acceptsBinding(result))return;
             projection.apply(result);
             // AFTER the projection, deliberately. The run's outcome is the fact an operator is
             // waiting on; the ledger write is best-effort and says so if it fails, so ordering it
             // first would let a ledger outage delay a terminal status that is already known.
             charges.record(result);
             credentials.reactTo(result);
-            // A specification or plan run pushed nothing to propose, and the work-run inbox holds no row for it.
+            // A specification or plan run pushed nothing to propose, and the work-run inbox holds no row for it: its own
+            // inbox claims every result it has, a failure included, so none falls through to the proposal below.
+            if (drafts.accept(result)) return;
             if (result instanceof RunResult.RunWorkArtifact) return;
             if(workItems.accept(result))return;
             // LAST, and after the projection on purpose: it reads the row the projection just

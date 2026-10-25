@@ -12,11 +12,13 @@ import java.util.Set;
 /**
  * The SQL side of a generated item's draft (M4 slice 3, A4), projected in the transaction that appends each event:
  * the item's preparation mode, which the copy and draft sweeps select on (decision 2), and one
- * {@code work_prepare_effect} row for each draft attempt started.
+ * {@code work_prepare_effect} row for each draft attempt started, by the sweep or by an automatic retry.
  */
 @ApplicationScoped
 public class WorkDraftProjection {
     private static final Set<String> DRAFT_PHASES = Set.of("spec", "plan");
+    /** The decisions that start a draft attempt: the sweep's start, and the automatic retry (slice 6). */
+    private static final Set<String> STARTS = Set.of("PHASE_STARTED", "DRAFT_RETRY_REQUESTED");
 
     void project(Connection c, WorkItemEvent item) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("UPDATE work_item SET preparation_mode=? WHERE id=?")) {
@@ -24,7 +26,7 @@ public class WorkDraftProjection {
             ps.setString(2, item.workItemId());
             ps.executeUpdate();
         }
-        if (item.draft() == null || !DRAFT_PHASES.contains(item.phase()) || !"PHASE_STARTED".equals(item.milestone())) return;
+        if (item.draft() == null || !DRAFT_PHASES.contains(item.phase()) || !STARTS.contains(item.milestone())) return;
         // A replayed projection of the same start inserts nothing: the attempt is the row's identity.
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO work_prepare_effect(attempt_id,work_item_id,generation,kind,state) VALUES (?,?,?,?,'pending')

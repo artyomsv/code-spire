@@ -87,6 +87,16 @@ after the switch (A16). It widens the V93 `work_tracker_outbox.effect_class` CHE
 carrying a written specification or plan, bound to the generation and the draft attempt, never the item revision.
 The plan named this migration V97; slice 4 took that number for `ARTIFACT_MISSING`.
 
+What the row holds (slice 6): the dispatcher's claim writes `run_id`, `provisional_digest` and `setup_revision`
+before the send. The automatic retry is a new row, inserted with `DRAFT_RETRY_REQUESTED`, whose `retry_of` names the
+refused attempt and whose `validation_error` is encrypted under `work-prepare-error:<attempt>`; `note` is encrypted
+under `work-prepare-note:<attempt>`. A terminal result is stored once in `result_payload`, encrypted under
+`work-prepare-result:<run_id>`, then applied and marked `result_processed` (`done`, or `refused` with the reason when
+the item no longer runs that attempt); a scheduled recovery applies any stored result a crash left unapplied. The
+written specification itself is a `work_item_artifact` row of kind `SPEC`, encrypted under its own id, and its ticket
+comment is a `draft` outbox row whose id is derived from the attempt, so a redelivered result enqueues nothing new; a
+takeover refuses it while it is still pending.
+
 The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
 and plan references, the revision counts, the two approvals, the base commit the specification read and the setup
 revision. It holds references only; the text is stored encrypted, as a composed task's is.

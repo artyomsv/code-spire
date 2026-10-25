@@ -142,6 +142,10 @@ public class WorkItemStore {
         }
         boolean takenOver=Set.of("HUMAN_TAKEOVER","WORK_ITEM_RETIRED").contains(item.milestone());
         if(prEnded || takenOver) {
+            // A written specification's comment outlives the next decision, but not a takeover (M4 slice 3, A6).
+            if(takenOver)try(PreparedStatement ps=c.prepareStatement("UPDATE work_tracker_outbox SET state='refused',reason='work_item_invalidated' WHERE work_item_id=? AND state='pending' AND effect_class='draft'")) {
+                ps.setString(1,item.workItemId());ps.executeUpdate();
+            }
             try(var ps=c.prepareStatement("UPDATE work_delivery_effect SET state='refused',reason='publication_held_by_human' WHERE work_item_id=? AND state IN ('pending','publishing','pushed')")) {
                 ps.setString(1,item.workItemId());ps.executeUpdate();
             }

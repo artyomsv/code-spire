@@ -8,6 +8,8 @@ import SettingField from '../SettingField';
 import DecisionEvidence from './DecisionEvidence';
 import * as approvalsApi from './approvalsApi';
 import { preparationEvidence, type PreparationEvidence } from './workPreparationApi';
+import SpecificationView from './SpecificationView';
+import { workDraft, type WorkDraftView } from './workDraftApi';
 
 const METHOD_WORDS: Record<string, string> = { merge: 'a merge commit', squash: 'a squash merge', rebase: 'a rebase merge' };
 
@@ -71,6 +73,7 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const [loaded, setLoaded] = useState<Loaded | null>(null), [error, setError] = useState('');
   const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | null>(null);
   const [evidence, setEvidence] = useState<{ value: PreparationEvidence | null; error: string }>({ value: null, error: '' });
+  const [draft, setDraft] = useState<{ loaded: boolean; value: WorkDraftView | null }>({ loaded: false, value: null });
   // Reuse an answer identity after a transport failure, but never attach it to a different gate, answer or note.
   const attempt = useRef<{ key: string; gate: string; approve: boolean; note: string } | null>(null);
   const live = useRef(true);
@@ -99,6 +102,18 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     return () => { current = false; };
   }, [itemId, admin, gateKey, prepared]);
 
+  // A generated item's spec gate binds the specification the factory wrote, not a prepared task (M4 slice 3, A6).
+  const gatePhase = loaded?.approval?.gate.phase;
+  const draftPhase = !preparation && gatePhase === 'spec' && !!loaded?.approval?.gate.artifact;
+  useEffect(() => {
+    let current = true;
+    setDraft({ loaded: false, value: null });
+    if (!admin || !gateKey || !draftPhase) return;
+    workDraft(itemId).then(value => { if (current) setDraft({ loaded: true, value }); })
+      .catch(() => { if (current) setDraft({ loaded: true, value: null }); });
+    return () => { current = false; };
+  }, [itemId, admin, gateKey, draftPhase]);
+
   async function decide(approve: boolean) {
     const gate = loaded?.approval?.gate;
     if (!gate) return;
@@ -124,12 +139,15 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const needsTexts = !!preparation && !!gate && gate.phase !== 'land';
   // The decision and the item are read separately. A decision that binds a preparation the item no
   // longer has cannot be matched to any texts, so it is not approvable either.
-  const orphaned = !preparation && !!gate && gate.phase !== 'land' && gate.artifact !== null;
+  const written = draftPhase ? draft.value?.specification ?? null : null;
+  const draftBound = !!written && written.sha256 === gate?.artifact;
+  const draftChanged = !!written && !draftBound;
+  const orphaned = !preparation && !!gate && gate.phase !== 'land' && gate.artifact !== null && (!draftPhase || draft.loaded && !written);
   const readable = !!evidence.value && !evidence.value.reason;
   const reported = evidence.value?.binding;
   const unreported = needsTexts && readable && reported === undefined;
   const mismatched = needsTexts && readable && reported !== undefined && reported !== gate?.artifact;
-  const bound = !orphaned && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
+  const bound = !orphaned && (!draftPhase || draftBound) && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
   const heading = headingFor(resultGate, gate?.phase);
   const verification = loaded?.item.progress?.execution?.verification;
   const subtitle = !loaded ? undefined : title ? `${title} · ${loaded.item.issueKey} · ${loaded.item.repository}` : `${loaded.item.issueKey} · ${loaded.item.repository}`;
@@ -145,6 +163,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     {loaded && gate && <>
       {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">
         <h4>What the checks found</h4><VerifyResult verification={verification} /></section>}
+      {draftBound && written && <section className="decision-sec" aria-label="What you approve">
+        <h4>What you approve</h4><SpecificationView specification={written} ticketLink={draft.value?.ticketLink ?? loaded.item.trackerUrl} /></section>}
+      {draftChanged && <p className="prov-error" role="alert">The specification changed after this decision was opened, so it is not what this decision binds. Approve is not offered; answering only closes this decision.</p>}
       <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
       {gate.phase === 'land' && <LandPreview item={loaded.item} />}
       {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering only closes this decision. Register the current versions to get a new one.</p>}

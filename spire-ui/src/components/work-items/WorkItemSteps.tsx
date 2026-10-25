@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { WorkItemDetail } from '../../api';
 import { formatEventTime } from '../../format';
@@ -6,6 +6,8 @@ import { actorLabel } from '../actorsApi';
 import { JOURNEY, journeyCells, landNote, landProgress, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
+import SpecificationView from './SpecificationView';
+import { workDraft, type WorkDraftView } from './workDraftApi';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'operators' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
@@ -64,6 +66,23 @@ function Prepared({ item, part }: { item: Item; part: 'specification' | 'plan' }
       : <a href={artifact.location.link} target="_blank" rel="noreferrer">{name} #{artifact.location.issueKey}</a>}
     {part === 'plan' ? ' · one step' : ''} · pinned <span className="mono">{artifact.sha256.slice(0, 12)}</span>
   </p>;
+}
+
+/**
+ * The specification the factory wrote for a generated item (M4 slice 3, §6.10). Read only once this attempt wrote one,
+ * so an item that never had a draft asks the server nothing.
+ */
+function DraftSpecification({ item }: { item: Item }) {
+  const written = !item.preparation && item.events.some(event => event.type === 'DRAFT_ARTIFACT_WRITTEN' && current(item, event.generation));
+  const [draft, setDraft] = useState<WorkDraftView | null>(null);
+  useEffect(() => {
+    if (!written) return;
+    let live = true;
+    workDraft(item.id).then(value => { if (live) setDraft(value); }).catch(() => { if (live) setDraft(null); });
+    return () => { live = false; };
+  }, [item.id, written]);
+  if (!written || !draft?.specification) return null;
+  return <SpecificationView specification={draft.specification} ticketLink={draft.ticketLink} />;
 }
 
 /**
@@ -157,7 +176,7 @@ function LandCommands({ item }: { item: Item }) {
 function Evidence({ item, phase }: { item: Item; phase: JourneyPhase }) {
   switch (phase) {
     case 'intake': return <Intake item={item} />;
-    case 'spec': return <Prepared item={item} part="specification" />;
+    case 'spec': return <><Prepared item={item} part="specification" /><DraftSpecification item={item} /></>;
     case 'plan': return <><Prepared item={item} part="plan" /><Decisions item={item} phase="plan" /></>;
     case 'build': return <Build item={item} />;
     case 'land': return <><Land item={item} /><LandCommands item={item} /><Decisions item={item} phase="land" /></>;

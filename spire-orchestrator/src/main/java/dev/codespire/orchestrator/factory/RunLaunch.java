@@ -93,6 +93,11 @@ public class RunLaunch {
         return dispatch(command);
     }
 
+    /** A specification or plan run (M4 slice 3): the same three outcomes, the same row updates. */
+    public Outcome launch(RunCommand.ExecuteWorkDraftRun command) {
+        return dispatch(command);
+    }
+
     private Outcome dispatch(RunCommand command) {
         String runId = command.runId();
         try {

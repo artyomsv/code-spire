@@ -434,6 +434,8 @@ public class WorkItemTransitions {
                     }
                     // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
                     boolean verifyResult="verify".equals(gate.phase()) && WorkItemLifecycle.VERIFY_RESULT_REASONS.contains(current.reason());
+                    // So does a generated item's spec or plan gate: it asks about the written artifact (M4 slice 3, A6).
+                    boolean draftResult=WorkDraftLifecycle.resultGate(current,gate);
                     // Retry build rewinds to build: the human chose to build again, which also answers a build: approve gate.
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
@@ -442,7 +444,8 @@ public class WorkItemTransitions {
                         WorkItemLifecycle.EntryMode mode=entryMode(history);
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
-                        next=enterPrepared(c,history,next,true,now,mode);
+                        if(draftResult){next=WorkDraftLifecycle.approved(next);store.appendDecision(c,history,next,"draft-approved:"+gateId+":"+key);history=store.history(id);}
+                        next=enterPrepared(c,history,next,!draftResult,now,mode);
                         history=store.history(id);
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
