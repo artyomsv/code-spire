@@ -2191,3 +2191,31 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   7-parameter constructor, now a plan record, a posting ladder class and a ports record). Each fix
   has a test that failed first, and the branch review's minors M-4 to M-9 were fixed in the same
   round. Record: [GitHub reviews acceptance](factory/GITHUB-REVIEWS-ACCEPTANCE.md).
+
+- **Factory M4 slice 2: land (2026-10-21 to 2026-10-25, PR #243).**
+  An approved land merges the delivered pull request on GitHub at exactly the approved head, with the
+  repository's merge method, through a durable `work_land_effect` row; a lost merge answer is recovered
+  by reading, never re-sent. The item branch is deleted, the ticket gets a comment (closing it is a
+  per-repository rule) and the item completes as `landed`. A failed check, a conflict or a branch behind
+  its base runs a land fix on the same pull request, through verify, delivery and review, to a new land
+  gate, within the repository's fix attempts; anything else is handed to the operator with GitHub's
+  reason, for Retry land or Stop land. A merge or close by hand completes or stops the item, and a landed
+  item cannot be readmitted (ADR-048). Nine slices ran, each RED then GREEN in CI, and 36 chosen
+  mutations, then 3 more, were all killed. A four-lens review covered the whole branch, and an external
+  review of the pull request found five defects, all fixed, approving `36b21943`. The live proof on
+  `spire-test` (squash, fix attempts 3, every build on a seat) merged #58 at its approved head in eleven
+  seconds with the ticket left open, merged #60 and closed its ticket, and on #62 read a conflict the
+  operator made on `main`, ran a land fix that merged the base, re-verified and re-reviewed, and merged on
+  the new gate. #66 met a TEST ruleset requiring one approval, was handed over with `land_blocked` and no
+  fix run, and the operator stopped it with a note. The hand merge found the worst defect: `spire-test`
+  has only a REVIEWER webhook, so PR 65, merged by hand while #64 waited at its land gate, was never
+  noticed. The reviewer's close of a delivered pull request now reaches land, and a periodic read every
+  2 minutes catches a missed or absent webhook; after the redeploy #64 converged by itself, and the
+  re-test #68 completed 19 seconds after its hand merge. The proof also fixed land decisions that
+  rendered identically, disabled buttons that looked clickable, a Stop land note that was not shown, and
+  slow dashboard polling, each with a test that failed first; three mutants of those fixes died in CI.
+  Left open: the failing-check fix, a check that is not code, exhausted attempts, Retry land, uncertain
+  merge recovery, a failed branch delete and the Jira close skip are proven against fakes only; land
+  `auto_if_green` stays unwired; GitLab and Bitbucket cannot land. PR #243 merged to master on
+  2026-10-25. Record: [land acceptance](factory/LAND-ACCEPTANCE.md). Next: M4's specification, plan
+  and step continuity.

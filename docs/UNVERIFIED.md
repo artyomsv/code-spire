@@ -160,8 +160,8 @@ orchestrator JVM and provider fixture. It observes the checkpoint and one charge
 is absent. Since M4, a held build starts verify instead of stopping, and the draft/regular delivery
 tests drive the real verify flow with only the buses faked. They establish native request/response
 handling. Since 2026-10-08 live item publication, verification, a draft marked ready and its review
-are established on GitHub only (M4 verify acceptance); live merge is not (see the M4 land entry
-below), and no live tracker-artifact journey follows from these local proofs.
+are established on GitHub only (M4 verify acceptance), and since 2026-10-25 so is live merge (see the M4
+land entry below); no live tracker-artifact journey follows from these local proofs.
 
 **M4 verify (2026-10-07), what no test establishes.**
 - **Live on GitHub only, with file checks.** Three items on `spire-test` verified passed, failed then
@@ -185,9 +185,15 @@ below), and no live tracker-artifact journey follows from these local proofs.
 an approved land no longer rebuilds delivered work. `WorkLandReadmitIT.aLandedItemCannotBeReadmitted`
 refuses a landed item (`readmission_landed`), and
 `WorkLandReadmitIT.anItemWaitingAtLandForACapabilityCannotBeReadmitted` refuses the `land /
-capability_unavailable` item #43 was (`readmission_land_pending`). Everything below is proven against a
-WireMock GitHub and a local origin only; no item has been merged live yet (`factory/LAND-ACCEPTANCE.md`
-when it lands).
+capability_unavailable` item #43 was (`readmission_land_pending`). Land has a live proof on GitHub since
+2026-10-25 ([land acceptance](factory/LAND-ACCEPTANCE.md)): on `spire-test` a clean merge under each ticket
+rule (#58 left open, #60 closed), a conflict fixed by a land fix and merged on a new gate (#62), a merge by
+hand (#64, #68) and a ruleset block handed over and stopped (#66). Everything below is proven against a
+WireMock GitHub and a local origin only, unless a bullet says otherwise.
+- **Land paths no live run has reached.** The failing-check land fix (`spire-test` has no CI to fail), a
+  check conclusion that is not code (`cancelled`, `timed_out`: `land_checks_not_code`), fix attempts spent
+  (`land_fix_attempts_exhausted`), Retry land end to end, the recovery of an uncertain merge, and a branch
+  delete that fails (`branch_delete_failed`). The conflict fix is the only land fix that has run live.
 - **Land that cannot merge is a stop, not a path.** On GitLab and Bitbucket, and on a GitHub repository
   with no FACTORY account or with land `auto_if_green`, every item that reaches land waits at `land /
   capability_unavailable`; switching land `off` leaves it at `land / not_eligible / land_off`. Readmit is
@@ -199,25 +205,29 @@ when it lands).
   factory sent, kept on the row when the merge is claimed, so a lost answer recovered after the setting
   changed records what was sent (`WorkLandingIT.anUncertainMergeRecordsTheMethodItSent`). A merge a person
   made, or one a re-read found made by someone else, records `unknown`: GitHub's pull request read does not
-  report the method. Nothing reads back whether GitHub merged with the method that was sent.
-- **A hand merge with no FACTORY webhook is noticed by the reviewer's close or a periodic read, proven
-  against a fake GitHub only.** The live land acceptance found it stuck: on `spire-test`, which has only a
-  REVIEWER webhook, PR 65 was merged by hand while issue #64 waited at its land gate, and nothing read the
+  report the method (seen live on #64 and #68). Nothing reads back whether GitHub merged with the method that
+  was sent.
+- **A hand merge with no FACTORY webhook is noticed by the reviewer's close or a periodic read; live, but
+  the two observers are not proven apart.** The live land acceptance found it stuck: on `spire-test`, which
+  has only a REVIEWER webhook, PR 65 was merged by hand while issue #64 waited at its land gate, and nothing read the
   pull request, since no `work_land_effect` row exists before approval. The REVIEWER webhook's
   `PullRequestClosed` for a delivered pull request now enters the same land observation as the factory's
   `merged`/`closed` activity (`WorkPullRequestWatch.reviewerClosed`), and every 2 minutes
   (`spire.work-pr-state-interval`) a bounded batch of 20 items at deliver, review or land with a delivered
   pull request and no live land effect has its pull request read (`WorkPullRequestWatch.check`), so a missed
   or absent webhook converges within minutes (`WorkLandUnwatchedIT`). A stopped item is not read
-  periodically; only a webhook reaches it. Neither path has run live; issue #64 is expected to converge
-  through the periodic read after a redeploy, and that is the first live proof. A webhook whose read could not
+  periodically; only a webhook reaches it. After the redeploy #64 converged by itself (land effect
+  2026-10-24 01:12:59 to 01:13:02, merger 3218389, branch deleted, comment posted); PR 65's close had arrived
+  before the fix, so the periodic read brought it. The re-test #68 completed 19 seconds after its hand merge;
+  which observer was first is not recorded. A webhook whose read could not
   confirm the merge leaves a `work_land_observation` row that every sweep reads again (`WorkLandWebhookIT`).
   The read takes the FACTORY account, or the REVIEWER account when the factory is unavailable; the reviewer's
   reader refuses a merge or a branch delete (`…aHandMergeIsReadThroughTheReviewerWhenTheFactoryIsUnavailable`,
   `ProviderClientsLanderTest`). No live repository has had its merge read through the reviewer.
 - **Merge-queue repositories are handed over, never proven live.** A repository that requires GitHub's
-  merge queue is expected to report `blocked`, which hands the item over with `land_blocked`. No test met a
-  real merge queue, and nothing reads the ruleset to say a queue was the cause.
+  merge queue is expected to report `blocked`, which hands the item over with `land_blocked`. A ruleset
+  requiring one approval was handed over that way live (#66), with no fix run. No test met a real merge
+  queue, and nothing reads the ruleset to say which rule was the cause.
 - **Fork pull requests.** The factory opens its pull request from the item branch in the same repository,
   and the land read, the fix clone and the branch delete all assume that. No test lands, fixes or deletes a
   pull request whose head lives in a fork.
@@ -235,7 +245,8 @@ when it lands).
   nothing re-reads the base and retries. `PublishRepoTest` covers a base that did not move.
 - **Jira `close` is skipped.** A Jira source under the `close` ticket rule gets the comment, keeps its
   status, and the item notes `ticket_close_unsupported`: a close needs a per-workflow transition id that
-  nothing configures. The GitHub Issues and GitLab close are proven against fakes only. The close reads the
+  nothing configures. The GitHub Issues close is live (#60, #62); the GitLab close is proven against fakes
+  only. The close reads the
   ticket rule again when it is claimed, under the repository and settings locks a save takes, so a rule saved as
   `comment` after the first read refuses it (`WorkPostLandEffectsTest.aRuleChangedBetweenTheReadAndTheClaimDoesNotClose`).
   The screen shows the note beside the merge, on a completed item too.
