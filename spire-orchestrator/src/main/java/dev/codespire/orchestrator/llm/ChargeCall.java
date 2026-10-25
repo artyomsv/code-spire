@@ -53,7 +53,8 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
     }
 
     /**
-     * A factory run's spend: the build capability, against a runId.
+     * A factory run's spend against a runId, under the run's own kind: a specification or plan run
+     * prepares work and is charged to the autonomy capability, a build or fix run to the build one.
      *
      * <p>V42 added {@code llm_charge.credential_ref} for exactly this and nothing wrote it, because
      * until the credential pool there was no per-run key identity to write. On an UNMETERED
@@ -63,7 +64,10 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
      * @param spend the run, its key, its kind and the pool member that paid
      */
     public static ChargeCall forRun(RunSpend spend, String model, List<ChargeLine> lines) {
-        return new ChargeCall(spend.runId(), ChargeSubject.RUN, ChargeCapability.BUILD,
-                spend.callRef(), ChargeKind.BUILD, model, lines, spend.credentialRef());
+        ChargeKind kind = spend.kind();
+        ChargeCapability capability = kind == ChargeKind.SPEC || kind == ChargeKind.PLAN
+                ? ChargeCapability.AUTONOMY : ChargeCapability.BUILD;
+        return new ChargeCall(spend.runId(), ChargeSubject.RUN, capability,
+                spend.callRef(), kind, model, lines, spend.credentialRef());
     }
 }

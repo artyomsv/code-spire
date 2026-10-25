@@ -78,6 +78,14 @@ class RunChargesTest {
 
         String paidBy = "API_KEY";
 
+        RunKind kind = RunKind.BUILD;
+
+        /** The run's kind, answered here for the same reason: RunCharges now reads it from the row. */
+        @Override
+        public Optional<RunKind> kindOf(String runId) {
+            return Optional.ofNullable(kind);
+        }
+
         /** How the run paid, answered here for the same reason as the credential above. */
         @Override
         public Optional<String> paidByOf(String runId) {

@@ -327,7 +327,7 @@ decision taken during the build, not by a change of mind here.
 | `attempt > 1` per subject | `RunResource.FIRST_ATTEMPT = 1` and a 409 on any repeat — "M0 runs each subject once". FR-F32's N is unreachable until this moves |
 | `review_id` + `finding_ref` + `kind` on `factory_run` (V54) | Nothing today joins a run to a review, so neither the cap nor "run cost on the pull request" can be computed |
 | A finding reference on `ReviewDetail.FindingView`, and `GET /api/runs` | The dashboard has no id to dispatch with, and no list to render |
-| `ChargeKind.FIX` | `ChargeCall.forRun` hard-codes `BUILD`; V42 already admits `FIX` |
+| `ChargeKind.FIX` | `ChargeCall.forRun` hard-coded `BUILD`; V42 already admits `FIX`. Done in M4: the kind is read from `factory_run.kind` |
 | The **factory-authored attribute** on the review row | ADR-038 requires it and nothing writes it — zero hits in `.java` or `.sql` |
 | Allowing the machine account as a pull-request AUTHOR | ADR-038's role split covers the push identity only. Same-branch fixes are fine (the author stays the human); a NEW factory pull request is skipped by `IntegrationSaga`'s allowlist unless the operator lists the account |
 | **`spire-run-worker` in `deploy/`** | It is in no compose file, no GHCR compose and no Helm chart. M2 is the shippable boundary and there is currently no way to ship the factory at all |

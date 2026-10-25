@@ -112,8 +112,11 @@ public class RunCharges {
                     .filter(dev.codespire.contract.work.PayWith.SUBSCRIPTION::equals).isPresent();
             List<ChargeLine> lines = subscription ? pricer.priceUnmetered(usage) : pricer.priceCall(model, usage);
             String credentialRef = credential.map(UUID::toString).orElse(null);
+            // The run's own kind, from its row: a fix run is FIX and a specification run SPEC. A run with
+            // no row is charged as a build, as every run was before the ledger read the kind.
+            ChargeKind kind = runs.kindOf(runId).map(RunKind::chargeKind).orElse(ChargeKind.BUILD);
             ledger.recordCharges(ChargeCall.forRun(new RunSpend(runId, CallRefs.forRun(runId, AGENT_CALL),
-                    ChargeKind.BUILD, credentialRef), model, lines));
+                    kind, credentialRef), model, lines));
             // The terminal-status push precedes charging. FIX runs and runs that delivered nothing
             // have no later PR write to refresh their spend, so notify after the ledger commits too.
             runs.push(runId);

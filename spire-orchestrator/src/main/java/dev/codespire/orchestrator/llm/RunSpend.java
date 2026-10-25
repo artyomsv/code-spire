@@ -19,5 +19,9 @@ public record RunSpend(String runId, String callRef, ChargeKind kind, String cre
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(callRef, "callRef");
         Objects.requireNonNull(kind, "kind");
+        if (kind == ChargeKind.REVIEW || kind == ChargeKind.RECONCILE || kind == ChargeKind.FOLLOWUP) {
+            throw new IllegalArgumentException("run " + runId + " cannot be charged as " + kind
+                    + ", which is a review call no run makes; a run is BUILD, FIX, SPEC or PLAN");
+        }
     }
 }

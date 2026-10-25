@@ -8,7 +8,7 @@ package dev.codespire.orchestrator.llm;
  * record its capability cannot have one inferred afterwards. That is the same reasoning ADR-023 used
  * to snapshot a rate onto the row instead of re-deriving it from a mutable catalog.
  *
- * <p>Only {@link #REVIEW} and {@link #BUILD} have producers today. The other three are in the
+ * <p>Only {@link #REVIEW}, {@link #BUILD} and {@link #AUTONOMY} have producers. The other two are in the
  * schema's CHECK because the column was added once, with its full vocabulary, rather than migrated
  * per milestone; they are named here so a future producer picks the constant the database already
  * accepts instead of inventing a spelling that fails the INSERT after the money is spent.
@@ -18,7 +18,7 @@ public enum ChargeCapability {
     REVIEW,
     /** The factory's build runs. */
     BUILD,
-    /** Autonomous work selection. Not produced yet. */
+    /** Autonomous work: selection, and the specification and plan runs that prepare an item (M4). */
     AUTONOMY,
     /** Repository knowledge building. Not produced yet. */
     KNOWLEDGE,

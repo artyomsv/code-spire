@@ -167,6 +167,24 @@ public class FactoryRunProjection {
         }
     }
 
+    /**
+     * What this run was dispatched to do, empty for a run this deployment never queued.
+     *
+     * @throws IllegalStateException when the row cannot be read. Not "empty": an unreadable specification
+     *     run read as a build would charge its spend to the wrong capability.
+     */
+    public Optional<RunKind> kindOf(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT kind FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(RunKind.valueOf(rs.getString("kind"))) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("What run " + runId + " was dispatched to do could not be read", e);
+        }
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -574,8 +592,8 @@ public class FactoryRunProjection {
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
-                                         comment_id, task_summary, repository_id, paid_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         comment_id, task_summary, repository_id, paid_by, step_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -622,6 +640,9 @@ public class FactoryRunProjection {
                    -- it would move a claim from one request to another while the unique index --
                    -- which is an INDEX, not a row comparison -- saw nothing move.
                    AND factory_run.comment_id IS NOT DISTINCT FROM EXCLUDED.comment_id
+                   -- And the plan step, which is part of what the run IS like its kind: a retry for
+                   -- another step re-armed here would leave this step's result on a row naming that one.
+                   AND factory_run.step_index IS NOT DISTINCT FROM EXCLUDED.step_index
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
@@ -649,8 +670,9 @@ public class FactoryRunProjection {
             ps.setString(19, taskSummary);
             ps.setObject(20, repositoryId);
             ps.setString(21, row.paidBy());
-            ps.setString(22, FAILED);
-            ps.setString(23, DISPATCH_FAILED);
+            ps.setObject(22, row.stepIndex(), java.sql.Types.INTEGER);
+            ps.setString(23, FAILED);
+            ps.setString(24, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             changed = ps.executeUpdate() == 1;
