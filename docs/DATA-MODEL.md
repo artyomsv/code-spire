@@ -63,6 +63,14 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
+## Specification, plan and steps (M4 slice 3, orchestrator V96)
+
+V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
+existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
+`generated` is refused (`preparation_unavailable`) while `spire.work.generated-preparation` is off, and
+nothing reads the setting yet. V96 also adds `factory_run.step_index` (null, or 0 and up): the plan step a
+run built. There is no `phase` column: verify is not a run, and `kind` already names spec, plan, build and fix.
+
 ## M3 repository ownership (ADR-042, slices 1–2)
 
 V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)

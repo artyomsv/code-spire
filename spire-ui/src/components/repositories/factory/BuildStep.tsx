@@ -3,7 +3,8 @@ import { fetchLlmModels, type LlmModelView } from '../../../api';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
-import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith } from './buildDefaultsApi';
+import PreparationField from './PreparationField';
+import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -34,15 +35,17 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [form, setForm] = useState({
     baseBranch: defaults.baseBranch ?? '', harness: defaults.harness ?? '', model: defaults.model ?? '',
-    effort: defaults.effort ?? '', payWith: (defaults.payWith ?? 'API_KEY') as PayWith,
+    effort: defaults.effort ?? '', payWith: (defaults.payWith ?? 'API_KEY') as PayWith, preparation: (defaults.preparation ?? 'composed') as Preparation,
     // One command per line on screen; a list on the wire (M4).
     verifyCommands: (defaults.verifyCommands ?? []).join('\n'), verifyTimeoutSeconds: String(defaults.verifyTimeoutSeconds ?? DEFAULT_VERIFY_SECONDS),
   });
   const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
-    harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {} });
+    harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number; preparations: Preparation[] }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] });
   const [busy, setBusy] = useState<'saving' | 'head' | null>(null);
   const [error, setError] = useState(''), [head, setHead] = useState<{ commit: string; account: string } | null>(null);
   const editing = open === 'build';
+  // The server offers generated only while it can honour it (M4 slice 3); otherwise the choice is not shown.
+  const offersGenerated = choices.preparations.includes('generated');
 
   useEffect(() => {
     if (!editing) return;
@@ -51,7 +54,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       // A wire answer of the wrong shape offers nothing rather than blanking the step.
       .then(([options, models]) => { if (active) setChoices({ harnesses: options.harnesses ?? [],
         models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
-        harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds }); })
+        harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds, preparations: options.preparations ?? [] }); })
       .catch(() => { /* the selects fall back to what is already saved; the save still refuses an unrunnable pair */ });
     return () => { active = false; };
   }, [repositoryId, editing]);
@@ -70,8 +73,12 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     try {
       // An empty level is the model's own default, sent as null rather than as a level called "".
       // Blank lines are dropped here as the server drops them: a blank command would run, exit 0 and pass.
-      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...form, effort: form.effort || null,
-        verifyCommands: verifyLines(form.verifyCommands), verifyTimeoutSeconds: Number(form.verifyTimeoutSeconds) });
+      // The preparation is sent only when the choice is on screen: none keeps what is stored, so a server that
+      // stopped offering generated is never switched back by a form that could not show it.
+      const { preparation, ...coordinates } = form;
+      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...coordinates, effort: form.effort || null,
+        verifyCommands: verifyLines(form.verifyCommands), verifyTimeoutSeconds: Number(form.verifyTimeoutSeconds),
+        ...(offersGenerated ? { preparation } : {}) });
       if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }
@@ -125,6 +132,8 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}
         setEffort={effort => setForm(previous => ({ ...previous, effort }))} />
+      {offersGenerated && <PreparationField repositoryId={repositoryId} value={form.preparation} harness={form.harness} model={form.model}
+        payWith={form.payWith} onChange={preparation => setForm(previous => ({ ...previous, preparation }))} />}
       <SettingField label="Check commands" scope="build setup" hint="One command per line, run in order on a clean copy of the build. The first failure stops the rest; only a build whose checks all pass is pushed.">
         <textarea aria-label="Check commands" rows={4} value={form.verifyCommands} placeholder="./gradlew check"
           onChange={event => setForm(previous => ({ ...previous, verifyCommands: event.target.value }))} /></SettingField>

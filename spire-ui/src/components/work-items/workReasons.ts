@@ -33,6 +33,8 @@ const REASONS = new Map(Object.entries({
   harness_unconfigured: 'This deployment has no agent image for that harness. Choose one of the offered names.',
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
   build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
+  preparation_invalid: 'Choose how the specification and plan are made: copy the ticket as one step, or write them with the build model.',
+  preparation_unavailable: 'This deployment does not write specifications and plans yet. Keep copying the ticket as one step.',
   land_settings_changed: 'Someone else saved the land setup while this form was open. Reload it and try again.',
   merge_method_invalid: 'The merge method must be merge, squash or rebase.',
   ticket_rule_invalid: 'The ticket rule must be comment or close.',

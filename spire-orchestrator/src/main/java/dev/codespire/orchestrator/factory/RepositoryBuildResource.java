@@ -41,6 +41,7 @@ public class RepositoryBuildResource {
     @Inject RepositoryAccounts accounts;
     @Inject ProviderClients clients;
     @Inject SecurityIdentity identity;
+    @Inject dev.codespire.orchestrator.work.GeneratedPreparation generatedPreparation;
 
     /**
      * The harnesses this deployment can actually run, each with the token types it can report. A name
@@ -82,7 +83,8 @@ public class RepositoryBuildResource {
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)),
-                config.wallClockSeconds(), List.of());
+                config.wallClockSeconds(), generatedPreparation.enabled()
+                        ? List.of(BuildDefaults.COMPOSED, BuildDefaults.GENERATED) : List.of(BuildDefaults.COMPOSED));
     }
 
     private HarnessModels modelsOf(String harness) {
