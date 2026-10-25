@@ -99,3 +99,9 @@ WorkLanding(pullRequest: dev.codespire.contract.scm.PullRequestRef, mergeCommit:
 
 # WorkDraftBinding
 WorkDraftBinding(workItemId: java.lang.String, generation: long, attemptId: java.util.UUID, kind: dev.codespire.contract.work.WorkDraftBinding$Kind, provisionalDigest: java.lang.String)
+
+# WorkItemEvent
+WorkItemEvent(workItemId: java.lang.String, sourceId: java.util.UUID, repositoryId: java.util.UUID, issue: dev.codespire.worksource.WorkIssueLocation, generation: long, policyRevision: long, admittedProfile: dev.codespire.contract.work.WorkPolicy$Profile, admittedModes: java.util.Map<dev.codespire.contract.work.WorkPolicy$Phase, java.lang.String>, authority: dev.codespire.contract.work.WorkItemEvent$Authority, policy: dev.codespire.contract.work.WorkPolicy$Selection, phase: java.lang.String, workflowStatus: java.lang.String, reason: java.lang.String, admittedLimits: dev.codespire.contract.work.WorkPolicyLimits, milestone: java.lang.String, gate: dev.codespire.contract.work.WorkGate, progress: dev.codespire.contract.work.WorkProgress, preparation: dev.codespire.contract.work.WorkPreparation, control: dev.codespire.contract.work.WorkControl, draft: dev.codespire.contract.work.WorkDraft)
+
+# WorkDraft
+WorkDraft(mode: java.lang.String, specification: dev.codespire.contract.work.WorkPreparation$Artifact, plan: dev.codespire.contract.work.WorkPreparation$Artifact, specificationRevisions: int, planRevisions: int, specificationApproved: boolean, planApproved: boolean, baseCommit: java.lang.String, setupRevision: long)

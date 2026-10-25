@@ -1,0 +1,228 @@
+package dev.codespire.contract.work;
+
+import dev.codespire.worksource.WorkIssueLocation;
+import java.time.Instant;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Admission and entry of a generated item (M4 slice 3, A16, decision 10): only an item not yet admitted is drafted, and
+ * only the draft sweep's entry starts a draft run.
+ */
+class WorkDraftLifecycleTest {
+    final UUID source = UUID.randomUUID(), repository = UUID.randomUUID();
+    final WorkIssueLocation issue = WorkDraftTest.ISSUE;
+    final WorkItemEvent.Authority authority = new WorkItemEvent.Authority(UUID.randomUUID(), 1, 1, 1);
+    static final WorkPolicyLimits LIMITS = new WorkPolicyLimits(60, 5, 20, 7200, 2_000_000, 40, Set.of());
+
+    static WorkPolicy.Profile profile(String intake, String spec, String plan) {
+        Map<WorkPolicy.Phase, String> modes = new EnumMap<>(WorkPolicy.Phase.class);
+        modes.put(WorkPolicy.Phase.INTAKE, intake);
+        modes.put(WorkPolicy.Phase.SPEC, spec);
+        modes.put(WorkPolicy.Phase.PLAN, plan);
+        return new WorkPolicy.Profile(UUID.randomUUID(), "TEST-profile", 1, 1, modes, LIMITS);
+    }
+
+    static WorkPolicy.Selection selected(WorkPolicy.Profile profile) {
+        return new WorkPolicy.Selection(profile, profile.modes(), List.of(), "policy_selected", List.of(), profile, profile.limits());
+    }
+
+    static WorkPolicy.Selection unselected(WorkPolicy.Profile ceiling) {
+        return new WorkPolicy.Selection(null, ceiling.modes(), List.of(), "no_eligible_label", List.of(), ceiling, ceiling.limits());
+    }
+
+    WorkItemEvent observe(long revision, WorkPolicy.Selection selection, WorkItemEvent previous) {
+        return WorkItemLifecycle.reconcile("TEST-item", source, repository, issue, revision, authority, selection, previous);
+    }
+
+    WorkItemEvent admit(WorkPolicy.Profile profile) {
+        return WorkDraftLifecycle.admitGenerated(null, observe(1, selected(profile), null));
+    }
+
+    static WorkItemEvent enter(WorkItemEvent item, boolean approved, WorkItemLifecycle.EntryMode mode) {
+        return WorkItemLifecycle.enter(item, item, 4, approved, Instant.EPOCH, true, UUID.randomUUID(), mode);
+    }
+
+    static WorkItemEvent at(WorkItemEvent item, String phase, String status, String reason) {
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), phase, status, reason, "TEST", item.gate(), item.progress());
+    }
+
+    @Test
+    void aFreshSpecAdmissionBecomesSpecificationToWrite() {
+        WorkItemEvent item = admit(profile("auto", "approve", "approve"));
+
+        assertEquals("spec", item.phase());
+        assertEquals("awaiting_input", item.workflowStatus());
+        assertEquals("specification_to_write", item.reason());
+        assertEquals("DRAFT_ADMITTED", item.milestone());
+        assertEquals(WorkDraft.admitted(), item.draft());
+    }
+
+    @Test
+    void aFreshAutomaticSpecAdmissionIsDraftedToo() {
+        WorkItemEvent item = admit(profile("auto", "auto", "auto"));
+
+        assertEquals("specification_to_write", item.reason());
+        assertNotNull(item.draft());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gate_open", "gate_approved"})
+    void itemsParkedBeforeTheSwitchStayParked(String parked) {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent admitted = observe(1, selected(profile), null);
+        WorkGate gate = new WorkGate(UUID.randomUUID(), 1, "OPEN", "spec", 1, 2, 1, authority, null, Instant.EPOCH,
+                Instant.EPOCH.plusSeconds(60), null, null, null, null);
+        WorkItemEvent previous = "gate_open".equals(parked)
+                ? WorkItemLifecycle.state(admitted, "waiting_approval", "approval_required", "GATE_OPENED", gate, admitted.progress().reserve(true))
+                : WorkItemLifecycle.state(admitted, "capability_unavailable", "spec_capability_unavailable", "CAPABILITY_UNAVAILABLE",
+                        gate.resolve("APPROVED", "TEST-operator", "TEST-key", null), admitted.progress());
+        WorkItemEvent reconciled = observe(2, selected(profile), previous);
+
+        WorkItemEvent next = WorkDraftLifecycle.admitGenerated(previous, reconciled);
+
+        assertEquals(reconciled, next);
+        assertNull(next.draft());
+        assertEquals(previous.reason(), next.reason());
+    }
+
+    @Test
+    void aTicketLabelledAfterItWasOpenedIsDrafted() {
+        WorkPolicy.Profile profile = profile("auto", "auto", "auto");
+        WorkItemEvent unlabelled = observe(1, unselected(profile), null);
+        assertNull(unlabelled.admittedProfile());
+
+        WorkItemEvent next = WorkDraftLifecycle.admitGenerated(unlabelled, observe(1, selected(profile), unlabelled));
+
+        assertEquals("specification_to_write", next.reason());
+        assertNotNull(next.draft());
+    }
+
+    @Test
+    void aDeselectedItemIsNotDrafted() {
+        WorkPolicy.Profile profile = profile("auto", "auto", "auto");
+        WorkItemEvent selected = observe(1, selected(profile), null);
+        WorkItemEvent deselected = observe(2, unselected(profile), selected);
+        assertNotNull(deselected.admittedProfile());
+        WorkItemEvent relabelled = observe(3, selected(profile), deselected);
+
+        WorkItemEvent next = WorkDraftLifecycle.admitGenerated(deselected, relabelled);
+
+        assertEquals(relabelled, next);
+        assertNull(next.draft());
+    }
+
+    @Test
+    void anIntakeApprovedItemIsDraftedToo() {
+        WorkItemEvent item = admit(profile("approve", "approve", "approve"));
+        assertEquals("intake", item.phase());
+        assertEquals("intake_approval_unavailable", item.reason());
+        assertNotNull(item.draft());
+
+        WorkItemEvent next = enter(item, true, WorkItemLifecycle.EntryMode.ORDINARY);
+
+        assertEquals("spec", next.phase());
+        assertEquals("awaiting_input", next.workflowStatus());
+        assertEquals("specification_to_write", next.reason());
+        assertNull(next.progress().attemptId());
+    }
+
+    @Test
+    void aPolicyChangeKeepsTheDraft() {
+        WorkPolicy.Profile profile = profile("auto", "approve", "approve");
+        WorkItemEvent drafted = admit(profile);
+
+        WorkItemEvent next = observe(2, selected(profile), drafted);
+
+        assertEquals(drafted.draft(), next.draft());
+        assertEquals("specification_to_write", next.reason());
+        assertEquals(2, next.policyRevision());
+    }
+
+    @Test
+    void aPreparedItemIsNotDrafted() {
+        WorkPolicy.Profile profile = profile("auto", "auto", "auto");
+        WorkItemEvent prepared = observe(1, selected(profile), null).prepared(new WorkPreparation(WorkDraftTest.stored('a'),
+                WorkDraftTest.stored('b'), "main", "c".repeat(40), "TEST-harness", "TEST-model", "TEST-operator",
+                WorkPreparation.VERIFY_BINDING, null, null, List.of(), 60));
+        WorkItemEvent reconciled = observe(2, selected(profile), prepared);
+
+        WorkItemEvent next = WorkDraftLifecycle.admitGenerated(prepared, reconciled);
+
+        assertEquals(reconciled, next);
+        assertNull(next.draft());
+    }
+
+    @Test
+    void anOrdinaryEntryParks() {
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+
+        WorkItemEvent spec = enter(drafted, false, WorkItemLifecycle.EntryMode.ORDINARY);
+        assertEquals("awaiting_input", spec.workflowStatus());
+        assertEquals("specification_to_write", spec.reason());
+        assertNull(spec.gate());
+        assertNull(spec.progress().attemptId());
+
+        WorkItemEvent plan = enter(at(drafted, "plan", "awaiting_input", "TEST"), false, WorkItemLifecycle.EntryMode.ORDINARY);
+        assertEquals("awaiting_input", plan.workflowStatus());
+        assertEquals("plan_to_write", plan.reason());
+        assertNull(plan.gate());
+        assertNull(plan.progress().attemptId());
+    }
+
+    @Test
+    void aDraftEntrySkipsThePermissionGate() {
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+
+        WorkItemEvent next = enter(drafted, false, WorkItemLifecycle.EntryMode.DRAFT);
+
+        assertEquals("active", next.workflowStatus());
+        assertEquals("PHASE_STARTED", next.milestone());
+        assertNull(next.gate());
+        assertEquals("spec", next.progress().attemptPhase());
+        assertNotNull(next.progress().attemptId());
+    }
+
+    @Test
+    void aDraftEntryWithoutARunTransportIsUnavailable() {
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+
+        WorkItemEvent next = WorkItemLifecycle.enter(drafted, drafted, 4, false, Instant.EPOCH, false, UUID.randomUUID(), WorkItemLifecycle.EntryMode.DRAFT);
+
+        assertEquals("capability_unavailable", next.workflowStatus());
+        assertNull(next.progress().attemptId());
+    }
+
+    @Test
+    void aDraftEntryStillHonoursTheCaps() {
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+        WorkItemEvent spent = WorkItemLifecycle.state(drafted, drafted.workflowStatus(), drafted.reason(), drafted.milestone(), null,
+                drafted.progress().account(7200, 0, 0));
+
+        WorkItemEvent next = enter(spent, false, WorkItemLifecycle.EntryMode.DRAFT);
+
+        assertEquals("stopped", next.workflowStatus());
+        assertEquals("policy_cap_reached", next.reason());
+    }
+
+    @Test
+    void specOffStaysOff() {
+        WorkItemEvent drafted = admit(profile("auto", "approve", "approve"));
+        WorkPolicy.Profile off = profile("auto", "off", "approve");
+        WorkItemEvent switched = drafted.decision(2, drafted.authority(), selected(off), "spec", "awaiting_input", "specification_to_write",
+                "TEST", null, drafted.progress());
+
+        WorkItemEvent next = enter(switched, false, WorkItemLifecycle.EntryMode.DRAFT);
+
+        assertEquals("not_eligible", next.workflowStatus());
+        assertEquals("spec_off", next.reason());
+    }
+}

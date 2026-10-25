@@ -67,7 +67,13 @@ public final class WorkItemLifecycle {
          * The build and deliver gates are skipped, because the new land approval is the one human check (operator,
          * 2026-10-21), and a build keeps the pull request it fixes. Verify and land keep their gates.
          */
-        LAND_FIX
+        LAND_FIX,
+        /**
+         * A specification or plan run started by the draft sweep (M4 slice 3, decision 10): the permission gate is
+         * skipped, because under generated preparation the setting admits the run (A6). Off, unknown usage and the caps
+         * still apply.
+         */
+        DRAFT
     }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
         return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);

@@ -103,3 +103,15 @@ describe('preparation setting reasons (M4 slice 3)', () => {
     expect(workReason('preparation_unavailable')).not.toContain('specifications and plans');
   });
 });
+
+describe('draft reasons (M4 slice 3)', () => {
+  it.each(['specification_to_write', 'plan_to_write'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+
+  // The factory writes these itself; the sentence must not send the reader to prepare the task by hand.
+  it('says the factory writes the draft', () => {
+    expect(workReason('specification_to_write')).toContain('factory');
+    expect(workReason('plan_to_write')).toContain('factory');
+  });
+});

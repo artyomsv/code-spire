@@ -52,6 +52,11 @@ it('sends a missing or moved task to its preparation', () => {
   expect(nextAction(row({ phase: 'spec', reason: 'specification_required' }))?.label).toBe('Prepare the task');
   expect(nextAction(row({ phase: 'plan', reason: 'artifacts_changed' }))?.to).toBe('/work-items/TEST-item');
 });
+// A generated item waits for the factory's own run (M4 slice 3), not for a person to prepare it.
+it('offers no preparation while the factory writes the draft', () => {
+  expect(nextAction(row({ phase: 'spec', reason: 'specification_to_write' }))).toBeNull();
+  expect(nextAction(row({ phase: 'plan', reason: 'plan_to_write' }))).toBeNull();
+});
 it('offers nothing when the item waits on nobody', () => {
   expect(nextAction(row({ workflowStatus: 'active', reason: 'phase_started' }))).toBeNull();
   expect(nextAction(row({ workflowStatus: 'not_eligible', reason: 'no_eligible_label' }))).toBeNull();

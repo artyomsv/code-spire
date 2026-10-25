@@ -27,5 +27,9 @@ class WorkProgressTest {
         assertEquals(2,progress.runs());assertEquals(3,progress.steps());assertTrue(progress.reserved());
         assertEquals("started",progress.attemptState());assertEquals(execution,progress.execution());
     }
+    // A specification or plan run counts toward wall clock, cost and calls, never toward runs or steps (A11).
+    @Test void draftPhasesDoNotCountRunsOrSteps(){
+        for(String phase:List.of("spec","plan")){var progress=usage(1,2,3,4,5).start(UUID.randomUUID(),phase,Instant.EPOCH);assertEquals(1,progress.runs(),phase);assertEquals(2,progress.steps(),phase);}
+    }
     @Test void belowAllCapsCanProceed(){assertTrue(usage(4,19,7199,1_999_999,39).within(limits,"build"));}
 }
