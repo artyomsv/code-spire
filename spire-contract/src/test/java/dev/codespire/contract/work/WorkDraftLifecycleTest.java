@@ -107,6 +107,17 @@ class WorkDraftLifecycleTest {
     }
 
     @Test
+    void anUnselectedItemIsNotDrafted() {
+        WorkItemEvent unselected = observe(1, unselected(profile("auto", "auto", "auto")), null);
+
+        WorkItemEvent next = WorkDraftLifecycle.admitGenerated(null, unselected);
+
+        assertNull(next.draft());
+        assertEquals(unselected.reason(), next.reason());
+        assertEquals(unselected, next);
+    }
+
+    @Test
     void aDeselectedItemIsNotDrafted() {
         WorkPolicy.Profile profile = profile("auto", "auto", "auto");
         WorkItemEvent selected = observe(1, selected(profile), null);
