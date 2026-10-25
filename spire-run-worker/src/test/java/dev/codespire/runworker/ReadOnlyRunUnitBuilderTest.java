@@ -81,4 +81,19 @@ class ReadOnlyRunUnitBuilderTest {
         assertEquals("TEST-machine-secret", unit.init().environment().get("SPIRE_CLONE_SECRET"));
         assertEquals("spire/draft-" + ATTEMPT, unit.init().environment().get("SPIRE_BRANCH"));
     }
+
+    /**
+     * A draft run's prompt must not carry a build's commit instruction. It told the agent to commit its work and to describe
+     * what it changed, which steers it to write the specification into the work tree and leave $SPIRE_ARTIFACT empty.
+     */
+    @Test
+    void aReadOnlyUnitsPromptAsksForTheArtifactAndNoCommit() throws Exception {
+        String prompt = unit().agent().environment().get("SPIRE_PROMPT");
+
+        assertTrue(prompt.startsWith("TEST-write the specification"), prompt);
+        assertFalse(prompt.contains("Commit your work"), "a read-only run is never told to commit");
+        assertFalse(prompt.contains("SPIRE_SUMMARY"), "nor to describe a change it must not make");
+        assertTrue(prompt.contains("SPIRE_ARTIFACT"), "it is told where its result goes");
+        assertTrue(prompt.contains("read-only"), "and that the repository is read-only");
+    }
 }
