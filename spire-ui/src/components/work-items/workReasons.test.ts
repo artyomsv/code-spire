@@ -91,7 +91,15 @@ describe('every land reason (M4 land)', () => {
 });
 
 describe('preparation setting reasons (M4 slice 3)', () => {
-  it.each(['preparation_invalid', 'preparation_unavailable'])('every new reason has a sentence: %s', reason => {
+  it.each(['preparation_invalid', 'generated_preparation_off'])('every new reason has a sentence: %s', reason => {
     expect(workReason(reason)).not.toBe(reason);
+  });
+
+  // Two screens, two refusals: the build setup's sentence must not talk about an item, nor the item's about the setup.
+  it('keeps the build setup refusal apart from the item refusal', () => {
+    expect(workReason('generated_preparation_off')).toContain('copying the ticket as one step');
+    expect(workReason('generated_preparation_off')).not.toContain('work item');
+    expect(workReason('preparation_unavailable')).toContain('under way or finished');
+    expect(workReason('preparation_unavailable')).not.toContain('specifications and plans');
   });
 });

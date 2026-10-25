@@ -429,10 +429,13 @@ class BuildDefaultsTest {
         assertEquals(0, defaults.get(repository).revision());
     }
 
-    /** While the generated path is dark, choosing it would store a promise nothing keeps. */
+    /**
+     * While the generated path is dark, choosing it would store a promise nothing keeps. Its own reason, not the
+     * item's {@code preparation_unavailable}, so each screen can say what is true for it.
+     */
     @Test
     void generatedIsRefusedWhileDark() {
-        assertEquals("preparation_unavailable", refusal(preparing("generated")));
+        assertEquals("generated_preparation_off", refusal(preparing("generated")));
         assertEquals(0, defaults.get(repository).revision());
     }
 
