@@ -46,7 +46,7 @@ public class BuildDefaults {
     public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
                            String payWith, List<String> verifyCommands, long verifyTimeoutSeconds,
                            String updatedBy, Instant updatedAt, String preparation) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null, COMPOSED); }
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null, GENERATED); }
         public boolean set() { return revision > 0; }
     }
 
