@@ -55,7 +55,7 @@ public final class WorkItemLifecycle {
      */
     private static boolean keepsPlace(WorkItemEvent previous) {
         return previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus())
-                || previous.preparation() != null || previous.draft() != null && previous.draft().specification() != null
+                || previous.preparation() != null
                 || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1);
     }
 
