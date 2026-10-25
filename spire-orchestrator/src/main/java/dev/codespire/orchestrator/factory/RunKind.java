@@ -38,7 +38,7 @@ public enum RunKind {
     public ChargeKind chargeKind() {
         return switch (this) {
             case BUILD -> ChargeKind.BUILD;
-            case FIX -> ChargeKind.FIX;
+            case FIX -> ChargeKind.BUILD;
             case SPEC -> ChargeKind.SPEC;
             case PLAN -> ChargeKind.PLAN;
         };
