@@ -27,7 +27,7 @@ public final class WorkDraftLifecycle {
     public static WorkItemEvent admitGenerated(WorkItemEvent previous, WorkItemEvent reconciled) {
         boolean admittedBefore = previous != null && previous.admittedProfile() != null;
         if (admittedBefore || reconciled.admittedProfile() == null || reconciled.draft() != null) return reconciled;
-        return awaitSpecification(reconciled.drafted(WorkDraft.admitted()), "DRAFT_ADMITTED");
+        return reconciled.drafted(WorkDraft.admitted());
     }
 
     /**
