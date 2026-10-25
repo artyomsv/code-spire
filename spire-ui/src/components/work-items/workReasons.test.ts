@@ -89,3 +89,9 @@ describe('every land reason (M4 land)', () => {
     expect(landReason('land_blocked', null)).toBe(workReason('land_blocked'));
   });
 });
+
+describe('preparation setting reasons (M4 slice 3)', () => {
+  it.each(['preparation_invalid', 'preparation_unavailable'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});

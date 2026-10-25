@@ -29,6 +29,8 @@ public class BuildDefaults {
 
     /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
     public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
+    /** How a repository prepares its work (M4 slice 3): the ticket copied as one step, or a written spec and plan. */
+    public static final String COMPOSED = "composed", GENERATED = "generated";
 
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
@@ -37,20 +39,28 @@ public class BuildDefaults {
      * @param payWith {@code API_KEY} or {@code SUBSCRIPTION} (M3.5 part F)
      * @param verifyCommands the checks verify runs, in order (M4); empty means builds stop as unverified
      * @param verifyTimeoutSeconds the limit for all of them together
+     * @param preparation {@link #COMPOSED} or {@link #GENERATED} (M4 slice 3); composed when no row exists
      */
     public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
                            String payWith, List<String> verifyCommands, long verifyTimeoutSeconds,
-                           String updatedBy, Instant updatedAt) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null); }
+                           String updatedBy, Instant updatedAt, String preparation) {
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null, null); }
         public boolean set() { return revision > 0; }
     }
 
     /**
      * @param effort null for the model's own default
      * @param payWith null or blank for an API key, which is what every setup paid with before part F
+     * @param preparation null keeps the stored value: a form that does not offer the choice must not reset it
      */
     public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort,
-                        String payWith, List<String> verifyCommands, Long verifyTimeoutSeconds) {
+                        String payWith, List<String> verifyCommands, Long verifyTimeoutSeconds, String preparation) {
+        /** Every caller written before the preparation setting keeps what is stored. */
+        public Input(long expectedRevision, String baseBranch, String harness, String model, String effort, String payWith,
+                     List<String> verifyCommands, Long verifyTimeoutSeconds) {
+            this(expectedRevision, baseBranch, harness, model, effort, payWith, verifyCommands, verifyTimeoutSeconds, null);
+        }
+
         /** Every caller written before M4 declares no checks and takes the default limit. */
         public Input(long expectedRevision, String baseBranch, String harness, String model, String effort, String payWith) {
             this(expectedRevision, baseBranch, harness, model, effort, payWith, List.of(), null);
@@ -92,7 +102,7 @@ public class BuildDefaults {
                 if (!rs.next()) return Defaults.none();
                 return new Defaults(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
                         rs.getString(5), rs.getString(6), List.of((String[]) rs.getArray(9).getArray()), rs.getLong(10),
-                        rs.getString(7), rs.getTimestamp(8).toInstant());
+                        rs.getString(7), rs.getTimestamp(8).toInstant(), null);
             }
         }
     }
