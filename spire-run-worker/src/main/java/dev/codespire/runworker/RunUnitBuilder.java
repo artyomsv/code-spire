@@ -119,6 +119,14 @@ public class RunUnitBuilder {
         return build(command, adapter, "spire-publish");
     }
 
+    /**
+     * A specification or plan run's unit (M4 slice 3): init and agent as {@link #build}, and a publisher that runs
+     * {@code spire-publish-none} with the handoff and no write credential, so it cannot push even if its code were wrong.
+     */
+    public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter adapter) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     /** Where a retried build's init reads the previous run's handoff. */
     static final String CHECKPOINT_PATH = "/checkpoint";
 

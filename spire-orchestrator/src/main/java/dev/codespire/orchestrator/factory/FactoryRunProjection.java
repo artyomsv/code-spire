@@ -841,6 +841,7 @@ public class FactoryRunProjection {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
+            case RunResult.RunWorkArtifact artifact -> { } // RED
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }

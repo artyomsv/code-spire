@@ -124,6 +124,43 @@ class RunResultSagaTest {
         assertEquals(List.of(result),continued);assertTrue(proposed.isEmpty(),"An associated result belongs exclusively to the item continuation");
     }
 
+    /**
+     * A specification or plan run (M4 slice 3) is projected and charged, and goes no further: it pushed nothing to
+     * propose, and the work-run inbox has no row for it (slice 6 gives drafts their own).
+     */
+    @Test
+    void anArtifactIsNeverProposedAsAPullRequest() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> continued = new ArrayList<>();
+        List<RunResult> proposed = new ArrayList<>();
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override
+            public boolean accept(RunResult result) {
+                continued.add(result);
+                return false;
+            }
+        };
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override
+            public void propose(RunResult result) {
+                proposed.add(result);
+            }
+        };
+        RunResult artifact = new RunResult.RunWorkArtifact(RUN_ID, new dev.codespire.contract.work.WorkDraftBinding(
+                "TEST-item", 1, java.util.UUID.fromString("00000000-0000-4000-8000-000000000005"),
+                dev.codespire.contract.work.WorkDraftBinding.Kind.SPEC, "d".repeat(64)),
+                "TEST-specification", false, Map.of("INPUT", 3L), 2);
+
+        saga.on(artifact);
+
+        assertEquals(List.of(artifact), projection.applied);
+        assertEquals(List.of(artifact), charges.charged);
+        assertTrue(proposed.isEmpty(), "an artifact pushed nothing to propose");
+        assertTrue(continued.isEmpty(), "a draft run has no work-run row to continue");
+    }
+
     @Test
     void aPoisonRecordIsSkippedNotProjected() {
         // The never-throw deserializer yields null for a record it cannot read; it is already on

@@ -16,6 +16,7 @@ import java.util.Objects;
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
+        @JsonSubTypes.Type(value = RunCommand.ExecuteWorkDraftRun.class, name = "ExecuteWorkDraftRun"),
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
@@ -307,6 +308,23 @@ public sealed interface RunCommand {
         public ExecuteWorkRun withMergedBaseTip(String tip){return new ExecuteWorkRun(runId,execution,work,tip);}
         /** The same build over another execution of the same run; the base tip is the orchestrator's and stays. */
         public ExecuteWorkRun withExecution(ExecuteRun next){return new ExecuteWorkRun(runId,next,work,mergedBaseTip);}
+        @Override public String scmCredential(){return execution.scmCredential();}
+        @Override public String harnessCredential(){return execution.harnessCredential();}
+    }
+
+    /**
+     * A specification or plan run (M4 slice 3, ADR-049): a fresh clone of the base, read by the agent, and its
+     * artifact handed back as {@code RunWorkArtifact}. Nothing is pushed. A distinct discriminator, for the reason
+     * {@link ExecuteWorkRun} has one: an older worker must refuse it, never run it as a pushing {@link ExecuteRun}.
+     *
+     * <p>{@code execution.branch()} is the clone's local branch, {@code spire/draft-<attempt>}; it never reaches a
+     * remote, and naming it after the attempt keeps it from ever looking like an item branch.
+     */
+    record ExecuteWorkDraftRun(String runId, ExecuteRun execution, dev.codespire.contract.work.WorkDraftBinding draft)
+            implements RunCommand {
+        public static final String DRAFT_BRANCH_PREFIX = "spire/draft-";
+        public ExecuteWorkDraftRun {
+        }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }

@@ -152,6 +152,18 @@ class RunDispatcherTest {
             }
             return result;
         }
+
+        /** Specification and plan runs (M4 slice 3), counted apart so a test sees which path ran. */
+        int readOnlyLaunches;
+
+        @Override
+        public RunResult launchReadOnly(RunCommand.ExecuteWorkDraftRun draft, RunObserver observer) {
+            order.add("launch-read-only");
+            readOnlyLaunches++;
+            observer.unitCreated(unitId, RunNotes.IGNORING);
+            observer.unitReleased();
+            return new RunResult.RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1);
+        }
     }
 
     static final class FakeEmitter implements Emitter<Record<String, RunResult>> {
@@ -385,6 +397,52 @@ class RunDispatcherTest {
         assertTrue(delivery.acked);
         assertEquals(List.of("RunStarted", "RunFinished"),
                 results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
+    }
+
+    private static final java.util.UUID DRAFT_ATTEMPT = java.util.UUID.fromString("00000000-0000-4000-8000-000000000004");
+
+    private static final RunCommand.ExecuteWorkDraftRun DRAFT = new RunCommand.ExecuteWorkDraftRun(
+            "run::github:acme/app:TEST-draft:1",
+            new RunCommand.ExecuteRun("run::github:acme/app:TEST-draft:1", new RepoRef("acme", "app"),
+                    "https://forge.example.test/acme/app.git", "main", "b".repeat(40), "spire/draft-" + DRAFT_ATTEMPT,
+                    "TEST-write the specification", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness"),
+            new dev.codespire.contract.work.WorkDraftBinding("TEST-item", 1, DRAFT_ATTEMPT,
+                    dev.codespire.contract.work.WorkDraftBinding.Kind.SPEC, "d".repeat(64)));
+
+    /** A specification or plan run (M4 slice 3) takes the execute claim like any run, and launches read-only. */
+    @Test
+    void aDraftRunIsClaimedOnceAndLaunchedReadOnly() {
+        dispatcher.onCommand(new Delivery(order).of(DRAFT)).toCompletableFuture().join();
+        Delivery again = new Delivery(order);
+        dispatcher.onCommand(again.of(DRAFT)).toCompletableFuture().join();
+
+        assertEquals(1, launcher.readOnlyLaunches, "a redelivered draft must not spend twice");
+        assertEquals(0, launcher.launches, "a draft run must never take the pushing path");
+        assertTrue(again.acked);
+        assertEquals(List.of("RunStarted", "RunWorkArtifact"),
+                results.sent.stream().map(r -> r.getClass().getSimpleName()).toList());
+        assertTrue(leases.released, "its unit is gone, so its lease is released");
+    }
+
+    /**
+     * The held store is what {@code WorkRunWorker.recover} reads (A1): a draft run must never be put there, or
+     * recovery would treat a destroyed read-only unit as a build awaiting publication.
+     */
+    @Test
+    void recoverNeverSeesADraftRun() {
+        int[] heldExecutions = {0};
+        dispatcher.workRuns = new WorkRunWorker() {
+            @Override
+            public CompletionStage<Void> execute(Message<RunCommand> message, RunCommand.ExecuteWorkRun command) {
+                heldExecutions[0]++;
+                return CompletableFuture.completedFuture(null);
+            }
+        };
+
+        dispatcher.onCommand(new Delivery(order).of(DRAFT)).toCompletableFuture().join();
+
+        assertEquals(0, heldExecutions[0]);
+        assertEquals(1, launcher.readOnlyLaunches);
     }
 
     @Test

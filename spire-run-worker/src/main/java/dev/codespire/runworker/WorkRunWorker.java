@@ -263,6 +263,8 @@ public class WorkRunWorker {
         if(result instanceof RunResult.RunFinished finished && finished.pushedRef()!=null)return result;
         var usage=switch(result) {
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
+            // Never stored here: a draft run is launched read-only by the dispatcher, outside this worker.
+            case RunResult.RunWorkArtifact artifact -> artifact.tokenUsage();
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;

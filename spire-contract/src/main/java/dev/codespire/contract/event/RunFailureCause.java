@@ -75,6 +75,13 @@ public enum RunFailureCause {
     /** The agent outlived its wall clock and was stopped. */
     AGENT_TIMEOUT(false, true),
 
+    /**
+     * A specification or plan run ended without handing over its artifact file, or handed over one the publisher
+     * refused (M4 slice 3). Not retryable by the worker: the same prompt is likely to end the same way, and the
+     * model has been paid for; the orchestrator offers its own automatic retry.
+     */
+    ARTIFACT_MISSING(false, true),
+
     /** The agent's egress was blocked, so it could not reach the model or a dependency. */
     BLOCKED_EGRESS(true, true),
 

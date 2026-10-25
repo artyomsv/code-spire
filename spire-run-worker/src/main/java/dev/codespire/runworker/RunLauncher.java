@@ -89,6 +89,14 @@ public class RunLauncher {
         return launch(command.execution(), command, observer, prepared);
     }
 
+    /**
+     * A specification or plan run (M4 slice 3): a read-only unit whose artifact comes back as {@code RunWorkArtifact}.
+     * The unit is destroyed once the result is decided, like an ordinary run's, and is never retained as held.
+     */
+    public RunResult launchReadOnly(RunCommand.ExecuteWorkDraftRun draft, RunObserver observer) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     private RunResult launch(RunCommand.ExecuteRun command, RunCommand.ExecuteWorkRun work,
                              RunObserver observer, java.util.function.Consumer<RunUnitSpec> prepared) {
         HarnessAdapter adapter;
