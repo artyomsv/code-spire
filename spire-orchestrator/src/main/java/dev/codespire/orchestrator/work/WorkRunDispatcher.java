@@ -91,8 +91,11 @@ public class WorkRunDispatcher {
                 ps.setString(4,id);ps.setObject(5,attempt);
                 if(ps.executeUpdate()!=1)throw new IllegalStateException("Run association already exists");
             }
-            try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='uncertain',reason='dispatch_claimed',run_id=?,preparation_binding=? WHERE attempt_id=?")) {
-                ps.setString(1,prepared.command().runId());ps.setString(2,prepared.command().work().preparationBinding());ps.setObject(3,attempt);ps.executeUpdate();
+            // A plan step's required start (M4 slice 3, A2): its ready must name it, and its loss is recorded against it.
+            String requiredRun=prepared.command().checkpointRequired()?prepared.command().execution().startFromRunId():null;
+            try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='uncertain',reason='dispatch_claimed',run_id=?,preparation_binding=?,required_start_run_id=?,required_start_head=? WHERE attempt_id=?")) {
+                ps.setString(1,prepared.command().runId());ps.setString(2,prepared.command().work().preparationBinding());
+                ps.setString(3,requiredRun);ps.setString(4,requiredRun==null?null:prepared.command().execution().startFromHead());ps.setObject(5,attempt);ps.executeUpdate();
             }
             String factoryActor=null,reviewerActor=null;
             try(var ps=c.prepareStatement("SELECT a.role,p.bot_account_id FROM repository_account a JOIN scm_provider p ON p.id=a.account_id WHERE a.repository_id=? AND a.role IN ('FACTORY','REVIEWER') FOR SHARE OF p")) {

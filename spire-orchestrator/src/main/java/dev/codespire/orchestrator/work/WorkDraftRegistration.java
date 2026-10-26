@@ -6,6 +6,7 @@ import dev.codespire.contract.work.WorkDraftLifecycle;
 import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkItemLifecycle;
 import dev.codespire.contract.work.WorkPreparation;
+import dev.codespire.contract.work.WorkStepLifecycle;
 import dev.codespire.orchestrator.factory.BuildDefaults;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -26,8 +27,8 @@ import java.util.List;
  * under the setup its specification was dispatched with, so that revision names the specification's base commit too. The ticket is not read again, so an edit
  * to it changes nothing about what was approved (Review Focus 7).
  *
- * <p>Until a build runs a plan step by step, a plan of more than one step waits at {@code plan_steps_unavailable}, so
- * nothing builds the first step alone and delivers it as the whole plan.
+ * <p>The registered item carries the plan cursor, one entry per approved step (M4 slice 3, A17), so the build runs the plan
+ * step by step from step 1.
  */
 @ApplicationScoped
 public class WorkDraftRegistration {
@@ -50,7 +51,7 @@ public class WorkDraftRegistration {
         BuildDefaults.Defaults setup = defaults.get(c, approved.repositoryId(), false);
         String refused = refusal(c, approved, setup);
         if (refused != null) return WorkDraftLifecycle.registrationRefused(approved, refused);
-        WorkItemEvent registered = WorkDraftLifecycle.registered(approved, preparation(draft, setup));
+        WorkItemEvent registered = WorkStepLifecycle.planRegistered(WorkDraftLifecycle.registered(approved, preparation(draft, setup)), steps(c, approved));
         store.appendDecision(c, history, registered, "draft-registered:" + draft.plan().storedId());
         return transitions.enterPrepared(c, store.history(approved.workItemId()), registered, false, clock.now(),
                 WorkItemLifecycle.EntryMode.ORDINARY);
@@ -60,7 +61,6 @@ public class WorkDraftRegistration {
     private String refusal(Connection c, WorkItemEvent item, BuildDefaults.Defaults setup) throws SQLException {
         if (buildAttempts(c, item) > 0) return "explicit_readmission_required";
         if (setup.revision() != item.draft().setupRevision()) return "draft_setup_changed";
-        if (steps(c, item) > 1) return "plan_steps_unavailable";
         return null;
     }
 

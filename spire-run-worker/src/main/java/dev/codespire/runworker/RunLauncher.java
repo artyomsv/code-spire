@@ -253,7 +253,9 @@ public class RunLauncher {
             } else if (outcome.checkpointHead().isPresent()) {
                 result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
                         finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted))
-                        .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)));
+                        .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)))
+                        // Where it started, after any base fallback: the orchestrator compares it with the start it chose (A2).
+                        .withStartFromHead(command.startFromHead());
             } else {
                 result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
                         .withUsage(finished.tokenUsage());

@@ -24,6 +24,7 @@ public class WorkItemTransitions {
     @Inject WorkArtifacts artifacts;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
     @Inject WorkDraftRegistration registration;
+    @Inject WorkStepAssembly stepAssembly;
     public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
         public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
@@ -210,6 +211,7 @@ public class WorkItemTransitions {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
                     if(result.execution()!=null)progress=progress.withExecution(result.execution());
                     if(!result.usageKnown())progress=progress.unknownUsage();
+                    if(result.successful())progress=WorkStepLifecycle.composedStepCompleted(item,progress,landFix);
                     if(!result.successful() && landFix && "build".equals(item.phase())) {
                         // A failed fix run fails the fix, not the item: its pull request is still open (Review Focus 16).
                         next=WorkItemLifecycle.landHanded(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),progress),"land_fix_run_failed");
@@ -221,7 +223,10 @@ public class WorkItemTransitions {
                     next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
-                    next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
+                    // A plan step's completion is the step loop's decision (M4 slice 3, A17); a land fix is never a step.
+                    WorkItemEvent stepped=WorkStepLifecycle.asks(item,landFix)?WorkStepLifecycle.next(next):null;
+                    if(stepped!=null){store.appendDecision(c,history,stepped,"step-completed:"+result.attemptId());history=store.history(id);next=stepped;mode=entryMode(history);}
+                    else next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
                 }
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
                 else if(observed.artifacts().failure()!=null)next=state(next,"awaiting_input",observed.artifacts().failure(),"ARTIFACTS_REQUIRED",next.gate(),next.progress().reserve(false));
@@ -266,9 +271,13 @@ public class WorkItemTransitions {
     static List<WorkItemEvent> facts(List<dev.codespire.contract.event.EventEnvelope> history) {
         return history.stream().map(event->(WorkItemEvent)event.payload()).toList();
     }
-    /** {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9). */
+    /**
+     * {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9), and
+     * {@link WorkItemLifecycle.EntryMode#STEP} between the steps of a plan (M4 slice 3, decision 13).
+     */
     static WorkItemLifecycle.EntryMode entryMode(List<dev.codespire.contract.event.EventEnvelope> history) {
-        return WorkItemLifecycle.landFixInProgress(facts(history))?WorkItemLifecycle.EntryMode.LAND_FIX:WorkItemLifecycle.EntryMode.ORDINARY;
+        boolean landFix=WorkItemLifecycle.landFixInProgress(facts(history));
+        return history.isEmpty()?WorkItemLifecycle.EntryMode.ORDINARY:WorkStepLifecycle.entryMode((WorkItemEvent)history.getLast().payload(),landFix);
     }
     /**
      * Why a recheck may not continue this item: it stopped or is running, so only readmission may; or land handed it
@@ -437,6 +446,9 @@ public class WorkItemTransitions {
                     boolean verifyResult="verify".equals(gate.phase()) && WorkItemLifecycle.VERIFY_RESULT_REASONS.contains(current.reason());
                     // So does a generated item's spec or plan gate: it asks about the written artifact (M4 slice 3, A6).
                     boolean draftResult=WorkDraftLifecycle.resultGate(current,gate);
+                    // A plan step whose start is gone cannot be built again: Retry is refused and Stop stays (M4 slice 3, decision 11).
+                    String lost=verifyResult && approve?stepAssembly.retryRefusal(c,history):null;
+                    if(lost!=null)return new Outcome(409,lost,current);
                     // Retry build rewinds to build: the human chose to build again, which also answers a build: approve gate.
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));

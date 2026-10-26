@@ -25,7 +25,6 @@ const REASONS = new Map(Object.entries({
   plan_written: 'The factory wrote the plan. Read its steps, then approve, revise or reject it.',
   plan_invalid: 'The plan the factory wrote twice still broke a rule: a step was missing a field or over its length, two steps shared an id, there were more steps than the limit, it named another specification, or a step prompt would not fit. Readmit to write it again, or stop.',
   draft_setup_changed: 'The repository\'s build setup was saved while the specification and plan were being written, so they were made for other settings. Readmit to write them again under the current setup.',
-  plan_steps_unavailable: 'The approved plan has more than one step, and building a plan step by step is not available yet. Nothing was built.',
   revision_limit_reached: 'All three revisions of this decision are used. Approve it or reject it.',
   revise_unavailable: 'Only a specification or plan the factory wrote can be revised, and only while its decision is open.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
@@ -123,6 +122,9 @@ const REASONS = new Map(Object.entries({
   timed_out: 'The checks did not finish within the verify time limit.',
   checkpoint_missing: "The build's commits could not be read for verification.",
   verify_could_not_run: 'Verification could not run.',
+  // A plan built step by step (M4 slice 3, decisions 7 and 11).
+  step_run_failed: "The step's run failed before it was verified; Retry builds this step again from where it started.",
+  step_checkpoint_lost: "This step's commits are gone and so is where it started; Readmit builds the plan again from step 1.",
   verify_command_invalid: 'A check command is over 1000 characters, or there are more than 20.',
   verify_timeout_out_of_range: "The verify time limit is under 60 seconds or over this deployment's maximum.",
   deliver_capability_unavailable: 'Delivery is not available.',

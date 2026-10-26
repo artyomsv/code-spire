@@ -68,6 +68,21 @@ final class PublisherEnvironments {
     }
 
     /**
+     * What the held publisher is told beside the ordinary environment. A land fix's merged base tip: the held gate sees the
+     * base merge before any permit exists, so it excuses the same orchestrator-issued tip the permit will; without it a base
+     * that edited a workflow is refused before any checkpoint (M4 slice 7a). A build that starts from a checkpoint names its
+     * head (M4 slice 3, A2), and the publisher refuses a checkpoint that does not descend from it. The agent receives neither.
+     */
+    static ContainerSpec held(ContainerSpec publisher, RunCommand.ExecuteWorkRun command) {
+        String start = command.execution().startFromHead();
+        if (command.mergedBaseTip() == null && start == null) return publisher;
+        Map<String, String> env = new HashMap<>(publisher.environment());
+        if (command.mergedBaseTip() != null) env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
+        if (start != null) env.put("SPIRE_START_HEAD", start);
+        return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
+    }
+
+    /**
      * The land-fix half of a permit (M4 slice 7a). An existing-branch run publishes only with an expected remote
      * head, and only the head it was built from: the run cloned that commit, so any other expectation would
      * approve a push over work the run never saw. A new-branch run has no remote head to expect.

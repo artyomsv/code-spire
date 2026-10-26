@@ -13,13 +13,16 @@ import java.util.Map;
  * content equals the merged base tip are the base's, not the agent's. A land fix's held build carries the same
  * tip, from the run worker's trusted environment, because it gates the base merge first: without it the base's
  * workflow edit is refused before any checkpoint, verify or permit exists.
+ *
+ * <p>{@code startHead} is the checkpoint a held build started from (M4 slice 3, A2), from the run worker's trusted
+ * environment: a checkpoint that does not descend from it rewrote the chain under a plan step, and is refused.
  */
 record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
-                         String expectedRemoteHead, String mergedBaseTip) {
+                         String expectedRemoteHead, String mergedBaseTip, String startHead) {
     enum Mode { AUTOMATIC, HELD, PERMITTED, READ_ONLY }
 
     static PublicationPolicy automatic() {
-        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null);
+        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null, null);
     }
 
     /**
@@ -27,7 +30,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
      * so even a wrong code path here has no secret to push with.
      */
     static PublicationPolicy readOnly() {
-        return new PublicationPolicy(Mode.READ_ONLY, null, null, null, Clock.systemUTC(), null, null);
+        return new PublicationPolicy(Mode.READ_ONLY, null, null, null, Clock.systemUTC(), null, null, null);
     }
 
     static PublicationPolicy held() {
@@ -36,17 +39,16 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
 
     /** A held build that may have merged the base at {@code mergedBaseTip}; null when it merges nothing. */
     static PublicationPolicy held(String mergedBaseTip) {
-        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null,
-                fullShaOrNull(mergedBaseTip));
+        return held(mergedBaseTip, null);
     }
 
-    /** RED: the start head is not checked yet. */
+    /** A held build that started from the checkpoint {@code startHead}; null when it started from the base. */
     static PublicationPolicy held(String mergedBaseTip, String startHead) {
-        return held(mergedBaseTip);
-    }
-
-    String startHead() {
-        return null;
+        if (startHead != null && !startHead.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("SPIRE_START_HEAD must be a full sha");
+        }
+        return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null,
+                fullShaOrNull(mergedBaseTip), startHead);
     }
 
     private static String fullShaOrNull(String mergedBaseTip) {
@@ -64,7 +66,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("The publication permit needs a positive validity window");
         }
         return new PublicationPolicy(Mode.PERMITTED, head, issuedAt, expiresAt,
-                java.util.Objects.requireNonNull(clock), null, null);
+                java.util.Objects.requireNonNull(clock), null, null, null);
     }
 
     /** The same permitted policy, pushing to an existing branch expected at {@code expectedRemoteHead}. */
@@ -76,14 +78,14 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("SPIRE_EXPECTED_REMOTE_HEAD must be a full sha");
         }
         return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead,
-                fullShaOrNull(mergedBaseTip));
+                fullShaOrNull(mergedBaseTip), null);
     }
 
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {
         return switch (mode) {
             case AUTOMATIC -> automatic();
             case READ_ONLY -> readOnly();
-            case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"));
+            case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"), optional(env, "SPIRE_START_HEAD"));
             case PERMITTED -> {
                 try {
                     PublicationPolicy permit = permitted(Env.required(env, "SPIRE_PERMITTED_HEAD"),

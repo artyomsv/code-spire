@@ -225,6 +225,19 @@ as `repository_changed`, a warning, and its change is discarded with the unit. H
 is the guard, not the code path: with no secret in its environment it cannot push even if its code
 were wrong.
 
+### 4.5 A plan's steps on one chain (M4 slice 3, A2)
+
+Each plan step is its own held run on its own `spire/work-<attempt>` branch name; nothing reaches the forge before
+deliver. Step k+1 starts from step k's checkpoint (`fromCheckpoint`), and because the entrypoint bundles `$BASE..HEAD`,
+every checkpoint-started run's handoff carries the whole chain. When step k+1 is ready the run worker retires and removes
+step k's unit, as it does for any retried build. Deliver publishes through the newest step run that holds a bundle.
+
+A later step's start is required (`checkpointRequired`): there is **no base fallback**. When the unit it names is gone
+the worker fails the step as `CHECKPOINT_MISSING` without launching anything, and the orchestrator opens the verify gate.
+The held publisher is told the start as `SPIRE_START_HEAD` and refuses a checkpoint that does not descend from it
+(`START_NOT_DESCENDED`, no checkpoint line). Step 1, or a step after only empty steps that started from the base, starts
+from the base, and its retry keeps today's fallback, since the base is its own start.
+
 ---
 
 ## 5. Continuous checkpointing

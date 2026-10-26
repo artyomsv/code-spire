@@ -42,6 +42,16 @@ characters and scrubs every credential the run was given. The record refuses any
 no summary, never an empty one, and a ready written before the field existed reads as null; the six-component
 constructor carries none, and `withStepSummary` rebuilds with it.
 
+A plan built step by step (M4 slice 3, §6.6, A2) adds three wire components. `ExecuteWorkRun.checkpointRequired`
+(`requiringCheckpoint()`, refused without `startFromRunId`) marks a later step's start: the run worker never replaces
+it with the base, and a start whose held unit is gone fails before any launch as `CHECKPOINT_MISSING`.
+`ExecuteWorkRun.emptyAllowed` (`allowingEmpty()`) marks every plan step outside a land fix; slice 10 reads it. Both are
+false on every other build and on a command decoded from before them, and every wither carries both.
+`RunWorkReady.startFromHead` (`withStartFromHead`) is the head the build started from after any base fallback, null
+for a build from the base. The held publisher is told the same head as `SPIRE_START_HEAD` and refuses a checkpoint that
+does not descend from it as `START_NOT_DESCENDED`; the orchestrator refuses a plan step's ready whose `startFromHead`
+is not the required start it recorded with the dispatch claim, `phase_evidence_mismatch`.
+
 `ExecuteWorkDraftRun(runId, execution, draft)` (M4 slice 3) is a specification or plan run, also on
 `cs.run-commands`. `draft` is a `WorkDraftBinding(workItemId, generation, attemptId, kind, provisionalDigest)`:
 `kind` is `SPEC` or `PLAN`, and the digest (64 hex) binds the setup revision, the ticket and the kind instead of
@@ -117,10 +127,26 @@ plan, the draft's base commit and the build setup's harness, model, effort, paym
 entry. Only a build-or-later attempt of the generation refuses it (A4). A plan run is bought only under the setup revision
 its specification was dispatched with, since it clones the commit that specification read; a setup saved in between
 stops the plan attempt at `plan / stopped / draft_setup_changed` before any run. A setup saved since the plan was
-dispatched waits at `plan / awaiting_input / draft_setup_changed`; the ticket is not read again, so an edit to it refuses nothing. Until
-plan steps are built one by one, a plan of more than one step waits at `plan / awaiting_input /
-plan_steps_unavailable` (`DRAFT_REGISTRATION_REFUSED`). Under bindings 1 to 5 a plan stays `schemaVersion: 1` with
+dispatched waits at `plan / awaiting_input / draft_setup_changed`; the ticket is not read again, so an edit to it refuses nothing. The
+registered item carries the plan cursor. Under bindings 1 to 5 a plan stays `schemaVersion: 1` with
 exactly one step; `schemaVersion: 2` is accepted only under binding 6.
+
+`WorkItemEvent` gains the component `steps` (`WorkSteps(total, index, completed, lost)`, slice 9, A17), carried by
+every wither and set by `WorkStepLifecycle.planRegistered` for a binding-6 plan: the next step (0-based), each
+completed step's `StepResult(index, execution, empty, holdsBundle)` and the runs whose checkpoint a start found gone.
+`WorkStepLifecycle` decides the loop; the phase order is untouched. After a verify's `PHASE_COMPLETED`, while the
+cursor is not done and no land fix is in progress, a passed step appends `STEP_COMPLETED`: phase `build` again for
+the next step, or `deliver` after the last, with the newest step run that holds a bundle and the last changed step's
+head and verification (decision 9). `WorkProgress.steps` counts completed steps, not build starts (A11): an item
+without a cursor completes its one step when verify passes, a land fix completes none and is not checked against
+`maxStepsPerPlan`, and readmission resets the count and the cursor. `EntryMode.STEP` (between steps, never step 1 or a
+land fix) skips the build and verify permission gates. A later step builds from the previous step's checkpoint, required;
+a retry starts from its own failed checkpoint, or from the chain run while no run of the step reached ready, and never
+from the base once a chain run exists (decision 11). A later step's `RunFailed` with commits behind it appends
+`STEP_RUN_FAILED` and opens the verify gate on the chain run's head, unverified `step_run_failed`, or
+`checkpoint_missing` for `CHECKPOINT_MISSING`, which also records the required start in `lost`. Retry of a step with no
+start left is refused `step_checkpoint_lost` and the gate stays open with Stop. Step 1's failure is still
+`failed / phase_failed`.
 
 **Revise** (`POST /api/approvals/{id}/revise {expectedVersion, idempotencyKey, note}`, `spire-admin`, a note required)
 answers an open specification or plan result gate from the dashboard only: `ResolveGate` has no revise, so a tracker

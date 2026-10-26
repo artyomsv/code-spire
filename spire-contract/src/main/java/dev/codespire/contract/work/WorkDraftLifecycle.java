@@ -147,7 +147,7 @@ public final class WorkDraftLifecycle {
                 "DRAFT_REGISTERED", item.gate(), item.progress().reserve(false)).prepared(preparation).withMilestone("DRAFT_REGISTERED");
     }
 
-    /** The approved plan cannot be registered (decision 15, or more steps than a build runs yet): the item waits in plan. */
+    /** The approved plan cannot be registered (decision 15): the item waits in plan. */
     public static WorkItemEvent registrationRefused(WorkItemEvent item, String reason) {
         return WorkItemLifecycle.state(item, "awaiting_input", reason, "DRAFT_REGISTRATION_REFUSED", item.gate(), item.progress().reserve(false));
     }

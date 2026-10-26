@@ -16,7 +16,8 @@ import java.util.Set;
 /**
  * The SQL side of a generated item's draft (M4 slice 3, A4), projected in the transaction that appends each event:
  * the item's preparation mode, which the copy and draft sweeps select on (decision 2), and one
- * {@code work_prepare_effect} row for each draft attempt started, by the sweep or by an automatic retry.
+ * {@code work_prepare_effect} row for each draft attempt started, by the sweep or by an automatic retry. The plan cursor is
+ * projected beside the mode ({@code step_index}, {@code step_total}, V101), NULL for an item without one.
  *
  * <p>A revision's note travels in the aggregate stream as the note of the REJECTED result gate (decision 8). That gate
  * stays on the item through the sweep's start, so the start's row copies the note, encrypted under the attempt, for the
@@ -33,9 +34,11 @@ public class WorkDraftProjection {
     @Inject EncryptionService encryption;
 
     void project(Connection c, WorkItemEvent item) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("UPDATE work_item SET preparation_mode=? WHERE id=?")) {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE work_item SET preparation_mode=?,step_index=?,step_total=? WHERE id=?")) {
             ps.setString(1, item.draft() == null ? "composed" : "generated");
-            ps.setString(2, item.workItemId());
+            ps.setObject(2, item.steps() == null ? null : item.steps().index(), java.sql.Types.INTEGER);
+            ps.setObject(3, item.steps() == null ? null : item.steps().total(), java.sql.Types.INTEGER);
+            ps.setString(4, item.workItemId());
             ps.executeUpdate();
         }
         if (item.draft() == null || !DRAFT_PHASES.contains(item.phase()) || !STARTS.contains(item.milestone())) return;

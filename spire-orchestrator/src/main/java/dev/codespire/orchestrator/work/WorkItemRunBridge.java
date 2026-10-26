@@ -22,6 +22,7 @@ public class WorkItemRunBridge {
     @Inject WorkItemStore store;
     @Inject WorkItemTransitions transitions;
     @Inject WorkStepSummaries summaries;
+    @Inject WorkStepTransitions steps;
 
     /** Validate the immutable dispatch binding before this message can project or charge a run. */
     public boolean acceptsBinding(RunResult result) {
@@ -81,12 +82,13 @@ public class WorkItemRunBridge {
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot decode work run result",failure);}
         if(ready instanceof RunResult.RunWorkReady checkpoint && !readyProcessed) {
-            if(!finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
+            // A plan step's ready that names another start than its dispatch required is refused (M4 slice 3, A2).
+            if(steps.offTheChain(checkpoint) || !finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
             // The summary (or that there was none, M4 slice 8) commits with the acknowledgement, so a crash before it
-            // replays both, and the summary's key makes the replay insert nothing. Step 0 until the step cursor exists.
+            // replays both, and the summary's key makes the replay insert nothing. Recorded under the step the run built.
             try(Connection c=dataSource.getConnection()) {
                 c.setAutoCommit(false);
-                summaries.record(c,checkpoint,0);
+                summaries.record(c,checkpoint,WorkStepSummaries.stepIndexOf(c,runId));
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")){ps.setString(1,runId);ps.executeUpdate();}
                 c.commit();
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
@@ -133,7 +135,9 @@ public class WorkItemRunBridge {
         if(result instanceof RunResult.RunWorkReady ready)usage=new WorkItemTransitions.PhaseResult(attempt,success,wall,
                 usage.costMillicents(),usage.calls(),usage.usageKnown(),new dev.codespire.contract.work.WorkExecution(
                         ready.runId(),ready.work(),ready.head(),null,null,keptPullRequest(itemId,attempt),null,null));
-        var outcome=transitions.complete(itemId,usage);
+        // A later plan step's failed run opens the verify gate rather than failing the item (M4 slice 3, decision 7).
+        var routed=result instanceof RunResult.RunFailed failed?steps.runFailed(itemId,new WorkStepTransitions.Failure(failed.runId(),failed.cause(),usage)):null;
+        var outcome=routed!=null?routed:transitions.complete(itemId,usage);
         if(outcome.status()==409 && Set.of("attempt_changed","item_not_active").contains(outcome.reason()))
             outcome=transitions.recordLateResult(itemId,usage);
         return outcome.status()==200;

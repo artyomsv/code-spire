@@ -22,7 +22,9 @@ final class WorkRunAssemblyRefusals {
             "factory_account_unavailable", "harness_credential_unavailable", "deployment_spend_cap_reached",
             "model_pricing_unavailable", "model_disabled", "catalogue_unavailable",
             "model_not_run_by_harness", "effort_not_offered", "effort_unverifiable",
-            "subscription_unavailable", "subscription_unreadable");
+            "subscription_unavailable", "subscription_unreadable",
+            // A plan step whose start is gone (M4 slice 3, decision 11); Retry refuses it first, so this is the race behind it.
+            WorkStepAssembly.CHECKPOINT_LOST);
 
     /** The one reason that carries a payload: "model_pricing_incomplete:CACHED_INPUT,REASONING". */
     private static final String PRICING = "model_pricing_incomplete";

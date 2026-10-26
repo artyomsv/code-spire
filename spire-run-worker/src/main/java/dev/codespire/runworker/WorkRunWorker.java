@@ -49,6 +49,9 @@ public class WorkRunWorker {
             RunResult result;
             if(claims.taken(id,RunDispatcher.CANCEL_SLOT) || store.revoked(command)) {
                 result=failures.of(command.execution(),"CANCELLED","Cancelled before the held build started");
+            } else if(startGone(command)) {
+                // A plan step never falls back to the base (M4 slice 3, A2): nothing is launched and nothing is bought.
+                result=failures.of(command.execution(),RunFailureCause.CHECKPOINT_MISSING.name(),"The checkpoint this plan step starts from is gone");
             } else if(!leases.take(id)) {
                 result=failures.of(command.execution(),"WORKER_FAILED","No lease was taken; the held build was not started");
             } else {
@@ -205,6 +208,11 @@ public class WorkRunWorker {
      * read would refuse the whole build, and a refused build fails the item; starting from the base instead keeps
      * the retry the operator asked for, and the prompt is corrected to say so.
      */
+    /** A plan step's required start whose held unit is no longer on this daemon (M4 slice 3, A2, decision 11). */
+    private boolean startGone(RunCommand.ExecuteWorkRun command) {
+        return command.checkpointRequired() && localUnit(command.execution().startFromRunId()).isEmpty();
+    }
+
     RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
         String previous=command.execution().startFromRunId();
         if(previous==null || localUnit(previous).isPresent())return command;

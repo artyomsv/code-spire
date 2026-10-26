@@ -16,7 +16,11 @@ export interface Preparation {
   /** The checks a verify runs, copied and bound with the preparation (M4). Absent before version 5. */
   verifyCommands?: string[];
   verifyTimeoutSeconds?: number;
+  /** 6 for a plan the factory wrote and builds step by step (M4 slice 3); absent on an older server. */
+  bindingVersion?: number;
 }
+/** The preparation binding of a plan the factory wrote and builds step by step (M4 slice 3, WorkPreparation.STEPS_BINDING). */
+export const STEPS_BINDING = 6;
 export interface ArtifactReference { artifact: Artifact; title: string }
 export interface WorkBuild { attemptId: string; state: string; runId: string | null; reason: string | null; generation: number }
 /** One verify attempt's result (M4). Only PASSED ever renders as a pass. */

@@ -38,7 +38,9 @@ public record WorkSteps(int total, int index, List<StepResult> completed, Set<St
         if (index < 0 || index > total) throw new IllegalArgumentException("The next step " + index + " is outside a plan of " + total);
         completed = List.copyOf(Objects.requireNonNull(completed, "completed"));
         lost = Set.copyOf(Objects.requireNonNull(lost, "lost"));
-        // RED: the cursor invariants are not enforced yet.
+        if (completed.size() != index) throw new IllegalArgumentException("Step " + index + " is next, so exactly " + index + " steps completed");
+        for (int i = 0; i < completed.size(); i++)
+            if (completed.get(i).index() != i) throw new IllegalArgumentException("Completed steps run 0, 1, 2 …; found " + completed.get(i).index() + " at " + i);
     }
 
     public static WorkSteps of(int total) {

@@ -167,27 +167,18 @@ public class RunUnitBuilder {
 
     public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
         RunUnitSpec unit = build(command.execution(), adapter, Topology.HELD);
-        if (!command.execution().pushesToAnExistingBranch()) return unit;
+        ContainerSpec publisher = PublisherEnvironments.held(unit.publisher(), command);
+        if (!command.execution().pushesToAnExistingBranch())
+            return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), publisher,
+                    unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
         Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
         initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
         ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
-        return new RunUnitSpec(unit.runId(), init, unit.agent(), heldPublisher(unit.publisher(), command),
+        return new RunUnitSpec(unit.runId(), init, unit.agent(), publisher,
                 unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
-    }
-
-    /**
-     * The held gate sees the base merge before any permit exists, so it excuses the same orchestrator-issued base
-     * tip the permit will; without it a base that edited a workflow is refused before any checkpoint. The agent
-     * never receives the tip.
-     */
-    private static ContainerSpec heldPublisher(ContainerSpec publisher, RunCommand.ExecuteWorkRun command) {
-        if (command.mergedBaseTip() == null) return publisher;
-        Map<String, String> env = new HashMap<>(publisher.environment());
-        env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
-        return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
     }
 
     /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */

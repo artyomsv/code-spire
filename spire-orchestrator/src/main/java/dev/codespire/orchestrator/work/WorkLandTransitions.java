@@ -172,7 +172,8 @@ public class WorkLandTransitions {
                 && WorkItemLifecycle.LAND_FIX_COUNTED.contains(event.reason())).count();
         long counted=WorkItemLifecycle.LAND_FIX_COUNTED.contains(reason)?1:0;
         if(used+counted>landSettings.get(c,item.repositoryId()).fixAttempts())return new HandOff("land_fix_attempts_exhausted",reason);
-        String limit=item.progress().limitReached(item.policy().limits(),"build");
+        // A land fix is no plan step, so the step limit does not hand it over (M4 slice 3, A11).
+        String limit=item.progress().limitReachedKeepingExecution(item.policy().limits());
         return limit==null?null:new HandOff("land_item_limit_reached",limit);
     }
     /** Where a land row goes when the decider hands its item over or starts a fix; null fields keep what the row holds. */

@@ -63,7 +63,7 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
-## Specification, plan and steps (M4 slice 3, orchestrator V96–V100)
+## Specification, plan and steps (M4 slice 3, orchestrator V96–V103)
 
 V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
 existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
@@ -109,7 +109,16 @@ acknowledges it, so a replay inserts nothing (`ON CONFLICT DO NOTHING`). `summar
 Tink-encrypted under `work-step-summary:<item>:<generation>:<step>:<run>`; a ready without one is state
 `summary_missing` with no summary, so the steps view (`GET /api/work-items/{id}/steps`, admin only) can say the
 step recorded no decisions. The steps view returns the newest run's row per step of the current generation.
-`step_index` is 0 until the step cursor exists. The plan named this migration V98; earlier slices took V98 and V99.
+`step_index` is the plan step the run was dispatched for (`factory_run.step_index`), 0 for a build that is not a plan
+step. The plan named this migration V98; earlier slices took V98 and V99.
+
+V101 adds `work_item.step_index` and `step_total` (slice 9, A17), the plan cursor projected from `WorkItemEvent.steps`
+when each event is appended: the next step (0-based, `step_total` once done) and the approved plan's step count, both
+NULL for an item without a cursor. V102 adds `work_run_effect.required_start_run_id` and `required_start_head`, written
+with the dispatch claim of a later plan step whose start is required: the orchestrator refuses a ready naming another
+start, and a `CHECKPOINT_MISSING` failure records that run as lost. V103 replaces the
+`factory_run_failure_cause_closed` CHECK with V97's set plus `CHECKPOINT_MISSING` (before it an alias of
+`CLONE_FAILED`) and `START_NOT_DESCENDED`. The plan named the cursor migration V99; earlier slices took V99 and V100.
 
 The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
 and plan references, the revision counts, the two approvals, the base commit the specification read and the setup

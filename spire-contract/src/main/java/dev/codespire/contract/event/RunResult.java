@@ -37,10 +37,15 @@ public sealed interface RunResult {
      * {@code summary_missing}, never as an empty summary. A ready written before the field existed reads as null.
      * The six-component constructor carries none; rebuild through {@link #withStepSummary}, which enumerates the
      * components once, next to the record.
+     *
+     * <p>{@code startFromHead} is the checkpoint head the build started from (M4 slice 3, A2), null for a build from the
+     * base; the orchestrator refuses a plan step's ready whose start is not the one it chose. Set through
+     * {@link #withStartFromHead}.
      */
     record RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                         List<String> changedPaths, Map<String, Long> tokenUsage,
-                        long activeWallSeconds, dev.codespire.contract.work.StepSummary stepSummary) implements RunResult {
+                        long activeWallSeconds, dev.codespire.contract.work.StepSummary stepSummary,
+                        String startFromHead) implements RunResult {
         public RunWorkReady {
             if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A ready run needs its identity");
             Objects.requireNonNull(work, "A ready run needs its work binding");
@@ -52,25 +57,23 @@ public sealed interface RunResult {
                 tokenUsage = Map.copyOf(tokenUsage);
             }
             if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
+            if (startFromHead != null && !startFromHead.matches("[0-9a-f]{40}"))
+                throw new IllegalArgumentException("A start head is a full checkpoint head");
         }
 
         public RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                             List<String> changedPaths, Map<String, Long> tokenUsage, long activeWallSeconds) {
-            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null);
+            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null, null);
         }
 
         /** Rebuild carrying the agent's step summary, enumerating the components once. */
         public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
-            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary);
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary, startFromHead);
         }
 
-        /** RED: the start head is not carried yet. */
-        public String startFromHead() {
-            return null;
-        }
-
-        public RunWorkReady withStartFromHead(String head) {
-            return this;
+        /** Rebuild carrying the head the build started from, enumerating the components once. */
+        public RunWorkReady withStartFromHead(String start) {
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, start);
         }
     }
 

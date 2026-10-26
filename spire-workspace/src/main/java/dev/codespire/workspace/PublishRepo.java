@@ -540,6 +540,20 @@ public final class PublishRepo implements AutoCloseable {
         return git.getRepository().getObjectDatabase().has(ObjectId.fromString(sha));
     }
 
+    /**
+     * Whether {@code sha} is {@code start} or descends from it (M4 slice 3, A2). A start this store does not hold is no
+     * ancestor: a checkpoint that extends a plan step's start carries it, because every bundle covers the whole chain.
+     */
+    public boolean descendsFrom(String sha, String start) throws IOException {
+        Repository repo = git.getRepository();
+        if (!repo.getObjectDatabase().has(ObjectId.fromString(start))) {
+            return false;
+        }
+        try (RevWalk walk = new RevWalk(repo)) {
+            return walk.isMergedInto(walk.parseCommit(ObjectId.fromString(start)), walk.parseCommit(ObjectId.fromString(sha)));
+        }
+    }
+
     public Path path() {
         return directory;
     }

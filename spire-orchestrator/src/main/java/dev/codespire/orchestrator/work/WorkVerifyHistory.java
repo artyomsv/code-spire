@@ -52,6 +52,49 @@ public class WorkVerifyHistory {
         }
     }
 
+    /**
+     * The latest applied verify of this generation that did not pass, among the runs of one plan step (M4 slice 3,
+     * decision 11): an earlier step's failure is not this step's, and its failed checkpoint is not this step's start.
+     */
+    public Optional<Previous> lastNotPassedAtStep(Connection c, String workItemId, long generation, int step) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT v.attempt_id,v.run_id,v.head,v.result FROM work_verify_effect v JOIN factory_run r ON r.run_id=v.run_id
+                WHERE v.work_item_id=? AND v.generation=? AND r.step_index=? AND v.state='applied' AND v.outcome<>'PASSED' AND v.reason IS NULL
+                ORDER BY v.created_at DESC LIMIT 1
+                """)) {
+            ps.setString(1, workItemId);
+            ps.setLong(2, generation);
+            ps.setInt(3, step);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                UUID attempt = rs.getObject(1, UUID.class);
+                RunVerification.RunWorkVerified result = mapper.readValue(
+                        encryption.decrypt(rs.getBytes(4), WorkVerifyResults.aad(attempt)), RunVerification.RunWorkVerified.class);
+                return Optional.of(new Previous(rs.getString(2), rs.getString(3), result.verification()));
+            } catch (IOException unreadable) {
+                throw new IllegalStateException("The last verify of step " + step + " of " + workItemId + " could not be read", unreadable);
+            }
+        }
+    }
+
+    /**
+     * Whether a run of this plan step reached ready, which started its verify. The run worker released the step's start
+     * the moment the first run built from it was ready, so after that the start is gone for good (decision 11).
+     */
+    public boolean readyAtStep(Connection c, String workItemId, long generation, int step) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT 1 FROM work_verify_effect v JOIN factory_run r ON r.run_id=v.run_id
+                WHERE v.work_item_id=? AND v.generation=? AND r.step_index=?
+                """)) {
+            ps.setString(1, workItemId);
+            ps.setLong(2, generation);
+            ps.setInt(3, step);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     /** Whether a retry can continue from the previous checkpoint, or must start again from the base. */
     public static boolean checkpointReadable(WorkVerification verification) {
         return !"checkpoint_missing".equals(verification.reason());

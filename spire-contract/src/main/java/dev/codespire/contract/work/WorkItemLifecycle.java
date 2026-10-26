@@ -88,8 +88,7 @@ public final class WorkItemLifecycle {
          * still apply.
          */
         DRAFT,
-        /** A later plan step (M4 slice 3, decision 13): build and verify skip their permission gates; off, usage and caps still apply. */
-        STEP
+        /** A later plan step (M4 slice 3, decision 13): build and verify skip their permission gates; off, usage and caps apply. */ STEP
     }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
         return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);
@@ -101,10 +100,10 @@ public final class WorkItemLifecycle {
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
+        if(!(landFix?item.progress().withinKeepingExecution(item.policy().limits(),item.phase()):item.progress().within(item.policy().limits(),item.phase())))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         WorkItemEvent drafted=WorkDraftLifecycle.enter(item,new WorkDraftLifecycle.Entry(entry==EntryMode.DRAFT,available,decisionId,now));
         if(drafted!=null)return drafted;
-        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
+        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase()) || entry==EntryMode.STEP && java.util.Set.of("build","verify").contains(item.phase());
         if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),

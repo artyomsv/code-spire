@@ -19,7 +19,8 @@ import javax.sql.DataSource;
  * Each build step's summary (M4 slice 8, §6.8, V100): what the agent said it decided, rejected and changed from the
  * plan, stored when the run's ready result is applied. The agent wrote it, so it is encrypted under an AAD naming the
  * item, generation, step and run, and never logged. A ready without one records {@code summary_missing}, so the steps
- * view can say so; the step still completes. The key makes a redelivered ready insert nothing.
+ * view can say so; the step still completes. The key makes a redelivered ready insert nothing. The step index is the
+ * one the run was dispatched for ({@code factory_run.step_index}, slice 9), 0 for a build that is not a plan step.
  */
 @ApplicationScoped
 public class WorkStepSummaries {
@@ -57,10 +58,29 @@ public class WorkStepSummaries {
         }
     }
 
+    /** The plan step a run was dispatched for; 0 for a build that is not a plan step. */
+    static int stepIndexOf(Connection c, String runId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT step_index FROM factory_run WHERE run_id=?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        }
+    }
+
     /** The newest run's summary of each step of this generation, in step order, decrypted. */
     public List<Step> list(String workItemId, long generation) {
+        try (Connection c = dataSource.getConnection()) {
+            return list(c, workItemId, generation);
+        } catch (SQLException failure) {
+            throw WorkSourceRegistry.database(failure);
+        }
+    }
+
+    /** The same list on the caller's connection, which a step's build assembly holds the item lock on. */
+    List<Step> list(Connection c, String workItemId, long generation) throws SQLException {
         List<Step> steps = new ArrayList<>();
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+        try (PreparedStatement ps = c.prepareStatement("""
                 SELECT DISTINCT ON (step_index) step_index,run_id,state,summary FROM work_step_summary
                 WHERE work_item_id=? AND generation=? ORDER BY step_index, created_at DESC, run_id DESC
                 """)) {
@@ -69,8 +89,6 @@ public class WorkStepSummaries {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) steps.add(step(rs, workItemId, generation));
             }
-        } catch (SQLException failure) {
-            throw WorkSourceRegistry.database(failure);
         }
         return steps;
     }

@@ -21,12 +21,12 @@ public record WorkProgress(UUID attemptId, String attemptPhase, String attemptSt
     public WorkProgress withExecution(WorkExecution value) { return new WorkProgress(attemptId,attemptPhase,attemptState,reserved,startedAt,runs,steps,wallSeconds,costMillicents,calls,usageUnknown,value); }
     public WorkProgress start(UUID id,String phase,Instant now) {
         boolean build="build".equals(phase);
-        return new WorkProgress(id,phase,"started",true,now,runs+(build?1:0),steps+(build?1:0),wallSeconds,costMillicents,calls,usageUnknown,build?null:execution);
+        return new WorkProgress(id,phase,"started",true,now,runs+(build?1:0),steps,wallSeconds,costMillicents,calls,usageUnknown,build?null:execution);
     }
-    /** A land fix's build (M4 land, spec §7.5): counted like any build, but it keeps the pull request it fixes. */
+    /** A land fix's build (M4 land, spec §7.5): a run counted like any build, but it keeps the pull request it fixes. */
     public WorkProgress startKeepingExecution(UUID id,String phase,Instant now) {
         boolean build="build".equals(phase);
-        return new WorkProgress(id,phase,"started",true,now,runs+(build?1:0),steps+(build?1:0),wallSeconds,costMillicents,calls,usageUnknown,execution);
+        return new WorkProgress(id,phase,"started",true,now,runs+(build?1:0),steps,wallSeconds,costMillicents,calls,usageUnknown,execution);
     }
     /** The first limit {@link #within} finds reached, named as the policy names it; null while every one allows more. */
     public String limitReached(WorkPolicyLimits limits,String phase) {
@@ -50,11 +50,14 @@ public record WorkProgress(UUID attemptId, String attemptPhase, String attemptSt
         return new WorkProgress(attemptId,attemptPhase,attemptState,reserved,startedAt,runs,steps,
                 Math.addExact(wallSeconds,wall),Math.addExact(costMillicents,cost),Math.addExact(calls,callCount),usageUnknown,execution);
     }
-    /** RED: a completed plan step is not counted yet. */
-    public WorkProgress completeStep() { return this; }
-    public WorkProgress withSteps(long value) { return this; }
-    public boolean withinKeepingExecution(WorkPolicyLimits limits,String phase) { return within(limits,phase); }
-    public String limitReachedKeepingExecution(WorkPolicyLimits limits) { return limitReached(limits,"build"); }
+    /** A plan step completed (M4 slice 3, A11): steps count completions, so a retried step counts once. */
+    public WorkProgress completeStep() { return withSteps(Math.addExact(steps,1)); }
+    /** Readmission starts the count again (decision 12). */
+    public WorkProgress withSteps(long value) { return new WorkProgress(attemptId,attemptPhase,attemptState,reserved,startedAt,runs,value,wallSeconds,costMillicents,calls,usageUnknown,execution); }
+    /** A land fix's build is no plan step (A11), so the step limit does not refuse it; every other limit does. */
+    public boolean withinKeepingExecution(WorkPolicyLimits limits,String phase) { return withSteps(0).within(limits,phase); }
+    /** The first limit a land fix's build would cross, the step limit excepted (A11); null while none is reached. */
+    public String limitReachedKeepingExecution(WorkPolicyLimits limits) { return withSteps(0).limitReached(limits,"build"); }
     public boolean within(WorkPolicyLimits limits,String phase) {
         return !usageUnknown && (!"build".equals(phase) || runs<limits.maxRunsPerItem() && steps<limits.maxStepsPerPlan())
                 && wallSeconds<limits.maxWallClockSeconds() && costMillicents<limits.maxCostMillicents() && calls<limits.maxCallsPerItem();

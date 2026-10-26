@@ -99,6 +99,24 @@ public final class PublishCycle {
     }
 
     /**
+     * Whether a held checkpoint extends the head its build started from (M4 slice 3, A2). A rewritten history under a
+     * plan step is refused and reported, with no checkpoint, so nothing downstream can verify or deliver it.
+     */
+    private boolean onTheChain(String sha) {
+        String start = publication.startHead();
+        try {
+            if (start == null || repo.descendsFrom(sha, start)) {
+                return true;
+            }
+        } catch (IOException unreadable) {
+            outcome.failed("START_NOT_DESCENDED", "The ancestry of " + sha + " could not be read: " + unreadable.getMessage());
+            return false;
+        }
+        outcome.failed("START_NOT_DESCENDED", sha + " does not descend from the start " + start);
+        return false;
+    }
+
+    /**
      * @return whether the run may continue. False means the gate refused, and a gate trip
      *         TERMINATES the run — the next bundle would carry the same refused commit plus more.
      */
@@ -136,6 +154,9 @@ public final class PublishCycle {
         }
 
         if (publication.mode() == PublicationPolicy.Mode.HELD) {
+            if (!onTheChain(sha)) {
+                return false;
+            }
             outcome.checkpoint(sha, changes.paths());
             return true;
         }

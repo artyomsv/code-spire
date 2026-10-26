@@ -69,10 +69,13 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,revision,admittedProfile,admittedModes,
                 observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,draft,steps);
     }
-    /** Carries the draft unchanged; what readmission keeps of it is slice 11's decision. */
+    /**
+     * Carries the draft unchanged; what readmission keeps of it is slice 11's decision. The plan cursor and the step count
+     * start again (decision 12), so no build of the next generation reads this one's cursor; runs and spend accumulate.
+     */
     public WorkItemEvent readmit() {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
-                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false),preparation,control,draft,steps);
+                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false).withSteps(0),preparation,control,draft,steps==null?null:steps.restarted());
     }
     public WorkItemEvent controlled(WorkControl value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,

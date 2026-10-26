@@ -95,6 +95,13 @@ public enum RunFailureCause {
     /** The init container could not clone the repository. */
     CLONE_FAILED(true, false),
 
+    /**
+     * The held checkpoint a build was to start from is gone (M4 slice 3, A2): the worker found its unit missing, or the
+     * trusted init could not rebuild it. Raised before the agent starts, so nothing was bought. Not retryable here: a
+     * plan step never falls back to the base, and the orchestrator opens the verify gate instead.
+     */
+    CHECKPOINT_MISSING(false, false),
+
     /** The push gate refused the change. It refuses the same tree the same way (ADR-037). */
     GATE_REFUSED(false, true),
 
@@ -119,6 +126,12 @@ public enum RunFailureCause {
 
     /** A commit the agent made never reached a bundle. */
     DROPPED_COMMIT(false, true),
+
+    /**
+     * A plan step's checkpoint does not descend from the head it started from (M4 slice 3, A2): the history was
+     * rewritten under the chain. The agent ran, and the held publisher refuses the checkpoint.
+     */
+    START_NOT_DESCENDED(false, true),
 
     // --- The control plane itself. Our bug, or our infrastructure. ---
 
@@ -190,9 +203,6 @@ public enum RunFailureCause {
             Map.entry("BASE_TIP_UNAVAILABLE", GATE_REFUSED),
             Map.entry("PUSH_FAILED", PUSH_TRANSPORT_FAILED),
             Map.entry("PUBLISHER_FAILED", WORKER_FAILED),
-            // M4: the trusted init could not rebuild a held checkpoint, for a retried build or a verify.
-            // A clone failure in kind; a verify reports its own outcome and never a RunFailed.
-            Map.entry("CHECKPOINT_MISSING", CLONE_FAILED),
             Map.entry("VERIFY_PREPARE_FAILED", CLONE_FAILED));
 
     /**

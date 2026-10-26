@@ -17,16 +17,19 @@ public class WorkRunAssembly {
     @Inject RunFunding funding;
     @Inject RunCredentials credentials;
     @Inject dev.codespire.orchestrator.work.WorkVerifyHistory verifyHistory;
+    @Inject dev.codespire.orchestrator.work.WorkStepAssembly steps;
     public record Prepared(RunCommand.ExecuteWorkRun command,FactoryRunProjection.QueuedRun row) {}
 
     public void validate(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,WorkArtifacts.Evidence evidence) {
-        parse(source,preparation,evidence,"work-validation");
+        parse(source,preparation,composedPrompt(evidence),"work-validation");
     }
-    private DispatchRequestParser.Parsed parse(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,
-                                               WorkArtifacts.Evidence evidence,String subject) {
+    private static String composedPrompt(WorkArtifacts.Evidence evidence) {
         if(evidence.failure()!=null || evidence.specification()==null || evidence.instruction()==null)
             throw new IllegalArgumentException("Validated tracker artifacts are required");
-        String prompt="Implement this one prepared task.\n\nSpecification:\n"+evidence.specification()+"\n\nSingle plan step:\n"+evidence.instruction();
+        return "Implement this one prepared task.\n\nSpecification:\n"+evidence.specification()+"\n\nSingle plan step:\n"+evidence.instruction();
+    }
+    private DispatchRequestParser.Parsed parse(WorkSourceRegistry.Source source,dev.codespire.contract.work.WorkPreparation preparation,
+                                               String prompt,String subject) {
         return DispatchRequestParser.parse(new RunResource.DispatchRequest(source.repository().workspace(),source.repository().slug(),source.scm().providerType(),
                 preparation.baseBranch(),preparation.baseCommit(),prompt,preparation.harness(),preparation.model(),subject,null,source.repositoryId()),config);
     }
@@ -42,7 +45,9 @@ public class WorkRunAssembly {
     public Prepared assemble(Connection c,WorkSourceRegistry.Source source,WorkItemEvent item,WorkArtifacts.Evidence evidence,
                              dev.codespire.orchestrator.work.WorkLandFixes.Fix fix) throws SQLException {
         String subject="work-"+item.progress().attemptId();
-        var in=parse(source,item.preparation(),evidence,subject);
+        // A plan step (M4 slice 3) builds its own prompt and start; a land fix after the plan is no step (decision 12).
+        var step=dev.codespire.orchestrator.work.WorkStepAssembly.builds(item,fix!=null)?steps.step(c,item,evidence):null;
+        var in=parse(source,item.preparation(),step==null?composedPrompt(evidence):step.prompt(),subject);
         // How the APPROVED preparation pays — not the build setup now, which may have changed since.
         boolean subscription=dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(item.preparation().payWith());
         var account=funding.account(c,source.repositoryId());
@@ -56,7 +61,7 @@ public class WorkRunAssembly {
         // Inside a land fix only that fix's own verify counts; a failure from before the pull request was opened is history.
         java.util.Optional<dev.codespire.orchestrator.work.WorkVerifyHistory.Previous> previous=verifyHistory.lastNotPassed(c,item.workItemId(),item.generation())
                 .filter(p->fix==null || fix.runs().contains(p.runId()));
-        String prompt=fix==null
+        String prompt=step!=null?in.prompt():fix==null
                 ?in.prompt()+previous.map(p->dev.codespire.orchestrator.work.WorkVerifyHistory.promptSection(p.verification())).orElse("")
                 :in.prompt()+dev.codespire.orchestrator.work.WorkLandFixes.promptSection(fix)
                         +previous.map(p->dev.codespire.orchestrator.work.WorkVerifyHistory.landFixPromptSection(p.verification())).orElse("");
@@ -69,13 +74,20 @@ public class WorkRunAssembly {
                 .atEffort(item.preparation().effort());
         if(subscription)command=command.paidBySignIn();
         if(fix!=null)command=command.onExistingBranch(fix.baseBranch());
-        var resumable=previous.filter(p->fix==null && dev.codespire.orchestrator.work.WorkVerifyHistory.checkpointReadable(p.verification()));
+        var resumable=previous.filter(p->fix==null && step==null && dev.codespire.orchestrator.work.WorkVerifyHistory.checkpointReadable(p.verification()));
         if(resumable.isPresent())command=command.fromCheckpoint(resumable.orElseThrow().runId(),resumable.orElseThrow().head());
+        if(step!=null && step.start().fromRunId()!=null)command=command.fromCheckpoint(step.start().fromRunId(),step.start().fromHead());
         var held=new RunCommand.ExecuteWorkRun(command,new dev.codespire.contract.work.WorkRunBinding(
                 item.workItemId(),item.generation(),item.progress().attemptId(),item.preparation().binding()));
         // The base tip the land effect read, never the workspace's: the held gate excuses only what that base brought.
         if(fix!=null && fix.baseTip()!=null)held=held.withMergedBaseTip(fix.baseTip());
         var row=new FactoryRunProjection.QueuedRun(id,in.harness(),in.model(),baseBranch,baseCommit,branch,account.botUsername(),funded.member().id());
+        if(step!=null) {
+            // Every plan step may finish empty (decision 14); one after a step that holds a bundle never falls back to the base (A2).
+            held=held.allowingEmpty();
+            if(step.start().required())held=held.requiringCheckpoint();
+            row=row.atStep(step.index());
+        }
         return new Prepared(held,subscription?row.paidBySubscription():row);
     }
 
