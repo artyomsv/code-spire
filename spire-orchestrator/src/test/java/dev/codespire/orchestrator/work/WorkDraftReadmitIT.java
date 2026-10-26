@@ -132,8 +132,9 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         assertNull(item.preparation());
         assertNull(item.steps(), "no cursor of the discarded plan is kept");
         draftSweep.sweep();
-        assertEquals(drafts + 1, draftRuns.size());
+        assertState(store.load(id), "spec", "active", "phase_started");
         assertEquals(WorkDraftBinding.Kind.SPEC, dispatched().draft().kind());
+        assertEquals(drafts + 1, draftRuns.size());
     }
 
     /** The factory writes a generated item's specification and plan: a hand-registered or copied task is refused. */
