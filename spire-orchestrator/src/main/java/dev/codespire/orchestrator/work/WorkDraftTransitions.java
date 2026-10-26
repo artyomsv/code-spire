@@ -181,7 +181,6 @@ public class WorkDraftTransitions {
             if (history.size() != expectedRevision) return new WorkItemTransitions.Outcome(409, "work_item_changed", item);
             WorkItemTransitions.Outcome refused = WorkItemTransitions.readmitRefusal(c, history, item);
             if (refused != null) return refused;
-            if (item.draft() == null) return new WorkItemTransitions.Outcome(409, "regenerate_unavailable", item);
             if (observed.evidence().failure() != null) return new WorkItemTransitions.Outcome(503, observed.evidence().failure(), item);
             WorkItemEvent checked = item.decision(observed.policy().revision(), WorkItemTransitions.authority(observed.source()),
                     transitions.select(observed, null), item.phase(), item.workflowStatus(), item.reason(), "POLICY_CHECKED", item.gate(), item.progress());
