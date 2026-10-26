@@ -439,6 +439,36 @@ class WorkDraftLifecycleTest {
         assertEquals("spec_off", next.reason());
     }
 
+    /** A specification switched off while its run worked stops at what it wrote: nothing approves it, no plan run follows. */
+    @Test
+    void aSpecSwitchedOffWhileItsRunWorkedStopsThere() {
+        WorkItemEvent running = started(profile("auto", "approve", "approve"));
+        WorkItemEvent switched = running.decision(2, running.authority(), selected(profile("auto", "off", "approve")), "spec", "active",
+                "phase_started", "POLICY_OBSERVED", null, running.progress());
+
+        WorkItemEvent next = WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(switched, WRITTEN, USAGE), OPENING);
+
+        assertEquals("spec / not_eligible / spec_off", state(next));
+        assertFalse(next.draft().specificationApproved());
+        assertNull(next.gate());
+    }
+
+    /** The same for a plan switched off while its run worked: it is neither approved nor registered into build. */
+    @Test
+    void aPlanSwitchedOffWhileItsRunWorkedStopsThere() {
+        WorkItemEvent atPlan = WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(started(profile("auto", "auto", "approve")), WRITTEN, USAGE), OPENING);
+        WorkItemEvent running = enter(atPlan, false, WorkItemLifecycle.EntryMode.DRAFT);
+        WorkItemEvent switched = running.decision(2, running.authority(), selected(profile("auto", "auto", "off")), "plan", "active",
+                "phase_started", "POLICY_OBSERVED", null, running.progress());
+        WorkDraft.Written plan = new WorkDraft.Written(WorkDraftTest.stored('b'), "c".repeat(40), 2);
+
+        WorkItemEvent next = WorkDraftLifecycle.afterWritten(WorkDraftLifecycle.written(switched, plan, USAGE), OPENING);
+
+        assertEquals("plan / not_eligible / plan_off", state(next));
+        assertFalse(next.draft().planApproved());
+        assertNull(next.gate());
+    }
+
     static final WorkDraftLifecycle.Revision REVISION = new WorkDraftLifecycle.Revision("TEST-operator", "TEST-revise-key", "TEST-note");
 
     WorkItemEvent specGate() {

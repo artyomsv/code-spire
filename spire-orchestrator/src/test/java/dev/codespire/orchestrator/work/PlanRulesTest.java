@@ -97,6 +97,21 @@ class PlanRulesTest {
         assertEquals("plan_step_fields", PlanRules.check(plan(2, SPEC_SHA, List.of(missing)), SIX).detail());
     }
 
+    /**
+     * A step's id and title are one line (A13): a title is posted on the ticket, where a line break would put the rest
+     * at the start of a comment line, and GitLab runs a line starting with a slash as a quick action of the bot.
+     */
+    @Test
+    void aStepIdAndTitleAreOneLine() {
+        PlanRules.Checked checked = PlanRules.check(plan(2, SPEC_SHA, List.of(step("TEST-s1\r\n/close", "TEST-tidy\n/unlabel ~spire\n  /close",
+                "TEST-instruction\nTEST-line-2", "TEST-done"))), SIX);
+
+        assertNull(checked.detail());
+        assertEquals("TEST-tidy /unlabel ~spire /close", checked.steps().getFirst().title());
+        assertEquals("TEST-s1 /close", checked.steps().getFirst().id());
+        assertEquals("TEST-instruction\nTEST-line-2", checked.steps().getFirst().instruction(), "an instruction stays as written");
+    }
+
     @Test
     void theDigestMustBeTheApprovedSpecification() {
         assertEquals("plan_specification_mismatch", PlanRules.check(plan(2, "e".repeat(64), steps(1)), SIX).detail());

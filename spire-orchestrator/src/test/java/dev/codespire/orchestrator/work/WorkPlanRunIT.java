@@ -166,6 +166,43 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
         assertNull(store.load(id).draft().plan());
     }
 
+    /**
+     * Every step builds in at least one run, and a plan delivers only at its end: a plan with more steps than the item
+     * has runs left would stop partway with everything spent and nothing delivered. The draft profiles allow 5 runs and
+     * 20 steps, as the shipped presets do, so the prompt asks for at most 5 and a 6-step plan is refused (A8, A11).
+     */
+    @Test
+    void aPlanLongerThanTheRunsLeftIsRefused() throws Exception {
+        String id = planRunning("plan-approve", 139);
+        RunCommand.ExecuteWorkDraftRun command = dispatched();
+        assertTrue(command.execution().prompt().contains("at most 5 steps"), command.execution().prompt());
+
+        saga.on(artifact(command, plan(6)));
+        assertState(store.load(id), "plan", "active", "phase_started");
+        saga.on(artifact(dispatched(), plan(6)));
+
+        assertState(store.load(id), "plan", "awaiting_input", "plan_invalid");
+        assertNull(store.load(id).draft().plan());
+    }
+
+    /** A8 at the call site: a plan whose largest step is over its prompt share is retried once, then waits (§6.4). */
+    @Test
+    void aPlanOverThePromptBudgetRetriesOnceThenWaits() throws Exception {
+        String id = planRunning("plan-approve", 140);
+        ObjectNode root = mapper.createObjectNode().put("schemaVersion", 2).put("specificationSha256", SPEC_SHA);
+        root.putArray("steps").addObject().put("id", "TEST-s1").put("title", "TEST-step-1").put("instruction", "i".repeat(3_900))
+                .put("doneWhen", "d".repeat(900));
+        String oversized = root.toString();
+
+        saga.on(artifact(dispatched(), oversized));
+        RunCommand.ExecuteWorkDraftRun retry = dispatched();
+        assertTrue(retry.execution().prompt().contains("the worst-case step prompt does not fit"), retry.execution().prompt());
+        saga.on(artifact(retry, oversized));
+
+        assertState(store.load(id), "plan", "awaiting_input", "plan_invalid");
+        assertNull(store.load(id).draft().plan());
+    }
+
     @Test
     void approvingTheOneStepPlanRegistersAndBuilds() throws Exception {
         String id = planRunning("plan-approve", 124);

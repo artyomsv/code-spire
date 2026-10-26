@@ -53,6 +53,18 @@ class UntrustedTextTest {
         assertEquals("````\nTEST ``` x\n````", UntrustedText.quoteBlock("TEST ``` x", UntrustedText.Markup.MARKDOWN));
     }
 
+    /** GitLab runs a note line that starts with a slash as a quick action of the bot (A13); none may start with one. */
+    @Test
+    void noMarkdownLineStartsAQuickAction() {
+        String neutralised = UntrustedText.neutralise("TEST-tidy\n/close\n  /unlabel ~spire", UntrustedText.Markup.MARKDOWN);
+        String quoted = UntrustedText.quoteBlock("## Outcome\n```\n/close\n```\n/label ~TEST", UntrustedText.Markup.MARKDOWN);
+
+        for (String text : java.util.List.of(neutralised, quoted))
+            for (String line : text.split("\n", -1)) assertFalse(line.stripLeading().startsWith("/") && !line.startsWith("    "), text);
+        for (String line : quoted.split("\n", -1)) assertTrue(line.startsWith("    "), "every quoted line is indented code: " + quoted);
+        assertTrue(quoted.contains("    /close\n"), quoted);
+    }
+
     @Test
     void jiraTextOutsideNoformatIsEscaped() {
         assertEquals("\\[\\~accountid:TEST-1] \\!https://TEST.example.test/p.png\\! \\{code} a\\|b",

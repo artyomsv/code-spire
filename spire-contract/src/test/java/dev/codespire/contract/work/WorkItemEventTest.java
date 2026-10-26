@@ -131,6 +131,27 @@ class WorkItemEventTest {
         assertEquals(WorkSteps.of(20), fits.steps());
     }
 
+    /**
+     * A8, A11: every step builds in at least one run and runs survive readmission, so a reused plan must fit the runs the
+     * item has left as well as the step limit; a 3-step plan with 2 of 5 runs left is written again.
+     */
+    @Test
+    void readmitWritesAgainAPlanLongerThanTheRunsLeft() {
+        WorkDraft approved = approvedDraft();
+        WorkItemEvent registered = item().drafted(approved).prepared(WorkDraftLifecycleTest.preparation(approved));
+        WorkProgress used = new WorkProgress(null, null, null, false, null, 3, 0, 30, 500, 6);
+        registered = registered.decision(1, registered.authority(), registered.policy(), "build", "stopped", "TEST-stopped", "TEST", null, used);
+
+        WorkItemEvent tooLong = registered.stepped(WorkSteps.of(3)).readmit();
+        WorkItemEvent fits = registered.stepped(WorkSteps.of(2)).readmit();
+
+        assertEquals(WorkDraft.admitted(), tooLong.draft());
+        assertNull(tooLong.preparation());
+        assertNull(tooLong.steps());
+        assertEquals(approved, fits.draft(), "a plan of exactly the runs left is reused");
+        assertEquals(WorkSteps.of(2), fits.steps());
+    }
+
     @Test
     void stepsSurviveTheStoredEventRoundTrip() throws Exception {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();

@@ -90,6 +90,27 @@ class StepPromptsTest {
         assertTrue(section.contains("\n`````\n"), section);
     }
 
+    /**
+     * A8: no step of an accepted plan is refused at dispatch. Whatever specification the budget accepts, the largest
+     * step prompt it can produce, with summaries and a verify section at their caps, stays within what a dispatch takes.
+     */
+    @Test
+    void theLargestPromptTheBudgetAcceptsFitsADispatch() {
+        List<String> items = java.util.Collections.nCopies(StepSummary.MAX_ITEMS, "z".repeat(StepSummary.MAX_ITEM_CHARS));
+        List<WorkStepSummaries.Step> full = List.of(new WorkStepSummaries.Step(0, "TEST-run-0", "recorded", new StepSummary(items, items, items)));
+        String verify = "v".repeat(WorkVerifyHistory.MAX_PROMPT_SECTION_CHARS);
+        List<WorkArtifacts.Step> steps = List.of(new WorkArtifacts.Step("TEST-s1", "t".repeat(120), "i".repeat(3000), "d".repeat(1000)),
+                new WorkArtifacts.Step("TEST-s2", "t".repeat(120), "i".repeat(3000), "d".repeat(1000)));
+        for (int run : new int[] {0, 4_000, 8_000, 12_000, 14_000, 16_000}) {
+            String specification = "## Outcome\nTEST\n## Context\n" + "`".repeat(run) + "\n" + "c".repeat(16_000 - run) + "\n## Acceptance criteria\n- TEST";
+            if (StepPromptBudget.refusal(specification, steps).isPresent()) continue;
+
+            String prompt = StepPrompts.prompt(new StepPrompts.Input(specification, steps, 1, full, verify));
+
+            assertTrue(prompt.length() <= 64 * 1024, "a backtick run of " + run + " gives a prompt of " + prompt.length() + " characters");
+        }
+    }
+
     @Test
     void aRetryCarriesItsFailureSection() {
         String prompt = StepPrompts.prompt(new StepPrompts.Input(SPEC, STEPS, 1, List.of(summary(0, "TEST-decision-1")),

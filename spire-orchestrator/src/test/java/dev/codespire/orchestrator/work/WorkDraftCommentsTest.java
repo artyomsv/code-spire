@@ -48,6 +48,20 @@ class WorkDraftCommentsTest {
         assertFalse(text.contains("<b>"), text);
     }
 
+    /** No line of a Markdown comment may start with a slash, which GitLab would run as a quick action of the bot (A13). */
+    @Test
+    void neitherCommentCarriesAQuickAction() {
+        String plan = WorkDraftComments.plan(java.util.List.of(new WorkArtifacts.Step("TEST-s1", "TEST-tidy\n/unlabel ~spire\n/close",
+                "TEST-instruction", "TEST-done")), DIGEST, UntrustedText.Markup.MARKDOWN);
+        String specification = WorkDraftComments.specification("## Outcome\n````\n```\n/close\n```\n````\n/label ~TEST", DIGEST,
+                UntrustedText.Markup.MARKDOWN);
+
+        for (String text : java.util.List.of(plan, specification))
+            for (String line : text.split("\n", -1)) assertFalse(line.startsWith("/"), text);
+        assertFalse(plan.contains("\n/"), plan);
+        assertTrue(specification.contains("\n    /close\n"), specification);
+    }
+
     @Test
     void thePlanCommentIsNeutralisedOnJira() {
         String text = WorkDraftComments.plan(STEPS, DIGEST, UntrustedText.Markup.WIKI);

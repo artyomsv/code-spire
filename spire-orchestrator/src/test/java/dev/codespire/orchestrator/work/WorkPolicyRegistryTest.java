@@ -38,6 +38,20 @@ class WorkPolicyRegistryTest extends WorkFixture {
                 other, "TEST-profile-" + other, 1, current().precedence(), current().modes())));
     }
 
+    /** A plan cursor holds at most 50 steps, so no profile may ask for a longer plan than the build can run. */
+    @Test void aStepLimitOverTheCursorIsRefused() {
+        WorkPolicy.Profile before = current();
+        dev.codespire.contract.work.WorkPolicyLimits was = before.limits();
+        dev.codespire.contract.work.WorkPolicyLimits over = new dev.codespire.contract.work.WorkPolicyLimits(was.gateTtlSeconds(), was.maxRunsPerItem(),
+                dev.codespire.contract.work.WorkSteps.MAX_STEPS + 1, was.maxWallClockSeconds(), was.maxCostMillicents(), was.maxCallsPerItem(), was.protectedPaths());
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, () -> policies.createVersion(new WorkPolicy.Profile(
+                profile, before.name(), 2, before.precedence(), before.modes(), over)));
+
+        assertTrue(refused.getMessage().contains("50"), refused.getMessage());
+        assertEquals(before, current());
+    }
+
     @Test void stalePolicyCannotReplaceTheMapping() {
         assertThrows(IllegalArgumentException.class, () -> policies.save(repository,
                 new WorkPolicyRegistry.Input(0, pin(), Map.of("TEST-replacement", pin()))));

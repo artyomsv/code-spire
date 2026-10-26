@@ -212,6 +212,18 @@ class WorkLandFixIT extends WorkLandFixture {
         assertEquals("maxRunsPerItem",latestEffect(id,"note"));
         assertEquals(1,heldCommands.size(),"no fix run");
     }
+    /** A land fix builds no plan step (A11): an item whose steps reached the step limit still gets its fix, never a hand-off. */
+    @Test void anItemAtItsStepLimitStillGetsALandFix() throws Exception {
+        String id=approved();
+        WorkItemEvent item=store.load(id);WorkProgress p=item.progress();
+        append(id,WorkItemLifecycle.state(item,item.workflowStatus(),item.reason(),"TEST_STEPS_USED",item.gate(),p.withSteps(item.policy().limits().maxStepsPerPlan())));
+        openAt(HEAD,"unstable","failure");
+        land.drain();
+        assertEquals(1,fixes(id));
+        WorkItemEvent fixing=store.load(id);
+        assertEquals("build",fixing.phase());assertEquals("active",fixing.workflowStatus(),fixing.reason());
+        dispatchedFix();
+    }
     @Test void aBlockedReviewOfAFixIsHanded() throws Exception {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         RunCommand.ExecuteWorkRun fix=dispatchedFix();pushed(id,fix,built(id,fix,FIXED));

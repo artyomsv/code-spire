@@ -49,6 +49,7 @@ class WorkStepsIT extends WorkSpecRunFixture {
     @Inject FactoryRunProjection runs;
     @Inject RunCharges charges;
     @Inject WorkStepSummaries summaries;
+    @Inject dev.codespire.orchestrator.factory.WorkRunAssembly assembly;
 
     @BeforeEach
     void stepsSetup() {
@@ -270,6 +271,35 @@ class WorkStepsIT extends WorkSpecRunFixture {
         List<WorkStepSummaries.Step> steps = summaries.list(id, store.load(id).generation());
         assertEquals(List.of(0, 1, 2), steps.stream().map(WorkStepSummaries.Step::stepIndex).toList());
         assertEquals(List.of("TEST-decision-1"), steps.getFirst().summary().decisions(), "step 1 keeps its own decision");
+    }
+
+    /**
+     * A land fix after a delivered plan is no plan step (decision 12): its prompt says the whole plan is already built on
+     * the branch and lists every step, never "this one prepared task" with step 1 as its only step, and the generated
+     * specification is quoted as data (A13).
+     */
+    @Test
+    void aLandFixAfterAPlanIsToldTheWholePlanIsBuilt() throws Exception {
+        String id = building("autonomous", 218, 3);
+        passStep(id, "1".repeat(40), "TEST-decision-1");
+        passStep(id, "2".repeat(40), "TEST-decision-2");
+        passStep(id, "3".repeat(40), "TEST-decision-3");
+        WorkItemEvent item = store.load(id);
+        assertTrue(item.steps().done());
+        WorkItemTransitions.Observation observed = transitions.observe(item.sourceId(), item.issue());
+        WorkLandFixes.Fix fix = new WorkLandFixes.Fix(UUID.randomUUID(), "land_checks_failed", "3".repeat(40),
+                new dev.codespire.contract.scm.PullRequestRef(918, "https://forge.example.test/TEST-pull/918", false), "spire/work-TEST-fix",
+                "main", null, "TEST-fix-instruction\n", Set.of());
+
+        String prompt;
+        try (Connection c = dataSource.getConnection()) {
+            prompt = assembly.assemble(c, observed.source(), item, observed.artifacts(), fix).command().execution().prompt();
+        }
+
+        assertFalse(prompt.contains("Single plan step"), prompt);
+        for (int n = 1; n <= 3; n++) assertTrue(prompt.contains("TEST-step-" + n), prompt);
+        assertTrue(prompt.contains("TEST-fix-instruction"), prompt);
+        assertTrue(prompt.contains(UntrustedText.DATA_HEADING + " The approved specification"), prompt);
     }
 
     @Test

@@ -70,6 +70,16 @@ class WorkLandFixDecisionTest {
         WorkItemEvent ordinary=enter(deliver,WorkItemLifecycle.EntryMode.ORDINARY);
         assertEquals("waiting_approval",ordinary.workflowStatus());assertEquals("deliver",ordinary.gate().phase());
     }
+    /** A11: a land fix builds no plan step, so steps at the limit do not refuse its build; an ordinary build is refused. */
+    @Test void aLandFixBuildIgnoresTheStepLimit(){
+        WorkItemEvent item=atLand("auto");
+        WorkProgress full=item.progress().withSteps(item.policy().limits().maxStepsPerPlan());
+        WorkItemEvent build=before(item.decision(item.policyRevision(),item.authority(),item.policy(),"land","active","phase_started","TEST",null,full),"build");
+        WorkItemEvent fixing=enter(build,WorkItemLifecycle.EntryMode.LAND_FIX);
+        assertEquals("PHASE_STARTED",fixing.milestone());assertEquals("active",fixing.workflowStatus(),fixing.reason());
+        WorkItemEvent ordinary=enter(build,WorkItemLifecycle.EntryMode.ORDINARY);
+        assertEquals("policy_cap_reached",ordinary.reason());
+    }
     @Test void theLandFixFlagNeverSkipsVerifyOrLand(){
         for(String phase:List.of("verify","land")) {
             WorkItemEvent next=enter(before(atLand("approve"),phase),WorkItemLifecycle.EntryMode.LAND_FIX);

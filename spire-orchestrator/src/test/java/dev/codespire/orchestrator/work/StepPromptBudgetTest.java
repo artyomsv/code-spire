@@ -57,6 +57,20 @@ class StepPromptBudgetTest {
         assertTrue(refused.orElseThrow().contains("largest step"), refused.orElseThrow());
     }
 
+    /**
+     * The fence a quoted part is given outgrows its longest backtick run on both sides (A13), so a specification within
+     * its 16 KiB share can still take twice that in the prompt: the budget counts what the prompt holds.
+     */
+    @Test
+    void theFencesCount() {
+        String specification = "## Outcome\nTEST\n## Context\n" + "`".repeat(16_000) + "\n## Acceptance criteria\n- TEST";
+        assertTrue(specification.length() <= StepPromptBudget.SPECIFICATION_BYTES);
+
+        Optional<String> refused = StepPromptBudget.refusal(specification, List.of(step(1, "TEST-small"), step(2, "TEST-small")));
+
+        assertTrue(refused.isPresent(), "the fenced specification leaves no room for the summaries and the verify section");
+    }
+
     @Test
     void aSpecificationOver16KiBIsNamed() {
         Optional<String> refused = StepPromptBudget.refusal(SPEC_16_KIB + "x", List.of(step(1, "TEST-small")));
