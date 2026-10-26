@@ -95,6 +95,42 @@ class WorkItemEventTest {
         assertEquals(WorkDraft.admitted(), item().drafted(approvedDraft()).readmit().draft(), "approved, but never registered");
     }
 
+    /**
+     * A hand-composed preparation beside an unwritten draft was never registered from it: readmit drops both, so the
+     * next generation writes its specification instead of parking with a preparation no draft run can reach.
+     */
+    @Test
+    void readmitDropsAPreparationNotRegisteredFromTheDraft() {
+        WorkDraft approved = approvedDraft();
+        WorkPreparation composed = new WorkPreparation(approved.specification(), approved.plan(), "main", "b".repeat(40), "codex",
+                "TEST-model", "TEST-operator", WorkPreparation.VERIFY_BINDING, null, null, List.of("TEST-check"), 60);
+
+        WorkItemEvent readmitted = item().drafted(WorkDraft.admitted()).prepared(composed).stepped(WorkSteps.of(2)).readmit();
+
+        assertEquals(WorkDraft.admitted(), readmitted.draft());
+        assertNull(readmitted.preparation());
+        assertNull(readmitted.steps(), "no cursor outlives the plan it counted");
+    }
+
+    /**
+     * A8: a reused plan must fit the step limit of the policy readmission selects now, or the item builds part of it and
+     * stops at the cap; a plan longer than that limit is written again instead.
+     */
+    @Test
+    void readmitWritesAgainAPlanLongerThanTheStepLimit() {
+        WorkDraft approved = approvedDraft();
+        WorkItemEvent registered = item().drafted(approved).prepared(WorkDraftLifecycleTest.preparation(approved));
+
+        WorkItemEvent tooLong = registered.stepped(WorkSteps.of(21)).readmit();
+        WorkItemEvent fits = registered.stepped(WorkSteps.of(20)).readmit();
+
+        assertEquals(WorkDraft.admitted(), tooLong.draft());
+        assertNull(tooLong.preparation());
+        assertNull(tooLong.steps());
+        assertEquals(approved, fits.draft(), "a plan of exactly the limit is reused");
+        assertEquals(WorkSteps.of(20), fits.steps());
+    }
+
     @Test
     void stepsSurviveTheStoredEventRoundTrip() throws Exception {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();

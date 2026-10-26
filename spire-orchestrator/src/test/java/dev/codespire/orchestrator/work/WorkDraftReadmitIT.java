@@ -9,6 +9,8 @@ import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkExecution;
 import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkItemLifecycle;
+import dev.codespire.contract.work.WorkPolicy;
+import dev.codespire.contract.work.WorkPolicyLimits;
 import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.contract.work.WorkProgress;
 import dev.codespire.contract.work.WorkRunBinding;
@@ -21,6 +23,7 @@ import io.restassured.response.ValidatableResponse;
 import jakarta.inject.Inject;
 import java.sql.Connection;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,10 +51,12 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
                 CHECKS, null, BuildDefaults.GENERATED), "TEST-spec-admin");
     }
 
-    private String onePlanStep() {
+    private String planSteps(int count) {
         ObjectNode root = mapper.createObjectNode().put("schemaVersion", 2).put("specificationSha256", WorkPreparation.digest(WorkSpecRunIT.SPEC));
-        root.putArray("steps").addObject().put("id", "TEST-s1").put("title", "TEST-step-1").put("instruction", "TEST-instruction-1")
-                .put("doneWhen", "TEST-done-1");
+        com.fasterxml.jackson.databind.node.ArrayNode steps = root.putArray("steps");
+        for (int step = 1; step <= count; step++)
+            steps.addObject().put("id", "TEST-s" + step).put("title", "TEST-step-" + step).put("instruction", "TEST-instruction-" + step)
+                    .put("doneWhen", "TEST-done-" + step);
         return root.toString();
     }
 
@@ -64,10 +69,14 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
      * before the agent ran: a failure that bought nothing leaves the usage known, so a readmission may enter build again.
      */
     private String failedAfterItsDraft(int number) throws Exception {
+        return failedAfterItsDraft(number, 1);
+    }
+
+    private String failedAfterItsDraft(int number, int steps) throws Exception {
         String id = started("autonomous", number);
         saga.on(artifact(dispatched(), WorkSpecRunIT.SPEC));
         draftSweep.sweep();
-        saga.on(artifact(dispatched(), onePlanStep()));
+        saga.on(artifact(dispatched(), planSteps(steps)));
         assertState(store.load(id), "build", "active", "phase_started");
         dispatcher.drain();
         saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(), "BAD_COMMAND", "TEST BAD_COMMAND", false, null));
@@ -101,6 +110,45 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         assertEquals(2, count("SELECT count(*) FROM factory_run WHERE work_item_id=? AND kind IN ('SPEC','PLAN')", id));
         assertEquals(builds + 1, heldCommands.size());
         assertEquals(item.generation(), heldCommands.getLast().work().generation());
+    }
+
+    /**
+     * A8 on readmission: the approved plan has more steps than the step limit of the policy selected now, so reusing it
+     * would build part of it and stop at the cap. The next generation writes its specification and plan again.
+     */
+    @Test
+    void readmitUnderALowerStepLimitWritesThePlanAgain() throws Exception {
+        String id = failedAfterItsDraft(405, 2);
+        assertEquals(2, store.load(id).steps().total());
+        long generation = store.load(id).generation();
+        int drafts = draftRuns.size();
+        lowerTheStepLimit(1);
+
+        readmit(id, false).statusCode(200);
+
+        WorkItemEvent item = store.load(id);
+        assertEquals(generation + 1, item.generation());
+        assertEquals(WorkDraft.admitted(), item.draft());
+        assertNull(item.preparation());
+        assertNull(item.steps(), "no cursor of the discarded plan is kept");
+        draftSweep.sweep();
+        assertEquals(drafts + 1, draftRuns.size());
+        assertEquals(WorkDraftBinding.Kind.SPEC, dispatched().draft().kind());
+    }
+
+    /** The factory writes a generated item's specification and plan: a hand-registered or copied task is refused. */
+    @Test
+    void aGeneratedItemCannotBePreparedByHand() throws Exception {
+        String id = admit("autonomous", 406);
+        assertNotNull(store.load(id).draft());
+        long revision = store.history(id).size();
+
+        WorkItemTransitions.Outcome refused = transitions.prepare(id, revision, preparation("TEST-human"));
+
+        assertEquals(409, refused.status());
+        assertEquals("preparation_generated", refused.reason());
+        assertEquals(revision, store.history(id).size());
+        assertNull(store.load(id).preparation());
     }
 
     @Test
@@ -151,6 +199,21 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
 
         assertEquals(revision, store.history(id).size());
         assertEquals(generation, store.load(id).generation());
+    }
+
+    /** A second version of the autonomous profile with a lower step limit, pinned as both its label and the ceiling. */
+    private void lowerTheStepLimit(long steps) {
+        WorkPolicy.Profile autonomous = profiles.get("autonomous");
+        WorkPolicyLimits was = autonomous.limits();
+        WorkPolicy.Profile lowered = policies.createVersion(new WorkPolicy.Profile(autonomous.id(), autonomous.name(), 2, autonomous.precedence(),
+                autonomous.modes(), new WorkPolicyLimits(was.gateTtlSeconds(), was.maxRunsPerItem(), steps, was.maxWallClockSeconds(),
+                was.maxCostMillicents(), was.maxCallsPerItem(), was.protectedPaths())));
+        WorkPolicyRegistry.Policy policy = policies.get(repository);
+        Map<String, WorkPolicyRegistry.Pin> mappings = new HashMap<>();
+        policy.mappings().forEach((label, profile) -> mappings.put(label, new WorkPolicyRegistry.Pin(profile.id(), profile.version())));
+        WorkPolicyRegistry.Pin pin = new WorkPolicyRegistry.Pin(lowered.id(), lowered.version());
+        mappings.put("TEST-autonomous", pin);
+        policies.save(repository, new WorkPolicyRegistry.Input(policy.revision(), pin, mappings));
     }
 
     private WorkItemEvent atLand(String id) {

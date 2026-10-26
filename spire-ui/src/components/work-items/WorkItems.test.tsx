@@ -871,6 +871,17 @@ it('still offers to compose again when the build belonged to an earlier generati
   expect(await screen.findByRole('button', { name: 'Prepare again from the ticket' })).toBeInTheDocument();
 });
 
+// The factory writes a generated item's specification and plan, and the server refuses to copy its ticket instead.
+it('does not offer to compose a generated item from its ticket', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', generated: true, builds: [] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Prepare again from the ticket' })).not.toBeInTheDocument();
+});
+
 it('offers composing again while a plan decision is open', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: prepared() });

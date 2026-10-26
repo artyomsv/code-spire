@@ -548,7 +548,7 @@ class WorkDraftLifecycleTest {
 
     private WorkItemEvent registeredItem() {
         WorkItemEvent approved = WorkDraftLifecycle.approved(planGate());
-        return WorkDraftLifecycle.registered(approved, preparation(approved.draft()));
+        return WorkStepLifecycle.planRegistered(WorkDraftLifecycle.registered(approved, preparation(approved.draft())), 3);
     }
 
     /** Regenerate (A7): a new generation that writes its specification and plan again, from an empty draft. */
@@ -563,6 +563,7 @@ class WorkDraftLifecycleTest {
         assertEquals("READMITTED", next.milestone(), "a land fix and the projection read a new generation from this milestone");
         assertEquals(WorkDraft.admitted(), next.draft());
         assertNull(next.preparation());
+        assertNull(next.steps(), "the discarded plan's cursor goes with it");
         assertNull(next.gate());
     }
 
@@ -582,6 +583,7 @@ class WorkDraftLifecycleTest {
 
         assertNull(unprepared.preparation());
         assertEquals(WorkDraft.admitted(), unprepared.draft());
+        assertNull(unprepared.steps(), "no cursor is left for a plan that no longer exists");
         assertNull(WorkDraftLifecycle.unprepared(observe(1, selected(profile("auto", "auto", "auto")), null)).draft(),
                 "a composed item stays composed");
     }
