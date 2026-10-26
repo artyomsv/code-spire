@@ -69,6 +69,32 @@ class WorkItemEventTest {
         assertEquals(500, readmitted.progress().costMillicents(), "spend survives a generation change");
     }
 
+    static WorkDraft approvedDraft() {
+        return WorkDraft.admitted().withSpecification(new WorkDraft.Written(WorkDraftTest.stored('a'), "b".repeat(40), 1))
+                .approved("spec").withPlan(WorkDraftTest.stored('c'), 1).approved("plan");
+    }
+
+    /** A7: an approved draft and the preparation registered from it travel on, so readmit spends nothing on them. */
+    @Test
+    void readmitKeepsAnApprovedDraft() {
+        WorkDraft approved = approvedDraft();
+        WorkPreparation preparation = WorkDraftLifecycleTest.preparation(approved);
+
+        WorkItemEvent readmitted = item().drafted(approved).prepared(preparation).readmit();
+
+        assertEquals(approved, readmitted.draft());
+        assertEquals(preparation, readmitted.preparation());
+    }
+
+    /** Nothing approved is registered yet, so the next generation writes its specification again from an empty draft. */
+    @Test
+    void readmitDropsAnUnapprovedDraft() {
+        WorkDraft specified = WorkDraft.admitted().withSpecification(new WorkDraft.Written(WorkDraftTest.stored('a'), "b".repeat(40), 1));
+
+        assertEquals(WorkDraft.admitted(), item().drafted(specified).readmit().draft());
+        assertEquals(WorkDraft.admitted(), item().drafted(approvedDraft()).readmit().draft(), "approved, but never registered");
+    }
+
     @Test
     void stepsSurviveTheStoredEventRoundTrip() throws Exception {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();

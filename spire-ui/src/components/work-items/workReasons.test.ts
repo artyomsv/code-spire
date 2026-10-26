@@ -104,6 +104,12 @@ describe('preparation setting reasons (M4 slice 3)', () => {
   });
 });
 
+describe('readmit and regenerate reasons (M4 slice 3, A7)', () => {
+  it.each(['regenerated', 'regenerate_unavailable'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
 describe('draft reasons (M4 slice 3)', () => {
   it.each(['specification_to_write', 'plan_to_write'])('every new reason has a sentence: %s', reason => {
     expect(workReason(reason)).not.toBe(reason);

@@ -32,6 +32,8 @@ export interface WorkItemPage {
 export interface WorkItemDetail extends WorkItemSummary {
   control?: { operator: string | null; note: string | null; observedHead: string | null } | null;
   preparation?: Preparation | null;
+  /** The factory writes this item's specification and plan (M4 slice 3): readmit may regenerate them. */
+  generated?: boolean;
   builds?: WorkBuild[];
   progress?: { execution?: WorkExecution | null; runs?: number; wallSeconds?: number; costMillicents?: number; calls?: number; usageUnknown?: boolean };
   effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;

@@ -546,6 +546,46 @@ class WorkDraftLifecycleTest {
         assertThrows(IllegalStateException.class, () -> WorkDraftLifecycle.registered(gated, preparation(gated.draft())));
     }
 
+    private WorkItemEvent registeredItem() {
+        WorkItemEvent approved = WorkDraftLifecycle.approved(planGate());
+        return WorkDraftLifecycle.registered(approved, preparation(approved.draft()));
+    }
+
+    /** Regenerate (A7): a new generation that writes its specification and plan again, from an empty draft. */
+    @Test
+    void regenerateClearsTheDraftAndThePreparation() {
+        WorkItemEvent registered = registeredItem();
+
+        WorkItemEvent next = WorkDraftLifecycle.regenerated(registered);
+
+        assertEquals(registered.generation() + 1, next.generation());
+        assertEquals("intake / awaiting_input / regenerated", state(next));
+        assertEquals("READMITTED", next.milestone(), "a land fix and the projection read a new generation from this milestone");
+        assertEquals(WorkDraft.admitted(), next.draft());
+        assertNull(next.preparation());
+        assertNull(next.gate());
+    }
+
+    @Test
+    void aComposedItemCannotRegenerate() {
+        WorkItemEvent composed = observe(1, selected(profile("auto", "auto", "auto")), null);
+
+        IllegalStateException refused = assertThrows(IllegalStateException.class, () -> WorkDraftLifecycle.regenerated(composed));
+
+        assertEquals("regenerate_unavailable", refused.getMessage());
+    }
+
+    /** A resume that cannot trust the prepared base drops the preparation: a generated item then writes its draft again. */
+    @Test
+    void anUnpreparedDraftIsWrittenAgain() {
+        WorkItemEvent unprepared = WorkDraftLifecycle.unprepared(registeredItem());
+
+        assertNull(unprepared.preparation());
+        assertEquals(WorkDraft.admitted(), unprepared.draft());
+        assertNull(WorkDraftLifecycle.unprepared(observe(1, selected(profile("auto", "auto", "auto")), null)).draft(),
+                "a composed item stays composed");
+    }
+
     @Test
     void aRefusedRegistrationWaitsInPlan() {
         WorkItemEvent next = WorkDraftLifecycle.registrationRefused(WorkDraftLifecycle.approved(planGate()), "draft_setup_changed");

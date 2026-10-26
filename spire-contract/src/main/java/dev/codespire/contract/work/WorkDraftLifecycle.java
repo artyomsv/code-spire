@@ -152,6 +152,14 @@ public final class WorkDraftLifecycle {
         return WorkItemLifecycle.state(item, "awaiting_input", reason, "DRAFT_REGISTRATION_REFUSED", item.gate(), item.progress().reserve(false));
     }
 
+    public static WorkItemEvent regenerated(WorkItemEvent item) {
+        throw new UnsupportedOperationException("RED");
+    }
+
+    public static WorkItemEvent unprepared(WorkItemEvent item) {
+        throw new UnsupportedOperationException("RED");
+    }
+
     /** Whether this gate asks about a written artifact of the item's draft, rather than permission to run (A6). */
     public static boolean resultGate(WorkItemEvent item, WorkGate gate) {
         return gate != null && item.draft() != null && DRAFT_PHASES.contains(gate.phase()) && gate.phase().equals(item.phase())
