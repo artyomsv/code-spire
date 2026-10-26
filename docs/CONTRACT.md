@@ -35,7 +35,8 @@ publication path. Readiness and terminal results use `cs.run-results`; transcrip
 on `cs.run-events` and do not become work-item domain events.
 
 `RunWorkReady.stepSummary` (M4 slice 8) is the `StepSummary(decisions, alternativesRejected, deviations)` a build's
-agent wrote to `$SPIRE_STEP_SUMMARY`, reported by the publisher as a `step_summary` line. The run worker parses it
+agent wrote to `$SPIRE_STEP_SUMMARY`, reported by the publisher as a `step_summary` line. The step's prompt
+(`StepPrompts.SUMMARY_INSTRUCTIONS`) names the variable, this JSON shape and these limits. The run worker parses it
 leniently (unknown fields and non-text items skipped; a value that is not a JSON object is no summary), keeps at
 most 20 items per list, cuts an item over 500 characters on a character boundary with an ellipsis, strips control
 characters and scrubs every credential the run was given. The record refuses anything over those caps. Null means

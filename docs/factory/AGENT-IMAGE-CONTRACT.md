@@ -38,7 +38,10 @@ to explain why. A contract that is not sufficient to build against is not doing 
 | `SPIRE_AUTOSAVE_SECONDS` | How often to checkpoint while the harness runs. A default is fine. |
 | `SPIRE_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace that the harness may write one line to: what it changed, in its own words. Your final checkpoint uses that line as its commit message; a mid-run one must not, because nothing has been summarised yet. Absent or blank falls back to a generic message. |
 | `SPIRE_ARTIFACT` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a specification or plan run writes its result. After the final checkpoint and before `DONE`, your entrypoint copies it, if it exists, to `$SPIRE_HANDOFF/artifact.md`. Capped at 32 KiB. Control characters other than newline and tab are dropped; text that still passes one 64 Ki-character outcome line once JSON-escaped is refused as `TOO_LARGE`. |
-| `SPIRE_STEP_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a plan step writes its decisions as JSON. Copied, if it exists, to `$SPIRE_HANDOFF/step-summary.json` before `DONE`, like the artifact. Capped at 8 KiB. |
+| `SPIRE_STEP_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a plan step writes its decisions as one JSON object, `{"decisions": [...], "alternativesRejected": [...], "deviations": [...]}`, each a list of strings. Copied, if it exists, to `$SPIRE_HANDOFF/step-summary.json` before `DONE`, like the artifact. Capped at 8 KiB; the run worker keeps at most 20 items of 500 characters per list. |
+
+Every plan step's prompt names `SPIRE_STEP_SUMMARY`, gives that shape and those limits, and asks for the file also
+when the step changed nothing; it names no path, for the same reason as `SPIRE_SUMMARY`.
 
 Everything the dispatched prompt says about `SPIRE_SUMMARY` is written against this contract, so an
 image that does not export it simply gets the fallback message — no run fails over it. Keep the file

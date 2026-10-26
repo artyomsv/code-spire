@@ -32,6 +32,23 @@ final class StepPrompts {
             to the decisions earlier steps recorded, or say in your step summary why you departed from them.
 
             """;
+    /**
+     * Where the step summary goes, its shape and its limits (review of PR 287, H-1). The run worker keeps at most
+     * {@link StepSummary#MAX_ITEMS} items of {@link StepSummary#MAX_ITEM_CHARS} characters per list, and the publisher
+     * refuses a file over 8 KiB ({@code HandoffFiles.STEP_SUMMARY_MAX_BYTES}). Without this an agent that did everything
+     * the prompt asked left the decision channel empty, and every later step read that its predecessors decided nothing.
+     */
+    static final String SUMMARY_INSTRUCTIONS = """
+            Before you finish, write your step summary to the file named by the SPIRE_STEP_SUMMARY environment variable,
+            as one JSON object of three lists of strings:
+            {"decisions": [...], "alternativesRejected": [...], "deviations": [...]}
+            "decisions" are the choices later steps must keep to, "alternativesRejected" the options you considered and
+            did not take, and "deviations" where you departed from the plan or from an earlier step's decisions, and why.
+            Each list holds at most %d items of at most %d characters; longer items are cut and further items dropped, and
+            a file over 8 KiB is not read at all. Write it also when you changed nothing, with empty lists if there was
+            nothing to decide: the later steps read it. It is not the one line for SPIRE_SUMMARY, which describes a commit.
+
+            """.formatted(StepSummary.MAX_ITEMS, StepSummary.MAX_ITEM_CHARS);
 
     private StepPrompts() {}
 
@@ -57,7 +74,7 @@ final class StepPrompts {
         return INSTRUCTIONS + UntrustedText.fenced(SPECIFICATION_LABEL, specification) + '\n'
                 + UntrustedText.fenced("The plan", titles(steps)) + '\n'
                 + "Now do step " + number + " of " + steps.size() + ": its title, its instruction and when it is done are below.\n"
-                + UntrustedText.fenced("Step " + number, current(steps.get(index))) + '\n';
+                + UntrustedText.fenced("Step " + number, current(steps.get(index))) + '\n' + SUMMARY_INSTRUCTIONS;
     }
 
     /**

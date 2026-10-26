@@ -45,6 +45,8 @@ origin (`WorkSpecRunIT`, `WorkPlanRunIT`, `WorkStepsIT`, `WorkEmptyStepsIT`, `Wo
 read-only publisher and handoff files against a local Docker daemon. No real agent has written a specification or a
 plan, so whether a real model meets the headings, the plan schema and the 48 KiB prompt budget at a useful rate is
 unknown; nor has a real chain of three steps run on one branch, nor a real agent written `$SPIRE_STEP_SUMMARY`.
+Every step's dispatched prompt names that file, its JSON shape and its limits (`everyDispatchedStepIsToldWhereItsDecisionsGo`),
+but whether a real model writes it, also for a step that changed nothing, is unobserved.
 
 - **The artifact and the summary pass through the run-worker host's Docker log.** The publisher prints them as
   outcome lines on its stdout, which Docker keeps for the unit's life. The run worker scrubs the run's secrets
