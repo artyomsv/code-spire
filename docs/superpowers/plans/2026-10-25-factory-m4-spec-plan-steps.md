@@ -679,7 +679,8 @@ Nothing dispatches one yet.
 - Modify: `spire-run-worker/src/main/java/dev/codespire/runworker/RunLauncher.java`: `launchReadOnly(draft, observer)`
   and the named branch `readOnlyResult(command, observed)` (A1; its body in a new `ReadOnlyResults`, since
   `RunLauncher` is already 423 lines): agent succeeded and `outcome.artifact()` present →
-  `RunWorkArtifact` with `failures.scrubFor(command).clean(text)`; absent → `RunFailed(ARTIFACT_MISSING)` with
+  `RunWorkArtifact` with `failures.scrubFor(command).clean(ControlCharacters.strip(text))` (strip first: a key split by
+  a control character passes the literal scrub and the orchestrator's own strip would join it back); absent → `RunFailed(ARTIFACT_MISSING)` with
   usage; agent failed → the usual failure with usage. The unit is destroyed in the existing `work == null` branch
   (so `unitReleased` fires); it is never put in `WorkRunStore`, so `WorkRunWorker.recover` cannot see it.
 - Modify: `spire-run-worker/src/main/java/dev/codespire/runworker/WorkRunWorker.java` (`cancelledResult` switch arm).
@@ -714,6 +715,7 @@ Nothing dispatches one yet.
 | `…aReadOnlyUnitMountsNoCheckpoint` | init has no `/checkpoint` mount | |
 | `RunLauncherTest.aReadOnlyRunReturnsItsArtifact` | fake runtime: publisher writes `artifact` line, agent exits 0 → `RunWorkArtifact` text equal, usage carried | branch missing |
 | `…theArtifactIsScrubbedOfTheRunsSecrets` | artifact text contains the decrypted harness key `TEST-key` → result text has none | scrub skipped |
+| `…aCredentialSplitByAControlCharacterIsScrubbedFromTheArtifact` | the model key split by a BEL → no BEL, no key | scrub before strip |
 | `…aReadOnlyRunWithoutAnArtifactFails` | no `artifact` line → `RunFailed("ARTIFACT_MISSING")` with usage | reports finished |
 | `…aRepositoryChangeIsAWarningNotAFailure` | `repository_changed` 1 + artifact → `RunWorkArtifact(repositoryChanged=true)` | treated as failure |
 | `…aReadOnlyRunDestroysItsUnit` | `runtime.destroy` called, `observer.unitReleased()` called | unit retained |
@@ -1135,7 +1137,8 @@ encrypted in `work_step_summary` (or `summary_missing`) and the dashboard can re
 - Modify: `ContractSchemaSnapshotTest` nested list + `contract-schema.txt`.
 - Create: `spire-run-worker/src/main/java/dev/codespire/runworker/StepSummaries.java`: parse the `step_summary` line's
   JSON with caps (items over 500 cut at a code point boundary with "…", lists over 20 truncated, unknown fields
-  ignored, a non-object → empty), scrubbed with `failures.scrubFor(command)`.
+  ignored, a non-object → empty), scrubbed with `failures.scrubFor(command)`. Each item is stripped of control
+  characters, then scrubbed, then cut.
 - Modify: `RunLauncher.java` (held branch: `RunWorkReady….withStepSummary(StepSummaries.from(outcome, scrub))`).
 - Create: `spire-orchestrator/src/main/resources/db/migration/V98__work_step_summary.sql`:
   `work_step_summary(work_item_id, generation, step_index INT, run_id, summary BYTEA NULL, state TEXT CHECK (state IN
@@ -1158,6 +1161,8 @@ encrypted in `work_step_summary` (or `summary_missing`) and the dashboard can re
 | `RunWorkReadyTest.withStepSummaryEnumeratesEveryComponent` | wither keeps run, work, head, paths, usage, wall | component dropped |
 | `ContractSchemaSnapshotTest` | `RunWorkReady` shows `stepSummary`; nested `StepSummary` | |
 | `StepSummariesTest.aSummaryIsCappedAndScrubbed` | 10,000 items, one with `TEST-key` → 20 items, ≤ 500 chars, no `TEST-key` | |
+| `…aCredentialSplitByAControlCharacterIsScrubbed` | `TEST-key` split by a BEL and by an ANSI sequence → no `TEST-key` | scrub before strip |
+| `…aCredentialAtTheCutIsScrubbed` | `TEST-key` starting 10 characters before the cut → no head of it of 8+ characters | cut before scrub |
 | `…aNonObjectIsMissing` | `"[1]"` → empty | throws |
 | `…unknownFieldsAreIgnored` | extra key → parsed | strict mapper |
 | `RunLauncherTest.theReadyResultCarriesTheSummary` | held run with `step_summary` line → `ready.stepSummary()` present | not attached |

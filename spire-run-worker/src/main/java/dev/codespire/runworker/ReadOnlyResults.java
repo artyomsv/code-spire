@@ -14,8 +14,9 @@ import java.util.Optional;
  * every credential the run was given, or {@code ARTIFACT_MISSING} with the usage the agent bought.
  *
  * <p>Scrubbed here, before it leaves the worker: the agent runs with the model key in its environment and can quote
- * it into the file, and the publisher's own redaction knows only the forge credential it was never given. A failed
- * agent keeps its own cause; this class sees only a run whose agent finished.
+ * it into the file, and the publisher's own redaction knows only the forge credential it was never given. Control
+ * characters go first, so a key split by one cannot pass the scrub and be joined back by the orchestrator's own strip.
+ * A failed agent keeps its own cause; this class sees only a run whose agent finished.
  */
 final class ReadOnlyResults {
 
@@ -36,7 +37,7 @@ final class ReadOnlyResults {
         if (finished.agentUnobserved() || handed.isEmpty()) {
             return missing("the run handed over no artifact", outcome, finished.tokenUsage());
         }
-        String text = failures.scrubFor(draft.execution()).clean(handed.orElseThrow());
+        String text = failures.scrubFor(draft.execution()).clean(ControlCharacters.strip(handed.orElseThrow()));
         if (text.isBlank()) {
             return missing("the artifact was empty", outcome, finished.tokenUsage());
         }

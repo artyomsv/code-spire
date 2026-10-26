@@ -9,15 +9,15 @@ import dev.codespire.secrets.SecretScrub;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 /**
  * Reads the step summary a held build handed over (M4 slice 8, §6.8, A9, A13) into the contract's capped record.
  *
  * <p>The agent wrote the file with the model key in its environment, and the publisher's own redaction knows only the
- * forge credential, so every item is scrubbed here with the run's credentials before it leaves the worker. It is
- * scrubbed before it is cut: a credential straddling the cut would otherwise leave its head behind. Control characters
- * go too, as they do from every untrusted text. Lenient on shape and strict on size: unknown fields and non-text items
+ * forge credential, so every item is scrubbed here with the run's credentials before it leaves the worker. Control
+ * characters go first, as they do from every untrusted text: a key split by one would pass the literal scrub and be
+ * joined back by a later strip. It is scrubbed before it is cut: a credential straddling the cut would otherwise leave
+ * its head behind. Lenient on shape and strict on size: unknown fields and non-text items
  * are skipped, a list over 20 items is truncated, and an item over 500 characters is cut on a character boundary and
  * ends with an ellipsis. Only a file that is not a JSON object is no summary at all. A backtick run is kept verbatim:
  * fencing it is the prompt's job, when a later step quotes it.
@@ -27,12 +27,6 @@ final class StepSummaries {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final String ELLIPSIS = "…";
-
-    /** A terminal control sequence: ESC [ parameters intermediates final. Stripped whole, not just its ESC. */
-    private static final Pattern ANSI = Pattern.compile("\u001B\\[[0-?]*[ -/]*[@-~]");
-
-    /** Every C0 control but newline and tab, DEL, and the C1 range. */
-    private static final Pattern CONTROLS = Pattern.compile("[\\x00-\\x08\\x0B-\\x1F\\x7F-\\x9F]");
 
     private StepSummaries() {
     }
@@ -60,14 +54,10 @@ final class StepSummaries {
         for (JsonNode element : list) {
             if (items.size() == StepSummary.MAX_ITEMS) break;
             if (!element.isTextual()) continue;
-            String item = cut(stripControls(scrub.clean(element.asText())));
+            String item = cut(scrub.clean(ControlCharacters.strip(element.asText())));
             if (!item.isBlank()) items.add(item);
         }
         return items;
-    }
-
-    private static String stripControls(String text) {
-        return CONTROLS.matcher(ANSI.matcher(text).replaceAll("")).replaceAll("");
     }
 
     private static String cut(String item) {
