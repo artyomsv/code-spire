@@ -103,7 +103,7 @@ public class WorkDraftTransitions {
         WorkItemEvent item = locked.item();
         WorkItemTransitions.Outcome changed = new WorkItemTransitions.Outcome(409, "work_item_changed", item);
         String key = "late-draft-result:" + result.attempt();
-        if (locked.history().stream().anyMatch(event -> key.equals(event.correlationId()))) return changed;
+
         if (result.attempt().equals(item.progress().attemptId()) && "active".equals(item.workflowStatus())) return changed;
         if (!uncounted(locked.c(), item.workItemId(), result.attempt())) return changed;
         WorkDraftLifecycle.RunUsage usage = result.usage();
