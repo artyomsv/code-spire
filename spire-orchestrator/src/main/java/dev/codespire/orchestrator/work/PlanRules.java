@@ -63,8 +63,6 @@ final class PlanRules {
         int version = steps ? 2 : 1;
         if (root == null || !root.isObject() || !root.path("schemaVersion").isInt() || root.path("schemaVersion").asInt() != version)
             return Checked.refused("plan_schema_version");
-        if (!bound.specificationSha256().equals(root.path("specificationSha256").asText()))
-            return Checked.refused("plan_specification_mismatch");
         JsonNode array = root.path("steps");
         long max = steps ? bound.maxSteps() : 1;
         if (!array.isArray() || array.isEmpty() || array.size() > max) return Checked.refused("plan_step_count");
