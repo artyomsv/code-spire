@@ -422,7 +422,7 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
 
         assertTrue(effects.dispatch(WorkSourceEffects.draftId(command.draft().attemptId())));
         String posted = planComment(136);
-        assertTrue(posted.contains("1. @​TEST-user &lt;b>x&lt;/b>"), posted);
+        assertTrue(posted.contains("> 1. @\u200BTEST-user <\u200Bb>x<\u200B/b>"), posted);
         assertFalse(posted.contains("<b>"), posted);
         assertState(store.load(id), "plan", "waiting_approval", "plan_written");
     }
