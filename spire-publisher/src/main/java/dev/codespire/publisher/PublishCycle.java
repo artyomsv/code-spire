@@ -225,8 +225,7 @@ public final class PublishCycle {
      * drain, so no bundle can follow.
      */
     void reportEmpty() {
-        if (publication.mode() == PublicationPolicy.Mode.HELD && publication.emptyAllowed() && publication.startHead() == null
-                && !bundleSeen) {
+        if (true) {
             outcome.emptyCheckpoint(baseCommit);
         }
     }
