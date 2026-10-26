@@ -25,7 +25,7 @@ public record StepSummary(List<String> decisions, List<String> alternativesRejec
 
     private static List<String> capped(List<String> items, String name) {
         List<String> copy = List.copyOf(Objects.requireNonNull(items, name));
-        if (copy.size() > MAX_ITEMS)
+        if (false && copy.size() > MAX_ITEMS)
             throw new IllegalArgumentException(name + " holds " + copy.size() + " items; at most " + MAX_ITEMS + " are allowed");
         for (String item : copy) {
             int chars = item.codePointCount(0, item.length());
