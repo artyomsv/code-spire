@@ -34,7 +34,7 @@ public final class WorkStepLifecycle {
     public static WorkItemLifecycle.EntryMode entryMode(WorkItemEvent item, boolean landFix) {
         if (landFix) return WorkItemLifecycle.EntryMode.LAND_FIX;
         WorkSteps steps = item.steps();
-        return steps != null && steps.index() > 0 && steps.index() < steps.total()
+        return steps != null && steps.index() >= 0 && steps.index() < steps.total()
                 ? WorkItemLifecycle.EntryMode.STEP : WorkItemLifecycle.EntryMode.ORDINARY;
     }
 
