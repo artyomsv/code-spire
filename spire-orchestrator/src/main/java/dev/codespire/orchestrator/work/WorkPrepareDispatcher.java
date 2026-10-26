@@ -108,6 +108,7 @@ public class WorkPrepareDispatcher {
             if (refusal != null) { stop(c, history, item, attempt, refusal); return null; }
             // The setup changed after it was read: the next drain reads it again, with the head of its base branch.
             if (defaults.get(c, item.repositoryId(), false).revision() != claim.remote().setup().revision()) return null;
+            if (setupChangedSinceSpecification(claim, item)) { stop(c, history, item, attempt, "draft_setup_changed"); return null; }
             return claimed(c, claim, item);
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
         catch (java.io.IOException failure) { throw new IllegalStateException("Cannot persist the draft dispatch", failure); }
@@ -144,6 +145,15 @@ public class WorkPrepareDispatcher {
         if (!transitions.select(observed, item).equals(admitted.policy()) || observed.policy().revision() != admitted.policyRevision())
             return "policy_changed_before_dispatch";
         return null;
+    }
+
+    /**
+     * A plan run clones the commit its specification read, so it is bought only under the setup that specification was
+     * dispatched with: another base branch, harness or model would make the plan for coordinates that commit does not
+     * belong to, and registration would then accept the mix under the plan's own revision (decision 15).
+     */
+    private static boolean setupChangedSinceSpecification(Claim claim, WorkItemEvent item) {
+        return claim.effect().kind() == WorkDraftBinding.Kind.PLAN && claim.remote().setup().revision() != item.draft().setupRevision();
     }
 
     private WorkDraftAssembly.Prepared claimed(Connection c, Claim claim, WorkItemEvent item) throws SQLException, java.io.IOException {

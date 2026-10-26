@@ -22,7 +22,8 @@ import java.util.List;
  * build-or-later attempt refuses, so the specification and plan attempts that wrote this draft do not.
  *
  * <p>The draft names the build setup revision its plan was dispatched with (decision 15). A setup saved since then is a
- * refusal, {@code draft_setup_changed}: the plan was made for other coordinates. The ticket is not read again, so an edit
+ * refusal, {@code draft_setup_changed}: the plan was made for other coordinates. The dispatcher bought the plan run only
+ * under the setup its specification was dispatched with, so that revision names the specification's base commit too. The ticket is not read again, so an edit
  * to it changes nothing about what was approved (Review Focus 7).
  *
  * <p>Until a build runs a plan step by step, a plan of more than one step waits at {@code plan_steps_unavailable}, so

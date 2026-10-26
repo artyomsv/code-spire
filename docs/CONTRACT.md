@@ -106,8 +106,10 @@ registered by `WorkDraftRegistration` in the same transaction: a `WorkPreparatio
 (`STEPS_BINDING`, a validation-rule version that hashes exactly what version 5 hashes) with the stored specification and
 plan, the draft's base commit and the build setup's harness, model, effort, payment and checks, registered by
 `system:draft@<setup revision>`, milestone `DRAFT_REGISTERED`, phase `build`, which is then entered as an ordinary
-entry. Only a build-or-later attempt of the generation refuses it (A4). A setup saved since the plan was dispatched waits
-at `plan / awaiting_input / draft_setup_changed`; the ticket is not read again, so an edit to it refuses nothing. Until
+entry. Only a build-or-later attempt of the generation refuses it (A4). A plan run is bought only under the setup revision
+its specification was dispatched with, since it clones the commit that specification read; a setup saved in between
+stops the plan attempt at `plan / stopped / draft_setup_changed` before any run. A setup saved since the plan was
+dispatched waits at `plan / awaiting_input / draft_setup_changed`; the ticket is not read again, so an edit to it refuses nothing. Until
 plan steps are built one by one, a plan of more than one step waits at `plan / awaiting_input /
 plan_steps_unavailable` (`DRAFT_REGISTRATION_REFUSED`). Under bindings 1 to 5 a plan stays `schemaVersion: 1` with
 exactly one step; `schemaVersion: 2` is accepted only under binding 6.
