@@ -23,12 +23,13 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [busy, setBusy] = useState<'resume' | 'readmit' | 'compose' | 'retry' | 'stop' | null>(null), [error, setError] = useState('');
-  const [note, setNote] = useState(''), [landNote, setLandNote] = useState('');
+  const [note, setNote] = useState(''), [landNote, setLandNote] = useState(''), [regenerate, setRegenerate] = useState(false);
   const landHintId = useId(), resumeHintId = useId();
   async function resume(readmit: boolean) {
     const number = started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
     try {
-      const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note) : await resumeWorkItem(item, readmit);
+      const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note)
+        : readmit && regenerate ? await resumeWorkItem(item, true, undefined, true) : await resumeWorkItem(item, readmit);
       if (active.current) changed(outcome.detail ? workRefusal(outcome.reason, outcome.detail) : undefined, number);
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(null); }
@@ -118,6 +119,10 @@ export default function WorkItemActions({ item, started, changed }: Props) {
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}
       {canReadmit && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void resume(true)}>
         {busy === 'readmit' ? 'Re-admitting…' : 'Re-admit under current policy'}</button>}
+      {/* Readmit reuses the approved specification and plan of an item the factory writes them for; this writes them again (A7). */}
+      {canReadmit && item.generated === true && <label className="field-check">
+        <input type="checkbox" disabled={busy !== null} checked={regenerate} onChange={event => setRegenerate(event.target.checked)} />
+        <span>Regenerate specification and plan</span></label>}
       {canCompose && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void compose()}>
         {busy === 'compose' ? 'Preparing…' : 'Prepare again from the ticket'}</button>}
     </div>

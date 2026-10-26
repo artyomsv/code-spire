@@ -12,7 +12,6 @@ import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.orchestrator.factory.RunResultSaga;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
@@ -36,7 +35,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * or approved (spec auto). Only the run transport and the pull request proposal are TEST boundaries.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-spec-admin", roles = "spire-admin")
 class WorkSpecRunIT extends WorkSpecRunFixture {
     static final String SPEC = """

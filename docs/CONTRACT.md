@@ -96,7 +96,7 @@ way, from the approved specification as stored (never the ticket read again) and
 `WorkItemEvent` gains the component `draft` (`WorkDraft`, M4 slice 3, A4), carried by every wither:
 `mode` (`generated`), the stored `specification` and `plan` references (`STORED` only), the revision counts (at most
 3 per phase), the two approvals, the `baseCommit` the specification read and the `setupRevision` it was written
-under. When the orchestrator's `spire.work.generated-preparation` is on and the repository prepares `generated`,
+under. When the repository prepares `generated`,
 `WorkDraftLifecycle.admitGenerated` records it on an item not admitted before (never observed, or observed with no
 admitted profile), so items selected before a switch stay where they are (A16). Such an item in spec waits at
 `spec / awaiting_input / specification_to_write`, milestone `DRAFT_ADMITTED`. Entering spec or plan while the draft
@@ -172,6 +172,16 @@ step was empty the item stops at `build / awaiting_input / plan_produced_no_chan
 a recheck is refused `explicit_readmission_required` and only Readmit or Stop go on. The pull request body of a plan
 lists each step's title, "empty" where so, and its summary, neutralised and capped at 32,000 characters. Run detail
 names the plan step (`publication.stepIndex` of `stepTotal`).
+
+Readmission (slice 11, A7) keeps the preparation, and keeps the draft only when a preparation was registered from it:
+the new generation enters spec and plan as supplied and builds step 1 again, with no `SPEC` or `PLAN` run. A draft
+nothing was registered from becomes `WorkDraft.admitted()`, so the specification is written again. `Resume` on
+`POST /api/work-items/{id}/resume` gains `regenerate`, honoured only with `readmit`: `WorkDraftLifecycle.regenerated`
+starts the new generation (milestone `READMITTED`, reason `regenerated`) with an admitted draft and no preparation,
+and the item parks at `specification_to_write` for the draft sweep. Every readmission refusal applies first with its
+own reason (a suspended item included); then a composed item is refused `regenerate_unavailable`. A resume after a
+takeover that drops the preparation (`WorkDraftLifecycle.unprepared`) drops a generated item's draft with it. The item
+view carries `generated` (the item has a draft), which is when the readmit action offers Regenerate.
 
 **Revise** (`POST /api/approvals/{id}/revise {expectedVersion, idempotencyKey, note}`, `spire-admin`, a note required)
 answers an open specification or plan result gate from the dashboard only: `ResolveGate` has no revise, so a tracker

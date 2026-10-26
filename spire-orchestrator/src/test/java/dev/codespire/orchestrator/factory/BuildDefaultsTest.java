@@ -429,25 +429,9 @@ class BuildDefaultsTest {
         assertEquals(0, defaults.get(repository).revision());
     }
 
-    /**
-     * While the generated path is dark, choosing it would store a promise nothing keeps. Its own reason, not the
-     * item's {@code preparation_unavailable}, so each screen can say what is true for it.
-     */
     @Test
-    void generatedIsRefusedWhileDark() {
-        assertEquals("generated_preparation_off", refusal(preparing("generated")));
-        assertEquals(0, defaults.get(repository).revision());
-    }
-
-    @Test
-    void composedCanBeSavedWhileDark() {
+    void composedCanBeSaved() {
         assertEquals("composed", defaults.save(repository, preparing("composed"), "TEST-operator").preparation());
-    }
-
-    @Test
-    void optionsOfferOnlyComposedWhileDark() {
-        given().get("/api/repositories/" + repository + "/factory/build/options").then().statusCode(200)
-                .body("preparations", is(List.of("composed")));
     }
 
     /** No phase column (A18): the step index is the only new run column, and a negative one is a writer bug. */

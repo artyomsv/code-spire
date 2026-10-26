@@ -4,10 +4,78 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-049 — Specification and plan are read-only harness runs; steps build on one chain
+
+**Status:** implemented on `feat/m4-spec-plan` (PR #287), 2026-10-26. Live proof pending
+(`docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md` when it lands). Supersedes the mechanism sentence of FR-F18
+(`docs/factory/PRD.md`) and of AUTONOMY §1, which said spec and plan were "one model call, no sandbox".
+
+**Context.** M3.5 copies the ticket into a specification and writes a fixed one-step plan, so a vague ticket
+reaches the agent as vague as it was written, and work bigger than one prompt is attempted in one run. The
+design is [the M4 specification, plan and steps specification](superpowers/specs/2026-10-25-factory-m4-spec-plan-steps-design.md);
+its section 9 holds the review amendments (A1..A22) and the
+[plan](superpowers/plans/2026-10-25-factory-m4-spec-plan-steps.md) the builder's decisions.
+
+**Decision.**
+- **A repository chooses.** `repository_build_defaults.preparation` is `composed` (the default, M3.5's copy) or
+  `generated`. A switch applies only to items admitted after it: admission records the draft on the item, and
+  the copy sweep skips any item admitted as generated.
+- **Specification and plan are runs, not model calls.** Each is a short read-only harness run on the
+  repository's build harness, model, effort and payment (`RunCommand.ExecuteWorkDraftRun`, kinds `SPEC` and
+  `PLAN`): it can read the repository, which a plan of vertical slices needs, and a subscription seat pays
+  nothing extra. The publisher runs in `READ_ONLY` mode with no write credential; a repository change is
+  discarded and reported as a warning. The orchestrator still calls no model.
+- **The artifacts travel through the image contract.** The agent writes `$SPIRE_ARTIFACT` (the specification
+  Markdown, or the plan JSON) and, on a build, `$SPIRE_STEP_SUMMARY`; the entrypoint copies them to the
+  handoff, the publisher reads them as regular files only and caps them, and the run worker scrubs the run's
+  secrets before sending (AGENT-IMAGE-CONTRACT.md).
+- **A draft until both are approved.** `WorkDraft` on the item holds stored references, revision counts and
+  approvals; the text is stored encrypted and posted to the ticket through a `draft` outbox effect. A spec or
+  plan gate under `approve` is a result gate on the artifact's digest; the dashboard alone may Revise with a
+  note (three per phase and generation). Both approved, the system registers a `WorkPreparation` under binding
+  6, refused `draft_setup_changed` when the build setup changed since the plan was written.
+- **Steps build on one chain of held checkpoints.** Binding 6 accepts a plan of 1..`maxStepsPerPlan` steps. The
+  plan cursor (`WorkSteps`) lives in the decider: step k+1 starts from the newest step run that holds a bundle
+  and must descend from its head; a lost checkpoint fails the step into the verify gate and never falls back to
+  the base. Each step verifies; a step that commits nothing completes as empty; deliver publishes the last
+  non-empty step's head as one pull request, and every step empty waits at `plan_produced_no_change`. No
+  permission gate opens between steps (`EntryMode.STEP`); the final land approval remains the human check.
+  That is the author's call.
+- **Every step's summary is carried forward.** Decisions, rejected alternatives and deviations are stored
+  encrypted per step (`work_step_summary`) and quoted into every later step's prompt as data, within a 48 KiB
+  prompt budget that the plan is checked against when it is accepted.
+- **Readmit reuses, Regenerate rewrites.** Readmit keeps an approved draft and its registered preparation and
+  rewinds the cursor, so a new generation spends nothing on spec and plan; a draft nothing was registered from
+  is written again. Regenerate clears both, and is refused wherever readmit is refused.
+- **`kind` and `step_index` answer #115's phase column.** `factory_run.kind` already names spec, plan, build and
+  fix; `step_index` names the step. No `phase` column: verify is not a run.
+
+**Consequences.**
+- Under profiles where spec and plan are `auto`, a generated repository spends two runs, plus up to one
+  automatic retry each, before the plan gate. The setting's copy says so.
+- Spec and plan runs are charged under the Build capability (ADR-035) with charge kinds `SPEC` and `PLAN`; they
+  count toward wall-clock, cost and calls, not `maxRunsPerItem`.
+- The publisher's stdout reaches the run-worker host's Docker log, so "never logged" holds for our services
+  only; the text is scrubbed before it leaves the run worker (docs/UNVERIFIED.md).
+- A ticket edited after its specification was approved changes nothing until Regenerate.
+
+**Rejected.**
+- **A model client in the orchestrator.** It could not read the repository, and would add a second payment
+  path beside the build's.
+- **A specification or plan file in the repository.** A second source of truth, and a diff the reviewer must
+  review (FR-F18).
+- **One pull request per step, or a gate between passing steps.** The operator rejected per-step approvals
+  during the land design; one pull request is what review and land already handle.
+- **Falling back to the base when a step's checkpoint is lost.** It would silently discard completed steps.
+
+---
+
 ## ADR-048 — Land merges through a durable effect pinned to the approved head
 
-**Status:** implemented on `feat/m4-land` (PR #243), 2026-10-22. Live proof pending
-(`docs/factory/LAND-ACCEPTANCE.md` when it lands).
+**Status:** implemented on `feat/m4-land` (PR #243), 2026-10-22. Accepted on its live proof on `spire-test`,
+2026-10-23 to 2026-10-25: two clean merges under each ticket rule, a conflict fixed by a land fix, a merge by
+hand and a protection block handed over ([land acceptance record](factory/LAND-ACCEPTANCE.md)). PR #243 merged
+to master on 2026-10-25.
 
 **Context.** Approving land recorded the answer and merged nothing: the item ended at `land /
 capability_unavailable`, and the screen then offered Readmit, which would build and propose the same work
@@ -92,8 +160,10 @@ operator's decisions and section 10 the review amendments.
 
 ## ADR-047 — The reviewer posts a forge-native review where the forge has one
 
-**Status:** implemented on `feat/github-reviews` (PR #196), 2026-10-15. Live proof pending
-(`docs/factory/GITHUB-REVIEWS-ACCEPTANCE.md` when it lands).
+**Status:** implemented on `feat/github-reviews` (PR #196), 2026-10-15. Accepted on its live proof on
+`spire-test`, 2026-10-16 to 2026-10-18: Approve, Request changes, Comment with the setting off, and a re-run
+that dismissed the bot's own hold ([GitHub reviews acceptance record](factory/GITHUB-REVIEWS-ACCEPTANCE.md)).
+The fallbacks are proven against fakes only (docs/UNVERIFIED.md).
 
 **Context.** A summary issue comment left GitHub's sidebar at "No reviews": nobody could see from GitHub
 that a PR was reviewed, or approved. The operator asked for real reviews during the M4 verify proof. The
@@ -126,8 +196,9 @@ design is [the GitHub reviews specification](superpowers/specs/2026-10-15-github
 
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint
 
-**Status:** implemented in M4 slice 1 (PR #184), 2026-10-07. Live proof pending
-(`docs/factory/M4-VERIFY-ACCEPTANCE.md` when it lands).
+**Status:** implemented in M4 slice 1 (PR #184), 2026-10-07. Accepted on its live proof on `spire-test`,
+2026-10-08: a passed, a failed-then-retried and an unverified build
+([M4 verify acceptance record](factory/M4-VERIFY-ACCEPTANCE.md)).
 
 **Context.** The three M3.5 builds stopped at `verify / capability_unavailable`: nothing checked a
 held build, so nothing could be pushed. FR-F20 asks for repository checks with three outcomes, and

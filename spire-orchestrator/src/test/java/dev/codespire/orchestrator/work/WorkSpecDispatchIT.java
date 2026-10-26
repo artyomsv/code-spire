@@ -2,7 +2,6 @@ package dev.codespire.orchestrator.work;
 
 import dev.codespire.contract.command.RunCommand;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -20,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * a reason to stop, and a forge or tracker that fails to answer once is asked again later instead of stopping the item.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-spec-admin", roles = "spire-admin")
 class WorkSpecDispatchIT extends WorkSpecRunFixture {
     /** DispatchRequestParser's prompt limit: a longer prompt is refused at assembly. */

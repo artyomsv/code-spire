@@ -16,7 +16,6 @@ import dev.codespire.orchestrator.factory.BuildDefaults;
 import dev.codespire.orchestrator.factory.RunResultSaga;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import io.restassured.response.ValidatableResponse;
 import jakarta.inject.Inject;
@@ -37,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * Only the buses are TEST boundaries.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-spec-admin", roles = "spire-admin")
 class WorkDraftReadmitIT extends WorkSpecRunFixture {
     static final PullRequestRef PR = new PullRequestRef(903, "https://forge.example.test/TEST-pull/903", false);
@@ -61,7 +59,10 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
-    /** A generated item whose specification and plan were written, approved and registered, and whose first build failed. */
+    /**
+     * A generated item whose specification and plan were written, approved and registered, and whose first build failed
+     * before the agent ran: a failure that bought nothing leaves the usage known, so a readmission may enter build again.
+     */
     private String failedAfterItsDraft(int number) throws Exception {
         String id = started("autonomous", number);
         saga.on(artifact(dispatched(), WorkSpecRunIT.SPEC));
@@ -69,7 +70,7 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         saga.on(artifact(dispatched(), onePlanStep()));
         assertState(store.load(id), "build", "active", "phase_started");
         dispatcher.drain();
-        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(), "AGENT_FAILED", "TEST AGENT_FAILED", false, null));
+        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(), "BAD_COMMAND", "TEST BAD_COMMAND", false, null));
         assertState(store.load(id), "build", "failed", "phase_failed");
         return id;
     }

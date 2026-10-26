@@ -12,7 +12,6 @@ import dev.codespire.worksource.WorkIssueRef;
 import dev.codespire.worksource.WorkSourceType;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import java.net.URI;
@@ -39,7 +38,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * A4, A5, A16). Nothing dispatches the run yet: its effect row stays pending.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-draft-admin", roles = "spire-admin")
 class WorkDraftAdmissionIT extends WorkPreparedFixture {
 

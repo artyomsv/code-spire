@@ -23,8 +23,10 @@ A generated preparation (M4 slice 3) is registered by the factory itself, under 
 it is a validation-rule version. Under it the plan is `schemaVersion: 2`: `specificationSha256` and 1 to
 `maxStepsPerPlan` `steps`, each with a unique `id`, a `title` (at most 120 characters), an `instruction` (at most
 4,000) and a `doneWhen` (at most 1,000), none blank, the whole plan at most 32 KiB. A version 1 plan is refused under
-binding 6, and `schemaVersion: 2` is refused under bindings 1 to 5, which keep exactly one step. The build reads the
-first step's instruction until a plan is built step by step; until then a plan of more than one step is not registered.
+binding 6, and `schemaVersion: 2` is refused under bindings 1 to 5, which keep exactly one step. A binding-6 plan is
+built step by step on one chain of held checkpoints and delivered as one pull request (ADR-049). It is registered only
+from an approved specification and plan the factory wrote, never from tracker references; readmission reuses it and
+Regenerate discards it. A human-prepared task keeps bindings 1 to 5 and its single step.
 
 The same prepared task follows the selected effective modes:
 

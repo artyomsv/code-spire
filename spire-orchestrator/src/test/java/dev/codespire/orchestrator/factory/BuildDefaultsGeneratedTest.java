@@ -6,9 +6,7 @@ import dev.codespire.orchestrator.provider.ProviderInput;
 import dev.codespire.orchestrator.provider.ProviderRegistry;
 import dev.codespire.orchestrator.repository.RepositoryInput;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
-import dev.codespire.orchestrator.work.GeneratedPreparationProfile;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import java.sql.Connection;
@@ -26,11 +24,10 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The preparation setting with the generated path switched on (M4 slice 3, §6.1). Nothing reads the
- * setting yet; these prove only that it is stored, kept, and offered.
+ * The generated preparation setting (M4 slice 3, §6.1): stored, kept, and offered. What admission does with it is
+ * {@code WorkDraftAdmissionIT}'s.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-build-admin", roles = "spire-admin")
 class BuildDefaultsGeneratedTest {
 
@@ -95,7 +92,7 @@ class BuildDefaultsGeneratedTest {
     }
 
     @Test
-    void optionsOfferGeneratedOnlyWhenOn() {
+    void optionsOfferBothPreparations() {
         given().get("/api/repositories/" + repository + "/factory/build/options").then().statusCode(200)
                 .body("preparations", is(List.of("composed", "generated")));
     }

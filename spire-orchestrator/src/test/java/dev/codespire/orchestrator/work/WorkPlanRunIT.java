@@ -14,7 +14,6 @@ import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.orchestrator.factory.BuildDefaults;
 import dev.codespire.orchestrator.factory.RunResultSaga;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
@@ -40,7 +39,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * gated on its digest, revised only from the dashboard, and registered into build as a binding-6 preparation.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-spec-admin", roles = "spire-admin")
 class WorkPlanRunIT extends WorkSpecRunFixture {
     static final String SPEC = WorkSpecRunIT.SPEC;

@@ -454,8 +454,18 @@ recognised, and a landed item cannot be readmitted. GitHub only; `auto_if_green`
 proof on `spire-test` merged under both ticket rules, fixed a conflict and merged on a new gate, completed
 two hand merges, and handed a ruleset block to the operator; it found that a hand merge went unseen on a
 repository with no FACTORY webhook, now caught by the reviewer's close and a 2-minute pull request read.
-The failing-check fix, exhausted attempts and Retry land are proven against fakes only. **Next:** the
-specification, the multi-step plan and step continuity below.
+The failing-check fix, exhausted attempts and Retry land are proven against fakes only.
+
+**Slice 3, specification, plan and steps: built on `feat/m4-spec-plan` (PR #287, ADR-049), live acceptance
+pending.** A repository whose build setup says `generated` has the factory write the specification and the plan
+with short read-only runs on the build's harness, model and payment, post both to the ticket and gate them as
+results (Revise with a note from the dashboard, three per phase). An approved plan of up to `maxStepsPerPlan` steps
+builds step by step on one chain of held checkpoints: each step verifies, a step that commits nothing completes as
+empty, a lost checkpoint opens the verify gate instead of falling back to the base, every step's summary is carried
+into the later steps' prompts, and the last change is delivered as one pull request. Readmit reuses the approved
+specification and plan; Regenerate writes them again. `composed`, the M3.5 copy, stays the default. Everything is
+proven against fakes only until the live proof (`docs/UNVERIFIED.md`). **Next:** that proof, recorded in
+`M4-SPEC-PLAN-ACCEPTANCE.md`, which is this milestone's exit criterion.
 
 **Delivers.** The `spec` phase — a vague ticket refined into outcome, context and acceptance
 criteria, written back to the tracker. The `plan` phase — decomposition into ordered vertical slices,

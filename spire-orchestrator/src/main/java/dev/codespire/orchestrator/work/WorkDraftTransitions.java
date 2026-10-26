@@ -167,6 +167,32 @@ public class WorkDraftTransitions {
         });
     }
 
+    /**
+     * Readmit with Regenerate (A7): a new generation that writes its specification and plan again, under the policy
+     * selected now, as readmission selects it. Every readmission refusal comes first with its own reason, so Regenerate is
+     * refused wherever readmit is; a composed item, which has no draft, is refused {@code regenerate_unavailable}. The
+     * new generation enters intake at once and parks where the draft sweep looks (decision 10).
+     */
+    WorkItemTransitions.Outcome regenerate(String id, long expectedRevision) {
+        WorkItemEvent reference = transitions.require(id);
+        WorkItemTransitions.Observation observed = transitions.observe(reference.sourceId(), reference.issue());
+        return transitions.underLock(id, (c, history, item) -> {
+            if (!transitions.current(c, observed)) return new WorkItemTransitions.Outcome(503, "authority_changed_during_read", item);
+            if (history.size() != expectedRevision) return new WorkItemTransitions.Outcome(409, "work_item_changed", item);
+            WorkItemTransitions.Outcome refused = WorkItemTransitions.readmitRefusal(c, history, item);
+            if (refused != null) return refused;
+            if (item.draft() == null) return new WorkItemTransitions.Outcome(409, "regenerate_unavailable", item);
+            if (observed.evidence().failure() != null) return new WorkItemTransitions.Outcome(503, observed.evidence().failure(), item);
+            WorkItemEvent checked = item.decision(observed.policy().revision(), WorkItemTransitions.authority(observed.source()),
+                    transitions.select(observed, null), item.phase(), item.workflowStatus(), item.reason(), "POLICY_CHECKED", item.gate(), item.progress());
+            WorkItemEvent next = WorkDraftLifecycle.regenerated(checked);
+            store.appendDecision(c, history, next, "regenerate:" + UUID.randomUUID());
+            List<EventEnvelope> regenerated = store.history(id);
+            next = transitions.enterPrepared(c, regenerated, next, false, clock.now(), WorkItemTransitions.entryMode(regenerated));
+            return decided(new Locked(c, store.history(id), next), next, "transition:" + UUID.randomUUID());
+        });
+    }
+
     /** The one automatic retry: a new attempt, whose effect row carries the refused attempt and the error, encrypted. */
     private WorkItemTransitions.Outcome retry(Locked locked, DraftResult result, String error) throws SQLException, java.io.IOException {
         UUID next = UUID.randomUUID();

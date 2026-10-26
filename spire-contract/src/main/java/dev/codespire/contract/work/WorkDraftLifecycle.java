@@ -152,12 +152,28 @@ public final class WorkDraftLifecycle {
         return WorkItemLifecycle.state(item, "awaiting_input", reason, "DRAFT_REGISTRATION_REFUSED", item.gate(), item.progress().reserve(false));
     }
 
+    /**
+     * Regenerate (A7): readmission into a new generation whose specification and plan are written again, from an empty
+     * draft and with no preparation. It keeps {@code READMITTED}, which is how a new generation is read elsewhere (a land
+     * fix ends on it). The caller refuses it first wherever readmission is refused.
+     *
+     * @throws IllegalStateException {@code regenerate_unavailable} for a composed item, which has no draft to write
+     */
     public static WorkItemEvent regenerated(WorkItemEvent item) {
-        throw new UnsupportedOperationException("RED");
+        if (item.draft() == null) throw new IllegalStateException("regenerate_unavailable");
+        WorkItemEvent readmitted = unprepared(item.readmit());
+        return readmitted.decision(readmitted.policyRevision(), readmitted.authority(), readmitted.policy(), "intake", "awaiting_input",
+                "regenerated", "READMITTED", null, readmitted.progress());
     }
 
+    /**
+     * Drops the preparation, as a resume that cannot trust the prepared base does; a generated item's draft goes with it,
+     * so the item writes its specification again instead of entering spec with an approved draft and no preparation
+     * (§6.11). The milestone is the caller's.
+     */
     public static WorkItemEvent unprepared(WorkItemEvent item) {
-        throw new UnsupportedOperationException("RED");
+        WorkItemEvent dropped = item.prepared(null);
+        return item.draft() == null ? dropped : dropped.drafted(WorkDraft.admitted());
     }
 
     /** Whether this gate asks about a written artifact of the item's draft, rather than permission to run (A6). */

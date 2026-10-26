@@ -14,7 +14,6 @@ import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.factory.RunCharges;
 import dev.codespire.orchestrator.factory.RunResultSaga;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.security.TestSecurity;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -31,7 +30,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * each test delivers.
  */
 @QuarkusTest
-@TestProfile(GeneratedPreparationProfile.class)
 @TestSecurity(user = "TEST-spec-admin", roles = "spire-admin")
 class WorkEmptyStepsIT extends WorkSpecRunFixture {
     static final String SPEC = WorkSpecRunIT.SPEC;

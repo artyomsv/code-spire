@@ -27,6 +27,9 @@ const REASONS = new Map(Object.entries({
   draft_setup_changed: 'The repository\'s build setup was saved while the specification and plan were being written, so they were made for other settings. Readmit to write them again under the current setup.',
   revision_limit_reached: 'All three revisions of this decision are used. Approve it or reject it.',
   revise_unavailable: 'Only a specification or plan the factory wrote can be revised, and only while its decision is open.',
+  // Readmit reuses an approved specification and plan; Regenerate writes them again (M4 slice 3, A7).
+  regenerated: 'Re-admitted to write the specification and plan again.',
+  regenerate_unavailable: 'Only an item whose specification and plan the factory writes can regenerate them. This one copies its ticket as one step.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',
   base_branch_blank: 'A base branch is required.',
@@ -46,8 +49,6 @@ const REASONS = new Map(Object.entries({
   model_unknown: 'That model is not in the catalogue, or it is switched off. Choose an enabled model.',
   build_defaults_changed: 'Someone else saved the build setup while this form was open. Reload it and try again.',
   preparation_invalid: 'Choose how the specification and plan are made: copy the ticket as one step, or write them with the build model.',
-  // The build setup's refusal while generated preparation is dark (M4 slice 3); slice 11 deletes it with the flag.
-  generated_preparation_off: 'This deployment does not write specifications and plans yet. Keep copying the ticket as one step.',
   preparation_unavailable: 'This work item is already under way or finished, so it cannot be prepared now.',
   land_settings_changed: 'Someone else saved the land setup while this form was open. Reload it and try again.',
   merge_method_invalid: 'The merge method must be merge, squash or rebase.',

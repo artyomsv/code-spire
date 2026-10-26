@@ -23,7 +23,6 @@ public class WorkItemStore {
     @Inject WorkItemTransitions transitions;
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
-    @Inject GeneratedPreparation generatedPreparation;
     @Inject dev.codespire.orchestrator.factory.BuildDefaults buildDefaults;
     @Inject WorkDraftProjection drafts;
 
@@ -71,7 +70,7 @@ public class WorkItemStore {
                 }
             }
             // Before admission, so a drafted item is never turned into a spec permission gate (M4 slice 3, A16).
-            if (generatedPreparation.enabled() && dev.codespire.orchestrator.factory.BuildDefaults.GENERATED.equals(buildDefaults.get(c, current.repositoryId(), false).preparation()))
+            if (dev.codespire.orchestrator.factory.BuildDefaults.GENERATED.equals(buildDefaults.get(c, current.repositoryId(), false).preparation()))
                 next = WorkDraftLifecycle.admitGenerated(previous, next);
             next = transitions.admission(next, history.size());
             if (next.equals(previous)) { sources.health(current.id(), "healthy"); return id; }

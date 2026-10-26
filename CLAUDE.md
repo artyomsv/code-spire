@@ -35,18 +35,18 @@ The design is fully specified in `docs/` — **treat those files as the source o
 | `docs/SECURITY.md` | Trust boundaries, OIDC/RBAC, Tink encryption, LLM threat model, cost gaps |
 | `docs/TLS.md` | The five requirements a TLS terminator must satisfy, the identity-provider leg included, three worked topologies, and a symptom table. Code Spire terminates no TLS by design |
 | `docs/REPO-RULES.md` | The `.codespire` file: format, the target-branch rule and why, writing effective rules |
-| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..048 cover the software factory; `docs/factory/` explains them in context |
+| `docs/DECISIONS.md` | Architecture decisions and their rationale. ADR-029..040, ADR-042..049 cover the software factory; `docs/factory/` explains them in context |
 | `docs/UNVERIFIED.md` | **Read before claiming something works.** The register of claims the code or the docs make that no test establishes — known-broken-and-guarded, fixed-but-never-run-live, paths no test reaches, and claims needing a corpus or spend. Three milestones in a row shipped a feature that was green, documented, and did not work |
 | `docs/RESEARCH.md` | Market landscape + the PR-Agent code evaluation that justified greenfield |
 | `docs/ROADMAP.md` | Phases P0–P4 with exit criteria |
 | `docs/HISTORY.md` | The per-milestone delivery log: what shipped, what each review round found, the traps each one paid for. **Append new milestones there**, then rewrite the Status snapshot below |
-| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`, M4 slice 2 land accepted 2026-10-25 in `LAND-ACCEPTANCE.md`); the rest of M4, and M5–M6, designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..048. ROADMAP's M0 section records what the build taught that the design had wrong |
+| `docs/factory/` | **M0–M3.5 implemented (PRs #95/#96/#119, M3 on master 2026-09-16, M3.5 accepted 2026-10-07 in `M35-ACCEPTANCE.md`, M4 slice 1 verify accepted 2026-10-08 in `M4-VERIFY-ACCEPTANCE.md`, GitHub reviews accepted 2026-10-18 in `GITHUB-REVIEWS-ACCEPTANCE.md`, M4 slice 2 land accepted 2026-10-25 in `LAND-ACCEPTANCE.md`, M4 slice 3 specification, plan and steps built on PR #287, live acceptance pending); M5–M6 designed.** The software factory: work item → spec → plan → sandboxed agent runs → branch → PR reviewed by the existing reviewer. PRD (FR-F1..F32), architecture, module reference, execution layer (harness terms quoted with retrieval dates), run topology, autonomy model, product packaging, prior art, M0–M6 build order, and `AGENT-IMAGE-CONTRACT.md` — the published contract any agent image may satisfy, checked by `spire-agent-image verify`. Decisions are ADR-029..040 and ADR-042..049. ROADMAP's M0 section records what the build taught that the design had wrong |
 | `docs/CICD-AND-PACKAGING.md` | **Parked plan.** No CI exists today; analysis of GitHub Actions + GHCR images + Helm/kustomize/ArgoCD, why Terraform is declined, and why it waits for D10 |
 | `docs/D10-AUTH-PLAN.md` | **Planned, not started.** The auth gate: hybrid OIDC, per-service URL prefixes so cookie scoping is real, the spike that must precede code, and the two designs review falsified |
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-10-25**. Delivery history is in docs/HISTORY.md; the
+Measured on **2026-10-26**. Delivery history is in docs/HISTORY.md; the
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
 proving slices and reviews, the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
 the live proof of "one ticket to a build", the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
@@ -54,7 +54,8 @@ the live proof of verify, the [GitHub reviews acceptance record](docs/factory/GI
 the live proof of forge-native reviews, and the [land acceptance record](docs/factory/LAND-ACCEPTANCE.md)
 the live proof of land. **M3, M3.5, M4 slices 1 and 2 and GitHub reviews are on master.** On GitHub an
 item now builds, verifies, delivers a PR, gets a review with a verdict, and on an approved land is
-merged, its branch deleted and its ticket told. Next is M4's specification, plan and step continuity.
+merged, its branch deleted and its ticket told. M4 slice 3, specification, plan and steps, is built on
+`feat/m4-spec-plan` (PR #287, ADR-049) and awaits its live proof, which is M4's exit criterion.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -149,8 +150,20 @@ merged, its branch deleted and its ticket told. Next is M4's specification, plan
   merged on a new gate, #64 and #68 merged by hand and completed, #66 blocked by a ruleset and handed
   over. The proof fixed hand merges unseen without a FACTORY webhook, and four dashboard defects.
 
+- **M4 slice 3: specification, plan and steps are built** (PR #287, ADR-049), live acceptance pending.
+  A repository whose build setup says `generated` has the factory write the specification and the plan
+  with read-only harness runs on the build's harness, model and payment (no write credential), post them
+  to the ticket and gate them as results, with Revise from the dashboard. The approved plan builds step
+  by step on one chain of held checkpoints: each step verifies, a step that commits nothing is empty, a
+  lost checkpoint opens the verify gate, every step's summary reaches the later steps' prompts, and the
+  last change is delivered as one pull request. Readmit reuses the approved draft; Regenerate rewrites
+  it. `composed`, the M3.5 copy, stays the default; the feature flag is gone.
+
 **Limits that remain:**
 
+- **Specification, plan and steps are proven against fakes only** until the live proof on `spire-test`
+  (`docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md` when it lands); the artifact and the summary pass through
+  the run-worker host's Docker log (docs/UNVERIFIED.md, the M4 slice 3 entry).
 - **Some land paths are proven against a WireMock GitHub only:** the failing-check land fix, a check
   that is not code, exhausted fix attempts, Retry land, uncertain-merge recovery, a failed branch
   delete and the Jira close skip. A hand merge records the method as `unknown`. Land `auto_if_green`

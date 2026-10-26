@@ -26,7 +26,6 @@ public class BuildDefaults {
     @Inject dev.codespire.orchestrator.llm.LlmModelPricer pricer;
     @Inject HarnessCatalogues catalogues;
     @Inject HarnessCredentialPool pool;
-    @Inject dev.codespire.orchestrator.work.GeneratedPreparation generatedPreparation;
 
     /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
     public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
@@ -225,13 +224,12 @@ public class BuildDefaults {
     /**
      * The preparation a save stores (M4 slice 3), or null to keep the stored one: a form that does not show
      * the choice sends none, and must not switch a repository back. Refused by name before the table's CHECK
-     * would turn an unknown value into a 500, and {@code generated} is refused while nothing would honour it.
+     * would turn an unknown value into a 500.
      */
     private String preparation(String typed) {
         String preparation = strip(typed);
         if (preparation == null) return null;
         if (!PREPARATIONS.contains(preparation)) throw new Refused("preparation_invalid");
-        if (preparation.equals(GENERATED) && !generatedPreparation.enabled()) throw new Refused("generated_preparation_off");
         return preparation;
     }
 

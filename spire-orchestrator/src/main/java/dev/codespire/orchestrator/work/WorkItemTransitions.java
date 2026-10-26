@@ -82,7 +82,8 @@ public class WorkItemTransitions {
                 String expectedHead=item.progress().execution()!=null && item.progress().execution().pullRequest()!=null
                         ?item.progress().execution().head():item.preparation()==null?null:item.preparation().baseCommit();
                 if(!Objects.equals(head,expectedHead) || observed.artifacts().failure()!=null)
-                    next=next.prepared(null).withMilestone("OPERATOR_RESUMED");
+                    // A generated item writes its draft again with it: an approved draft without its preparation has no way on.
+                    next=WorkDraftLifecycle.unprepared(next).withMilestone("OPERATOR_RESUMED");
                 store.appendDecision(c,history,next,"operator-resume:"+UUID.randomUUID());history=store.history(id);
                 next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"resume-transition:"+UUID.randomUUID());
@@ -300,7 +301,7 @@ public class WorkItemTransitions {
      * names the strongest reason first: a merged pull request cannot be built again beside itself (spec §7.9), then
      * anything that still holds the delivered pull request open, then a merge whose outcome is not recorded yet.
      */
-    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
+    static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
         WorkItemLifecycle.EntryMode mode=entryMode(history);
         if(Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
         if(landed(history,item))return new Outcome(409,"readmission_landed",item);

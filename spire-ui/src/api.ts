@@ -106,9 +106,10 @@ export interface LandView {
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */
 export interface WorkItemOutcome { reason: string; detail?: string }
 
-export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<WorkItemOutcome> {
+/** `regenerate` with `readmit` writes a generated item's specification and plan again instead of reusing them (M4 slice 3, A7). */
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string, regenerate?: boolean): Promise<WorkItemOutcome> {
   const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
+    body: JSON.stringify({ expectedRevision: item.revision, readmit, note, regenerate }) });
   if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
   return response.json();
 }
