@@ -52,7 +52,6 @@ final class StepSummaries {
         List<String> items = new ArrayList<>();
         if (list == null || !list.isArray()) return items;
         for (JsonNode element : list) {
-            if (items.size() == StepSummary.MAX_ITEMS) break;
             if (!element.isTextual()) continue;
             String item = cut(scrub.clean(ControlCharacters.strip(element.asText())));
             if (!item.isBlank()) items.add(item);
