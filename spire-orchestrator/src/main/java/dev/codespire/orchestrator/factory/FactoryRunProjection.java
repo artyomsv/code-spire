@@ -299,6 +299,7 @@ public class FactoryRunProjection {
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
                        r.started_at, r.ended_at, r.pr_url, r.pr_error, r.agent_started_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
+                       r.step_index, w.step_total,
                        c.priced_millicents, c.unpriced_lines, c.line_count
                   FROM factory_run r
                   LEFT JOIN (
@@ -316,6 +317,7 @@ public class FactoryRunProjection {
                          WHERE subject_kind = 'RUN' AND archived_at IS NULL
                          GROUP BY subject_id
                   ) c ON c.subject_id = r.run_id
+                  LEFT JOIN work_item w ON w.id = r.work_item_id
                  WHERE 1 = 1
                 """);
         List<String> bound = new ArrayList<>();
