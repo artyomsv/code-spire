@@ -219,6 +219,21 @@ class HeldPublicationTest {
         assertFalse(lines.contains("\"empty\""), lines);
     }
 
+    /**
+     * Only a start from the base may be reported empty (amendment 3): a run that started from a checkpoint and wrote no
+     * bundle holds nothing, so it keeps today's missing checkpoint and its predecessor keeps the chain.
+     */
+    @Test void aCheckpointStartWithoutABundleIsNotEmpty() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held(null, f.base).allowingEmpty(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertFalse(lines.contains("\"event\":\"checkpoint\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
     /** Only a plan step may finish empty (decision 14): every other held build keeps today's missing checkpoint. */
     @Test void anIdleBuildWithoutTheAllowanceStillFails() throws Exception {
         Fixture f = fixture();

@@ -201,11 +201,17 @@ class WorkRunWorkerTest {
         assertTrue(events.contains("released"));assertTrue(events.contains("release-lease"));
         assertTrue(reported.contains(buildResult),"the empty ready itself is still sent");
     }
-    /** An empty step that started from a checkpoint holds the whole chain: the next step starts from it (decision 9). */
-    @Test void anEmptyCheckpointStepKeepsItsUnit(){
+    /**
+     * An empty ready holds no bundle (amendment 3), so it never supersedes the run it started from: that run's workspace
+     * is the only copy of the chain's commits. Only its own unit is released.
+     */
+    @Test void anEmptyReadyNeverRetiresTheRunItStartedFrom(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
         buildResult=ready.withStartFromHead(ready.head()).withEmpty(true);
-        execute();
-        assertNull(retired);assertEquals(0,deletions);
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals(command.runId(),retired,"only its own unit is closed");
+        assertEquals(1,deletions,"the predecessor's workspace is kept");
     }
     @Test void aFirstBuildRetiresNothing(){
         execute();

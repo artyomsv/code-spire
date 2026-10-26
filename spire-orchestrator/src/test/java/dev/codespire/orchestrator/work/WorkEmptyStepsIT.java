@@ -205,6 +205,51 @@ class WorkEmptyStepsIT extends WorkSpecRunFixture {
         assertEquals(0, count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=?", id));
     }
 
+    /**
+     * Only a start from the base may be reported empty (amendment 3): a checkpoint-started run's empty ready holds no bundle,
+     * so it never becomes the chain run. The step fails as a failed run does, on the run that still holds the chain.
+     */
+    @Test
+    void anEmptyReadyFromACheckpointIsRefused() throws Exception {
+        String id = building(308, 3);
+        passStep(id, "1".repeat(40));
+        WorkExecution first = store.load(id).steps().completed().getFirst().execution();
+        RunCommand.ExecuteWorkRun second = last();
+
+        saga.on(new RunResult.RunWorkReady(second.runId(), second.work(), "1".repeat(40), List.of(), Map.of("INPUT", 1L), 9)
+                .withStartFromHead(second.execution().startFromHead()).withEmpty(true));
+
+        WorkItemEvent item = store.load(id);
+        assertState(item, "verify", "waiting_approval", "verify_unverified");
+        assertEquals(first.runId(), item.progress().execution().runId(), "the gate stands on the run that holds the chain");
+        assertEquals(0, milestones(id, "STEP_EMPTY"));
+        assertEquals(1, count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND reason='phase_evidence_mismatch'", second.runId()));
+    }
+
+    /**
+     * The step's completion and its summary commit separately: a ready replayed after a crash between them is judged by
+     * its attempt, already completed, not refused against the state the completion left. Its summary is still recorded.
+     */
+    @Test
+    void aReplayedEmptyLastStepKeepsItsSummary() throws Exception {
+        String id = building(309, 2);
+        saga.on(emptyFromBase(id, last()));
+        dispatcher.drain();
+        RunResult.RunWorkReady lastStep = emptyFromBase(id, last()).withStepSummary(new StepSummary(List.of("TEST-decision"), List.of(), List.of()));
+        saga.on(lastStep);
+        assertState(store.load(id), "build", "awaiting_input", "plan_produced_no_change");
+
+        // As if the orchestrator died after the completion committed and before the summary and acknowledgement did.
+        executeWith("DELETE FROM work_step_summary WHERE run_id=?", lastStep.runId());
+        executeWith("UPDATE work_run_effect SET ready_processed=false WHERE run_id=?", lastStep.runId());
+        bridge.recover();
+
+        assertEquals(1, count("SELECT count(*) FROM work_step_summary WHERE run_id=? AND state='recorded'", lastStep.runId()));
+        assertEquals(0, count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND reason='phase_evidence_mismatch'", lastStep.runId()));
+        assertEquals(1, count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND ready_processed", lastStep.runId()));
+        assertEquals(1, milestones(id, "PLAN_PRODUCED_NO_CHANGE"));
+    }
+
     @Test
     void theRunAndTheStepsViewNameEachStep() throws Exception {
         String id = building(307, 3);

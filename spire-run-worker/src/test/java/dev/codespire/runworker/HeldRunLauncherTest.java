@@ -93,6 +93,13 @@ class HeldRunLauncherTest {
         assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));
         assertEquals(Map.of("INPUT",7L),result.tokenUsage());
     }
+    /** A run started from a checkpoint always bundles its start (amendment 3): an empty line from one is never a ready. */
+    @Test void anEmptyCheckpointFromACheckpointStartFails(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var fromCheckpoint=new RunCommand.ExecuteWorkRun(COMMAND.execution().fromCheckpoint("TEST-previous","b".repeat(40)),COMMAND.work()).allowingEmpty();
+        var result=assertInstanceOf(RunResult.RunFailed.class,launcher.launchHeld(fromCheckpoint,RunObserver.IGNORING,unit->{}));
+        assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));
+    }
     @Test void anOrdinaryCheckpointIsNeverEmpty(){
         assertFalse(assertInstanceOf(RunResult.RunWorkReady.class,launcher.launchHeld(COMMAND.allowingEmpty(),RunObserver.IGNORING,unit->{})).empty());
     }
