@@ -1165,7 +1165,9 @@ export interface RunListEntry {
   prUrl: string | null;
   prError: string | null;
   /** Absent on standalone runs and older servers; these are observed held-build facts. */
-  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null } | null;
+  /** stepIndex (0-based) and stepTotal name the plan step a run built (M4 slice 3); null or absent for any other build. */
+  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null;
+    stepIndex?: number | null; stepTotal?: number | null } | null;
 }
 
 export interface RunFilter {

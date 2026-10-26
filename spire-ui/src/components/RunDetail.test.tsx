@@ -83,6 +83,20 @@ it('shows the retained checkpoint and stopped compute while publication waits', 
   expect(screen.queryByText('Succeeded')).toBeNull();
 });
 
+// A plan step's run says which step it built (M4 slice 3, §6.9).
+it('names the plan step a run built', async () => {
+  show(runView({ status: 'awaiting_delivery', pushedRef: null, endedAt: null,
+    publication: { workItemId: 'TEST-work', checkpointHead: 'a'.repeat(40), readyAt: '2026-09-14T02:00:00Z', activeWallSeconds: 17, stepIndex: 1, stepTotal: 4 } }));
+  await loaded();
+  expect(screen.getByRole('region', { name: 'Build checkpoint' })).toHaveTextContent('Plan step 2 of 4');
+});
+it('names no plan step for a build that is none', async () => {
+  show(runView({ status: 'awaiting_delivery', pushedRef: null, endedAt: null,
+    publication: { workItemId: 'TEST-work', checkpointHead: 'a'.repeat(40), readyAt: null, activeWallSeconds: null, stepIndex: null, stepTotal: null } }));
+  await loaded();
+  expect(screen.getByRole('region', { name: 'Build checkpoint' })).not.toHaveTextContent('Plan step');
+});
+
 it('does not invent an agent start for an older finished run', async () => {
   show(runView({ status: 'succeeded', endedAt: '2026-09-11T10:03:00Z' }));
   await loaded();

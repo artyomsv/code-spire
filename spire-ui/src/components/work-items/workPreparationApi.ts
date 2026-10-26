@@ -90,3 +90,19 @@ export const composePreparation = (id: string, expectedRevision: number) =>
   read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation/compose?expectedRevision=${expectedRevision}`, { method: 'POST' });
 export const registerPreparation = (id: string, input: Omit<Preparation, 'registeredBy'> & { expectedRevision: number }) =>
   read<{ reason: string }>(`/api/work-items/${encodeURIComponent(id)}/preparation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+
+/** What a plan step's agent said it decided (M4 slice 3, §6.8): agent-written text, shown only as text. */
+export interface StepSummary { decisions: string[]; alternativesRejected: string[]; deviations: string[] }
+/** One plan step as the Build step shows it (§6.10). */
+export interface StepRow {
+  index: number;
+  title: string;
+  state: 'waiting' | 'building' | 'verifying' | 'passed' | 'empty' | 'failed';
+  /** The commit the step left; null while it has none. */
+  head: string | null;
+  /** recorded or summary_missing; null before the step's run was ready. */
+  summaryState: string | null;
+  summary: StepSummary | null;
+}
+export interface WorkStepsView { rows: StepRow[] }
+export const workSteps = (id: string) => read<WorkStepsView>(`/api/work-items/${encodeURIComponent(id)}/steps`);

@@ -130,7 +130,7 @@ describe('plan run and revision reasons (M4 slice 3)', () => {
 });
 
 describe('plan step reasons (M4 slice 3)', () => {
-  it.each(['step_run_failed', 'step_checkpoint_lost'])('%s has a sentence', reason => {
+  it.each(['step_run_failed', 'step_checkpoint_lost', 'plan_produced_no_change'])('%s has a sentence', reason => {
     expect(workReason(reason)).not.toBe(reason);
   });
   it('no longer says a plan of steps cannot be built', () => {

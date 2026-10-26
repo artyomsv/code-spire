@@ -78,6 +78,24 @@ class HeldRunLauncherTest {
         runtime.publisherLines=List.of();var result=assertInstanceOf(RunResult.RunFailed.class,launch());
         assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));assertEquals(Map.of("INPUT",7L),result.tokenUsage());
     }
+    /** The held publisher's empty checkpoint at the base (M4 slice 3, §6.7). */
+    static final String EMPTY_CHECKPOINT="{\"event\":\"checkpoint\",\"head\":\""+"b".repeat(40)+"\",\"changed\":[],\"empty\":true}";
+    @Test void anEmptyCheckpointIsReady(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var ready=assertInstanceOf(RunResult.RunWorkReady.class,launcher.launchHeld(COMMAND.allowingEmpty(),RunObserver.IGNORING,unit->{}));
+        assertTrue(ready.empty());assertEquals("b".repeat(40),ready.head());assertNull(ready.startFromHead());
+        assertEquals(Map.of("INPUT",7L),ready.tokenUsage());
+    }
+    /** Only a plan step may finish empty (decision 14): a forged or misrouted empty line fails as today's idle build. */
+    @Test void anEmptyCheckpointWithoutTheAllowanceFails(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var result=assertInstanceOf(RunResult.RunFailed.class,launch());
+        assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));
+        assertEquals(Map.of("INPUT",7L),result.tokenUsage());
+    }
+    @Test void anOrdinaryCheckpointIsNeverEmpty(){
+        assertFalse(assertInstanceOf(RunResult.RunWorkReady.class,launcher.launchHeld(COMMAND.allowingEmpty(),RunObserver.IGNORING,unit->{})).empty());
+    }
     @Test void aRefusedCheckpointCannotBecomeReadiness(){
         runtime.publisherLines=List.of(CHECKPOINT,"{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"TEST-file\",\"kind\":\"MODIFIED\"}]}");
         assertTrue(assertInstanceOf(RunResult.RunFinished.class,launch()).refused());

@@ -193,6 +193,85 @@ class WorkStepLifecycleTest {
                 "a land fix completes no step");
     }
 
+    /** The item as its current step's build left it: ready at {@code head}, before the step loop decides (§6.7). */
+    static WorkItemEvent buildReady(WorkItemEvent item, String run, String head) {
+        WorkProgress progress = new WorkProgress(UUID.randomUUID(), "build", "completed", false, Instant.EPOCH, 3, item.steps().index(), 0, 0, 0)
+                .withExecution(new WorkExecution(run, new WorkRunBinding("TEST-item", 1, UUID.randomUUID(), "c".repeat(64)), head, null, null, null, null));
+        return at(item, "build", "awaiting_input", "phase_completed", progress);
+    }
+
+    static WorkSteps withEmpty(WorkSteps steps, String run, String head, boolean holdsBundle) {
+        WorkExecution execution = new WorkExecution(run, new WorkRunBinding("TEST-item", 1, UUID.randomUUID(), "c".repeat(64)), head, null, null, null, null);
+        return steps.completedWith(new WorkSteps.StepResult(steps.index(), execution, true, holdsBundle));
+    }
+
+    @Test
+    void anIdleLaterStepIsEmpty() {
+        WorkItemEvent ready = buildReady(item("auto", "auto", completed(3, 1)), "TEST-run-2", "1".repeat(40));
+
+        WorkItemEvent next = WorkStepLifecycle.next(ready);
+
+        assertNotNull(next, "a head equal to the step's start is an empty step, decided by the step loop");
+        assertEquals("STEP_EMPTY", next.milestone());
+        assertEquals("build", next.phase(), "verify is skipped: the next step builds");
+        assertEquals(2, next.steps().index());
+        WorkSteps.StepResult empty = next.steps().completed().get(1);
+        assertTrue(empty.empty());
+        assertTrue(empty.holdsBundle(), "a checkpoint-started run holds the chain, so the next step starts from it");
+        assertEquals("TEST-run-2", next.steps().chainRun().orElseThrow().execution().runId());
+        assertEquals(ready.progress().steps() + 1, next.progress().steps(), "an empty step completes and counts");
+    }
+
+    @Test
+    void anEmptyStepSkipsVerify() {
+        WorkItemEvent ready = buildReady(item("auto", "auto", WorkSteps.of(3)), "TEST-run-1", BASE);
+
+        WorkItemEvent next = WorkStepLifecycle.next(ready);
+
+        assertNotNull(next);
+        assertEquals("build / awaiting_input / STEP_EMPTY", next.phase() + " / " + next.workflowStatus() + " / " + next.milestone());
+        assertFalse(next.steps().completed().getFirst().holdsBundle(), "a base-started empty run holds nothing");
+        assertTrue(next.steps().chainRun().isEmpty(), "so the next step starts from the base");
+    }
+
+    @Test
+    void aStepThatCommittedStillVerifies() {
+        assertNull(WorkStepLifecycle.next(buildReady(item("auto", "auto", completed(3, 1)), "TEST-run-2", "b".repeat(40))));
+    }
+
+    @Test
+    void everyStepEmptyProducesNoChange() {
+        WorkSteps twoEmpty = withEmpty(withEmpty(WorkSteps.of(3), "TEST-run-1", BASE, false), "TEST-run-2", BASE, false);
+
+        WorkItemEvent next = WorkStepLifecycle.next(buildReady(item("auto", "auto", twoEmpty), "TEST-run-3", BASE));
+
+        assertEquals("build / awaiting_input / plan_produced_no_change", next.phase() + " / " + next.workflowStatus() + " / " + next.reason());
+        assertEquals("PLAN_PRODUCED_NO_CHANGE", next.milestone());
+        assertTrue(next.steps().done());
+    }
+
+    @Test
+    void anEmptyLastStepDeliversTheLastChange() {
+        WorkItemEvent next = WorkStepLifecycle.next(buildReady(item("auto", "auto", completed(3, 2)), "TEST-run-3", "2".repeat(40)));
+
+        assertEquals("deliver", next.phase());
+        WorkExecution delivered = next.progress().execution();
+        assertEquals("TEST-run-3", delivered.runId(), "the newest run holding a bundle publishes the chain");
+        assertEquals("2".repeat(40), delivered.head(), "the last change, never the empty step's own");
+        assertTrue(delivered.verification().passed(), "with that change's passed verification");
+    }
+
+    @Test
+    void anEmptyReadyIsAcceptedOnlyOnAStepsStart() {
+        WorkItemEvent building = building(item("auto", "auto", completed(3, 1)));
+
+        assertTrue(WorkStepLifecycle.acceptsEmpty(building, false, "1".repeat(40)));
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building, false, "b".repeat(40)), "an empty ready off the step's start");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building, true, "1".repeat(40)), "a land fix is never empty");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", null)), false, BASE), "a composed build is never empty");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", completed(3, 3))), false, "3".repeat(40)), "a finished cursor");
+    }
+
     @Test
     void onlyABindingSixPlanGetsACursor() {
         WorkItemEvent stepsPlan = item("auto", "auto", null);

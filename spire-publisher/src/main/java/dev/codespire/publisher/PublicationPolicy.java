@@ -51,6 +51,11 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
                 fullShaOrNull(mergedBaseTip), startHead);
     }
 
+    /** RED stub: a held plan step that may finish with no commit. */
+    PublicationPolicy allowingEmpty() {
+        return this;
+    }
+
     private static String fullShaOrNull(String mergedBaseTip) {
         if (mergedBaseTip != null && !mergedBaseTip.matches("[0-9a-f]{40}")) {
             throw new IllegalStateException("SPIRE_MERGED_BASE_TIP must be a full sha");

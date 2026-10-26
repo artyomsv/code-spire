@@ -217,6 +217,11 @@ public final class PublisherOutcome {
         return refused() || failedAfterCheckpoint ? Optional.empty() : Optional.ofNullable(checkpointHead);
     }
 
+    /** RED stub: whether the last checkpoint said the build committed nothing. */
+    public boolean checkpointEmpty() {
+        return false;
+    }
+
     public List<String> changedPaths() {
         return List.copyOf(changedPaths);
     }

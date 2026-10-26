@@ -219,8 +219,11 @@ public class FactoryRunProjection {
                           Instant startedAt, Instant endedAt, RunCost cost, RunSpend spend, RunPublication publication) {
     }
 
-    /** Held-build facts, distinct from a remote push and from a completed work item. */
-    public record RunPublication(String workItemId,String checkpointHead,Instant readyAt,Long activeWallSeconds) {}
+    /**
+     * Held-build facts, distinct from a remote push and from a completed work item. {@code stepIndex} is the plan step the
+     * run built (0-based) and {@code stepTotal} the item's plan length, both null for a build that is no plan step (§6.9).
+     */
+    public record RunPublication(String workItemId,String checkpointHead,Instant readyAt,Long activeWallSeconds,Integer stepIndex,Integer stepTotal) {}
 
     /**
      * One row of the runs list — a LIST shape, deliberately not {@link RunView}.
@@ -1176,6 +1179,6 @@ public class FactoryRunProjection {
 
     private static RunPublication publicationOf(ResultSet rs) throws SQLException {
         String item=rs.getString("work_item_id");
-        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class));
+        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class),null,null);
     }
 }

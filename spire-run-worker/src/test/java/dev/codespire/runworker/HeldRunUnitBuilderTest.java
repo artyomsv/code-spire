@@ -96,6 +96,16 @@ class HeldRunUnitBuilderTest {
         RunUnitSpec fix=builder.buildHeld(new RunCommand.ExecuteWorkRun(landFix("TEST-run").execution().fromCheckpoint("TEST-previous","c".repeat(40)),binding),new CodexAdapter());
         assertEquals("c".repeat(40),fix.publisher().environment().get("SPIRE_START_HEAD"),"on an existing branch too");
     }
+    /** Only a plan step may finish empty (M4 slice 3, decision 14): its held publisher alone is told so. */
+    @Test void onlyAnEmptyAllowedRunTellsThePublisher() throws Exception {
+        RunUnitSpec step=builder.buildHeld(command("TEST-run",null).allowingEmpty(),new CodexAdapter());
+        assertEquals("1",step.publisher().environment().get("SPIRE_EMPTY_ALLOWED"));
+        assertFalse(step.agent().environment().containsKey("SPIRE_EMPTY_ALLOWED"),"the agent is not told");
+        assertFalse(builder.buildHeld(command("TEST-run",null),new CodexAdapter()).publisher().environment().containsKey("SPIRE_EMPTY_ALLOWED"),
+                "an ordinary held build keeps today's missing-checkpoint failure");
+        assertFalse(builder.buildHeld(landFix("TEST-run"),new CodexAdapter()).publisher().environment().containsKey("SPIRE_EMPTY_ALLOWED"),
+                "a land fix is never empty");
+    }
     @Test void aNewBranchItemBuildFetchesNothingExtra() throws Exception {
         RunUnitSpec unit=builder.buildHeld(command("TEST-run",null),new CodexAdapter());
         assertFalse(unit.init().environment().containsKey("SPIRE_FETCH_BRANCH"));

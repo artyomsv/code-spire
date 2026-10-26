@@ -192,6 +192,21 @@ class WorkRunWorkerTest {
         worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
         assertEquals("TEST-previous",launched.execution().startFromRunId());
     }
+    /** An empty step from the base holds no bundle (M4 slice 3, §6.7): nothing can start from it or publish it, so it is released. */
+    @Test void anEmptyBaseStepReleasesItsUnit(){
+        buildResult=ready.withEmpty(true);
+        execute();
+        assertEquals(command.runId(),retired,"the empty unit is closed locally");
+        assertEquals(1,deletions,"and its workspace released, not held until the watchdog");
+        assertTrue(events.contains("released"));assertTrue(events.contains("release-lease"));
+        assertTrue(reported.contains(buildResult),"the empty ready itself is still sent");
+    }
+    /** An empty step that started from a checkpoint holds the whole chain: the next step starts from it (decision 9). */
+    @Test void anEmptyCheckpointStepKeepsItsUnit(){
+        buildResult=ready.withStartFromHead(ready.head()).withEmpty(true);
+        execute();
+        assertNull(retired);assertEquals(0,deletions);
+    }
     @Test void aFirstBuildRetiresNothing(){
         execute();
         assertNull(retired);assertEquals(0,deletions);

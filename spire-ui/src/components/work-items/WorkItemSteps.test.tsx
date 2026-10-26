@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Gate } from './approvalsApi';
 import WorkItemSteps from './WorkItemSteps';
-import type { WorkExecution } from './workPreparationApi';
+import * as preparationApi from './workPreparationApi';
+import type { StepRow, WorkExecution } from './workPreparationApi';
 
 afterEach(cleanup);
 const ASSISTED = { INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto', VERIFY: 'auto', DELIVER: 'draft_pr', REVIEW: 'auto', LAND: 'approve' };
@@ -193,4 +194,25 @@ it('shows the note of a land retry on the Land step', () => {
     events: [{ sequence: 30, type: 'LAND_RETRY_REQUESTED', reason: 'approval_required', occurredAt: '2026-10-23T12:00:00Z', phase: 'land',
       workflowStatus: 'waiting_approval', operator: 'TEST-operator-subject', note: 'TEST-the code owners approved', generation: 1 }] }));
   expect(step('Land').getByText(/^Land retry requested by TEST-operator-subject/)).toHaveTextContent('TEST-the code owners approved');
+});
+
+// A plan the factory wrote builds step by step (M4 slice 3, §6.10): the Build step shows one row per plan step.
+it('the build step lists plan steps', async () => {
+  const rows: StepRow[] = [
+    { index: 0, title: 'TEST-step-1', state: 'passed', head: '1'.repeat(40), summaryState: 'recorded', summary: { decisions: ['TEST-decision'], alternativesRejected: [], deviations: [] } },
+    { index: 1, title: 'TEST-step-2', state: 'building', head: null, summaryState: null, summary: null },
+  ];
+  const read = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows });
+  const stored = (key: string) => ({ sha256: 'c'.repeat(64), origin: 'STORED' as const, storedId: 'TEST-stored-' + key,
+    location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
+  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null, preparation: { specification: stored('81'), plan: stored('81'),
+    baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'system:draft@1', bindingVersion: 6 } }));
+  expect(await step('Build').findByText(/TEST-step-1/)).toBeInTheDocument();
+  expect(step('Build').getByText(/TEST-step-2/)).toBeInTheDocument();
+  expect(read).toHaveBeenCalledWith('TEST-item');
+});
+it('asks for no plan steps for a one-step preparation', () => {
+  const read = vi.spyOn(preparationApi, 'workSteps');
+  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null }));
+  expect(read).not.toHaveBeenCalled();
 });

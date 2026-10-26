@@ -28,6 +28,14 @@ class WorkReadyProtocolTest {
         assertEquals(summary,read.stepSummary());
     }
 
+    @Test void aReadyRoundTripsItsEmptyFlag() throws Exception {
+        var ready = new RunResult.RunWorkReady("TEST-run",WORK,"b".repeat(40),List.of(),Map.of("INPUT",7L),12).withEmpty(true);
+        var json = new ObjectMapper();
+        var read = (RunResult.RunWorkReady) json.readValue(json.writeValueAsString(ready),RunResult.class);
+        assertTrue(read.empty());
+        assertEquals(ready,read);
+    }
+
     @Test void aReadyWithoutASummaryReadsBackWithout() throws Exception {
         // A ready written before the summary existed has no such field; it is read as no summary, never an empty one.
         String older = "{\"type\":\"RunWorkReady\",\"runId\":\"TEST-run\",\"work\":{\"workItemId\":\"TEST-work\",\"generation\":1,"

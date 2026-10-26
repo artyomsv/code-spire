@@ -192,6 +192,62 @@ class HeldPublicationTest {
         assertFalse(output.toString().contains("START_NOT_DESCENDED"), output.toString());
     }
 
+    /** A plan step whose agent committed nothing (M4 slice 3, §6.7, decision 14): an empty checkpoint at the base. */
+    @Test void theHeldPublisherSignalsAnEmptyFirstStep() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        assertEquals(0, PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("\"event\":\"checkpoint\",\"head\":\"" + f.base + "\""), lines);
+        assertTrue(lines.contains("\"empty\":true"), lines);
+        assertFalse(lines.contains("\"event\":\"failed\""), lines);
+        assertEquals("", ref(f.origin, BRANCH));
+    }
+
+    @Test void aBundleIsNeverEmpty() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        String head = git(f.work, "rev-parse", "HEAD");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        assertEquals(0, PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("\"head\":\"" + head + "\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    /** Only a plan step may finish empty (decision 14): every other held build keeps today's missing checkpoint. */
+    @Test void anIdleBuildWithoutTheAllowanceStillFails() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertFalse(lines.contains("\"event\":\"checkpoint\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    /** An unreadable bundle is still a bundle: the agent committed something, so the run is never reported empty. */
+    @Test void anUnreadableBundleIsNotEmpty() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve("1.bundle"), "TEST not a bundle");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("BUNDLE_UNREADABLE"), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    private PublisherConfig config(Fixture f) {
+        return new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(), 10_000_000L, null, dir, null);
+    }
+
     private PublicationPolicy permit(String head, Clock clock) {
         return PublicationPolicy.permitted(head, NOW, NOW.plusSeconds(60), clock);
     }

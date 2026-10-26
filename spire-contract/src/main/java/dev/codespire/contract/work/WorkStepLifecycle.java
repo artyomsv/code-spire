@@ -53,6 +53,11 @@ public final class WorkStepLifecycle {
         return stepPassed(completed);
     }
 
+    /** RED stub: whether an empty ready may complete the current step. */
+    public static boolean acceptsEmpty(WorkItemEvent item, boolean landFix, String head) {
+        return true;
+    }
+
     /** Counted on completion, never on a start (A11): a retried step counts once. */
     private static WorkItemEvent stepPassed(WorkItemEvent item) {
         WorkExecution passed = item.progress().execution();

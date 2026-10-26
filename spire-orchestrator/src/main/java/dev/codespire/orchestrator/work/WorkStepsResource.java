@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.work;
 
 import dev.codespire.contract.event.EventEnvelope;
+import dev.codespire.contract.work.StepSummary;
 import dev.codespire.contract.work.WorkItemEvent;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -24,13 +25,19 @@ public class WorkStepsResource {
     @Inject WorkItemStore store;
     @Inject WorkStepSummaries summaries;
 
-    public record View(List<WorkStepSummaries.Step> steps) {}
+    /**
+     * One plan step as the Build step shows it: its title, state ({@code waiting}, {@code building}, {@code verifying},
+     * {@code passed}, {@code empty}, {@code failed}), the commit it left, and its newest summary.
+     */
+    public record Row(int index, String title, String state, String head, String summaryState, StepSummary summary) {}
+
+    public record View(List<WorkStepSummaries.Step> steps, List<Row> rows) {}
 
     @GET
     public View read(@PathParam("id") String id) {
         List<EventEnvelope> history = store.history(id);
         if (history.isEmpty()) throw new NotFoundException();
         WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
-        return new View(summaries.list(id, item.generation()));
+        return new View(summaries.list(id, item.generation()), List.of());
     }
 }

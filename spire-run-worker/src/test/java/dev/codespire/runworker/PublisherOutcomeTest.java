@@ -24,6 +24,24 @@ class PublisherOutcomeTest {
         assertFalse(outcome.refused());
     }
 
+    /** A plan step that committed nothing (M4 slice 3, §6.7): the held publisher's checkpoint says so. */
+    @Test
+    void readsAnEmptyCheckpoint() {
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "a".repeat(40) + "\",\"changed\":[],\"empty\":true}");
+
+        assertEquals("a".repeat(40), outcome.checkpointHead().orElseThrow());
+        assertTrue(outcome.checkpointEmpty());
+    }
+
+    @Test
+    void aLaterCheckpointWithCommitsIsNotEmpty() {
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "a".repeat(40) + "\",\"changed\":[],\"empty\":true}");
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "b".repeat(40) + "\",\"changed\":[]}");
+
+        assertFalse(outcome.checkpointEmpty(), "the last checkpoint decides");
+        assertFalse(new PublisherOutcome().checkpointEmpty(), "no checkpoint is not an empty one");
+    }
+
     @Test
     void theLastPushWins() {
         // Continuous checkpointing means several pushes per run, each superseding the last.
