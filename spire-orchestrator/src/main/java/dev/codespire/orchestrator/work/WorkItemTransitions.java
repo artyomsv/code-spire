@@ -186,6 +186,8 @@ public class WorkItemTransitions {
                     next=next.readmit();
                     store.appendDecision(c,history,next,"readmit:"+UUID.randomUUID());
                     history=store.history(id);
+                    // The readmit rewound the cursor to step 1: a mode read before it would skip step 1's build gate.
+                    mode=entryMode(history);
                 }
                 if(result!=null && !result.successful() && "verify".equals(item.phase())
                         && result.execution()!=null && result.execution().verification()!=null) {

@@ -44,13 +44,15 @@ constructor carries none, and `withStepSummary` rebuilds with it.
 
 A plan built step by step (M4 slice 3, §6.6, A2) adds three wire components. `ExecuteWorkRun.checkpointRequired`
 (`requiringCheckpoint()`, refused without `startFromRunId`) marks a later step's start: the run worker never replaces
-it with the base, and a start whose held unit is gone fails before any launch as `CHECKPOINT_MISSING`.
+it with the base, and a start whose held unit is gone fails before any launch as `CHECKPOINT_MISSING` (one released
+after that check fails the launch instead).
 `ExecuteWorkRun.emptyAllowed` (`allowingEmpty()`) marks every plan step outside a land fix; slice 10 reads it. Both are
 false on every other build and on a command decoded from before them, and every wither carries both.
 `RunWorkReady.startFromHead` (`withStartFromHead`) is the head the build started from after any base fallback, null
 for a build from the base. The held publisher is told the same head as `SPIRE_START_HEAD` and refuses a checkpoint that
 does not descend from it as `START_NOT_DESCENDED`; the orchestrator refuses a plan step's ready whose `startFromHead`
-is not the required start it recorded with the dispatch claim, `phase_evidence_mismatch`.
+is not the required start it recorded with the dispatch claim, `phase_evidence_mismatch` on the run effect, and fails
+the step as a failed run does: the verify gate opens on the chain's head, `UNVERIFIED / step_run_failed`.
 
 `ExecuteWorkDraftRun(runId, execution, draft)` (M4 slice 3) is a specification or plan run, also on
 `cs.run-commands`. `draft` is a `WorkDraftBinding(workItemId, generation, attemptId, kind, provisionalDigest)`:

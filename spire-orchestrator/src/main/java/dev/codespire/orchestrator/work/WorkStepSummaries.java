@@ -21,7 +21,8 @@ import javax.sql.DataSource;
  * plan, stored when the run's ready result is applied. The agent wrote it, so it is encrypted under an AAD naming the
  * item, generation, step and run, and never logged. A ready without one records {@code summary_missing}, so the steps
  * view can say so; the step still completes. The key makes a redelivered ready insert nothing. The step index is the
- * one the run was dispatched for ({@code factory_run.step_index}, slice 9), 0 for a build that is not a plan step.
+ * one the run was dispatched for ({@code factory_run.step_index}, slice 9), 0 for the build of an item without a plan
+ * cursor; a land fix after a plan records none.
  */
 @ApplicationScoped
 public class WorkStepSummaries {
@@ -59,17 +60,25 @@ public class WorkStepSummaries {
         }
     }
 
-    /** Records the ready's summary under the step its run built. */
+    /**
+     * Records the ready's summary under the step its run built: 0 on an item without a plan cursor. A build of a
+     * plan's item that is no step of it, a land fix, records nothing: under 0 it stood in for step 1's summary, since
+     * the steps view shows each step's newest row.
+     */
     void recordBuilt(Connection c, RunResult.RunWorkReady ready, WorkItemEvent item) throws SQLException {
-        record(c, ready, stepIndexOf(c, ready.runId()));
+        Integer step = stepIndexOf(c, ready.runId());
+        if (step == null && item.steps() != null) return;
+        record(c, ready, step == null ? 0 : step);
     }
 
-    /** The plan step a run was dispatched for; 0 for a build that is not a plan step. */
-    static int stepIndexOf(Connection c, String runId) throws SQLException {
+    /** The plan step a run was dispatched for; null for a build that is not a plan step. */
+    static Integer stepIndexOf(Connection c, String runId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("SELECT step_index FROM factory_run WHERE run_id=?")) {
             ps.setString(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
+                if (!rs.next()) return null;
+                int step = rs.getInt(1);
+                return rs.wasNull() ? null : step;
             }
         }
     }
