@@ -77,7 +77,7 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
      * count start again (decision 12), so no build of the next generation reads this one's cursor; runs and spend accumulate.
      */
     public WorkItemEvent readmit() {
-        boolean reused = draft == null || registeredFromDraft() && stepsFit();
+        boolean reused = draft == null || stepsFit();
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
                 authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false).withSteps(0),
                 reused?preparation:null,control,reused?draft:WorkDraft.admitted(),reused && steps!=null?steps.restarted():null);
