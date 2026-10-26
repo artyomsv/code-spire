@@ -82,6 +82,24 @@ class PublicationPolicyTest {
         assertThrows(IllegalStateException.class, () -> PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of("SPIRE_START_HEAD", "abc")));
     }
 
+    /** Only a held plan step's trusted environment lets an agent finish with no commit (M4 slice 3, decision 14). */
+    @Test void aHeldPlanStepReadsEmptyAllowedFromTheTrustedEnvironment() {
+        String start = "c".repeat(40);
+        PublicationPolicy step = PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                Map.of("SPIRE_EMPTY_ALLOWED", "1", "SPIRE_START_HEAD", start));
+        assertTrue(step.emptyAllowed(), "a plan step may report an empty checkpoint");
+        assertEquals(PublicationPolicy.Mode.HELD, step.mode());
+        assertEquals(start, step.startHead(), "allowing empty keeps the chain it started from");
+        assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of()).emptyAllowed(),
+                "every other held build keeps the missing checkpoint");
+        for (String other : new String[]{"0", "true", " "}) {
+            assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                    Map.of("SPIRE_EMPTY_ALLOWED", other)).emptyAllowed(), other);
+        }
+        assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.AUTOMATIC,
+                Map.of("SPIRE_EMPTY_ALLOWED", "1")).emptyAllowed(), "only a held build reports an empty checkpoint");
+    }
+
     @Test void aHeldLandFixGatesWithTheTrustedBaseTip() {
         // The held build sees the base merge first; without the tip it refuses before any permit exists.
         String tip = "c".repeat(40);
