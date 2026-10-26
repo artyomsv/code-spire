@@ -89,6 +89,30 @@ class StepSummariesTest {
     }
 
     @Test
+    void aCredentialSplitByAControlCharacterIsScrubbed() {
+        // Stripping joins the two halves, so the scrub must run on the stripped text, not before it.
+        ObjectNode root = JSON.createObjectNode();
+        root.putArray("decisions").add("TEST-bell TEST-key-\u0007abcdefgh").add("TEST-ansi TEST-key-\u001B[0mabcdefgh");
+
+        StepSummary summary = parsed(root.toString());
+
+        assertEquals(2, summary.decisions().size());
+        for (String item : summary.decisions()) assertFalse(item.contains(KEY), "a split credential was joined back: " + item);
+    }
+
+    @Test
+    void aCredentialAtTheCutIsScrubbed() {
+        // The key starts 10 characters before the cut: cutting first would leave its head behind.
+        ObjectNode root = JSON.createObjectNode();
+        root.putArray("decisions").add("x".repeat(StepSummary.MAX_ITEM_CHARS - 10) + KEY);
+
+        String item = parsed(root.toString()).decisions().getFirst();
+
+        for (int length = SecretScrub.MIN_PLAUSIBLE_SECRET_LENGTH; length <= KEY.length(); length++)
+            assertFalse(item.contains(KEY.substring(0, length)), "a head of the credential survived the cut: " + item);
+    }
+
+    @Test
     void aBacktickRunIsKeptVerbatim() {
         ObjectNode root = JSON.createObjectNode();
         root.putArray("decisions").add("```TEST-text```");

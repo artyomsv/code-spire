@@ -121,6 +121,20 @@ class ReadOnlyRunLauncherTest {
     }
 
     @Test
+    void aCredentialSplitByAControlCharacterIsScrubbedFromTheArtifact() {
+        // The publisher line's JSON escape decodes to a BEL inside the model key; stripping it later would rejoin the key.
+        runtime.publisherLines = List.of(artifactLine("TEST-spec quoting "
+                + RunLauncherTest.MODEL_KEY.substring(0, 10) + "\\u0007" + RunLauncherTest.MODEL_KEY.substring(10)));
+
+        RunResult.RunWorkArtifact artifact = assertInstanceOf(RunResult.RunWorkArtifact.class,
+                launcher.launchReadOnly(DRAFT, observer));
+
+        assertTrue(artifact.text().startsWith("TEST-spec quoting"), "the text itself must survive");
+        assertFalse(artifact.text().contains("\u0007"), "the control character must go before the scrub, not after it");
+        assertFalse(artifact.text().contains(RunLauncherTest.MODEL_KEY), "a split model key reached the artifact");
+    }
+
+    @Test
     void aReadOnlyRunWithoutAnArtifactFails() {
         runtime.publisherLines = List.of("{\"event\":\"handoff_file_refused\",\"file\":\"artifact.md\",\"why\":\"SYMLINK\"}");
 
