@@ -252,7 +252,8 @@ public class RunLauncher {
                         .withUsage(finished.tokenUsage());
             } else if (outcome.checkpointHead().isPresent()) {
                 result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
-                        finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted));
+                        finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted))
+                        .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)));
             } else {
                 result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
                         .withUsage(finished.tokenUsage());

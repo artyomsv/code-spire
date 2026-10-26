@@ -123,6 +123,7 @@ abstract class WorkFixture {
                 execute("DELETE FROM work_land_observation WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_verify_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_prepare_effect WHERE work_item_id=?",owned);
+                execute("DELETE FROM work_step_summary WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_delivery_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM work_run_effect WHERE work_item_id=?",owned);
                 execute("DELETE FROM llm_charge WHERE subject_kind='RUN' AND subject_id IN (SELECT run_id FROM factory_run WHERE work_item_id=?)",owned);

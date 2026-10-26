@@ -31,10 +31,16 @@ public sealed interface RunResult {
      * A completed build whose checkpoint remains unpublished. This is not a terminal publication
      * result. The same measured token map rides the eventual terminal result under the same charge
      * key; active wall time excludes the human hold between these two observations.
+     *
+     * <p>{@code stepSummary} is what the agent said it decided (M4 slice 8, §6.8), already capped and scrubbed by the
+     * worker. Null means the build handed over none, or none that was a JSON object: the orchestrator records that as
+     * {@code summary_missing}, never as an empty summary. A ready written before the field existed reads as null.
+     * The six-component constructor carries none; rebuild through {@link #withStepSummary}, which enumerates the
+     * components once, next to the record.
      */
     record RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                         List<String> changedPaths, Map<String, Long> tokenUsage,
-                        long activeWallSeconds) implements RunResult {
+                        long activeWallSeconds, dev.codespire.contract.work.StepSummary stepSummary) implements RunResult {
         public RunWorkReady {
             if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A ready run needs its identity");
             Objects.requireNonNull(work, "A ready run needs its work binding");
@@ -48,12 +54,14 @@ public sealed interface RunResult {
             if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
         }
 
-        public dev.codespire.contract.work.StepSummary stepSummary() {
-            throw new UnsupportedOperationException("RED");
+        public RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
+                            List<String> changedPaths, Map<String, Long> tokenUsage, long activeWallSeconds) {
+            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null);
         }
 
+        /** Rebuild carrying the agent's step summary, enumerating the components once. */
         public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
-            throw new UnsupportedOperationException("RED");
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary);
         }
     }
 

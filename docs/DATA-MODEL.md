@@ -63,7 +63,7 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
-## Specification, plan and steps (M4 slice 3, orchestrator V96–V99)
+## Specification, plan and steps (M4 slice 3, orchestrator V96–V100)
 
 V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
 existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
@@ -102,6 +102,14 @@ tracker's evidence or ticket read, or the base branch head) leaves the row `pend
 a deferral and sets `retry_after` 30 seconds out, doubling each time; the dispatcher drains only rows whose
 `retry_after` has passed. The fifth deferral in a row refuses the row and stops the item with the read's reason. A
 refusal the setup settles (`build_defaults_missing`, `repository_account_missing`, a changed policy) stops at once.
+
+V100 adds `work_step_summary`, keyed by `(work_item_id, generation, step_index, run_id)`: what a build step's agent
+said it decided (slice 8). The row is written when the run's ready result is applied, in the transaction that
+acknowledges it, so a replay inserts nothing (`ON CONFLICT DO NOTHING`). `summary` is the `StepSummary` JSON,
+Tink-encrypted under `work-step-summary:<item>:<generation>:<step>:<run>`; a ready without one is state
+`summary_missing` with no summary, so the steps view (`GET /api/work-items/{id}/steps`, admin only) can say the
+step recorded no decisions. The steps view returns the newest run's row per step of the current generation.
+`step_index` is 0 until the step cursor exists. The plan named this migration V98; earlier slices took V98 and V99.
 
 The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
 and plan references, the revision counts, the two approvals, the base commit the specification read and the setup

@@ -1,21 +1,100 @@
 package dev.codespire.orchestrator.work;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.work.StepSummary;
+import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.io.IOException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
+import javax.sql.DataSource;
 
-/** RED: nothing is stored yet. */
+/**
+ * Each build step's summary (M4 slice 8, §6.8, V100): what the agent said it decided, rejected and changed from the
+ * plan, stored when the run's ready result is applied. The agent wrote it, so it is encrypted under an AAD naming the
+ * item, generation, step and run, and never logged. A ready without one records {@code summary_missing}, so the steps
+ * view can say so; the step still completes. The key makes a redelivered ready insert nothing.
+ */
 @ApplicationScoped
 public class WorkStepSummaries {
+    static final String RECORDED = "recorded", MISSING = "summary_missing";
+
+    @Inject DataSource dataSource;
+    @Inject ObjectMapper mapper;
+    @Inject EncryptionService encryption;
+
+    /** One step's newest summary; {@code summary} is null exactly when the state is {@code summary_missing}. */
     public record Step(int stepIndex, String runId, String state, StepSummary summary) {}
 
-    void record(Connection c, RunResult.RunWorkReady ready, int stepIndex) {
-        throw new UnsupportedOperationException("RED");
+    /** A row's identity, which its ciphertext is bound to: a summary moved to another row does not decrypt. */
+    private record Key(String workItemId, long generation, int stepIndex, String runId) {
+        String aad() {
+            return "work-step-summary:" + workItemId + ":" + generation + ":" + stepIndex + ":" + runId;
+        }
     }
 
+    /** Records the ready's summary for this step, or that it had none; a second call for the same run is a no-op. */
+    void record(Connection c, RunResult.RunWorkReady ready, int stepIndex) throws SQLException {
+        Key key = new Key(ready.work().workItemId(), ready.work().generation(), stepIndex, ready.runId());
+        StepSummary summary = ready.stepSummary();
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO work_step_summary(work_item_id,generation,step_index,run_id,summary,state) VALUES (?,?,?,?,?,?)
+                ON CONFLICT (work_item_id,generation,step_index,run_id) DO NOTHING
+                """)) {
+            ps.setString(1, key.workItemId());
+            ps.setLong(2, key.generation());
+            ps.setInt(3, key.stepIndex());
+            ps.setString(4, key.runId());
+            ps.setBytes(5, summary == null ? null : encrypt(summary, key.aad()));
+            ps.setString(6, summary == null ? MISSING : RECORDED);
+            ps.executeUpdate();
+        }
+    }
+
+    /** The newest run's summary of each step of this generation, in step order, decrypted. */
     public List<Step> list(String workItemId, long generation) {
-        throw new UnsupportedOperationException("RED");
+        List<Step> steps = new ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
+                SELECT DISTINCT ON (step_index) step_index,run_id,state,summary FROM work_step_summary
+                WHERE work_item_id=? AND generation=? ORDER BY step_index, created_at DESC, run_id DESC
+                """)) {
+            ps.setString(1, workItemId);
+            ps.setLong(2, generation);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) steps.add(step(rs, workItemId, generation));
+            }
+        } catch (SQLException failure) {
+            throw WorkSourceRegistry.database(failure);
+        }
+        return steps;
+    }
+
+    private Step step(ResultSet rs, String workItemId, long generation) throws SQLException {
+        Key key = new Key(workItemId, generation, rs.getInt(1), rs.getString(2));
+        byte[] stored = rs.getBytes(4);
+        StepSummary summary = stored == null ? null : decrypt(stored, key.aad());
+        return new Step(key.stepIndex(), key.runId(), rs.getString(3), summary);
+    }
+
+    private byte[] encrypt(StepSummary summary, String aad) {
+        try {
+            return encryption.encrypt(mapper.writeValueAsBytes(summary), aad);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot encode a step summary", failure);
+        }
+    }
+
+    private StepSummary decrypt(byte[] stored, String aad) {
+        try {
+            return mapper.readValue(encryption.decrypt(stored, aad), StepSummary.class);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Cannot decode a stored step summary", failure);
+        }
     }
 }

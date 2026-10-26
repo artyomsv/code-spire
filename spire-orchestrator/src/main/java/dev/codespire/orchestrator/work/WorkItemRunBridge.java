@@ -21,6 +21,7 @@ public class WorkItemRunBridge {
     @Inject FactoryRunProjection runs;
     @Inject WorkItemStore store;
     @Inject WorkItemTransitions transitions;
+    @Inject WorkStepSummaries summaries;
 
     /** Validate the immutable dispatch binding before this message can project or charge a run. */
     public boolean acceptsBinding(RunResult result) {
@@ -81,8 +82,13 @@ public class WorkItemRunBridge {
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot decode work run result",failure);}
         if(ready instanceof RunResult.RunWorkReady checkpoint && !readyProcessed) {
             if(!finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
-            try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")) {
-                ps.setString(1,runId);ps.executeUpdate();
+            // The summary (or that there was none, M4 slice 8) commits with the acknowledgement, so a crash before it
+            // replays both, and the summary's key makes the replay insert nothing. Step 0 until the step cursor exists.
+            try(Connection c=dataSource.getConnection()) {
+                c.setAutoCommit(false);
+                summaries.record(c,checkpoint,0);
+                try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")){ps.setString(1,runId);ps.executeUpdate();}
+                c.commit();
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         }
         if(terminal==null || resultProcessed)return;

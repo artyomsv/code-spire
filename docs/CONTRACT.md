@@ -34,6 +34,14 @@ independently of M1 cancellation. Ordinary `ExecuteRun` and standalone /fix reta
 publication path. Readiness and terminal results use `cs.run-results`; transcript facts remain
 on `cs.run-events` and do not become work-item domain events.
 
+`RunWorkReady.stepSummary` (M4 slice 8) is the `StepSummary(decisions, alternativesRejected, deviations)` a build's
+agent wrote to `$SPIRE_STEP_SUMMARY`, reported by the publisher as a `step_summary` line. The run worker parses it
+leniently (unknown fields and non-text items skipped; a value that is not a JSON object is no summary), keeps at
+most 20 items per list, cuts an item over 500 characters on a character boundary with an ellipsis, strips control
+characters and scrubs every credential the run was given. The record refuses anything over those caps. Null means
+no summary, never an empty one, and a ready written before the field existed reads as null; the six-component
+constructor carries none, and `withStepSummary` rebuilds with it.
+
 `ExecuteWorkDraftRun(runId, execution, draft)` (M4 slice 3) is a specification or plan run, also on
 `cs.run-commands`. `draft` is a `WorkDraftBinding(workItemId, generation, attemptId, kind, provisionalDigest)`:
 `kind` is `SPEC` or `PLAN`, and the digest (64 hex) binds the setup revision, the ticket and the kind instead of
