@@ -81,7 +81,6 @@ final class PublisherEnvironments {
         Map<String, String> env = new HashMap<>(publisher.environment());
         if (command.mergedBaseTip() != null) env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
         if (start != null) env.put("SPIRE_START_HEAD", start);
-        if (command.emptyAllowed()) env.put("SPIRE_EMPTY_ALLOWED", "1");
         return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
     }
 
