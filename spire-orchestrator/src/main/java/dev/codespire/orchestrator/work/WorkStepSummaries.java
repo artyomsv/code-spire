@@ -71,6 +71,26 @@ public class WorkStepSummaries {
         record(c, ready, step == null ? 0 : step);
     }
 
+    /**
+     * Whether a completed step of the item's current plan has a ready the bridge has not acknowledged yet (review of
+     * PR 287, M-1). The bridge stores a step's summary with that acknowledgement, after the transition that may already
+     * have made the next step's build pending, so a step dispatched in between would be told for good that its
+     * predecessor decided nothing. The ready of a completed step completed it, so its replay always acknowledges.
+     */
+    static boolean unacknowledgedStep(Connection c, WorkItemEvent item) throws SQLException {
+        if (!WorkStepAssembly.buildsStep(item) || item.steps().completed().isEmpty()) return false;
+        String[] runs = item.steps().completed().stream().map(step -> step.execution().runId()).toArray(String[]::new);
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT 1 FROM work_run_effect WHERE work_item_id=? AND generation=? AND run_id = ANY(?)
+                   AND ready_payload IS NOT NULL AND NOT ready_processed
+                """)) {
+            ps.setString(1, item.workItemId());
+            ps.setLong(2, item.generation());
+            ps.setArray(3, c.createArrayOf("text", runs));
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        }
+    }
+
     /** The plan step a run was dispatched for; null for a build that is not a plan step. */
     static Integer stepIndexOf(Connection c, String runId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("SELECT step_index FROM factory_run WHERE run_id=?")) {

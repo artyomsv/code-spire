@@ -65,6 +65,8 @@ public class WorkRunDispatcher {
                 }
             }
             if(!Objects.equals(read.preparation(),item.preparation()))return null;
+            // A step's prompt carries every earlier step's summary: it waits, still pending, until those are stored (PR 287, M-1).
+            if(WorkStepSummaries.unacknowledgedStep(c,item))return null;
             // Intake may have observed a newer policy while this effect was pending. Compare against
             // the decision which admitted this attempt, not that newer observational projection.
             WorkItemEvent admitted=history.stream().map(event->(WorkItemEvent)event.payload())
