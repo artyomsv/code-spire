@@ -176,19 +176,32 @@ public class WorkPrepareDispatcher {
             refuse(c, effect.attempt(), "run_already_recorded");
             return null;
         }
+        associate(c, runId, binding);
+        markClaimed(c, new ClaimedRun(runId, binding, remote.setup().revision()));
+        return prepared;
+    }
+
+    /** The queued run, the binding it was dispatched under and the setup revision it was bought with. */
+    private record ClaimedRun(String runId, WorkDraftBinding binding, long setupRevision) {}
+
+    /** Ties the queued run to the item and its draft attempt; a run already tied to another is refused. */
+    private static void associate(Connection c, String runId, WorkDraftBinding binding) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("UPDATE factory_run SET work_item_id=?,work_phase_attempt_id=? WHERE run_id=?"
                 + " AND (work_item_id IS NULL OR (work_item_id=? AND work_phase_attempt_id=?))")) {
-            ps.setString(1, item.workItemId()); ps.setObject(2, effect.attempt()); ps.setString(3, runId);
-            ps.setString(4, item.workItemId()); ps.setObject(5, effect.attempt());
+            ps.setString(1, binding.workItemId()); ps.setObject(2, binding.attemptId()); ps.setString(3, runId);
+            ps.setString(4, binding.workItemId()); ps.setObject(5, binding.attemptId());
             if (ps.executeUpdate() != 1) throw new IllegalStateException("Run association already exists");
         }
+    }
+
+    /** Marks the effect claimed before the dispatch: an outcome lost after this is uncertain, never resent. */
+    private static void markClaimed(Connection c, ClaimedRun run) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("UPDATE work_prepare_effect SET state='uncertain',reason='dispatch_claimed',run_id=?,"
                 + "provisional_digest=?,setup_revision=?,updated_at=now() WHERE attempt_id=?")) {
-            ps.setString(1, runId); ps.setString(2, binding.provisionalDigest()); ps.setLong(3, remote.setup().revision());
-            ps.setObject(4, effect.attempt());
+            ps.setString(1, run.runId()); ps.setString(2, run.binding().provisionalDigest()); ps.setLong(3, run.setupRevision());
+            ps.setObject(4, run.binding().attemptId());
             ps.executeUpdate();
         }
-        return prepared;
     }
 
     /** The approved specification as stored, its digest, the setup's checks and the most steps the item can build now (§6.4). */
