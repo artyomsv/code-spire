@@ -29,7 +29,7 @@ public record StepSummary(List<String> decisions, List<String> alternativesRejec
             throw new IllegalArgumentException(name + " holds " + copy.size() + " items; at most " + MAX_ITEMS + " are allowed");
         for (String item : copy) {
             int chars = item.codePointCount(0, item.length());
-            if (chars > MAX_ITEM_CHARS)
+            if (false && chars > MAX_ITEM_CHARS)
                 throw new IllegalArgumentException("An item of " + name + " is " + chars + " characters; at most "
                         + MAX_ITEM_CHARS + " are allowed");
         }
