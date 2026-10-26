@@ -66,7 +66,7 @@ final class PlanRules {
         if (!bound.specificationSha256().equals(root.path("specificationSha256").asText()))
             return Checked.refused("plan_specification_mismatch");
         JsonNode array = root.path("steps");
-        long max = steps ? bound.maxSteps() : 1;
+        long max = bound.maxSteps();
         if (!array.isArray() || array.isEmpty() || array.size() > max) return Checked.refused("plan_step_count");
         return steps ? versionTwo(array) : versionOne(array.get(0));
     }
