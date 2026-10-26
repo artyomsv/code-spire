@@ -29,6 +29,7 @@ const REASONS = new Map(Object.entries({
   revise_unavailable: 'Only a specification or plan the factory wrote can be revised, and only while its decision is open.',
   // Readmit reuses an approved specification and plan; Regenerate writes them again (M4 slice 3, A7).
   regenerated: 'Re-admitted to write the specification and plan again.',
+  preparation_generated: 'The factory writes this item's specification and plan, so its ticket cannot be copied as a task. Regenerate writes them again.',
   regenerate_unavailable: 'Only an item whose specification and plan the factory writes can regenerate them. This one copies its ticket as one step.',
   repository_account_missing: 'This repository has no factory or reviewer account bound, so its branches cannot be read. Bind an account on the Repositories screen.',
   branch_head_unsupported: 'This forge cannot report a branch head here. Type the full commit instead.',

@@ -92,7 +92,8 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // rule — an approximation of work_phase_attempt, and deliberately the conservative one: it hides a
   // button the server might have allowed rather than offering one it must refuse.
   const attempted = (item.builds ?? []).some(build => build.generation === item.generation);
-  const canCompose = !attempted
+  // A generated item's specification and plan are written by the factory; the server refuses to copy its ticket.
+  const canCompose = !attempted && item.generated !== true
     && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
   if (!canResume && !canReadmit && !canCompose && !stoppableAtLand) return null;
   // A disabled button gives no reason by itself (live land acceptance: Stop land seemed to do nothing), so the

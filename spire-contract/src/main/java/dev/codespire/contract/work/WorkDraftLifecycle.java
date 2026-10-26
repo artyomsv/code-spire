@@ -167,12 +167,12 @@ public final class WorkDraftLifecycle {
     }
 
     /**
-     * Drops the preparation, as a resume that cannot trust the prepared base does; a generated item's draft goes with it,
-     * so the item writes its specification again instead of entering spec with an approved draft and no preparation
-     * (§6.11). The milestone is the caller's.
+     * Drops the preparation, as a resume that cannot trust the prepared base does, and the plan cursor that counted its
+     * steps; a generated item's draft goes with it, so the item writes its specification again instead of entering spec
+     * with an approved draft and no preparation (§6.11). The milestone is the caller's.
      */
     public static WorkItemEvent unprepared(WorkItemEvent item) {
-        WorkItemEvent dropped = item.prepared(null);
+        WorkItemEvent dropped = item.prepared(null).stepped(null);
         return item.draft() == null ? dropped : dropped.drafted(WorkDraft.admitted());
     }
 

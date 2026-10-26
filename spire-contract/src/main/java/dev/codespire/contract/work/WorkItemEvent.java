@@ -70,15 +70,25 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
                 observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,draft,steps);
     }
     /**
-     * Keeps the preparation, and a draft only when a preparation was registered from it (A7): an approved specification
-     * and plan are reused, so readmission spends nothing on them. A draft nothing was registered from becomes
-     * {@link WorkDraft#admitted()}, and the next generation writes its specification again. The plan cursor and the step
+     * Keeps a composed item's preparation. A generated item keeps its draft, preparation and plan only when that
+     * preparation was registered from the approved draft (A7) and the plan fits the step limit of the policy selected now
+     * (A8), so readmission spends nothing on them and no step is refused partway. Otherwise all three go: the draft becomes
+     * {@link WorkDraft#admitted()} and the next generation writes its specification again. The plan cursor and the step
      * count start again (decision 12), so no build of the next generation reads this one's cursor; runs and spend accumulate.
      */
     public WorkItemEvent readmit() {
-        WorkDraft kept = draft == null || preparation != null ? draft : WorkDraft.admitted();
+        boolean reused = draft == null || registeredFromDraft() && stepsFit();
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
-                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false).withSteps(0),preparation,control,kept,steps==null?null:steps.restarted());
+                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false).withSteps(0),
+                reused?preparation:null,control,reused?draft:WorkDraft.admitted(),reused && steps!=null?steps.restarted():null);
+    }
+    private boolean registeredFromDraft() {
+        return preparation != null && draft.specificationApproved() && draft.planApproved()
+                && draft.specification().equals(preparation.specification()) && draft.plan().equals(preparation.plan());
+    }
+    /** An item no label selects ends not eligible whatever its plan, so only a selected policy's limit refuses one. */
+    private boolean stepsFit() {
+        return steps == null || policy.selected() == null || steps.total() <= policy.limits().maxStepsPerPlan();
     }
     public WorkItemEvent controlled(WorkControl value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,

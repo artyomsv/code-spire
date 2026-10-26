@@ -563,6 +563,8 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);WorkItemEvent current=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expectedRevision)return new Outcome(409,"work_item_changed",current);
                 if(Set.of("active","retired","suspended","completed").contains(current.workflowStatus()))return new Outcome(409,"preparation_unavailable",current);
+                // The factory writes a generated item's specification and plan: a copied task beside its draft wedges it (A7).
+                if(current.draft()!=null)return new Outcome(409,"preparation_generated",current);
                 try(PreparedStatement ps=c.prepareStatement("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND generation=?")) {
                     ps.setString(1,id);ps.setLong(2,current.generation());try(ResultSet rs=ps.executeQuery()) {
                         rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);

@@ -270,7 +270,8 @@ CI for every slice (RED then GREEN), mutation checks on every guard, and a live 
    gate state, no migration. Tracker commands and PR reviews keep plain approve/reject.
 7. **Readmit reuses approved artifacts (§6.11).** `readmit()` carries the preparation forward, so readmit
    spends nothing on spec and plan; the readmit dialog offers "Regenerate specification and plan", which
-   clears the draft and preparation for the new generation.
+   clears the draft and preparation for the new generation. Only a preparation registered from the approved draft,
+   with a plan within the step limit selected at readmission, is reused; any other is dropped with the draft.
 8. **Prompt budget (§6.6).** Spec ≤ 16 KiB; plan embedded as numbered titles ≤ 4 KiB; the current step's
    instruction + doneWhen ≤ 4 KiB; summaries ≤ 12 KiB; verify-failure section ≤ 8 KiB: ≤ 48 KiB before the
    commit instruction. The worst-case step prompt is validated when the plan is accepted, so no step is

@@ -173,14 +173,18 @@ a recheck is refused `explicit_readmission_required` and only Readmit or Stop go
 lists each step's title, "empty" where so, and its summary, neutralised and capped at 32,000 characters. Run detail
 names the plan step (`publication.stepIndex` of `stepTotal`).
 
-Readmission (slice 11, A7) keeps the preparation, and keeps the draft only when a preparation was registered from it:
-the new generation enters spec and plan as supplied and builds step 1 again, with no `SPEC` or `PLAN` run. A draft
-nothing was registered from becomes `WorkDraft.admitted()`, so the specification is written again. `Resume` on
+Readmission (slice 11, A7) keeps a composed item's preparation. A generated item keeps its draft, preparation and plan
+cursor only when the preparation was registered from the approved draft (both artifacts equal) and, under a selected
+policy, the plan has no more steps than the `maxStepsPerPlan` selected now (A8): the new generation enters spec and
+plan as supplied and builds step 1 again, with no `SPEC` or `PLAN` run. Otherwise all three go and the draft becomes
+`WorkDraft.admitted()`, so the specification and plan are written again instead of a plan the cap stops partway.
+`transitions.prepare`, and so hand registration and "Prepare again from the ticket", refuses an item with a draft
+`preparation_generated`, and the dashboard does not offer that action for a generated item. `Resume` on
 `POST /api/work-items/{id}/resume` gains `regenerate`, honoured only with `readmit`: `WorkDraftLifecycle.regenerated`
 starts the new generation (milestone `READMITTED`, reason `regenerated`) with an admitted draft and no preparation,
 and the item parks at `specification_to_write` for the draft sweep. Every readmission refusal applies first with its
 own reason (a suspended item included); then a composed item is refused `regenerate_unavailable`. A resume after a
-takeover that drops the preparation (`WorkDraftLifecycle.unprepared`) drops a generated item's draft with it. The item
+takeover that drops the preparation (`WorkDraftLifecycle.unprepared`) drops the plan cursor and a generated item's draft with it. The item
 view carries `generated` (the item has a draft), which is when the readmit action offers Regenerate.
 
 **Revise** (`POST /api/approvals/{id}/revise {expectedVersion, idempotencyKey, note}`, `spire-admin`, a note required)
