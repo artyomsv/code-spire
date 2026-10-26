@@ -42,15 +42,28 @@ class UntrustedTextTest {
         assertEquals("@\u200BTEST-user &lt;script>", UntrustedText.neutralise("@TEST-user <script>", UntrustedText.Markup.MARKDOWN));
     }
 
+    /** A blockquote, not a code block: the quoted Markdown renders, with every construct that would act broken. */
     @Test
-    void markdownQuotesAreNotEscapedInsideTheCodeBlock() {
-        assertEquals("    List<String> @TEST-user\n    TEST-line-2",
-                UntrustedText.quoteBlock("List<String> @TEST-user\nTEST-line-2", UntrustedText.Markup.MARKDOWN));
+    void aMarkdownQuoteIsABlockquote() {
+        assertEquals("> ## Outcome\n> - List<​String> for @​TEST-user\n>\n> TEST-line-3",
+                UntrustedText.quoteBlock("## Outcome\n- List<String> for @TEST-user\n\nTEST-line-3\n", UntrustedText.Markup.MARKDOWN));
     }
 
+    /**
+     * A fence keeps its lines as written, links included, but loses its info string, so no diagram or map renders from
+     * it; the invisible breaks still apply inside, in case the renderer does not see the fence that was seen here.
+     */
     @Test
-    void aMarkdownQuoteKeepsItsBackticksAsCode() {
-        assertEquals("    TEST\n    ```\n    x", UntrustedText.quoteBlock("TEST\n```\nx", UntrustedText.Markup.MARKDOWN));
+    void aMarkdownFenceStaysCodeWithoutItsInfoString() {
+        assertEquals("> ```\n> TEST-code [TEST]​(x)\n> ```\n> TEST-after",
+                UntrustedText.quoteBlock("```mermaid\nTEST-code [TEST](x)\n```\nTEST-after", UntrustedText.Markup.MARKDOWN));
+    }
+
+    /** A code span keeps its text; the prose around it is made readable. */
+    @Test
+    void aMarkdownCodeSpanKeepsItsText() {
+        assertEquals("> `TEST-[a](b)` TEST-a (`TEST-b`)",
+                UntrustedText.quoteBlock("`TEST-[a](b)` [TEST-a](TEST-b)", UntrustedText.Markup.MARKDOWN).replace("​", ""));
     }
 
     /** GitLab runs a note line that starts with a slash as a quick action of the bot (A13); none may start with one. */
@@ -60,9 +73,9 @@ class UntrustedTextTest {
         String quoted = UntrustedText.quoteBlock("## Outcome\n```\n/close\n```\n/label ~TEST", UntrustedText.Markup.MARKDOWN);
 
         for (String text : java.util.List.of(neutralised, quoted))
-            for (String line : text.split("\n", -1)) assertFalse(line.stripLeading().startsWith("/") && !line.startsWith("    "), text);
-        for (String line : quoted.split("\n", -1)) assertTrue(line.startsWith("    "), "every quoted line is indented code: " + quoted);
-        assertTrue(quoted.contains("    /close\n"), quoted);
+            for (String line : text.split("\n", -1)) assertFalse(line.startsWith("/"), text);
+        for (String line : quoted.split("\n", -1)) assertTrue(line.startsWith(">"), "every quoted line is in the blockquote: " + quoted);
+        assertTrue(quoted.contains("> /close\n"), quoted);
     }
 
     @Test

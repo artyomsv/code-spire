@@ -146,7 +146,7 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
         assertTrue(effects.dispatch(WorkSourceEffects.draftId(command.draft().attemptId())));
         String posted = planComment(122);
         assertTrue(posted.startsWith(WorkDraftComments.PLAN_HEAD), posted);
-        assertTrue(posted.contains("1. TEST-step-1\n2. TEST-step-2"), posted);
+        assertTrue(posted.contains("> 1. TEST-step-1\n> 2. TEST-step-2"), posted);
         assertTrue(posted.contains(WorkPreparation.digest(text)), posted);
     }
 

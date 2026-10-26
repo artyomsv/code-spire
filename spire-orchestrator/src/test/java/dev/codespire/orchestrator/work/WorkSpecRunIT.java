@@ -214,8 +214,8 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         String body = posted.getFirst();
         assertTrue(body.startsWith(WorkDraftComments.SPECIFICATION_HEAD), body);
         assertTrue(body.contains(WorkPreparation.digest(SPEC)), body);
-        assertTrue(body.contains("\n    ## Outcome\n    TEST-outcome for @TEST-user"), body);
-        assertTrue(body.contains("a List<String> of TEST-widgets"), body);
+        assertTrue(body.contains("\n> ## Outcome\n> TEST-outcome for @​TEST-user"), body);
+        assertTrue(body.contains("a List<​String> of TEST-widgets"), body);
         assertFalse(body.contains("&lt;"), body);
         assertEquals("sent", effects.status(draftComment(id)).state());
     }
