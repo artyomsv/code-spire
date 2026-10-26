@@ -27,9 +27,9 @@ intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► 
 
 Delivery precedes review because the existing reviewer consumes an actual pushed pull request
 (ADR-045). M3's [prepared task handoff](PREPARED-TASKS.md) accepts existing specification and
-single-step plan references; generation and verification remain M4 capabilities. Slice 8a proves
-the plan/build policy boundary with an explicit test transport. Production item builds remain
-unavailable until slice 8b supplies the publication hold; missing phases never report completion.
+single-step plan references, and stays the path of a `composed` repository; a `generated` repository
+has the factory write both (ADR-049), and verify runs the repository's own checks (ADR-046). Missing
+phases never report completion.
 
 Spec and plan run as written above only for a repository whose build setup says `generated` (M4 slice 3,
 ADR-049, which supersedes the "one model call, no sandbox" of the first draft). Each is a short read-only run

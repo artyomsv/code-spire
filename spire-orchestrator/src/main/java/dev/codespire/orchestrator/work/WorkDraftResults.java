@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.PayWith;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkDraftLifecycle;
@@ -49,7 +50,7 @@ public class WorkDraftResults {
      * provisional digest. Anything else is refused {@code draft_binding_mismatch} before it can be projected or charged.
      */
     public boolean acceptsBinding(RunResult result) {
-        if (!(result instanceof RunResult.RunWorkArtifact artifact)) return true;
+        if (!(result instanceof RunWorkArtifact artifact)) return true;
         WorkDraftBinding bound = artifact.draft();
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement("""
                 SELECT 1 FROM work_prepare_effect WHERE run_id=? AND work_item_id=? AND generation=? AND attempt_id=? AND kind=?
@@ -69,7 +70,7 @@ public class WorkDraftResults {
     /** @return whether this result belongs to a draft run, which nothing after this may handle */
     public boolean accept(RunResult result) {
         if (!draftRun(result.runId())) return false;
-        if (!(result instanceof RunResult.RunWorkArtifact || result instanceof RunResult.RunFailed)) return true;
+        if (!(result instanceof RunWorkArtifact || result instanceof RunResult.RunFailed)) return true;
         if (!acceptsBinding(result)) return true;
         store(result);
         apply(result.runId());
@@ -122,7 +123,7 @@ public class WorkDraftResults {
      * seat run spent nothing per token, and an unpriced run's cost is unknown, never an invented zero.
      */
     private WorkDraftLifecycle.RunUsage usage(RunResult result, FactoryRunProjection.RunView run) {
-        long wall = result instanceof RunResult.RunWorkArtifact artifact ? artifact.activeWallSeconds()
+        long wall = result instanceof RunWorkArtifact artifact ? artifact.activeWallSeconds()
                 : run.startedAt() == null || run.endedAt() == null ? 0 : Math.max(0, Duration.between(run.startedAt(), run.endedAt()).toSeconds());
         if (RunCharges.nothingWasBought(result)) return new WorkDraftLifecycle.RunUsage(wall, 0, 0, true);
         if (PayWith.SUBSCRIPTION.equals(runs.paidByOf(result.runId()).orElse(null))) return new WorkDraftLifecycle.RunUsage(wall, 0, 1, true);

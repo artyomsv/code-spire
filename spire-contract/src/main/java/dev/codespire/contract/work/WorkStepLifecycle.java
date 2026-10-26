@@ -21,19 +21,29 @@ public final class WorkStepLifecycle {
     /**
      * Whether the step loop decides what follows a completed phase: a cursor not finished yet, outside a land fix. A land
      * fix after a delivered plan is one more build on its pull request, never a plan step (decision 12).
+     *
+     * @param mode how the phase that completed was entered, {@link #entryMode} under the item lock
      */
-    public static boolean asks(WorkItemEvent item, boolean landFix) {
-        return item.steps() != null && !item.steps().done() && !landFix;
+    public static boolean asks(WorkItemEvent item, WorkItemLifecycle.EntryMode mode) {
+        return mode != WorkItemLifecycle.EntryMode.LAND_FIX && stepping(item);
+    }
+
+    private static boolean stepping(WorkItemEvent item) {
+        return item.steps() != null && !item.steps().done();
     }
 
     /**
-     * How the next entry of this item is made, derived under the item lock (decision 13): {@link
+     * How the next entry of this item is made, derived under the item lock from its history (decisions 12, 13): {@link
+     * WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress, {@link
      * WorkItemLifecycle.EntryMode#STEP} between the steps of a plan, so a later step opens no permission gate. Step 0 is the
      * first build of the approved plan and asks as today's single build does; a land fix wins.
+     *
+     * @param history the item's facts, oldest first; the last is the item as it stands
      */
-    public static WorkItemLifecycle.EntryMode entryMode(WorkItemEvent item, boolean landFix) {
-        if (landFix) return WorkItemLifecycle.EntryMode.LAND_FIX;
-        WorkSteps steps = item.steps();
+    public static WorkItemLifecycle.EntryMode entryMode(List<WorkItemEvent> history) {
+        if (history.isEmpty()) return WorkItemLifecycle.EntryMode.ORDINARY;
+        if (WorkItemLifecycle.landFixInProgress(history)) return WorkItemLifecycle.EntryMode.LAND_FIX;
+        WorkSteps steps = history.getLast().steps();
         return steps != null && steps.index() > 0 && steps.index() < steps.total()
                 ? WorkItemLifecycle.EntryMode.STEP : WorkItemLifecycle.EntryMode.ORDINARY;
     }
@@ -63,8 +73,8 @@ public final class WorkStepLifecycle {
      * building, outside a land fix, at the head the step started from. Anything else is refused, so a composed item never
      * verifies and delivers its unchanged base, and an idle land fix is handed over instead of looping through fixes.
      */
-    public static boolean acceptsEmpty(WorkItemEvent item, boolean landFix, String head) {
-        return asks(item, landFix) && "build".equals(item.phase()) && item.preparation() != null
+    public static boolean acceptsEmpty(WorkItemEvent item, WorkItemLifecycle.EntryMode mode, String head) {
+        return asks(item, mode) && "build".equals(item.phase()) && item.preparation() != null
                 && item.steps().startHead(item.preparation().baseCommit()).equals(head);
     }
 
@@ -114,8 +124,8 @@ public final class WorkStepLifecycle {
     }
 
     /** An item without a cursor completes its one step when verify passes, and a land fix completes none (decision 12). */
-    public static WorkProgress composedStepCompleted(WorkItemEvent item, WorkProgress progress, boolean landFix) {
-        return item.steps() == null && !landFix && "verify".equals(item.phase()) ? progress.completeStep() : progress;
+    public static WorkProgress composedStepCompleted(WorkItemEvent item, WorkProgress progress, WorkItemLifecycle.EntryMode mode) {
+        return item.steps() == null && mode != WorkItemLifecycle.EntryMode.LAND_FIX && "verify".equals(item.phase()) ? progress.completeStep() : progress;
     }
 
     /**
@@ -123,8 +133,12 @@ public final class WorkStepLifecycle {
      * an earlier step's run holds a bundle. With none there is no execution to put under a gate, and the run's failure is
      * today's.
      */
-    public static boolean routesRunFailure(WorkItemEvent item, boolean landFix) {
-        return "build".equals(item.phase()) && asks(item, landFix) && item.steps().chainRun().isPresent();
+    public static boolean routesRunFailure(WorkItemEvent item, WorkItemLifecycle.EntryMode mode) {
+        return mode != WorkItemLifecycle.EntryMode.LAND_FIX && laterStepRunning(item);
+    }
+
+    private static boolean laterStepRunning(WorkItemEvent item) {
+        return "build".equals(item.phase()) && stepping(item) && item.steps().chainRun().isPresent();
     }
 
     /**
@@ -141,7 +155,7 @@ public final class WorkStepLifecycle {
      * records the lost run, so no retry starts from it again (decision 11).
      */
     public static WorkItemEvent stepRunFailed(WorkItemEvent item, RunFailure failure, WorkItemLifecycle.GateOpening opening) {
-        if (!routesRunFailure(item, false) || !"active".equals(item.workflowStatus()))
+        if (!laterStepRunning(item) || !"active".equals(item.workflowStatus()))
             throw new IllegalStateException("Only a running later step with commits behind it fails into the verify gate, not "
                     + item.phase() + " / " + item.workflowStatus() + " / " + item.reason());
         WorkExecution chain = item.steps().chainRun().orElseThrow().execution();

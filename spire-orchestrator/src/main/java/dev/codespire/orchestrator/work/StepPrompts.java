@@ -19,6 +19,13 @@ import java.util.Map;
 final class StepPrompts {
     static final String SUMMARIES_LABEL = "Decisions recorded by earlier steps, oldest first";
     static final String CUT_NOTE = "(The decisions of earlier steps were cut to fit; the newest steps are kept whole.)\n";
+    static final String SPECIFICATION_LABEL = "The approved specification";
+    private static final String LAND_FIX_INSTRUCTIONS = """
+            Every step of the approved plan below is already built on this branch, which is checked out at the head that
+            was approved. Do not build the plan again and do not undo any of its steps: fix only what the forge refused,
+            which is described after the plan.
+
+            """;
     private static final String INSTRUCTIONS = """
             Implement one step of an approved plan. The approved specification and the whole plan are below for context;
             build only the current step, so the repository is still working and passes its checks when you finish. Keep
@@ -36,16 +43,31 @@ final class StepPrompts {
     record Input(String specification, List<WorkArtifacts.Step> steps, int index, List<WorkStepSummaries.Step> summaries, String verifySection) {}
 
     static String prompt(Input input) {
-        WorkArtifacts.Step step = input.steps().get(input.index());
-        int number = input.index() + 1;
-        StringBuilder prompt = new StringBuilder(INSTRUCTIONS)
-                .append(UntrustedText.fenced("The approved specification", input.specification())).append('\n')
-                .append(UntrustedText.fenced("The plan", titles(input.steps()))).append('\n')
-                .append("Now do step ").append(number).append(" of ").append(input.steps().size())
-                .append(": its title, its instruction and when it is done are below.\n")
-                .append(UntrustedText.fenced("Step " + number, current(step))).append('\n');
+        StringBuilder prompt = new StringBuilder(fixedPart(input.specification(), input.steps(), input.index()));
         if (input.index() > 0) prompt.append(summaries(input.summaries(), input.index()));
         return prompt.append(input.verifySection() == null ? "" : input.verifySection()).toString();
+    }
+
+    /**
+     * Step {@code index}'s prompt before the summaries and the verify section: the parts the plan fixes, fences included.
+     * {@link StepPromptBudget} measures it and adds the other two at their caps.
+     */
+    static String fixedPart(String specification, List<WorkArtifacts.Step> steps, int index) {
+        int number = index + 1;
+        return INSTRUCTIONS + UntrustedText.fenced(SPECIFICATION_LABEL, specification) + '\n'
+                + UntrustedText.fenced("The plan", titles(steps)) + '\n'
+                + "Now do step " + number + " of " + steps.size() + ": its title, its instruction and when it is done are below.\n"
+                + UntrustedText.fenced("Step " + number, current(steps.get(index))) + '\n';
+    }
+
+    /**
+     * The task of a land fix after a delivered plan (decision 12): no step of it, so not a step prompt and not the
+     * single-step task of a composed item. Every step is already on the branch; the fix is told so, with the specification
+     * quoted as data (A13) and the plan as its numbered titles. The caller appends what the forge refused.
+     */
+    static String landFix(String specification, List<WorkArtifacts.Step> steps) {
+        return LAND_FIX_INSTRUCTIONS + UntrustedText.fenced(SPECIFICATION_LABEL, specification) + '\n'
+                + UntrustedText.fenced("The plan, every step of it already built on this branch", titles(steps)) + '\n';
     }
 
     /** The decisions of steps 0 to {@code index - 1}, oldest first, as one fenced section of at most 12 KiB. */

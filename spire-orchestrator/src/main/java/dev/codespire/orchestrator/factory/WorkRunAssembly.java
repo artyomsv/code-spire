@@ -45,9 +45,12 @@ public class WorkRunAssembly {
     public Prepared assemble(Connection c,WorkSourceRegistry.Source source,WorkItemEvent item,WorkArtifacts.Evidence evidence,
                              dev.codespire.orchestrator.work.WorkLandFixes.Fix fix) throws SQLException {
         String subject="work-"+item.progress().attemptId();
-        // A plan step (M4 slice 3) builds its own prompt and start; a land fix after the plan is no step (decision 12).
-        var step=dev.codespire.orchestrator.work.WorkStepAssembly.builds(item,fix!=null)?steps.step(c,item,evidence):null;
-        var in=parse(source,item.preparation(),step==null?composedPrompt(evidence):step.prompt(),subject);
+        // A plan step (M4 slice 3) builds its own prompt and start; a land fix after the plan is no step (decision 12),
+        // and is told the whole plan is already built, never given step 1 as a single-step task.
+        var step=fix==null && dev.codespire.orchestrator.work.WorkStepAssembly.buildsStep(item)?steps.step(c,item,evidence):null;
+        String task=step!=null?step.prompt():fix!=null && item.steps()!=null
+                ?dev.codespire.orchestrator.work.WorkStepAssembly.landFixPrompt(evidence):composedPrompt(evidence);
+        var in=parse(source,item.preparation(),task,subject);
         // How the APPROVED preparation pays — not the build setup now, which may have changed since.
         boolean subscription=dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(item.preparation().payWith());
         var account=funding.account(c,source.repositoryId());

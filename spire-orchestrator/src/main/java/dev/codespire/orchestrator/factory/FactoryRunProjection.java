@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.factory;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -846,7 +847,7 @@ public class FactoryRunProjection {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
-            case RunResult.RunWorkArtifact artifact -> artifactWritten(artifact);
+            case RunWorkArtifact artifact -> artifactWritten(artifact);
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
@@ -880,7 +881,7 @@ public class FactoryRunProjection {
      * A specification or plan run handed back its artifact (M4 slice 3): it did what it was for, and pushed nothing.
      * The text itself is not stored here; the draft's own effect row holds it, encrypted (slice 6).
      */
-    private void artifactWritten(RunResult.RunWorkArtifact artifact) {
+    private void artifactWritten(RunWorkArtifact artifact) {
         update("UPDATE factory_run SET status = ?, pushed_ref = NULL, active_wall_seconds = ?, failure_cause = NULL,"
                         + " failure_detail = NULL, ended_at = now() WHERE run_id = ? AND " + LIVE,
                 artifact.runId(), SUCCEEDED, artifact.activeWallSeconds(), artifact.runId());

@@ -159,8 +159,9 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   backfill, on the first scan of an existing backlog — bypasses the check entirely.
 - **FR-F17 — Eight phases [M3/M4].** A work item moves through `intake → spec → plan → build →
   verify → deliver → review → land`. Each phase is separately gateable. Delivery opens the pushed
-  pull request the existing reviewer needs (ADR-045). M3 can accept a human-prepared specification
-  and single-step plan; it does not claim that M4's generation or verification executors exist.
+  pull request the existing reviewer needs (ADR-045). M3's handoff accepts a human-prepared
+  specification and single-step plan, the path of a `composed` repository; a `generated` repository
+  has the factory write both (ADR-049), and verify runs the repository's checks (ADR-046).
 - **FR-F18 — Specification phase [M4].** A vague ticket is refined into an outcome, context and
   acceptance criteria, **written back to the tracker as a comment** — never into the repository,
   which would create a second source of truth and a diff the reviewer must review before any code

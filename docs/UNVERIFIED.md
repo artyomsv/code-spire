@@ -52,6 +52,10 @@ unknown; nor has a real chain of three steps run on one branch, nor a real agent
   scrub, so "never logged" holds for our services only (A9). Unobserved on a real host: how long that log
   outlives the unit under the deployment's log driver.
 - **A Jira or GitLab ticket comment** carrying a specification is proven against fakes of their markups only.
+- **No GitLab quick action runs from a draft comment** rests on reading GitLab's extractor, not on a live note: it
+  runs only lines that start with a slash at column 0 and skips only exact three-backtick fences. So the specification
+  is quoted as an indented code block and a plan title's line-leading slash is broken with a zero-width space; no note
+  has been posted to a live GitLab to watch `/close` stay text.
 
 **What would settle it.** The live proof the plan names, recorded in `docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md`: a
 title-only ticket on `spire-test` becomes a specification with criteria, a plan of three or more steps, steps that

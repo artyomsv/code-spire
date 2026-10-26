@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import io.quarkus.scheduler.Scheduled;
@@ -50,7 +51,7 @@ public class WorkItemRunBridge {
     }
     boolean record(RunResult result) {
         // A draft run's artifact is not a work-run result: it has no work_run_effect row (M4 slice 3 gives it its own).
-        if(result instanceof RunResult.RunWorkArtifact)return false;
+        if(result instanceof RunWorkArtifact)return false;
         if(result instanceof RunResult.RunWorkReady) {
             if(!acceptsBinding(result))return false;
             try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='sent',reason=NULL,ready_payload=COALESCE(ready_payload,?) WHERE run_id=?")) {

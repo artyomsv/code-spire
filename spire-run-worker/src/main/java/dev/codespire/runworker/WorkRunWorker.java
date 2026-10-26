@@ -4,6 +4,7 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.runtime.*;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -289,7 +290,7 @@ public class WorkRunWorker {
         var usage=switch(result) {
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
             // Never stored here: a draft run is launched read-only by the dispatcher, outside this worker.
-            case RunResult.RunWorkArtifact artifact -> artifact.tokenUsage();
+            case RunWorkArtifact artifact -> artifact.tokenUsage();
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;

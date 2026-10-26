@@ -34,7 +34,8 @@ its section 9 holds the review amendments (A1..A22) and the
   plan gate under `approve` is a result gate on the artifact's digest; the dashboard alone may Revise with a
   note (three per phase and generation). Both approved, the system registers a `WorkPreparation` under binding
   6, refused `draft_setup_changed` when the build setup changed since the plan was written.
-- **Steps build on one chain of held checkpoints.** Binding 6 accepts a plan of 1..`maxStepsPerPlan` steps. The
+- **Steps build on one chain of held checkpoints.** Binding 6 accepts a plan of 1..`maxStepsPerPlan` steps, and no more
+  than the cursor's 50 or the build runs the item has left, since each step builds in at least one run. The
   plan cursor (`WorkSteps`) lives in the decider: step k+1 starts from the newest step run that holds a bundle
   and must descend from its head; a lost checkpoint fails the step into the verify gate and never falls back to
   the base. Each step verifies; a step that commits nothing completes as empty; deliver publishes the last

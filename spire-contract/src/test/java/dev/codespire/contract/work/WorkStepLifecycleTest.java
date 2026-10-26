@@ -62,7 +62,7 @@ class WorkStepLifecycleTest {
     }
 
     static WorkItemEvent enter(WorkItemEvent item) {
-        return WorkItemLifecycle.enter(item, item, 4, false, Instant.EPOCH, true, UUID.randomUUID(), WorkStepLifecycle.entryMode(item, false));
+        return WorkItemLifecycle.enter(item, item, 4, false, Instant.EPOCH, true, UUID.randomUUID(), WorkStepLifecycle.entryMode(List.of(item)));
     }
 
     @Test
@@ -102,7 +102,7 @@ class WorkStepLifecycleTest {
     @Test
     void aStepRunFailureKeepsCompletedSteps() {
         WorkItemEvent running = building(item("auto", "auto", completed(4, 1)));
-        assertTrue(WorkStepLifecycle.routesRunFailure(running, false));
+        assertTrue(WorkStepLifecycle.routesRunFailure(running, WorkItemLifecycle.EntryMode.STEP));
 
         WorkItemEvent gated = WorkStepLifecycle.stepRunFailed(running, failure(running.progress().attemptId(), false, null),
                 new WorkItemLifecycle.GateOpening(4, Instant.EPOCH, UUID.randomUUID()));
@@ -130,7 +130,7 @@ class WorkStepLifecycleTest {
     void aFirstStepRunFailureStillFails() {
         WorkItemEvent running = building(item("auto", "auto", WorkSteps.of(3)));
 
-        assertFalse(WorkStepLifecycle.routesRunFailure(running, false));
+        assertFalse(WorkStepLifecycle.routesRunFailure(running, WorkItemLifecycle.EntryMode.STEP));
         assertThrows(IllegalStateException.class, () -> WorkStepLifecycle.stepRunFailed(running, failure(running.progress().attemptId(), false, null),
                 new WorkItemLifecycle.GateOpening(4, Instant.EPOCH, UUID.randomUUID())));
     }
@@ -142,18 +142,20 @@ class WorkStepLifecycleTest {
         WorkSteps steps = WorkSteps.of(3).completedWith(new WorkSteps.StepResult(0, emptyFromBase, true, false));
         WorkItemEvent running = building(item("auto", "auto", steps));
 
-        assertFalse(WorkStepLifecycle.routesRunFailure(running, false), "no run holds a bundle, so there is nothing to put under a gate");
+        assertFalse(WorkStepLifecycle.routesRunFailure(running, WorkItemLifecycle.EntryMode.STEP), "no run holds a bundle, so there is nothing to put under a gate");
     }
 
     @Test
     void aLandFixAfterAPlanDeliversTheFixHead() {
         WorkItemEvent fixPassed = verifyPassed(item("auto", "auto", completed(3, 3)), "TEST-fix-run", "f".repeat(40));
 
-        assertFalse(WorkStepLifecycle.asks(fixPassed, true), "a land fix completes no step");
-        assertFalse(WorkStepLifecycle.asks(fixPassed, false), "a finished cursor completes no step either");
-        assertEquals(WorkItemLifecycle.EntryMode.LAND_FIX, WorkStepLifecycle.entryMode(fixPassed, true));
-        assertEquals(fixPassed.progress(), WorkStepLifecycle.composedStepCompleted(fixPassed, fixPassed.progress(), true));
-        assertEquals(fixPassed.progress(), WorkStepLifecycle.composedStepCompleted(fixPassed, fixPassed.progress(), false),
+        assertFalse(WorkStepLifecycle.asks(fixPassed, WorkItemLifecycle.EntryMode.LAND_FIX), "a land fix completes no step");
+        assertFalse(WorkStepLifecycle.asks(fixPassed, WorkItemLifecycle.EntryMode.ORDINARY), "a finished cursor completes no step either");
+        WorkItemEvent requested = fixPassed.withMilestone("LAND_FIX_REQUESTED");
+        assertEquals(WorkItemLifecycle.EntryMode.LAND_FIX, WorkStepLifecycle.entryMode(List.of(requested, fixPassed)), "a land fix in progress wins");
+        assertEquals(WorkItemLifecycle.EntryMode.ORDINARY, WorkStepLifecycle.entryMode(List.of(fixPassed)));
+        assertEquals(fixPassed.progress(), WorkStepLifecycle.composedStepCompleted(fixPassed, fixPassed.progress(), WorkItemLifecycle.EntryMode.LAND_FIX));
+        assertEquals(fixPassed.progress(), WorkStepLifecycle.composedStepCompleted(fixPassed, fixPassed.progress(), WorkItemLifecycle.EntryMode.ORDINARY),
                 "an item with a cursor counts its steps through the loop, never as one composed step");
     }
 
@@ -188,8 +190,8 @@ class WorkStepLifecycleTest {
     void aComposedItemCountsItsOneStep() {
         WorkItemEvent composed = verifyPassed(item("auto", "auto", null), "TEST-run-1", "b".repeat(40));
 
-        assertEquals(composed.progress().steps() + 1, WorkStepLifecycle.composedStepCompleted(composed, composed.progress(), false).steps());
-        assertEquals(composed.progress().steps(), WorkStepLifecycle.composedStepCompleted(composed, composed.progress(), true).steps(),
+        assertEquals(composed.progress().steps() + 1, WorkStepLifecycle.composedStepCompleted(composed, composed.progress(), WorkItemLifecycle.EntryMode.ORDINARY).steps());
+        assertEquals(composed.progress().steps(), WorkStepLifecycle.composedStepCompleted(composed, composed.progress(), WorkItemLifecycle.EntryMode.LAND_FIX).steps(),
                 "a land fix completes no step");
     }
 
@@ -265,11 +267,11 @@ class WorkStepLifecycleTest {
     void anEmptyReadyIsAcceptedOnlyOnAStepsStart() {
         WorkItemEvent building = building(item("auto", "auto", completed(3, 1)));
 
-        assertTrue(WorkStepLifecycle.acceptsEmpty(building, false, "1".repeat(40)));
-        assertFalse(WorkStepLifecycle.acceptsEmpty(building, false, "b".repeat(40)), "an empty ready off the step's start");
-        assertFalse(WorkStepLifecycle.acceptsEmpty(building, true, "1".repeat(40)), "a land fix is never empty");
-        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", null)), false, BASE), "a composed build is never empty");
-        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", completed(3, 3))), false, "3".repeat(40)), "a finished cursor");
+        assertTrue(WorkStepLifecycle.acceptsEmpty(building, WorkItemLifecycle.EntryMode.STEP, "1".repeat(40)));
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building, WorkItemLifecycle.EntryMode.STEP, "b".repeat(40)), "an empty ready off the step's start");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building, WorkItemLifecycle.EntryMode.LAND_FIX, "1".repeat(40)), "a land fix is never empty");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", null)), WorkItemLifecycle.EntryMode.STEP, BASE), "a composed build is never empty");
+        assertFalse(WorkStepLifecycle.acceptsEmpty(building(item("auto", "auto", completed(3, 3))), WorkItemLifecycle.EntryMode.STEP, "3".repeat(40)), "a finished cursor");
     }
 
     @Test

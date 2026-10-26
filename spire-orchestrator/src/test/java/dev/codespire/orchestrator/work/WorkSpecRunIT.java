@@ -4,6 +4,7 @@ import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkGate;
 import dev.codespire.contract.work.WorkItemEvent;
@@ -61,8 +62,8 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
     @Inject WorkItemControl control;
     @Inject WorkDraftResource draftResource;
 
-    private static RunResult.RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+    private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
     private byte[] bytes(String sql, Object value) throws SQLException {
@@ -193,7 +194,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         WorkDraftBinding foreign = new WorkDraftBinding(bound.workItemId(), bound.generation(), bound.attemptId(), bound.kind(), "e".repeat(64));
         long history = store.history(id).size();
 
-        saga.on(new RunResult.RunWorkArtifact(command.runId(), foreign, SPEC, false, Map.of("INPUT", 10L), 3));
+        saga.on(new RunWorkArtifact(command.runId(), foreign, SPEC, false, Map.of("INPUT", 10L), 3));
 
         assertEquals(history, store.history(id).size());
         assertState(store.load(id), "spec", "active", "phase_started");
@@ -213,7 +214,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         String body = posted.getFirst();
         assertTrue(body.startsWith(WorkDraftComments.SPECIFICATION_HEAD), body);
         assertTrue(body.contains(WorkPreparation.digest(SPEC)), body);
-        assertTrue(body.contains("```\n## Outcome\nTEST-outcome for @TEST-user"), body);
+        assertTrue(body.contains("\n    ## Outcome\n    TEST-outcome for @TEST-user"), body);
         assertTrue(body.contains("a List<String> of TEST-widgets"), body);
         assertFalse(body.contains("&lt;"), body);
         assertEquals("sent", effects.status(draftComment(id)).state());
@@ -261,7 +262,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
     @Test
     void aRedeliveredArtifactPostsOneComment() throws Exception {
         String id = started("spec-approve", 92);
-        RunResult.RunWorkArtifact result = artifact(dispatched(), SPEC);
+        RunWorkArtifact result = artifact(dispatched(), SPEC);
 
         saga.on(result);
         saga.on(result);
@@ -274,7 +275,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
     @Test
     void aStoredDraftResultIsAppliedAfterARestart() throws Exception {
         String id = started("spec-approve", 93);
-        RunResult.RunWorkArtifact result = artifact(dispatched(), SPEC);
+        RunWorkArtifact result = artifact(dispatched(), SPEC);
 
         assertTrue(draftResults.store(result));
         assertState(store.load(id), "spec", "active", "phase_started");

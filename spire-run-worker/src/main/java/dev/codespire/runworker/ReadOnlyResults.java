@@ -3,6 +3,7 @@ package dev.codespire.runworker;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -42,10 +43,10 @@ final class ReadOnlyResults {
             return missing("the artifact was empty", outcome, finished.tokenUsage());
         }
         // Redaction replaces a secret with a marker that can be longer than it, so a text at the cap can grow past it.
-        if (text.getBytes(StandardCharsets.UTF_8).length > RunResult.RunWorkArtifact.MAX_TEXT_BYTES) {
+        if (text.getBytes(StandardCharsets.UTF_8).length > RunWorkArtifact.MAX_TEXT_BYTES) {
             return missing("the artifact is over its cap once credentials are redacted", outcome, finished.tokenUsage());
         }
-        return new RunResult.RunWorkArtifact(draft.runId(), draft.draft(), text, outcome.repositoryChanged() > 0,
+        return new RunWorkArtifact(draft.runId(), draft.draft(), text, outcome.repositoryChanged() > 0,
                 finished.tokenUsage(), activeWallSeconds);
     }
 

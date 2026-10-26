@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenCount;
 import dev.codespire.contract.review.TokenType;
@@ -194,7 +195,7 @@ final class RunTokenUsage {
         return switch (result) {
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
-            case RunResult.RunWorkArtifact artifact -> artifact.tokenUsage();
+            case RunWorkArtifact artifact -> artifact.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
         };

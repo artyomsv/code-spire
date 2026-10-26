@@ -41,9 +41,17 @@ public class WorkStepAssembly {
     /** The current step's build: its index, prompt and start. */
     public record Step(int index, String prompt, Start start) {}
 
-    /** Whether this item's next build is a plan step: a cursor still running, outside a land fix. */
-    public static boolean builds(WorkItemEvent item, boolean landFix) {
-        return item.steps() != null && !item.steps().done() && !landFix;
+    /**
+     * Whether this item's next build outside a land fix is a plan step: a cursor still running. A land fix after the plan
+     * is no step (decision 12); its caller asks {@link #landFixPrompt} instead.
+     */
+    public static boolean buildsStep(WorkItemEvent item) {
+        return item.steps() != null && !item.steps().done();
+    }
+
+    /** The task of a land fix after a delivered plan, from the stored artifacts: the whole plan is already built. */
+    public static String landFixPrompt(WorkArtifacts.Evidence evidence) {
+        return StepPrompts.landFix(evidence.specification(), evidence.steps());
     }
 
     /** The step this item builds next, with its prompt from the stored artifacts. */
@@ -58,14 +66,14 @@ public class WorkStepAssembly {
     /** Where the current step starts, or empty when none is left (decision 11). */
     Optional<Start> start(Connection c, WorkItemEvent item) throws SQLException {
         WorkSteps steps = item.steps();
-        Optional<WorkVerifyHistory.Previous> mine = verifyHistory.lastNotPassedAtStep(c, item.workItemId(), item.generation(), steps.index());
+        Optional<WorkVerifyHistory.Previous> mine = verifyHistory.lastNotPassedAtCurrentStep(c, item);
         String failure = mine.map(previous -> WorkVerifyHistory.promptSection(previous.verification())).orElse("");
         Optional<WorkSteps.StepResult> chain = steps.chainRun();
         if (mine.isPresent() && WorkVerifyHistory.checkpointReadable(mine.orElseThrow().verification()) && !steps.lost().contains(mine.orElseThrow().runId()))
             return Optional.of(new Start(mine.orElseThrow().runId(), mine.orElseThrow().head(), chain.isPresent(), failure));
         if (chain.isEmpty()) return Optional.of(new Start(null, null, false, failure));
         String chainRun = chain.orElseThrow().execution().runId();
-        if (steps.lost().contains(chainRun) || verifyHistory.readyAtStep(c, item.workItemId(), item.generation(), steps.index()))
+        if (steps.lost().contains(chainRun) || verifyHistory.readyAtCurrentStep(c, item))
             return Optional.empty();
         return Optional.of(new Start(chainRun, chain.orElseThrow().execution().head(), true, ""));
     }
@@ -76,8 +84,7 @@ public class WorkStepAssembly {
      */
     String retryRefusal(Connection c, List<EventEnvelope> history) throws SQLException {
         WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
-        boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
-        if (!builds(item, landFix)) return null;
+        if (WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history)) || !buildsStep(item)) return null;
         return start(c, item).isPresent() ? null : CHECKPOINT_LOST;
     }
 }

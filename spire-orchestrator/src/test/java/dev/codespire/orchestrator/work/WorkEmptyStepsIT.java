@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.StepSummary;
 import dev.codespire.contract.work.WorkExecution;
 import dev.codespire.contract.work.WorkItemEvent;
@@ -55,8 +56,8 @@ class WorkEmptyStepsIT extends WorkSpecRunFixture {
         return root.toString();
     }
 
-    private static RunResult.RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+    private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
     /** A generated item of {@code steps} steps, written, approved, registered, and its first step dispatched. */

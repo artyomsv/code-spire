@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.ResolveGate;
 import dev.codespire.contract.work.WorkDraft;
 import dev.codespire.contract.work.WorkDraftBinding;
@@ -84,7 +85,7 @@ public class WorkDraftTransitions {
                     || !phase.equals(item.phase()))
                 return new WorkItemTransitions.Outcome(409, "work_item_changed", item);
             Locked locked = new Locked(c, history, item);
-            if (result.result() instanceof RunResult.RunWorkArtifact artifact) return artifact(locked, result, artifact.text());
+            if (result.result() instanceof RunWorkArtifact artifact) return artifact(locked, result, artifact.text());
             return decided(locked, WorkDraftLifecycle.runFailed(item, result.usage()), "draft-failed:" + result.attempt());
         });
     }
@@ -104,7 +105,8 @@ public class WorkDraftTransitions {
     }
 
     /**
-     * A plan is checked against the approved specification as stored and the item's step limit (§6.4), then its
+     * A plan is checked against the approved specification as stored and the most steps the item can build now, its
+     * step limit, the cursor's 50 and its runs left (§6.4, {@link dev.codespire.contract.work.WorkProgress#planStepBound}), then its
      * worst-case step prompt against the budget (A8), so that no step is refused at dispatch after the plan is approved.
      */
     private Validated plan(Locked locked, String text) throws SQLException {
@@ -113,7 +115,7 @@ public class WorkDraftTransitions {
         String specification = artifacts.read(locked.c(), item.workItemId(), approved.storedId())
                 .orElseThrow(() -> new IllegalStateException("Work item " + item.workItemId() + " names a specification it does not store"));
         PlanRules.Checked checked = PlanRules.accept(text, new PlanRules.Bound(WorkPreparation.STEPS_BINDING, approved.sha256(),
-                item.policy().limits().maxStepsPerPlan()));
+                item.progress().planStepBound(item.policy().limits())));
         if (!checked.valid()) return new Validated(text, List.of(), PlanRules.sentence(checked.detail()));
         return new Validated(text, checked.steps(), StepPromptBudget.refusal(specification, checked.steps()).orElse(null));
     }

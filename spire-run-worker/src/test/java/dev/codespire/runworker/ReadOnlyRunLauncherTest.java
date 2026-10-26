@@ -2,6 +2,7 @@ package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.harness.HarnessAdapter;
@@ -97,7 +98,7 @@ class ReadOnlyRunLauncherTest {
     void aReadOnlyRunReturnsItsArtifact() {
         runtime.publisherLines = List.of(artifactLine("TEST-specification"));
 
-        RunResult.RunWorkArtifact artifact = assertInstanceOf(RunResult.RunWorkArtifact.class,
+        RunWorkArtifact artifact = assertInstanceOf(RunWorkArtifact.class,
                 launcher.launchReadOnly(DRAFT, observer));
 
         assertEquals("TEST-specification", artifact.text());
@@ -112,7 +113,7 @@ class ReadOnlyRunLauncherTest {
         runtime.publisherLines = List.of(artifactLine("TEST-spec quoting " + RunLauncherTest.MODEL_KEY + " and "
                 + RunLauncherTest.WRITE_SECRET));
 
-        RunResult.RunWorkArtifact artifact = assertInstanceOf(RunResult.RunWorkArtifact.class,
+        RunWorkArtifact artifact = assertInstanceOf(RunWorkArtifact.class,
                 launcher.launchReadOnly(DRAFT, observer));
 
         assertFalse(artifact.text().contains(RunLauncherTest.MODEL_KEY), "the model key reached the artifact");
@@ -126,7 +127,7 @@ class ReadOnlyRunLauncherTest {
         runtime.publisherLines = List.of(artifactLine("TEST-spec quoting "
                 + RunLauncherTest.MODEL_KEY.substring(0, 10) + "\\u0007" + RunLauncherTest.MODEL_KEY.substring(10)));
 
-        RunResult.RunWorkArtifact artifact = assertInstanceOf(RunResult.RunWorkArtifact.class,
+        RunWorkArtifact artifact = assertInstanceOf(RunWorkArtifact.class,
                 launcher.launchReadOnly(DRAFT, observer));
 
         assertTrue(artifact.text().startsWith("TEST-spec quoting"), "the text itself must survive");
@@ -161,7 +162,7 @@ class ReadOnlyRunLauncherTest {
     void aRepositoryChangeIsAWarningNotAFailure() {
         runtime.publisherLines = List.of("{\"event\":\"repository_changed\",\"bundles\":1}", artifactLine("TEST-plan"));
 
-        RunResult.RunWorkArtifact artifact = assertInstanceOf(RunResult.RunWorkArtifact.class,
+        RunWorkArtifact artifact = assertInstanceOf(RunWorkArtifact.class,
                 launcher.launchReadOnly(DRAFT, observer));
 
         assertTrue(artifact.repositoryChanged());

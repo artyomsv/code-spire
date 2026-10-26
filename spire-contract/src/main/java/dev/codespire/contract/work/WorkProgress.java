@@ -52,6 +52,14 @@ public record WorkProgress(UUID attemptId, String attemptPhase, String attemptSt
     }
     /** A plan step completed (M4 slice 3, A11): steps count completions, so a retried step counts once. */
     public WorkProgress completeStep() { return withSteps(Math.addExact(steps,1)); }
+    /**
+     * The most steps a plan may have now (M4 slice 3, A8, A11): the step limit, the cursor's {@link WorkSteps#MAX_STEPS},
+     * and the runs left, because every step builds in at least one run and a plan delivers only at its end, so a longer
+     * plan would stop partway with its runs spent and nothing delivered. Never negative.
+     */
+    public long planStepBound(WorkPolicyLimits limits) {
+        return Math.max(0,Math.min(Math.min(limits.maxStepsPerPlan(),WorkSteps.MAX_STEPS),limits.maxRunsPerItem()-runs));
+    }
     /** Readmission starts the count again (decision 12). */
     public WorkProgress withSteps(long value) { return new WorkProgress(attemptId,attemptPhase,attemptState,reserved,startedAt,runs,value,wallSeconds,costMillicents,calls,usageUnknown,execution); }
     /** A land fix's build is no plan step (A11), so the step limit does not refuse it; every other limit does. */

@@ -72,7 +72,7 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
     /**
      * Keeps a composed item's preparation. A generated item keeps its draft, preparation and plan only when that
      * preparation was registered from the approved draft (A7) and the plan fits the step limit of the policy selected now
-     * (A8), so readmission spends nothing on them and no step is refused partway. Otherwise all three go: the draft becomes
+     * and the runs left (A8, A11), so readmission spends nothing on them and no step is refused partway. Otherwise all three go: the draft becomes
      * {@link WorkDraft#admitted()} and the next generation writes its specification again. The plan cursor and the step
      * count start again (decision 12), so no build of the next generation reads this one's cursor; runs and spend accumulate.
      */
@@ -86,9 +86,12 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
         return preparation != null && draft.specificationApproved() && draft.planApproved()
                 && draft.specification().equals(preparation.specification()) && draft.plan().equals(preparation.plan());
     }
-    /** An item no label selects ends not eligible whatever its plan, so only a selected policy's limit refuses one. */
+    /**
+     * An item no label selects ends not eligible whatever its plan, so only a selected policy's limit refuses one. Runs
+     * survive readmission, so the plan must fit the runs left as well as the step limit ({@link WorkProgress#planStepBound}).
+     */
     private boolean stepsFit() {
-        return steps == null || policy.selected() == null || steps.total() <= policy.limits().maxStepsPerPlan();
+        return steps == null || policy.selected() == null || steps.total() <= progress.planStepBound(policy.limits());
     }
     public WorkItemEvent controlled(WorkControl value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,

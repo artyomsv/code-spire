@@ -43,14 +43,14 @@ class UntrustedTextTest {
     }
 
     @Test
-    void markdownQuotesAreNotEscapedInsideTheFence() {
-        assertEquals("```\nList<String> @TEST-user\n```",
-                UntrustedText.quoteBlock("List<String> @TEST-user", UntrustedText.Markup.MARKDOWN));
+    void markdownQuotesAreNotEscapedInsideTheCodeBlock() {
+        assertEquals("    List<String> @TEST-user\n    TEST-line-2",
+                UntrustedText.quoteBlock("List<String> @TEST-user\nTEST-line-2", UntrustedText.Markup.MARKDOWN));
     }
 
     @Test
-    void aMarkdownQuoteOutgrowsItsBackticks() {
-        assertEquals("````\nTEST ``` x\n````", UntrustedText.quoteBlock("TEST ``` x", UntrustedText.Markup.MARKDOWN));
+    void aMarkdownQuoteKeepsItsBackticksAsCode() {
+        assertEquals("    TEST\n    ```\n    x", UntrustedText.quoteBlock("TEST\n```\nx", UntrustedText.Markup.MARKDOWN));
     }
 
     /** GitLab runs a note line that starts with a slash as a quick action of the bot (A13); none may start with one. */

@@ -59,6 +59,12 @@ public class WorkPolicyRegistry {
     @Transactional
     public WorkPolicy.Profile createVersion(WorkPolicy.Profile profile) {
         dev.codespire.workspace.PathGlob.compileAll(List.copyOf(profile.limits().protectedPaths()));
+        // A plan cursor holds at most this many steps (M4 slice 3), so a longer limit would ask for a plan no build can run.
+        // Checked here, not in WorkPolicyLimits: stored events carry limits, and an older profile must still replay.
+        if (profile.limits().maxStepsPerPlan() > dev.codespire.contract.work.WorkSteps.MAX_STEPS)
+            throw new IllegalArgumentException("Step limit " + profile.limits().maxStepsPerPlan() + " is over the "
+                    + dev.codespire.contract.work.WorkSteps.MAX_STEPS + " steps a plan may have; set it to "
+                    + dev.codespire.contract.work.WorkSteps.MAX_STEPS + " or fewer");
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO autonomy_profile(id,name,precedence) VALUES (?,?,?) ON CONFLICT (id) DO NOTHING

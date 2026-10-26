@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.WorkDraftBinding;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -70,7 +71,7 @@ class RunWorkArtifactProjectionTest {
     }
 
     private static RunResult artifact(String runId) {
-        return new RunResult.RunWorkArtifact(runId, new WorkDraftBinding("TEST-item", 1, UUID.randomUUID(),
+        return new RunWorkArtifact(runId, new WorkDraftBinding("TEST-item", 1, UUID.randomUUID(),
                 WorkDraftBinding.Kind.SPEC, "d".repeat(64)), "TEST-specification", false, Map.of("INPUT", 10L), 4);
     }
 

@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -62,7 +63,7 @@ public class RunResultSaga {
             // A specification or plan run pushed nothing to propose, and the work-run inbox holds no row for it: its own
             // inbox claims every result it has, a failure included, so none falls through to the proposal below.
             if (drafts.accept(result)) return;
-            if (result instanceof RunResult.RunWorkArtifact) return;
+            if (result instanceof RunWorkArtifact) return;
             if(workItems.accept(result))return;
             // LAST, and after the projection on purpose: it reads the row the projection just
             // wrote, it talks to a forge, and it must not delay the terminal status an operator is

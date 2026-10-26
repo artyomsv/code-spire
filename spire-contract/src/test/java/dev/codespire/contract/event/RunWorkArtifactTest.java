@@ -18,8 +18,8 @@ class RunWorkArtifactTest {
     private static final WorkDraftBinding DRAFT = new WorkDraftBinding("TEST-item", 1,
             UUID.fromString("00000000-0000-4000-8000-000000000001"), WorkDraftBinding.Kind.PLAN, "d".repeat(64));
 
-    private static RunResult.RunWorkArtifact artifact(String text, Map<String, Long> usage) {
-        return new RunResult.RunWorkArtifact(RUN_ID, DRAFT, text, false, usage, 3);
+    private static RunWorkArtifact artifact(String text, Map<String, Long> usage) {
+        return new RunWorkArtifact(RUN_ID, DRAFT, text, false, usage, 3);
     }
 
     @Test
@@ -44,19 +44,19 @@ class RunWorkArtifactTest {
     @Test
     void anArtifactNamesItsRunAndDraftAndANonNegativeWall() {
         assertThrows(IllegalArgumentException.class,
-                () -> new RunResult.RunWorkArtifact(" ", DRAFT, "TEST-spec", false, null, 3));
+                () -> new RunWorkArtifact(" ", DRAFT, "TEST-spec", false, null, 3));
         assertThrows(NullPointerException.class,
-                () -> new RunResult.RunWorkArtifact(RUN_ID, null, "TEST-spec", false, null, 3));
+                () -> new RunWorkArtifact(RUN_ID, null, "TEST-spec", false, null, 3));
         assertThrows(IllegalArgumentException.class,
-                () -> new RunResult.RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", false, null, -1));
+                () -> new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", false, null, -1));
     }
 
     @Test
     void withUsageEnumeratesEveryComponent() {
-        RunResult.RunWorkArtifact original = new RunResult.RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, null, 7);
+        RunWorkArtifact original = new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, null, 7);
 
-        RunResult.RunWorkArtifact measured = original.withUsage(Map.of("INPUT", 11L));
+        RunWorkArtifact measured = original.withUsage(Map.of("INPUT", 11L));
 
-        assertEquals(new RunResult.RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, Map.of("INPUT", 11L), 7), measured);
+        assertEquals(new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, Map.of("INPUT", 11L), 7), measured);
     }
 }

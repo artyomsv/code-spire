@@ -16,9 +16,12 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A component on the work event survives every wither (CLAUDE.md: a wire record's rebuild sites drop it silently). */
 class WorkItemEventTest {
     static WorkItemEvent item() {
+        return item(new WorkPolicyLimits(60, 5, 20, 7200, 2_000_000, 40, Set.of()));
+    }
+
+    static WorkItemEvent item(WorkPolicyLimits limits) {
         Map<WorkPolicy.Phase, String> modes = Map.of(WorkPolicy.Phase.INTAKE, "auto", WorkPolicy.Phase.SPEC, "auto");
-        WorkPolicy.Profile profile = new WorkPolicy.Profile(UUID.randomUUID(), "TEST-policy", 1, 1, modes,
-                new WorkPolicyLimits(60, 5, 20, 7200, 2_000_000, 40, Set.of()));
+        WorkPolicy.Profile profile = new WorkPolicy.Profile(UUID.randomUUID(), "TEST-policy", 1, 1, modes, limits);
         WorkPolicy.Selection selection = new WorkPolicy.Selection(profile, profile.modes(), List.of(), "policy_selected", List.of(), profile, profile.limits());
         WorkIssueLocation issue = new WorkIssueLocation(new WorkIssueRef(WorkSourceType.GITHUB, "https://tracker.example.test", "TEST-project",
                 "TEST-issue"), "TEST-42", URI.create("https://tracker.example.test/TEST-42"));
@@ -119,7 +122,9 @@ class WorkItemEventTest {
     @Test
     void readmitWritesAgainAPlanLongerThanTheStepLimit() {
         WorkDraft approved = approvedDraft();
-        WorkItemEvent registered = item().drafted(approved).prepared(WorkDraftLifecycleTest.preparation(approved));
+        // Runs enough for every step, so only the step limit decides.
+        WorkItemEvent registered = item(new WorkPolicyLimits(60, 40, 20, 7200, 2_000_000, 40, Set.of())).drafted(approved)
+                .prepared(WorkDraftLifecycleTest.preparation(approved));
 
         WorkItemEvent tooLong = registered.stepped(WorkSteps.of(21)).readmit();
         WorkItemEvent fits = registered.stepped(WorkSteps.of(20)).readmit();

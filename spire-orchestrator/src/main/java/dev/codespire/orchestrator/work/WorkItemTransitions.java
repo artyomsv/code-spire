@@ -165,7 +165,8 @@ public class WorkItemTransitions {
                 if(expected>=0 && history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 // Derived here, under the lock, because the decider sees no history (A9).
-                WorkItemLifecycle.EntryMode mode=entryMode(history);boolean landFix=mode==WorkItemLifecycle.EntryMode.LAND_FIX;
+                // entered stays how this result's phase was entered; mode moves on with a readmit or a completed step.
+                WorkItemLifecycle.EntryMode mode=entryMode(history),entered=mode;
                 if(result!=null) {
                     try(PreparedStatement ps=c.prepareStatement("SELECT state FROM work_phase_attempt WHERE id=? AND work_item_id=?")) {
                         ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
@@ -214,8 +215,8 @@ public class WorkItemTransitions {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
                     if(result.execution()!=null)progress=progress.withExecution(result.execution());
                     if(!result.usageKnown())progress=progress.unknownUsage();
-                    if(result.successful())progress=WorkStepLifecycle.composedStepCompleted(item,progress,landFix);
-                    if(!result.successful() && landFix && "build".equals(item.phase())) {
+                    if(result.successful())progress=WorkStepLifecycle.composedStepCompleted(item,progress,entered);
+                    if(!result.successful() && entered==WorkItemLifecycle.EntryMode.LAND_FIX && "build".equals(item.phase())) {
                         // A failed fix run fails the fix, not the item: its pull request is still open (Review Focus 16).
                         next=WorkItemLifecycle.landHanded(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),progress),"land_fix_run_failed");
                         store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
@@ -227,7 +228,7 @@ public class WorkItemTransitions {
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
                     // A plan step's completion is the step loop's decision (M4 slice 3, A17); a land fix is never a step.
-                    WorkItemEvent stepped=WorkStepLifecycle.asks(item,landFix)?WorkStepLifecycle.next(next):null;
+                    WorkItemEvent stepped=WorkStepLifecycle.asks(item,entered)?WorkStepLifecycle.next(next):null;
                     if(stepped!=null){store.appendDecision(c,history,stepped,"step-completed:"+result.attemptId());history=store.history(id);next=stepped;mode=entryMode(history);
                         // Every step changed nothing (§6.7): nothing is entered, and only Stop or Readmit go on.
                         if(WorkStepLifecycle.NO_CHANGE.equals(stepped.reason()))return new Outcome(200,stepped.reason(),stepped);}
@@ -281,8 +282,7 @@ public class WorkItemTransitions {
      * {@link WorkItemLifecycle.EntryMode#STEP} between the steps of a plan (M4 slice 3, decision 13).
      */
     static WorkItemLifecycle.EntryMode entryMode(List<dev.codespire.contract.event.EventEnvelope> history) {
-        boolean landFix=WorkItemLifecycle.landFixInProgress(facts(history));
-        return history.isEmpty()?WorkItemLifecycle.EntryMode.ORDINARY:WorkStepLifecycle.entryMode((WorkItemEvent)history.getLast().payload(),landFix);
+        return WorkStepLifecycle.entryMode(facts(history));
     }
     /**
      * Why a recheck may not continue this item: it stopped or is running, so only readmission may; or land handed it

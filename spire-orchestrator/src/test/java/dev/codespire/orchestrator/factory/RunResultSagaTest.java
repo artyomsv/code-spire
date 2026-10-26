@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -154,7 +155,7 @@ class RunResultSagaTest {
                 proposed.add(result);
             }
         };
-        RunResult artifact = new RunResult.RunWorkArtifact(RUN_ID, new dev.codespire.contract.work.WorkDraftBinding(
+        RunResult artifact = new RunWorkArtifact(RUN_ID, new dev.codespire.contract.work.WorkDraftBinding(
                 "TEST-item", 1, java.util.UUID.fromString("00000000-0000-4000-8000-000000000005"),
                 dev.codespire.contract.work.WorkDraftBinding.Kind.SPEC, "d".repeat(64)),
                 "TEST-specification", false, Map.of("INPUT", 3L), 2);

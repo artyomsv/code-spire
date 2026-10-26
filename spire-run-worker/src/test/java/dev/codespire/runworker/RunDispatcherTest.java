@@ -3,6 +3,7 @@ package dev.codespire.runworker;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
@@ -162,7 +163,7 @@ class RunDispatcherTest {
             readOnlyLaunches++;
             observer.unitCreated(unitId, RunNotes.IGNORING);
             observer.unitReleased();
-            return new RunResult.RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1);
+            return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1);
         }
     }
 

@@ -105,10 +105,10 @@ public class WorkPrepareDispatcher {
             if (!claimable(c, claim.effect(), item)) return null;
             if (claim.remote().deferral() != null) { defer(c, claim, history); return null; }
             String refusal = refusal(claim, history, item);
-            if (refusal != null) { stop(c, history, item, attempt, refusal); return null; }
+            if (refusal != null) { stop(c, history, new Stop(attempt, refusal)); return null; }
             // The setup changed after it was read: the next drain reads it again, with the head of its base branch.
             if (defaults.get(c, item.repositoryId(), false).revision() != claim.remote().setup().revision()) return null;
-            if (setupChangedSinceSpecification(claim, item)) { stop(c, history, item, attempt, "draft_setup_changed"); return null; }
+            if (setupChangedSinceSpecification(claim, item)) { stop(c, history, new Stop(attempt, "draft_setup_changed")); return null; }
             return claimed(c, claim, item);
         } catch (SQLException failure) { throw WorkSourceRegistry.database(failure); }
         catch (java.io.IOException failure) { throw new IllegalStateException("Cannot persist the draft dispatch", failure); }
@@ -168,7 +168,7 @@ public class WorkPrepareDispatcher {
         WorkDraftAssembly.Prepared prepared;
         try { prepared = assembly.assemble(c, new WorkDraftAssembly.Request(claim.observed().source(), item, remote.setup(), prompt, base, binding)); }
         catch (IllegalStateException | jakarta.ws.rs.BadRequestException unavailable) {
-            stop(c, store.history(item.workItemId()), item, effect.attempt(), WorkRunAssemblyRefusals.reasonOf(unavailable));
+            stop(c, store.history(item.workItemId()), new Stop(effect.attempt(), WorkRunAssemblyRefusals.reasonOf(unavailable)));
             return null;
         }
         String runId = prepared.command().runId();
@@ -191,13 +191,13 @@ public class WorkPrepareDispatcher {
         return prepared;
     }
 
-    /** The approved specification as stored, its digest, the setup's checks and the item's step limit (§6.4). */
+    /** The approved specification as stored, its digest, the setup's checks and the most steps the item can build now (§6.4). */
     private String planPrompt(Connection c, WorkItemEvent item, Claim claim) throws SQLException {
         WorkPreparation.Artifact approved = item.draft().specification();
         String specification = artifacts.read(c, item.workItemId(), approved.storedId())
                 .orElseThrow(() -> new IllegalStateException("Work item " + item.workItemId() + " names a specification it does not store"));
         WorkDraftPrompts.PlanInput input = new WorkDraftPrompts.PlanInput(specification, approved.sha256(),
-                claim.remote().setup().verifyCommands(), item.policy().limits().maxStepsPerPlan());
+                claim.remote().setup().verifyCommands(), item.progress().planStepBound(item.policy().limits()));
         return WorkDraftPrompts.plan(input, claim.effect().retryError(), claim.effect().note());
     }
 
@@ -219,14 +219,21 @@ public class WorkPrepareDispatcher {
                 deferrals = rs.getInt(1);
             }
         }
-        if (deferrals >= MAX_DEFERRALS) stop(c, history, (WorkItemEvent) history.getLast().payload(), attempt, reason);
+        if (deferrals >= MAX_DEFERRALS) stop(c, history, new Stop(attempt, reason));
     }
 
-    /** The run cannot be bought: the row is refused and the item stops with the rule's own reason, as a build's does. */
-    private void stop(Connection c, List<EventEnvelope> history, WorkItemEvent item, UUID attempt, String reason) throws SQLException, java.io.IOException {
-        refuse(c, attempt, reason);
-        WorkItemEvent stopped = WorkItemLifecycle.state(item, "stopped", reason, "WORK_ITEM_REFUSED", item.gate(), item.progress().reserve(false));
-        transitions.decide(c, new WorkItemTransitions.Decision(history, stopped, "draft-refused:" + attempt));
+    /** Which draft attempt cannot be bought, and the rule's reason. */
+    private record Stop(UUID attempt, String reason) {}
+
+    /**
+     * The run cannot be bought: the row is refused and the item stops with the rule's own reason, as a build's does. The
+     * item is the last fact of the history the stop is decided under, so the two cannot drift apart.
+     */
+    private void stop(Connection c, List<EventEnvelope> history, Stop stop) throws SQLException, java.io.IOException {
+        refuse(c, stop.attempt(), stop.reason());
+        WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
+        WorkItemEvent stopped = WorkItemLifecycle.state(item, "stopped", stop.reason(), "WORK_ITEM_REFUSED", item.gate(), item.progress().reserve(false));
+        transitions.decide(c, new WorkItemTransitions.Decision(history, stopped, "draft-refused:" + stop.attempt()));
     }
 
     private void refuse(Connection c, UUID attempt, String reason) throws SQLException {

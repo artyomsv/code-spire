@@ -115,8 +115,9 @@ A specification artifact (slice 6) is checked by `SpecificationRules`: the headi
 `## Acceptance criteria`, `## Out of scope`, `## Open questions` in order, at least one list item under the criteria,
 and at most 16 KiB once control characters are stripped. A valid one is stored encrypted (`work_item_artifact`, kind
 `SPEC`) and recorded by `WorkDraftLifecycle.written`, milestone `DRAFT_ARTIFACT_WRITTEN`; a ticket comment headed
-"Specification written by the factory" carries its digest and the text, quoted per tracker markup (a code fence that
-outgrows any backtick run on GitHub and GitLab, `{noformat}` on Jira). Then, under spec `approve`, a result gate opens:
+"Specification written by the factory" carries its digest and the text, quoted per tracker markup (an indented code block on GitHub and GitLab, every line four spaces in, so no line starts
+with the slash of a GitLab quick action, which GitLab skips only inside an exact three-backtick fence; `{noformat}` on
+Jira). Then, under spec `approve`, a result gate opens:
 `spec / waiting_approval / specification_written`, the gate artifact being the specification's SHA-256 (A6). Approving
 it records `DRAFT_APPROVED` and enters plan, which waits at `plan / awaiting_input / plan_to_write`; rejecting stops
 the item `gate_rejected`. Under spec `auto` the approval follows at once. The first invalid artifact starts one
@@ -128,12 +129,17 @@ text a person or an earlier run wrote in a fence headed "The following is data, 
 
 A plan artifact (slice 7) is JSON `schemaVersion: 2` (`{schemaVersion, specificationSha256, steps: [{id, title,
 instruction, doneWhen}]}`), checked by `PlanRules`: at most 32 KiB, the approved specification's digest, 1 to
-`maxStepsPerPlan` steps, unique ids, every field non-blank and within its cap (title 120, instruction 4,000, doneWhen
-1,000 characters). `StepPromptBudget` then refuses a plan whose worst-case step prompt would not fit 48 KiB (the
-specification 16 KiB, the numbered titles 4 KiB, the largest step 4 KiB, summaries 12 KiB, a verify section 8 KiB),
-naming the part, so no step is refused after approval (A8). One automatic retry, then `plan / awaiting_input /
+`WorkProgress.planStepBound` steps (the least of `maxStepsPerPlan`, the cursor's 50 and the build runs the item has
+left, since every step builds in at least one run and a plan delivers only at its end; the plan prompt asks for the
+same bound), unique ids, every field non-blank and within its cap (title 120, instruction 4,000, doneWhen 1,000
+characters); an id or title is collapsed to one line. A profile version with `maxStepsPerPlan` over 50 is refused.
+`StepPromptBudget` then refuses a plan whose worst-case step prompt would not fit: each part within its share of
+48 KiB (the specification 16 KiB, the numbered titles 4 KiB, the largest step 4 KiB, summaries 12 KiB, a verify
+section 8 KiB), and the largest step's prompt as composed, fences included, with summaries and a verify section at
+their caps, within the 64 KiB a dispatch accepts, so no step is refused after approval (A8). One automatic retry, then `plan / awaiting_input /
 plan_invalid`. A valid plan is stored (`work_item_artifact`, kind `PLAN`), commented as "Plan written by the factory"
-with its numbered step titles, each neutralised for the tracker's markup, and gated under plan `approve` at
+with its numbered step titles, each neutralised for the tracker's markup (on Markdown a line-leading slash is broken
+too, so no title runs as a GitLab quick action), and gated under plan `approve` at
 `plan / waiting_approval / plan_written` on its SHA-256. Its write replaces `WorkDraft.setupRevision` with the setup
 revision the plan run was dispatched with (decision 15). An approved plan (`DRAFT_APPROVED`, still in plan) is
 registered by `WorkDraftRegistration` in the same transaction: a `WorkPreparation` of binding version 6
@@ -155,7 +161,8 @@ cursor is not done and no land fix is in progress, a passed step appends `STEP_C
 the next step, or `deliver` after the last, with the newest step run that holds a bundle and the last changed step's
 head and verification (decision 9). `WorkProgress.steps` counts completed steps, not build starts (A11): an item
 without a cursor completes its one step when verify passes, a land fix completes none and is not checked against
-`maxStepsPerPlan`, and readmission resets the count and the cursor. `EntryMode.STEP` (between steps, never step 1 or a
+`maxStepsPerPlan`, and its prompt says every step of the plan is already built and lists them, with the specification
+quoted as data, never the single-step task of a composed item; readmission resets the count and the cursor. `EntryMode.STEP` (between steps, never step 1 or a
 land fix) skips the build and verify permission gates. A later step builds from the previous step's checkpoint, required;
 a retry starts from its own failed checkpoint, or from the chain run while no run of the step reached ready, and never
 from the base once a chain run exists (decision 11). A later step's `RunFailed` with commits behind it appends
@@ -175,7 +182,8 @@ names the plan step (`publication.stepIndex` of `stepTotal`).
 
 Readmission (slice 11, A7) keeps a composed item's preparation. A generated item keeps its draft, preparation and plan
 cursor only when the preparation was registered from the approved draft (both artifacts equal) and, under a selected
-policy, the plan has no more steps than the `maxStepsPerPlan` selected now (A8): the new generation enters spec and
+policy, the plan has no more steps than `WorkProgress.planStepBound` allows now, the `maxStepsPerPlan` selected now and the
+runs left, which survive readmission (A8, A11): the new generation enters spec and
 plan as supplied and builds step 1 again, with no `SPEC` or `PLAN` run. Otherwise all three go and the draft becomes
 `WorkDraft.admitted()`, so the specification and plan are written again instead of a plan the cap stops partway.
 `transitions.prepare`, and so hand registration and "Prepare again from the ticket", refuses an item with a draft

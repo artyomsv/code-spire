@@ -23,13 +23,15 @@ final class PlanRules {
     static final int MAX_PLAN_BYTES = 32 * 1024;
     static final int MAX_TITLE_CHARS = 120, MAX_INSTRUCTION_CHARS = 4_000, MAX_DONE_WHEN_CHARS = 1_000;
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** A line break with the blanks around it; control stripping has already removed every carriage return. */
+    private static final java.util.regex.Pattern LINE_BREAK = java.util.regex.Pattern.compile("[ \t]*\n\s*");
     /** What each refusal tells the agent on its one retry; the detail itself is what the screens key on. */
     private static final Map<String, String> SENTENCES = Map.of(
             "plan_too_large", "the plan is over 32 KiB",
             "plan_not_json", "the plan is not a JSON object",
             "plan_schema_version", "the plan must be a JSON object with \"schemaVersion\": 2",
             "plan_specification_mismatch", "\"specificationSha256\" is not the digest of the approved specification",
-            "plan_step_count", "the plan has no steps, or more steps than the limit",
+            "plan_step_count", "the plan has no steps, or more steps than the limit; every step needs at least one build run",
             "plan_step_ids", "two steps share an id; every step id must be unique",
             "plan_step_fields", "every step needs an id, a title of at most 120 characters, an instruction of at most 4000"
                     + " characters and a doneWhen of at most 1000 characters, none of them blank");
@@ -82,13 +84,22 @@ final class PlanRules {
         List<WorkArtifacts.Step> steps = new ArrayList<>();
         Set<String> ids = new HashSet<>();
         for (JsonNode node : array) {
-            String id = text(node, "id", MAX_TITLE_CHARS), title = text(node, "title", MAX_TITLE_CHARS);
+            String id = line(text(node, "id", MAX_TITLE_CHARS)), title = line(text(node, "title", MAX_TITLE_CHARS));
             String instruction = text(node, "instruction", MAX_INSTRUCTION_CHARS), doneWhen = text(node, "doneWhen", MAX_DONE_WHEN_CHARS);
             if (id == null || title == null || instruction == null || doneWhen == null) return Checked.refused("plan_step_fields");
             if (!ids.add(id)) return Checked.refused("plan_step_ids");
             steps.add(new WorkArtifacts.Step(id, title, instruction, doneWhen));
         }
         return new Checked(null, List.copyOf(steps));
+    }
+
+    /**
+     * An id or a title on one line (A13): a title is posted on the ticket as a list item, where a line break would put
+     * the rest at the start of a comment line, and GitLab runs such a line starting with a slash as a quick action. The
+     * plan's text is stored as written, so every read of it collapses the same way and the prompt and the ticket agree.
+     */
+    private static String line(String text) {
+        return text == null ? null : LINE_BREAK.matcher(text).replaceAll(" ");
     }
 
     /** The field's text after control stripping, or null when it is missing, not text, blank or over its cap. */

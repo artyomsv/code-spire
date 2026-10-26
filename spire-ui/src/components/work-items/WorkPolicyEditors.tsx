@@ -14,7 +14,7 @@ const phaseHelp: Record<api.Phase, string> = {
 const limitHelp: Record<keyof typeof bounds, string> = {
   gateTtlSeconds: 'How long an unanswered approval remains valid; at least one second.',
   maxRunsPerItem: 'Total run attempts allowed for one item. Zero prevents runs.',
-  maxStepsPerPlan: 'Maximum plan steps. Zero prevents execution.',
+  maxStepsPerPlan: 'Maximum plan steps, at most 50. Each step needs at least one run, so a plan is also held to the runs left. Zero prevents execution.',
   maxWallClockSeconds: 'Time budget in seconds. Zero prevents execution.',
   maxCostMillicents: 'Spend budget: 100,000 millicents = $1. Zero prevents execution.',
   maxCallsPerItem: 'Maximum model calls for one item. Zero prevents execution.',
@@ -61,7 +61,7 @@ export function ProfileEditor({ profiles, initial, saved, cancelled }: { profile
     <h4 className="field-sep">Limits</h4>
     <p className="prov-note">A zero maximum stops execution. The built-in CI protected paths always apply.</p>
     <div className="settings-fields">{Object.entries(bounds).map(([field, label]) => <SettingField key={field} label={label} scope="limits" hint={`Required. ${limitHelp[field as keyof typeof bounds]}`}>
-      <input aria-label={label} required type="number" step={1} min={field === 'gateTtlSeconds' ? 1 : 0}
+      <input aria-label={label} required type="number" step={1} min={field === 'gateTtlSeconds' ? 1 : 0} max={field === 'maxStepsPerPlan' ? 50 : undefined}
         value={limits[field as keyof typeof bounds]} onChange={event => setLimits(value => ({ ...value, [field]: Number(event.target.value) }))} /></SettingField>)}</div>
     <SettingField label="Additional protected paths, one per line" scope="limits"
       hint="Optional. Repository-relative path patterns to protect in addition to the built-in CI paths. Leave blank for no additions.">

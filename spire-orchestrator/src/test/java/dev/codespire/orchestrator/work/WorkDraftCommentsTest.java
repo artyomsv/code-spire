@@ -25,10 +25,10 @@ class WorkDraftCommentsTest {
     }
 
     @Test
-    void theMarkdownCommentFencesTheSpecificationVerbatim() {
+    void theMarkdownCommentQuotesTheSpecificationVerbatim() {
         String text = WorkDraftComments.specification("## Outcome\nList<String> @TEST-user ````", DIGEST, UntrustedText.Markup.MARKDOWN);
 
-        assertTrue(text.contains("`````\n## Outcome\nList<String> @TEST-user ````\n`````"), text);
+        assertTrue(text.contains("\n\n    ## Outcome\n    List<String> @TEST-user ````\n\n"), text);
         assertFalse(text.contains("&lt;"), text);
         assertTrue(text.contains("on the dashboard"), text);
     }

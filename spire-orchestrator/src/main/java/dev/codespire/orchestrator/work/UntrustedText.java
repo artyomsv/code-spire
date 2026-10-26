@@ -8,7 +8,8 @@ import java.util.regex.Pattern;
  * Text someone else wrote, quoted where it must stay text (M4 slice 3, A13): a ticket, a written specification or a
  * revision note, into an agent's prompt or onto a ticket. In a prompt it sits in a fenced block headed as data, with a
  * fence longer than any backtick run inside, so it cannot close its own block. On a ticket it is neutralised for the
- * tracker's own markup, so it can neither mention anyone nor render as a link, an image or a macro.
+ * tracker's own markup, so it can neither mention anyone nor render as a link, an image or a macro, and no line of it
+ * starts with a slash, which GitLab would run as a quick action of the bot account.
  *
  * <p>Control characters go first everywhere: a terminal escape in a ticket would otherwise reach the agent's transcript
  * and the operator's screen as an instruction to the terminal.
@@ -25,12 +26,16 @@ final class UntrustedText {
     private static final Pattern BACKTICK_RUN = Pattern.compile("`+");
     private static final Pattern WIKI_SPECIAL = Pattern.compile("([\\[!{|~])");
     private static final Pattern NOFORMAT = Pattern.compile("(?i)\\{(noformat)");
+    /** A line that starts with a slash after any indent: a GitLab quick action once the indent is gone. */
+    private static final Pattern LEADING_SLASH = Pattern.compile("(?m)^([ \\t]*)/");
+    /** Four spaces make a Markdown line indented code, which neither renders nor starts with a quick action's slash. */
+    private static final String CODE_INDENT = "    ";
 
     private UntrustedText() {}
 
     /** How the item's tracker renders a comment. */
     enum Markup {
-        /** Markdown, where a code fence quotes and entities are not decoded inside it. */
+        /** Markdown, where a code block quotes and entities are not decoded inside it. */
         MARKDOWN,
         /** Wiki markup, where a noformat block quotes and brackets, bangs, braces, pipes and tildes are markup. */
         WIKI;
@@ -74,20 +79,22 @@ final class UntrustedText {
     static String neutralise(String text, Markup markup) {
         String clean = stripControls(text);
         if (markup == Markup.WIKI) return WIKI_SPECIAL.matcher(clean).replaceAll(Matcher.quoteReplacement("\\") + "$1");
-        return clean.replace("@", "@" + ZERO_WIDTH_SPACE).replace("<", "&lt;");
+        String escaped = clean.replace("@", "@" + ZERO_WIDTH_SPACE).replace("<", "&lt;");
+        return LEADING_SLASH.matcher(escaped).replaceAll("$1" + ZERO_WIDTH_SPACE + "/");
     }
 
     /**
-     * A whole text quoted on a ticket. Markdown: a code fence that outgrows any backtick run inside, with nothing escaped
-     * inside it, since a code block neither renders nor decodes entities. Wiki markup: a noformat block whose inner closing
-     * tokens are broken, so the text cannot end the block early.
+     * A whole text quoted on a ticket. Markdown: an indented code block, every line four spaces in, with nothing escaped
+     * inside it, since a code block neither renders nor decodes entities. Not a fence: GitLab skips quick actions only
+     * inside a fence of exactly three backticks, so a longer fence around an inner one would let the lines after it run,
+     * while an indented line never starts with the slash a quick action needs. Wiki markup: a noformat block whose inner
+     * closing tokens are broken, so the text cannot end the block early.
      */
     static String quoteBlock(String text, Markup markup) {
         String clean = stripControls(text);
         if (markup == Markup.WIKI)
             return "{noformat}\n" + NOFORMAT.matcher(clean).replaceAll("{" + ZERO_WIDTH_SPACE + "$1") + "\n{noformat}";
-        String fence = fenceFor(clean);
-        return fence + "\n" + clean + "\n" + fence;
+        return CODE_INDENT + clean.replace("\n", "\n" + CODE_INDENT);
     }
 
     private static String fenceFor(String text) {

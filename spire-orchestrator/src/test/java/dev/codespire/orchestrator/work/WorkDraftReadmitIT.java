@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.work;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.scm.PullRequestRef;
 import dev.codespire.contract.work.WorkDraft;
 import dev.codespire.contract.work.WorkDraftBinding;
@@ -60,8 +61,8 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         return root.toString();
     }
 
-    private static RunResult.RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+    private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
     /**

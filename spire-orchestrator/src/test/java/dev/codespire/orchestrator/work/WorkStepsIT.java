@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.EventEnvelope;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.StepSummary;
 import dev.codespire.contract.work.WorkGate;
 import dev.codespire.contract.work.WorkItemEvent;
@@ -92,8 +93,8 @@ class WorkStepsIT extends WorkSpecRunFixture {
         return root.toString();
     }
 
-    private static RunResult.RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+    private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
     /** A generated item of {@code steps} steps, written, approved, registered, and its first step dispatched. */
@@ -337,11 +338,17 @@ class WorkStepsIT extends WorkSpecRunFixture {
         assertEquals(2, store.load(id).progress().steps());
     }
 
+    /**
+     * A plan is accepted only within the runs left (A8, A11), so a 2-step plan fits two runs; a verify retry spends the
+     * second, and the next step's build is refused at the cap.
+     */
     @Test
     void aStepRunCountsTowardMaxRuns() throws Exception {
-        String id = building("two-runs", 207, 3);
-        passStep(id, "1".repeat(40), "TEST-decision-1");
-        passStep(id, "2".repeat(40), "TEST-decision-2");
+        String id = building("two-runs", 207, 2);
+        failVerify(id, "1".repeat(40), "TEST-decision-1-first-try");
+        assertEquals(200, retry(id).status());
+        dispatcher.drain();
+        passStep(id, "2".repeat(40), "TEST-decision-1");
 
         assertState(store.load(id), "build", "stopped", "policy_cap_reached");
         assertEquals(2, heldCommands.size());

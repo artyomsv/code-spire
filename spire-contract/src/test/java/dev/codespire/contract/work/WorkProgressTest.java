@@ -51,4 +51,12 @@ class WorkProgressTest {
         for(String phase:List.of("spec","plan")){var progress=usage(1,2,3,4,5).start(UUID.randomUUID(),phase,Instant.EPOCH);assertEquals(1,progress.runs(),phase);assertEquals(2,progress.steps(),phase);}
     }
     @Test void belowAllCapsCanProceed(){assertTrue(usage(4,19,7199,1_999_999,39).within(limits,"build"));}
+    // A plan may have no more steps than the step limit, the cursor holds, or the runs left buy (M4 slice 3, A8, A11).
+    @Test void thePlanStepBoundIsTheLeastOfItsThreeLimits(){
+        assertEquals(5,usage(0,0,0,0,0).planStepBound(limits),"5 runs bound 20 steps");
+        assertEquals(1,usage(4,0,0,0,0).planStepBound(limits));
+        assertEquals(0,usage(6,0,0,0,0).planStepBound(limits),"never negative");
+        assertEquals(WorkSteps.MAX_STEPS,usage(0,0,0,0,0).planStepBound(new WorkPolicyLimits(60,500,100,7200,2_000_000,40,Set.of())));
+        assertEquals(20,usage(0,0,0,0,0).planStepBound(new WorkPolicyLimits(60,500,20,7200,2_000_000,40,Set.of())));
+    }
 }

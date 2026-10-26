@@ -41,10 +41,10 @@ class StepPromptBudgetTest {
         WorkArtifacts.Step large = step(3, "y".repeat(4100));
         steps.add(large);
         steps.add(step(4, "TEST-small"));
-        long titles = IntStream.range(0, steps.size()).mapToLong(i -> ((i + 1) + ". " + steps.get(i).title() + "\n").length()).sum();
+        long largest = StepPrompts.fixedPart(SPEC_16_KIB, steps, 2).length();
 
-        assertEquals(SPEC_16_KIB.length() + titles + 4100 + large.doneWhen().length() + StepPromptBudget.SUMMARIES_BYTES + StepPromptBudget.VERIFY_BYTES,
-                StepPromptBudget.worstCase(SPEC_16_KIB, steps));
+        assertEquals(largest + StepPromptBudget.SUMMARIES_BYTES + WorkVerifyHistory.MAX_PROMPT_SECTION_CHARS,
+                StepPromptBudget.worstCase(SPEC_16_KIB, steps), "the largest step's prompt, fences included, with the other parts at their caps");
         Optional<String> refused = StepPromptBudget.refusal(SPEC_16_KIB, steps);
         assertTrue(refused.orElseThrow().contains("largest step"), refused.orElseThrow());
     }

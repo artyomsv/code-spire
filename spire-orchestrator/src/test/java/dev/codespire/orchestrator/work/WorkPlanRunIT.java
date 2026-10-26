@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.EventEnvelope;
-import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.contract.work.ResolveGate;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkGate;
@@ -50,8 +50,8 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
     @Inject WorkPrepareReads reads;
     @Inject WorkDraftResource draftResource;
 
-    private static RunResult.RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunResult.RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+    private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
     }
 
     /** A schema-version-2 plan of the given step titles, bound to the TEST specification. */

@@ -45,9 +45,9 @@ public class WorkStepTransitions {
                 WorkItemTransitions.lockItem(c, id);
                 List<EventEnvelope> history = store.history(id);
                 WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
-                boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
+                WorkItemLifecycle.EntryMode mode = WorkItemTransitions.entryMode(history);
                 UUID attempt = failure.usage().attemptId();
-                if (!WorkStepLifecycle.routesRunFailure(item, landFix) || !"active".equals(item.workflowStatus())
+                if (!WorkStepLifecycle.routesRunFailure(item, mode) || !"active".equals(item.workflowStatus())
                         || !Objects.equals(attempt, item.progress().attemptId()) || verifyOff(item)) return null;
                 if (completed(c, attempt)) return new WorkItemTransitions.Outcome(200, "result_already_applied", item);
                 WorkItemEvent next = WorkStepLifecycle.stepRunFailed(item, runFailure(c, failure),
@@ -101,8 +101,8 @@ public class WorkStepTransitions {
         UUID attempt = ready.work().buildAttemptId();
         try (Connection c = dataSource.getConnection()) {
             if (!attempt.equals(item.progress().attemptId()) || completed(c, attempt)) return false;
-            boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
-            if (ready.startFromHead() == null && WorkStepLifecycle.acceptsEmpty(item, landFix, ready.head())) return false;
+            WorkItemLifecycle.EntryMode mode = WorkItemTransitions.entryMode(history);
+            if (ready.startFromHead() == null && WorkStepLifecycle.acceptsEmpty(item, mode, ready.head())) return false;
             mismatch(c, ready.runId());
             return true;
         } catch (SQLException failed) {
