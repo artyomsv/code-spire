@@ -45,6 +45,14 @@ class HeldRunLauncherTest {
         assertEquals(COMMAND.work(),ready.work());assertEquals(HEAD,ready.head());assertEquals(List.of("TEST-file"),ready.changedPaths());
         assertEquals(Map.of("INPUT",7L),ready.tokenUsage());assertTrue(ready.activeWallSeconds()>0);
     }
+    @Test void theReadyResultCarriesTheSummary(){
+        // The summary is scrubbed in the worker: the agent ran with the model key and can quote it into the file (A9).
+        runtime.publisherLines=List.of(CHECKPOINT,"{\"event\":\"step_summary\",\"json\":\"{\\\"decisions\\\":[\\\"TEST-decision "+RunLauncherTest.MODEL_KEY+"\\\"]}\"}");
+        var ready=assertInstanceOf(RunResult.RunWorkReady.class,launch());
+        assertNotNull(ready.stepSummary());var decision=ready.stepSummary().decisions().getFirst();
+        assertTrue(decision.startsWith("TEST-decision "),decision);assertFalse(decision.contains(RunLauncherTest.MODEL_KEY),"the model key reached the summary");
+    }
+    @Test void noSummaryLineMeansNull(){assertNull(assertInstanceOf(RunResult.RunWorkReady.class,launch()).stepSummary());}
     @Test void aFinishedHeldBuildRetainsItsUnit(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.destroyed.isEmpty());}
     @Test void anAlreadyStoppedHeldBuildNeedsNoCancellation(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.cancelled.isEmpty());}
     @Test void heldCreationUsesTheFullPublicationBinding(){launch();assertEquals(new PublicationKey(COMMAND.work().publicationKey()),runtime.binding);}

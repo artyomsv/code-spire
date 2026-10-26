@@ -155,7 +155,7 @@ class ContractSchemaSnapshotTest {
                 dev.codespire.contract.work.WorkControl.class,dev.codespire.contract.work.WorkVerification.class,
                 dev.codespire.contract.work.WorkVerification.CheckResult.class,dev.codespire.contract.work.WorkLanding.class,
                 dev.codespire.contract.work.WorkDraftBinding.class,dev.codespire.contract.work.WorkItemEvent.class,
-                dev.codespire.contract.work.WorkDraft.class)) {
+                dev.codespire.contract.work.WorkDraft.class,dev.codespire.contract.work.StepSummary.class)) {
             lines.add("# "+nested.getSimpleName());
             lines.add(render(nested,nested.getSimpleName()));
             lines.add("");

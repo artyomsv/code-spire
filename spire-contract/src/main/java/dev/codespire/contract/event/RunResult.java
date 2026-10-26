@@ -47,6 +47,14 @@ public sealed interface RunResult {
             }
             if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
         }
+
+        public dev.codespire.contract.work.StepSummary stepSummary() {
+            throw new UnsupportedOperationException("RED");
+        }
+
+        public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
+            throw new UnsupportedOperationException("RED");
+        }
     }
 
     /**

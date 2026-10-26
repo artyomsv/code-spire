@@ -56,7 +56,7 @@ RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.St
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
 RunWorkArtifact(runId: java.lang.String, draft: dev.codespire.contract.work.WorkDraftBinding, text: java.lang.String, repositoryChanged: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
-RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
+RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, stepSummary: dev.codespire.contract.work.StepSummary)
 
 # RunVerification
 RunWorkVerified(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, verification: dev.codespire.contract.work.WorkVerification)
@@ -105,3 +105,6 @@ WorkItemEvent(workItemId: java.lang.String, sourceId: java.util.UUID, repository
 
 # WorkDraft
 WorkDraft(mode: java.lang.String, specification: dev.codespire.contract.work.WorkPreparation$Artifact, plan: dev.codespire.contract.work.WorkPreparation$Artifact, specificationRevisions: int, planRevisions: int, specificationApproved: boolean, planApproved: boolean, baseCommit: java.lang.String, setupRevision: long)
+
+# StepSummary
+StepSummary(decisions: java.util.List<java.lang.String>, alternativesRejected: java.util.List<java.lang.String>, deviations: java.util.List<java.lang.String>)

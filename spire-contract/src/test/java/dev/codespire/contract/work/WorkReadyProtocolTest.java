@@ -19,6 +19,23 @@ class WorkReadyProtocolTest {
         assertFalse(wire.contains("pushedRef"));
     }
 
+    @Test void aReadyRoundTripsItsStepSummary() throws Exception {
+        var summary = new StepSummary(List.of("TEST-decision"),List.of("TEST-alternative"),List.of("TEST-deviation"));
+        var ready = new RunResult.RunWorkReady("TEST-run",WORK,"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),12).withStepSummary(summary);
+        var json = new ObjectMapper();
+        var read = (RunResult.RunWorkReady) json.readValue(json.writeValueAsString(ready),RunResult.class);
+        assertEquals(ready,read);
+        assertEquals(summary,read.stepSummary());
+    }
+
+    @Test void aReadyWithoutASummaryReadsBackWithout() throws Exception {
+        // A ready written before the summary existed has no such field; it is read as no summary, never an empty one.
+        String older = "{\"type\":\"RunWorkReady\",\"runId\":\"TEST-run\",\"work\":{\"workItemId\":\"TEST-work\",\"generation\":1,"
+                + "\"buildAttemptId\":\"00000000-0000-0000-0000-000000000001\",\"preparationBinding\":\"" + "a".repeat(64) + "\"},"
+                + "\"head\":\"" + "b".repeat(40) + "\",\"changedPaths\":[],\"tokenUsage\":null,\"activeWallSeconds\":1}";
+        assertNull(((RunResult.RunWorkReady) new ObjectMapper().readValue(older,RunResult.class)).stepSummary());
+    }
+
     @Test void readyNeedsItsRunWorkAndCheckpoint() {
         for(String id:new String[]{null,""," "})assertThrows(IllegalArgumentException.class,
                 () -> new RunResult.RunWorkReady(id,WORK,"b".repeat(40),List.of(),null,0));
