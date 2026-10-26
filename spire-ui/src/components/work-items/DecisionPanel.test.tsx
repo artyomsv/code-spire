@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as gateway from '../../api';
@@ -264,7 +264,9 @@ it('says a failed plan step builds again from where it started', async () => {
   vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
   vi.mocked(gateway.getWorkItem).mockResolvedValue(stepFailed);
   show();
-  expect(await screen.findByText(/builds this step again from where it started/)).toBeInTheDocument();
+  // The reason's sentence also shows with the result; the approve section is where Retry is explained.
+  const approve = await screen.findByRole('region', { name: 'If you approve' });
+  expect(within(approve).getByText(/builds this step again from where it started/)).toBeInTheDocument();
   expect(screen.queryByText(/starts again from the base/)).toBeNull();
 });
 // Decision 11: a plan step's commits are gone and never rebased on the base, so the way on is Readmit.
