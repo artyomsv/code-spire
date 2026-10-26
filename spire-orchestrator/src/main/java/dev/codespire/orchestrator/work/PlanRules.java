@@ -60,7 +60,7 @@ final class PlanRules {
 
     static Checked check(JsonNode root, Bound bound) {
         boolean steps = bound.bindingVersion() >= WorkPreparation.STEPS_BINDING;
-        int version = steps ? 2 : 1;
+        int version = 2;
         if (root == null || !root.isObject() || !root.path("schemaVersion").isInt() || root.path("schemaVersion").asInt() != version)
             return Checked.refused("plan_schema_version");
         if (!bound.specificationSha256().equals(root.path("specificationSha256").asText()))
