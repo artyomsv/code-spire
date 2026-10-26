@@ -286,7 +286,7 @@ class WorkStepsIT extends WorkSpecRunFixture {
         passStep(id, "3".repeat(40), "TEST-decision-3");
         WorkItemEvent item = store.load(id);
         assertTrue(item.steps().done());
-        WorkItemTransitions.Observation observed = transitions.observe(item.sourceId(), item.issue());
+        WorkItemTransitions.Observation observed = transitions.observe(item);
         WorkLandFixes.Fix fix = new WorkLandFixes.Fix(UUID.randomUUID(), "land_checks_failed", "3".repeat(40),
                 new dev.codespire.contract.scm.PullRequestRef(918, "https://forge.example.test/TEST-pull/918", false), "spire/work-TEST-fix",
                 "main", null, "TEST-fix-instruction\n", Set.of());
