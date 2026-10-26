@@ -103,7 +103,7 @@ public final class WorkItemLifecycle {
         if(!(landFix?item.progress().withinKeepingExecution(item.policy().limits(),item.phase()):item.progress().within(item.policy().limits(),item.phase())))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         WorkItemEvent drafted=WorkDraftLifecycle.enter(item,new WorkDraftLifecycle.Entry(entry==EntryMode.DRAFT,available,decisionId,now));
         if(drafted!=null)return drafted;
-        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase()) || entry==EntryMode.STEP && java.util.Set.of("build","verify").contains(item.phase());
+        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
         if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),
