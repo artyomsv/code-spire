@@ -110,8 +110,10 @@ export default function WorkItemDetail() {
 {/* The prepared specification is a snapshot. Saying when the ticket has moved on is the whole
           reason an operator would press "Prepare again" — and never changes the approved bytes.
           A ticket that can no longer compose counts as changed too: emptying or over-filling it used to
-          remove the notice rather than raise it, which is the drift that matters most. */}
-      {item.preparation?.specification.origin === 'STORED' && tracker.value
+          remove the notice rather than raise it, which is the drift that matters most.
+          Composed preparations only: a generated specification is the factory's text, never the ticket's composition,
+          so the digests always differ, and no source-ticket digest is kept to compare instead (review of PR 287, M-3). */}
+      {!item.generated && item.preparation?.specification.origin === 'STORED' && tracker.value
         && (tracker.value.composedSha256
           ? tracker.value.composedSha256 !== item.preparation.specification.sha256
           : Boolean(tracker.value.composedRefusal))
