@@ -62,7 +62,7 @@ final class StepSummaries {
 
     private static String cut(String item) {
         if (item.codePointCount(0, item.length()) <= StepSummary.MAX_ITEM_CHARS) return item;
-        int end = item.offsetByCodePoints(0, StepSummary.MAX_ITEM_CHARS - 1);
+        int end = StepSummary.MAX_ITEM_CHARS - 1;
         return item.substring(0, end) + ELLIPSIS;
     }
 }
