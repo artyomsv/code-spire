@@ -80,7 +80,7 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
         boolean reused = draft == null || registeredFromDraft() && stepsFit();
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
                 authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false).withSteps(0),
-                reused?preparation:null,control,reused?draft:WorkDraft.admitted(),reused && steps!=null?steps.restarted():null);
+                reused?preparation:null,control,draft==null?null:WorkDraft.admitted(),reused && steps!=null?steps.restarted():null);
     }
     private boolean registeredFromDraft() {
         return preparation != null && draft.specificationApproved() && draft.planApproved()
