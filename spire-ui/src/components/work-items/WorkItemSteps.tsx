@@ -6,9 +6,7 @@ import { actorLabel } from '../actorsApi';
 import { JOURNEY, journeyCells, landNote, landProgress, type Cell, type JourneyPhase } from './workJourney';
 import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
-import SpecificationView from './SpecificationView';
-import PlanView from './PlanView';
-import { workDraft, type WorkDraftView } from './workDraftApi';
+import DraftArtifact from './DraftArtifact';
 import StepRows from './StepRows';
 import { STEPS_BINDING, workSteps, type StepRow } from './workPreparationApi';
 
@@ -69,24 +67,6 @@ function Prepared({ item, part }: { item: Item; part: 'specification' | 'plan' }
       : <a href={artifact.location.link} target="_blank" rel="noreferrer">{name} #{artifact.location.issueKey}</a>}
     {part === 'plan' ? ' · one step' : ''} · pinned <span className="mono">{artifact.sha256.slice(0, 12)}</span>
   </p>;
-}
-
-/**
- * The specification or plan the factory wrote for a generated item (M4 slice 3, §6.10). Read only once this generation
- * wrote one, so an item that never had a draft asks the server nothing. A registered draft stays readable here.
- */
-function DraftArtifact({ item, part }: { item: Item; part: 'spec' | 'plan' }) {
-  const written = item.events.some(event => event.type === 'DRAFT_ARTIFACT_WRITTEN' && current(item, event.generation));
-  const [draft, setDraft] = useState<WorkDraftView | null>(null);
-  useEffect(() => {
-    if (!written) return;
-    let live = true;
-    workDraft(item.id).then(value => { if (live) setDraft(value); }).catch(() => { if (live) setDraft(null); });
-    return () => { live = false; };
-  }, [item.id, written]);
-  if (!written || !draft) return null;
-  if (part === 'plan') return draft.plan ? <PlanView plan={draft.plan} /> : null;
-  return draft.specification ? <SpecificationView specification={draft.specification} ticketLink={draft.ticketLink} /> : null;
 }
 
 /**
