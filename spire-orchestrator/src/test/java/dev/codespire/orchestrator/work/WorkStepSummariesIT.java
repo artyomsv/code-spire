@@ -134,6 +134,7 @@ class WorkStepSummariesIT extends WorkPreparedFixture {
 
         given().get("/api/work-items/" + id + "/steps").then().statusCode(200)
                 .body("steps[0].state", is("summary_missing"), "steps[0].summary", nullValue());
-        given().get("/api/work-items/TEST-no-such-item/steps").then().statusCode(404);
+        // A well-formed identity no item has; a malformed one is refused before any read.
+        given().get("/api/work-items/work-v1-" + "0".repeat(64) + "/steps").then().statusCode(404);
     }
 }
