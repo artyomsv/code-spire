@@ -55,9 +55,14 @@ but whether a real model writes it, also for a step that changed nothing, is uno
   outlives the unit under the deployment's log driver.
 - **A Jira or GitLab ticket comment** carrying a specification is proven against fakes of their markups only.
 - **No GitLab quick action runs from a draft comment** rests on reading GitLab's extractor, not on a live note: it
-  runs only lines that start with a slash at column 0 and skips only exact three-backtick fences. So the specification
-  is quoted as an indented code block and a plan title's line-leading slash is broken with a zero-width space; no note
-  has been posted to a live GitLab to watch `/close` stay text.
+  runs only lines that start with a slash at column 0. So the specification and the plan's step titles are quoted as
+  a Markdown blockquote, every line starting with `>`; no note has been posted to a live GitLab to watch `/close` stay
+  text.
+- **The quoted specification renders and does nothing** is proven against strings only (`WorkDraftCommentsTest`,
+  `UntrustedTextTest`), not against GitHub's or GitLab's renderer. It rests on CommonMark and the forges' reference
+  rules: a zero-width space after `<`, `@`, `&`, `]` before `(`, `[` or `:`, `:` before `//`, `www.`, and the sigils
+  of `#1`, `!1`, `$1`, `GH-1`, `~x`, `%x`, `^x` stops each from opening a tag, a mention, an entity, a link or a
+  reference. Not broken: a bare commit SHA, which GitHub links when it names a commit of the repository.
 
 **What would settle it.** The live proof the plan names, recorded in `docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md`: a
 title-only ticket on `spire-test` becomes a specification with criteria, a plan of three or more steps, steps that

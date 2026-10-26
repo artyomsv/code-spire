@@ -15,9 +15,10 @@ import java.util.function.Function;
  * bound to the generation and the attempt (Review Focus 24): under {@code auto} the approval follows the written
  * artifact at once, and a {@code phase} row would be refused {@code work_item_changed} before it was sent.
  *
- * <p>The specification is quoted per tracker markup ({@link UntrustedText#quoteBlock}); a plan is posted as its
- * numbered step titles, each neutralised ({@link UntrustedText#neutralise}) because the list sits outside any quote. Both
- * are model output from a ticket anyone could write, and neither may mention anyone or render on the ticket.
+ * <p>The specification is quoted per tracker markup ({@link UntrustedText#quoteBlock}): a blockquote that renders on
+ * GitHub and GitLab, a noformat block on Jira. A plan is posted as its numbered step titles, each on one line; on GitHub
+ * and GitLab the list is quoted the same way, on Jira each title is neutralised ({@link UntrustedText#neutralise}). Both
+ * are model output from a ticket anyone could write, and neither may mention, link, load or run anything on the ticket.
  */
 @ApplicationScoped
 public class WorkDraftComments {
@@ -35,8 +36,15 @@ public class WorkDraftComments {
     static String plan(List<WorkArtifacts.Step> steps, String sha256, UntrustedText.Markup markup) {
         StringBuilder list = new StringBuilder();
         for (int i = 0; i < steps.size(); i++)
-            list.append(i == 0 ? "" : "\n").append(i + 1).append(". ").append(UntrustedText.neutralise(steps.get(i).title(), markup));
-        return PLAN_HEAD + "\n\nDigest: " + sha256 + "\n\n" + list + CLOSING;
+            list.append(i == 0 ? "" : "\n").append(i + 1).append(". ").append(title(steps.get(i).title(), markup));
+        String quoted = markup == UntrustedText.Markup.WIKI ? list.toString() : UntrustedText.quoteBlock(list.toString(), markup);
+        return PLAN_HEAD + "\n\nDigest: " + sha256 + "\n\n" + quoted + CLOSING;
+    }
+
+    /** A title on one line; in Markdown it is made inert by the blockquote around the whole list, not here. */
+    private static String title(String title, UntrustedText.Markup markup) {
+        if (markup == UntrustedText.Markup.WIKI) return UntrustedText.neutralise(title, markup);
+        return UntrustedText.stripControls(title).replaceAll("\\s+", " ").strip();
     }
 
     /**

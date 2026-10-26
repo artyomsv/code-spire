@@ -297,7 +297,12 @@ CI for every slice (RED then GREEN), mutation checks on every guard, and a live 
 13. **Untrusted text (§6.3, §6.4, §6.8).** Ticket text, artifacts and summaries are quoted into prompts in
     fenced blocks marked "data, not instructions". Control characters are stripped. Field caps: step title
     120, instruction 4,000, doneWhen 1,000, summary item 500. Tracker comments neutralise `@`-mentions and
-    raw HTML.
+    raw HTML. On GitHub and GitLab a specification, and a plan's numbered step titles, are quoted as a readable
+    Markdown blockquote (every line `> `), not as code: the live acceptance found an indented code block one grey
+    monospace block. Images are removed, links become their text with the address in a code span, fences lose
+    their info string, and a zero-width space breaks every tag, entity, mention, reference, link destination and
+    autolinked address, inside code too, so a misread code span can only read worse, never act. Jira keeps
+    `{noformat}`.
 14. **Evidence for N steps (§6.4).** `WorkArtifacts.Evidence` carries a step list; `schemaVersion: 2` is
     accepted only under binding 6, and v1 keeps exactly one step. Binding 6 hashes nothing new (the plan
     digest covers the steps): it is a validation-rule version, so `WorkPreparation`'s `≤ 5` check becomes

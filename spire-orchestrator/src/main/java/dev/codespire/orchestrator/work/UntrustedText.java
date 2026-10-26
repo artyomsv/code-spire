@@ -28,8 +28,6 @@ final class UntrustedText {
     private static final Pattern NOFORMAT = Pattern.compile("(?i)\\{(noformat)");
     /** A line that starts with a slash after any indent: a GitLab quick action once the indent is gone. */
     private static final Pattern LEADING_SLASH = Pattern.compile("(?m)^([ \\t]*)/");
-    /** Four spaces make a Markdown line indented code, which neither renders nor starts with a quick action's slash. */
-    private static final String CODE_INDENT = "    ";
 
     private UntrustedText() {}
 
@@ -84,17 +82,17 @@ final class UntrustedText {
     }
 
     /**
-     * A whole text quoted on a ticket. Markdown: an indented code block, every line four spaces in, with nothing escaped
-     * inside it, since a code block neither renders nor decodes entities. Not a fence: GitLab skips quick actions only
-     * inside a fence of exactly three backticks, so a longer fence around an inner one would let the lines after it run,
-     * while an indented line never starts with the slash a quick action needs. Wiki markup: a noformat block whose inner
-     * closing tokens are broken, so the text cannot end the block early.
+     * A whole text quoted on a ticket. Markdown: a blockquote that renders as Markdown and does nothing
+     * ({@link MarkdownQuote}). Not a code block: on GitHub that is one grey monospace block, hard to read. Not a fence
+     * either: GitLab skips quick actions only inside a fence of exactly three backticks, while a quoted line starts with
+     * {@code >}, never with the slash a quick action needs. Wiki markup: a noformat block whose inner closing tokens are
+     * broken, so the text cannot end the block early.
      */
     static String quoteBlock(String text, Markup markup) {
         String clean = stripControls(text);
         if (markup == Markup.WIKI)
             return "{noformat}\n" + NOFORMAT.matcher(clean).replaceAll("{" + ZERO_WIDTH_SPACE + "$1") + "\n{noformat}";
-        return CODE_INDENT + clean.replace("\n", "\n" + CODE_INDENT);
+        return MarkdownQuote.quote(clean);
     }
 
     private static String fenceFor(String text) {

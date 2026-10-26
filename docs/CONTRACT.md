@@ -116,9 +116,12 @@ A specification artifact (slice 6) is checked by `SpecificationRules`: the headi
 `## Acceptance criteria`, `## Out of scope`, `## Open questions` in order, at least one list item under the criteria,
 and at most 16 KiB once control characters are stripped. A valid one is stored encrypted (`work_item_artifact`, kind
 `SPEC`) and recorded by `WorkDraftLifecycle.written`, milestone `DRAFT_ARTIFACT_WRITTEN`; a ticket comment headed
-"Specification written by the factory" carries its digest and the text, quoted per tracker markup (an indented code block on GitHub and GitLab, every line four spaces in, so no line starts
-with the slash of a GitLab quick action, which GitLab skips only inside an exact three-backtick fence; `{noformat}` on
-Jira). Then, under spec `approve`, a result gate opens:
+"Specification written by the factory" carries its digest and the text, quoted per tracker markup. On GitHub and
+GitLab it is a Markdown blockquote, every line prefixed `> ` so headings and lists render and no line starts with the
+slash of a GitLab quick action; images are removed, a link is its text with the address in a code span, a fence loses
+its info string, and a zero-width space breaks every tag, entity, mention, issue/PR/MR/label reference, link
+destination and autolinked address, in code too (`MarkdownQuote`). On Jira it is `{noformat}`. The plan comment
+quotes its numbered step titles the same way. Then, under spec `approve`, a result gate opens:
 `spec / waiting_approval / specification_written`, the gate artifact being the specification's SHA-256 (A6). Approving
 it records `DRAFT_APPROVED` and enters plan, which waits at `plan / awaiting_input / plan_to_write`; rejecting stops
 the item `gate_rejected`. Under spec `auto` the approval follows at once. The first invalid artifact starts one
