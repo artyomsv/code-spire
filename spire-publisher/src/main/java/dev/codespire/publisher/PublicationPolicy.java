@@ -99,7 +99,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             case READ_ONLY -> readOnly();
             case HELD -> {
                 PublicationPolicy held = held(optional(env, "SPIRE_MERGED_BASE_TIP"), optional(env, "SPIRE_START_HEAD"));
-                yield "1".equals(optional(env, "SPIRE_EMPTY_ALLOWED")) ? held.allowingEmpty() : held;
+                yield held;
             }
             case PERMITTED -> {
                 try {
