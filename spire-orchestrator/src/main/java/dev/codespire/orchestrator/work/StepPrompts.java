@@ -74,7 +74,7 @@ final class StepPrompts {
         return INSTRUCTIONS + UntrustedText.fenced(SPECIFICATION_LABEL, specification) + '\n'
                 + UntrustedText.fenced("The plan", titles(steps)) + '\n'
                 + "Now do step " + number + " of " + steps.size() + ": its title, its instruction and when it is done are below.\n"
-                + UntrustedText.fenced("Step " + number, current(steps.get(index))) + '\n' + SUMMARY_INSTRUCTIONS;
+                + UntrustedText.fenced("Step " + number, current(steps.get(index))) + '\n';
     }
 
     /**
