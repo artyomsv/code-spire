@@ -51,11 +51,7 @@ final class WorkDraftPrompts {
             to, and read the file .codespire at the repository root if it exists: it holds this repository's rules.
 
             Steps are vertical slices: each leaves the repository working and testable, and passes the checks below on its
-            own. When the specification has more than one outcome, write one step per independently verifiable outcome,
-            typically one per acceptance criterion or vertical slice.
-            Write a single step only when the whole change is one small, coherent edit.
-            Never pad the plan with a step that changes nothing.
-            Write at least one step and at most %d steps.
+            own. Write at least one step and at most %d steps.
 
             The plan is JSON of exactly this shape, with "schemaVersion": 2:
 
