@@ -36,6 +36,7 @@ public class WorkDelivery {
     @Inject ObjectMapper mapper;
     @Inject EncryptionService encryption;
     @Inject WorkLandFixes landFixes;
+    @Inject WorkStepSummaries summaries;
     record Effect(UUID attempt,String item,long generation,String run,String state,Instant expires,byte[] request) {}
     /** @param kept a land fix's pull request, which the push updated: delivery completes on it and opens none (M4 land) */
     record Claim(RunCommand.PublishWorkRun permit,PullRequestSink sink,PullRequestSink.NewPullRequest request,PullRequestRef kept) {
@@ -184,7 +185,8 @@ public class WorkDelivery {
             }
             // A land fix opens no pull request: its run's base is the item branch itself, which no forge takes as a base.
             PullRequestSink.NewPullRequest request=fix!=null?null:new PullRequestSink.NewPullRequest(run.branch(),run.baseBranch(),"Prepared work: "+item.issue().issueKey(),
-                    "Prepared work item: "+item.issue().link()+"\n\nBuilt commit: `"+item.progress().execution().head()+"`",
+                    "Prepared work item: "+item.issue().link()+"\n\nBuilt commit: `"+item.progress().execution().head()+"`"+(item.steps()==null?"":"\n\n"+WorkPullRequestSteps.section(WorkPullRequestSteps.lines(
+                            item.steps(),observed.artifacts().steps(),summaries.list(c,item.workItemId(),item.generation())))),
                     "draft_pr".equals(item.policy().effective().get(WorkPolicy.Phase.DELIVER)));
             if(request!=null && request.draft() && !sink.supportsDrafts()){stopLocked(c,history,item,effect,"draft_pr_unsupported");return null;}
             if("pending".equals(effect.state())) {

@@ -83,6 +83,9 @@ public final class PublisherOutcome {
 
     private boolean failedAfterCheckpoint;
 
+    /** Whether the last checkpoint said the build committed nothing (M4 slice 3, §6.7). */
+    private boolean checkpointEmpty;
+
     private String failureCause;
 
     private String failureDetail;
@@ -110,12 +113,14 @@ public final class PublisherOutcome {
                 String head = node.path("head").asText("");
                 if (!head.matches("[0-9a-f]{40}")) {
                     checkpointHead = null;
+                    checkpointEmpty = false;
                     failureCause = "PUBLISHER_FAILED";
                     failureDetail = "The publisher checkpoint did not carry a full head";
                     failedAfterCheckpoint = true;
                     break;
                 }
                 checkpointHead = head;
+                checkpointEmpty = node.path("empty").asBoolean(false);
                 collect(node.path("changed"), changedPaths);
                 failedAfterCheckpoint = false;
             }
@@ -217,9 +222,9 @@ public final class PublisherOutcome {
         return refused() || failedAfterCheckpoint ? Optional.empty() : Optional.ofNullable(checkpointHead);
     }
 
-    /** RED stub: whether the last checkpoint said the build committed nothing. */
+    /** Whether the observed checkpoint says the build committed nothing; false when there is no checkpoint to read. */
     public boolean checkpointEmpty() {
-        return false;
+        return checkpointEmpty && checkpointHead().isPresent();
     }
 
     public List<String> changedPaths() {

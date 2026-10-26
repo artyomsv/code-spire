@@ -71,14 +71,17 @@ final class PublisherEnvironments {
      * What the held publisher is told beside the ordinary environment. A land fix's merged base tip: the held gate sees the
      * base merge before any permit exists, so it excuses the same orchestrator-issued tip the permit will; without it a base
      * that edited a workflow is refused before any checkpoint (M4 slice 7a). A build that starts from a checkpoint names its
-     * head (M4 slice 3, A2), and the publisher refuses a checkpoint that does not descend from it. The agent receives neither.
+     * head (M4 slice 3, A2), and the publisher refuses a checkpoint that does not descend from it. A plan step may finish
+     * with no commit (decision 14), and only its publisher is told so: every other held build keeps today's missing
+     * checkpoint, which fails the run. The agent receives none of them.
      */
     static ContainerSpec held(ContainerSpec publisher, RunCommand.ExecuteWorkRun command) {
         String start = command.execution().startFromHead();
-        if (command.mergedBaseTip() == null && start == null) return publisher;
+        if (command.mergedBaseTip() == null && start == null && !command.emptyAllowed()) return publisher;
         Map<String, String> env = new HashMap<>(publisher.environment());
         if (command.mergedBaseTip() != null) env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
         if (start != null) env.put("SPIRE_START_HEAD", start);
+        if (command.emptyAllowed()) env.put("SPIRE_EMPTY_ALLOWED", "1");
         return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
     }
 

@@ -16,13 +16,17 @@ import java.util.Map;
  *
  * <p>{@code startHead} is the checkpoint a held build started from (M4 slice 3, A2), from the run worker's trusted
  * environment: a checkpoint that does not descend from it rewrote the chain under a plan step, and is refused.
+ *
+ * <p>{@code emptyAllowed} is set only for a held plan step ({@code SPIRE_EMPTY_ALLOWED=1}, M4 slice 3, decision 14): an
+ * agent that committed nothing is reported as an empty checkpoint at the base. Every other held build keeps today's
+ * missing checkpoint, which fails the run.
  */
 record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expiresAt, Clock clock,
-                         String expectedRemoteHead, String mergedBaseTip, String startHead) {
+                         String expectedRemoteHead, String mergedBaseTip, String startHead, boolean emptyAllowed) {
     enum Mode { AUTOMATIC, HELD, PERMITTED, READ_ONLY }
 
     static PublicationPolicy automatic() {
-        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null, null);
+        return new PublicationPolicy(Mode.AUTOMATIC, null, null, null, Clock.systemUTC(), null, null, null, false);
     }
 
     /**
@@ -30,7 +34,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
      * so even a wrong code path here has no secret to push with.
      */
     static PublicationPolicy readOnly() {
-        return new PublicationPolicy(Mode.READ_ONLY, null, null, null, Clock.systemUTC(), null, null, null);
+        return new PublicationPolicy(Mode.READ_ONLY, null, null, null, Clock.systemUTC(), null, null, null, false);
     }
 
     static PublicationPolicy held() {
@@ -48,12 +52,15 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("SPIRE_START_HEAD must be a full sha");
         }
         return new PublicationPolicy(Mode.HELD, null, null, null, Clock.systemUTC(), null,
-                fullShaOrNull(mergedBaseTip), startHead);
+                fullShaOrNull(mergedBaseTip), startHead, false);
     }
 
-    /** RED stub: a held plan step that may finish with no commit. */
+    /** The same held policy for a plan step, which may finish with no commit (decision 14). */
     PublicationPolicy allowingEmpty() {
-        return this;
+        if (mode != Mode.HELD) {
+            throw new IllegalStateException("Only a held build reports an empty checkpoint");
+        }
+        return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead, mergedBaseTip, startHead, true);
     }
 
     private static String fullShaOrNull(String mergedBaseTip) {
@@ -71,7 +78,7 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("The publication permit needs a positive validity window");
         }
         return new PublicationPolicy(Mode.PERMITTED, head, issuedAt, expiresAt,
-                java.util.Objects.requireNonNull(clock), null, null, null);
+                java.util.Objects.requireNonNull(clock), null, null, null, false);
     }
 
     /** The same permitted policy, pushing to an existing branch expected at {@code expectedRemoteHead}. */
@@ -83,14 +90,17 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
             throw new IllegalStateException("SPIRE_EXPECTED_REMOTE_HEAD must be a full sha");
         }
         return new PublicationPolicy(mode, head, issuedAt, expiresAt, clock, expectedRemoteHead,
-                fullShaOrNull(mergedBaseTip), null);
+                fullShaOrNull(mergedBaseTip), null, false);
     }
 
     static PublicationPolicy fromEnv(Mode mode, Map<String, String> env) {
         return switch (mode) {
             case AUTOMATIC -> automatic();
             case READ_ONLY -> readOnly();
-            case HELD -> held(optional(env, "SPIRE_MERGED_BASE_TIP"), optional(env, "SPIRE_START_HEAD"));
+            case HELD -> {
+                PublicationPolicy held = held(optional(env, "SPIRE_MERGED_BASE_TIP"), optional(env, "SPIRE_START_HEAD"));
+                yield "1".equals(optional(env, "SPIRE_EMPTY_ALLOWED")) ? held.allowingEmpty() : held;
+            }
             case PERMITTED -> {
                 try {
                     PublicationPolicy permit = permitted(Env.required(env, "SPIRE_PERMITTED_HEAD"),

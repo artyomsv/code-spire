@@ -64,6 +64,9 @@ public sealed interface RunResult {
             if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
             if (startFromHead != null && !startFromHead.matches("[0-9a-f]{40}"))
                 throw new IllegalArgumentException("A start head is a full checkpoint head");
+            // A build that committed nothing stands where it started; from the base, the orchestrator checks the base.
+            if (empty && startFromHead != null && !head.equals(startFromHead))
+                throw new IllegalArgumentException("An empty ready reports its start " + startFromHead + ", not " + head);
         }
 
         public RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
@@ -83,7 +86,7 @@ public sealed interface RunResult {
 
         /** Rebuild saying whether the build committed nothing, enumerating the components once. */
         public RunWorkReady withEmpty(boolean nothingCommitted) {
-            return this; // RED: not carried yet
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, startFromHead, nothingCommitted);
         }
     }
 

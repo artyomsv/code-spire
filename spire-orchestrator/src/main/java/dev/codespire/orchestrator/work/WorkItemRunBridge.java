@@ -84,9 +84,10 @@ public class WorkItemRunBridge {
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot decode work run result",failure);}
         if(ready instanceof RunResult.RunWorkReady checkpoint && !readyProcessed) {
-            // A plan step's ready that names another start than its dispatch required is refused (M4 slice 3, A2): the
-            // step fails as a failed run does, so a person decides, and its summary is not the step's.
-            boolean offTheChain=steps.offTheChain(checkpoint);
+            // A plan step's ready that names another start than its dispatch required is refused (M4 slice 3, A2), and so
+            // is an empty ready anywhere but on a plan step's start (decision 14): the step fails as a failed run does, so
+            // a person decides, and its summary is not the step's.
+            boolean offTheChain=steps.offTheChain(checkpoint) || steps.refusedEmpty(checkpoint);
             if(offTheChain?!refuseOffTheChain(itemId,attempt,checkpoint):!finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
             // The summary (or that there was none, M4 slice 8) commits with the acknowledgement, so a crash before it
             // replays both, and the summary's key makes the replay insert nothing. Recorded under the step the run built.

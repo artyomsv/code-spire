@@ -72,7 +72,9 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const handedAtLand = item.land?.handedOver === true;
   const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable', 'not_eligible'].includes(item.workflowStatus);
   const stoppableAtLand = item.land?.stoppable === true;
-  const canResume = !handedAtLand && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
+  // A plan whose every step was empty has nothing left to build (M4 slice 3, §6.7): the server refuses a recheck there.
+  const canResume = !handedAtLand && item.reason !== 'plan_produced_no_change'
+    && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
   const fixing = item.land?.fixInProgress === true;
   const canReadmit = !landed && !waitingAtLand && !fixing

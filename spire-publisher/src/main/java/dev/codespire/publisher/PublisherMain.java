@@ -86,6 +86,7 @@ public final class PublisherMain {
                 carryOn = drain(watcher, cycle);
             }
             if (carryOn && mode == PublicationPolicy.Mode.HELD) {
+                cycle.reportEmpty();
                 // A plan step's decisions travel beside its checkpoint (M4 slice 3); a missing or refused summary
                 // is reported, never a failure.
                 HandoffReport.stepSummary(config.handoffDir(), outcome);

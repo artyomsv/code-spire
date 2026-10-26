@@ -87,6 +87,11 @@ public final class OutcomeWriter {
         write(entry("event", "checkpoint", "head", head, "changed", describe(changed)));
     }
 
+    /** A held plan step that committed nothing (M4 slice 3, §6.7): its checkpoint is where it started. */
+    public void emptyCheckpoint(String head) {
+        write(entry("event", "checkpoint", "head", head, "changed", List.of(), "empty", true));
+    }
+
     /** The verify workspace holds exactly {@code head} (M4, {@code spire-verify-prepare}). */
     public void prepared(String head) {
         write(entry("event", "prepared", "head", head));

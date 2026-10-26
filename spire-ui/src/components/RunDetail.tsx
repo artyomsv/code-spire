@@ -37,6 +37,8 @@ function RunDetailPage({ runId }: { runId: string }) {
           <RunPhases run={run} />
           {run.publication && <RunCard title="Build checkpoint">
             <p><Link to={`/work-items/${encodeURIComponent(run.publication.workItemId)}`}>Work item</Link></p>
+            {run.publication.stepIndex != null && run.publication.stepTotal != null
+              && <p>Plan step {run.publication.stepIndex + 1} of {run.publication.stepTotal}</p>}
             {run.status === 'awaiting_delivery' && <p>Build complete. Compute has stopped; the workspace is retained while the work item waits for delivery permission.</p>}
             <RunFields rows={[
               ['Checkpoint', run.publication.checkpointHead],

@@ -250,12 +250,13 @@ public class RunLauncher {
             if (finished.pushedRef() != null) {
                 result = failure(command, "PUBLISHER_FAILED", "Publication escaped the initial hold at " + finished.pushedRef())
                         .withUsage(finished.tokenUsage());
-            } else if (outcome.checkpointHead().isPresent()) {
+            } else if (outcome.checkpointHead().isPresent() && !emptyRefused(work, command, outcome)) {
                 result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
                         finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted))
                         .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)))
                         // Where it started, after any base fallback: the orchestrator compares it with the start it chose (A2).
-                        .withStartFromHead(command.startFromHead());
+                        .withStartFromHead(command.startFromHead())
+                        .withEmpty(outcome.checkpointEmpty());
             } else {
                 result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
                         .withUsage(finished.tokenUsage());
@@ -386,6 +387,16 @@ public class RunLauncher {
             LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
                     command.runId(), outcome.omittedPaths());
         }
+    }
+
+    /**
+     * An empty checkpoint is a ready only for a plan step allowed to finish empty, at the head it started from (M4 slice 3,
+     * decision 14). Any other is today's idle build: no observed checkpoint.
+     */
+    private static boolean emptyRefused(RunCommand.ExecuteWorkRun work, RunCommand.ExecuteRun command, PublisherOutcome outcome) {
+        if (!outcome.checkpointEmpty()) return false;
+        String start = command.startFromHead();
+        return !work.emptyAllowed() || start != null && !start.equals(outcome.checkpointHead().orElseThrow());
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {

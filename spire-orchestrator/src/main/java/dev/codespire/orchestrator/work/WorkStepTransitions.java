@@ -75,13 +75,38 @@ public class WorkStepTransitions {
                 String required = rs.next() ? rs.getString(1) : null;
                 if (required == null || required.equals(ready.startFromHead())) return false;
             }
-            try (PreparedStatement note = c.prepareStatement("UPDATE work_run_effect SET reason='phase_evidence_mismatch' WHERE run_id=?")) {
-                note.setString(1, ready.runId());
-                note.executeUpdate();
-            }
+            mismatch(c, ready.runId());
             return true;
         } catch (SQLException failed) {
             throw WorkSourceRegistry.database(failed);
+        }
+    }
+
+    /**
+     * Whether a ready that says it committed nothing is refused (decision 14): one for an item without a plan cursor, for
+     * a finished cursor, inside a land fix, or at a head other than the step's start. It fails as a failed run does, so a
+     * composed item never verifies its unchanged base and an idle land fix is handed over. Read without the lock: none of
+     * these facts changes while the build attempt the ready names is the current one, which the completion checks under it.
+     */
+    boolean refusedEmpty(RunResult.RunWorkReady ready) {
+        if (!ready.empty()) return false;
+        List<EventEnvelope> history = store.history(ready.work().workItemId());
+        if (history.isEmpty()) return false;
+        WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
+        boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
+        if (WorkStepLifecycle.acceptsEmpty(item, landFix, ready.head())) return false;
+        try (Connection c = dataSource.getConnection()) {
+            mismatch(c, ready.runId());
+            return true;
+        } catch (SQLException failed) {
+            throw WorkSourceRegistry.database(failed);
+        }
+    }
+
+    private static void mismatch(Connection c, String runId) throws SQLException {
+        try (PreparedStatement note = c.prepareStatement("UPDATE work_run_effect SET reason='phase_evidence_mismatch' WHERE run_id=?")) {
+            note.setString(1, runId);
+            note.executeUpdate();
         }
     }
 

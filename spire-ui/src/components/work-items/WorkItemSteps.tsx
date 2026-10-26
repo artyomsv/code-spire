@@ -9,6 +9,8 @@ import VerifyResult from './VerifyResult';
 import SpecificationView from './SpecificationView';
 import PlanView from './PlanView';
 import { workDraft, type WorkDraftView } from './workDraftApi';
+import StepRows from './StepRows';
+import { STEPS_BINDING, workSteps, type StepRow } from './workPreparationApi';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'operators' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
@@ -117,6 +119,22 @@ function Decisions({ item, phase }: { item: Item; phase: string }) {
   </>;
 }
 
+/**
+ * The plan's steps, one row each (M4 slice 3, §6.10), read only for a plan built step by step, so a one-step item asks
+ * the server nothing. Read again whenever the item moves, since each step changes its rows.
+ */
+function PlanSteps({ item }: { item: Item }) {
+  const stepped = item.preparation?.bindingVersion === STEPS_BINDING;
+  const [rows, setRows] = useState<StepRow[]>([]);
+  useEffect(() => {
+    if (!stepped) return;
+    let live = true;
+    workSteps(item.id).then(view => { if (live) setRows(view.rows); }).catch(() => { if (live) setRows([]); });
+    return () => { live = false; };
+  }, [item.id, stepped, item.phase, item.workflowStatus, item.reason]);
+  return stepped ? <StepRows rows={rows} /> : null;
+}
+
 function Build({ item }: { item: Item }) {
   const all = item.builds ?? [];
   const builds = all.filter(build => current(item, build.generation));
@@ -131,6 +149,7 @@ function Build({ item }: { item: Item }) {
       {build.reason && <> · {workReason(build.reason)}</>}
     </li>)}</ul>}
     {execution && <p className="factory-note">Built commit <code>{execution.head}</code>{execution.pullRequest ? '' : ' · held, not pushed'}</p>}
+    <PlanSteps item={item} />
   </>;
 }
 

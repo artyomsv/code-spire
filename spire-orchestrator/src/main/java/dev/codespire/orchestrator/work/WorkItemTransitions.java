@@ -228,6 +228,8 @@ public class WorkItemTransitions {
                     // A plan step's completion is the step loop's decision (M4 slice 3, A17); a land fix is never a step.
                     WorkItemEvent stepped=WorkStepLifecycle.asks(item,landFix)?WorkStepLifecycle.next(next):null;
                     if(stepped!=null){store.appendDecision(c,history,stepped,"step-completed:"+result.attemptId());history=store.history(id);next=stepped;mode=entryMode(history);}
+                    // Every step changed nothing (§6.7): nothing is entered, and only Stop or Readmit go on.
+                    if(stepped!=null && WorkStepLifecycle.NO_CHANGE.equals(stepped.reason()))return new Outcome(200,stepped.reason(),stepped);
                     else next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
                 }
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
@@ -289,6 +291,8 @@ public class WorkItemTransitions {
         if(Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
             return new Outcome(409,"explicit_readmission_required",item);
         if(WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
+        // A plan whose every step was empty has nothing left to build: a recheck would start a step past its end.
+        if(WorkStepLifecycle.NO_CHANGE.equals(item.reason()))return new Outcome(409,"explicit_readmission_required",item);
         return null;
     }
     /**

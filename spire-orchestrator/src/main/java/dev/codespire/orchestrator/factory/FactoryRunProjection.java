@@ -1140,9 +1140,11 @@ public class FactoryRunProjection {
                        r.workspace, r.slug, r.subject, r.attempt, r.base_branch, r.base_commit, r.branch, r.pushed_as,
                        r.review_id, r.finding_ref, r.task_summary, r.started_at, r.ended_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
+                       r.step_index, w.step_total,
                        h.label AS credential_label, h.type AS credential_type, h.auth_mode AS credential_auth_mode
                   FROM factory_run r
                   LEFT JOIN harness_credential h ON h.id = r.harness_credential_id
+                  LEFT JOIN work_item w ON w.id = r.work_item_id
                  WHERE r.run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -1179,6 +1181,12 @@ public class FactoryRunProjection {
 
     private static RunPublication publicationOf(ResultSet rs) throws SQLException {
         String item=rs.getString("work_item_id");
-        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class),null,null);
+        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class),
+                stepIndexOf(rs),stepIndexOf(rs)==null?null:rs.getObject("step_total",Integer.class));
+    }
+
+    /** The plan step a run built, read once as a nullable column: getInt would turn "no step" into step 1. */
+    private static Integer stepIndexOf(ResultSet rs) throws SQLException {
+        return rs.getObject("step_index",Integer.class);
     }
 }

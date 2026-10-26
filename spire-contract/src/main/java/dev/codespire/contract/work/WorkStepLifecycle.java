@@ -38,9 +38,13 @@ public final class WorkStepLifecycle {
                 ? WorkItemLifecycle.EntryMode.STEP : WorkItemLifecycle.EntryMode.ORDINARY;
     }
 
+    /** Every step of the plan completed empty (§6.7): nothing is delivered, and only Stop or Readmit go on. */
+    public static final String NO_CHANGE = "plan_produced_no_change";
+
     /**
      * What follows a completed phase of a plan step, or null when the hard-coded order decides it. A passed verify
-     * completes the step: the next one builds, or the last one delivers.
+     * completes the step: the next one builds, or the last one delivers. A build whose head is the step's start head
+     * changed nothing (A3): it completes as empty and is not verified, whether the publisher said so or not.
      *
      * @param completed the item as the phase's completion left it, with the passed execution on its progress
      * @throws IllegalStateException on a finished cursor, so a missed guard fails instead of moving past the plan
@@ -49,13 +53,44 @@ public final class WorkStepLifecycle {
         WorkSteps steps = completed.steps();
         if (steps == null || steps.done())
             throw new IllegalStateException("No plan step of " + completed.workItemId() + " is in progress, so nothing completes one");
+        if ("build".equals(completed.phase())) return idle(completed) ? stepEmpty(completed) : null;
         if (!"verify".equals(completed.phase())) return null;
         return stepPassed(completed);
     }
 
-    /** RED stub: whether an empty ready may complete the current step. */
+    /**
+     * Whether a ready that says it committed nothing may complete the current step (decision 14): only a plan step that is
+     * building, outside a land fix, at the head the step started from. Anything else is refused, so a composed item never
+     * verifies and delivers its unchanged base, and an idle land fix is handed over instead of looping through fixes.
+     */
     public static boolean acceptsEmpty(WorkItemEvent item, boolean landFix, String head) {
-        return true;
+        return asks(item, landFix) && "build".equals(item.phase()) && item.preparation() != null
+                && item.steps().startHead(item.preparation().baseCommit()).equals(head);
+    }
+
+    /** The build's head is where the step started: the last change made, or the base while nothing was (A3). */
+    private static boolean idle(WorkItemEvent built) {
+        WorkExecution execution = built.progress().execution();
+        return execution != null && built.preparation() != null
+                && built.steps().startHead(built.preparation().baseCommit()).equals(execution.head());
+    }
+
+    /**
+     * An empty step completes without verify (§6.7) and counts (A11). Its run holds a bundle only when it started from a
+     * checkpoint, which every step does once an earlier run holds one (decision 9); a base-started empty run holds nothing.
+     * When every step was empty nothing is delivered.
+     */
+    private static WorkItemEvent stepEmpty(WorkItemEvent item) {
+        WorkSteps before = item.steps();
+        WorkSteps steps = before.completedWith(new WorkSteps.StepResult(before.index(), item.progress().execution(), true,
+                before.chainRun().isPresent()));
+        WorkProgress progress = item.progress().completeStep();
+        if (steps.done() && steps.lastNonEmpty().isEmpty())
+            return item.decision(item.policyRevision(), item.authority(), item.policy(), "build", "awaiting_input", NO_CHANGE,
+                    "PLAN_PRODUCED_NO_CHANGE", item.gate(), progress.reserve(false)).stepped(steps);
+        if (steps.done()) progress = progress.withExecution(delivered(steps));
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), steps.done() ? "deliver" : "build",
+                "awaiting_input", "phase_completed", "STEP_EMPTY", item.gate(), progress).stepped(steps);
     }
 
     /** Counted on completion, never on a start (A11): a retried step counts once. */

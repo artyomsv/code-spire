@@ -69,6 +69,7 @@ public class WorkRunWorker {
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
             if(result instanceof RunResult.RunWorkReady)retireSuperseded(command);
+            if(result instanceof RunResult.RunWorkReady ready && ready.empty() && ready.startFromHead()==null)retireEmpty(command);
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
             LOG.errorf("run %s: held execution could not be recorded (%s); retained for recovery",id,failure.getClass().getSimpleName());
@@ -196,6 +197,21 @@ public class WorkRunWorker {
             releaseRetired(previous,old.orElseThrow().execution().work().publicationKey(),publication);
         } catch(RuntimeException failure) {
             LOG.warnf("run %s: the superseded held build %s was not released (%s)",command.runId(),previous,failure.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * An empty plan step that started from the base holds no bundle (M4 slice 3, §6.7): nothing can start from it or
+     * publish it, and nothing else would ever release it. Its row is closed locally once the ready is stored, which is
+     * still sent, and its workspace released, as {@link #retireSuperseded} does.
+     */
+    private void retireEmpty(RunCommand.ExecuteWorkRun command) {
+        if(!(runtime instanceof PublicationRuntime publication))return;
+        try {
+            if(store.retire(command.runId(),failures.of(command.execution(),"CANCELLED","An empty plan step holds no bundle to publish")))
+                releaseRetired(command.runId(),command.work().publicationKey(),publication);
+        } catch(RuntimeException failure) {
+            LOG.warnf("run %s: the empty held build was not released (%s)",command.runId(),failure.getClass().getSimpleName());
         }
     }
 

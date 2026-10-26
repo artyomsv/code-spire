@@ -50,6 +50,9 @@ public final class PublishCycle {
 
     private boolean published;
 
+    /** Whether any bundle reached this cycle, readable or not: only a run with none may be reported empty. */
+    private boolean bundleSeen;
+
     public PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                         long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome) {
         this(repo, baseCommit, branch, profileGlobs, bundleMaxBytes, credential, outcome,
@@ -121,6 +124,7 @@ public final class PublishCycle {
      *         TERMINATES the run — the next bundle would carry the same refused commit plus more.
      */
     public boolean handle(Path bundle) {
+        bundleSeen = true;
         ChangeSet changes;
         String sha;
         try {
@@ -211,6 +215,17 @@ public final class PublishCycle {
         outcome.failed("REMOTE_HEAD_MOVED", "Expected " + branch + " at " + expected + " but the remote has "
                 + remote.orElse("no such branch"));
         return true;
+    }
+
+    /**
+     * A held plan step whose agent wrote no bundle at all committed nothing (M4 slice 3, §6.7): it is reported as an empty
+     * checkpoint where it started, but only when the run worker allowed it (decision 14). Called after DONE and the last
+     * drain, so no bundle can follow.
+     */
+    void reportEmpty() {
+        if (publication.mode() == PublicationPolicy.Mode.HELD && publication.emptyAllowed() && !bundleSeen) {
+            outcome.emptyCheckpoint(publication.startHead() != null ? publication.startHead() : baseCommit);
+        }
     }
 
     /** No agent will produce another bundle during permitted publication. Missing work is visible. */

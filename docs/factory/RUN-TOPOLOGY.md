@@ -238,6 +238,12 @@ The held publisher is told the start as `SPIRE_START_HEAD` and refuses a checkpo
 (`START_NOT_DESCENDED`, no checkpoint line). Step 1, or a step after only empty steps that started from the base, starts
 from the base, and its retry keeps today's fallback, since the base is its own start.
 
+A step that commits nothing completes as empty (§6.7). From the base the agent writes no bundle at all; a plan step's
+held publisher alone is given `SPIRE_EMPTY_ALLOWED=1` and then reports `checkpoint ... empty: true` at the base after
+`DONE`. That unit holds nothing to start from or publish, so the run worker retires it and releases its workspace once
+the ready is stored. From a checkpoint the agent still bundles its start, so the publisher reports an ordinary
+checkpoint and the orchestrator sees the step's start head; that unit holds the chain and the next step starts from it.
+
 ---
 
 ## 5. Continuous checkpointing

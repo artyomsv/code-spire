@@ -125,6 +125,7 @@ const REASONS = new Map(Object.entries({
   // A plan built step by step (M4 slice 3, decisions 7 and 11).
   step_run_failed: "The step's run failed before it was verified; Retry builds this step again from where it started.",
   step_checkpoint_lost: "This step's commits are gone and so is where it started; Readmit builds the plan again from step 1.",
+  plan_produced_no_change: 'Every step of the plan finished without changing anything, so there is nothing to deliver. Readmit to build it again, or stop.',
   verify_command_invalid: 'A check command is over 1000 characters, or there are more than 20.',
   verify_timeout_out_of_range: "The verify time limit is under 60 seconds or over this deployment's maximum.",
   deliver_capability_unavailable: 'Delivery is not available.',

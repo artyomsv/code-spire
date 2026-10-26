@@ -105,6 +105,8 @@ export function nextAction(item: WorkItemRow): NextAction | null {
   if (item.workflowStatus === 'awaiting_input' && PREPARATION_REASONS.has(item.reason))
     return { label: 'Prepare the task', to: `/work-items/${encodeURIComponent(item.id)}` };
   if (item.workflowStatus === 'suspended') return { label: 'Resume', to: `/work-items/${encodeURIComponent(item.id)}` };
+  // Every plan step finished empty (M4 slice 3, §6.7): the item offers Stop and Readmit.
+  if (item.reason === 'plan_produced_no_change') return { label: 'Stop or readmit', to: `/work-items/${encodeURIComponent(item.id)}` };
   return null;
 }
 
