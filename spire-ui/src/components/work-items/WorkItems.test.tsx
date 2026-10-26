@@ -831,6 +831,21 @@ it('adds no drift notice while the ticket still composes to what was prepared', 
   expect(screen.queryByText(/The ticket changed after it was prepared/)).not.toBeInTheDocument();
 });
 
+// A generated item's specification is the factory's text, not a composition of the ticket, so the composed digest
+// never matches it (review of PR 287, M-3). No source-ticket digest is kept to compare, so no drift is claimed, and
+// a ticket that could not be composed says nothing about a specification the factory wrote.
+it('adds no drift notice to a generated item', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot, generated: true });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-title-only', trackerStatus: 'open',
+    composedSha256: null, composedRefusal: 'ticket_body_empty' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByText(/The ticket changed after it was prepared/)).not.toBeInTheDocument();
+});
+
 // An assisted item sits at its plan decision. That is exactly when an operator reads the ticket again
 // and edits it, so the button has to be reachable there rather than only before anything is prepared.
 // A ticket somebody emptied has drifted further from what was prepared than an edited one. It used to

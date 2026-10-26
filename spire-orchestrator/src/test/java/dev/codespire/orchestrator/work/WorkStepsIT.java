@@ -190,6 +190,50 @@ class WorkStepsIT extends WorkSpecRunFixture {
         assertEquals(3, milestones(id, "STEP_COMPLETED"));
     }
 
+    /**
+     * The prompt each step's build is dispatched with, assembled as the dispatcher assembles it and not a ready the test
+     * wrote, tells the agent where its decisions go (review of PR 287, H-1): without it the summaries the later steps
+     * read could only ever come from a test.
+     */
+    @Test
+    void everyDispatchedStepIsToldWhereItsDecisionsGo() throws Exception {
+        String id = building("autonomous", 219, 3);
+        passStep(id, "1".repeat(40), "TEST-decision-1");
+        passStep(id, "2".repeat(40), "TEST-decision-2");
+
+        assertEquals(3, heldCommands.size());
+        for (RunCommand.ExecuteWorkRun command : heldCommands) {
+            String prompt = command.execution().prompt();
+            assertTrue(prompt.contains("SPIRE_STEP_SUMMARY"), prompt);
+            assertTrue(prompt.contains("\"alternativesRejected\""), prompt);
+            assertTrue(prompt.contains("also when you changed nothing"), prompt);
+        }
+    }
+
+    /**
+     * The bridge stores a step's summary after the transition that completed the step (review of PR 287, M-1). Stage the
+     * crash between the two: the next step's build is pending, the summary is not stored and the ready is not
+     * acknowledged. The next step is not dispatched until the replay stores the summary, so its prompt carries it.
+     */
+    @Test
+    void theNextStepWaitsForTheSummaryOfTheStepBefore() throws Exception {
+        String id = building("autonomous", 220, 3);
+        RunCommand.ExecuteWorkRun first = last();
+        saga.on(ready(first, "1".repeat(40), "TEST-decision-1"));
+        execute("DELETE FROM work_step_summary WHERE work_item_id=?", id);
+        execute("UPDATE work_run_effect SET ready_processed=false WHERE run_id=?", first.runId());
+        verifier.drain();
+        verifyResults.apply(passed(verifies.getLast()));
+        assertEquals(1, store.load(id).steps().index());
+
+        dispatcher.drain();
+        bridge.recover();
+        dispatcher.drain();
+
+        assertEquals(2, heldCommands.size(), "step 2 is dispatched once");
+        assertTrue(last().execution().prompt().contains("TEST-decision-1"), "step 2's prompt carries step 1's decision");
+    }
+
     @Test
     void eachStepRunRecordsItsIndex() throws Exception {
         String id = building("autonomous", 202, 3);

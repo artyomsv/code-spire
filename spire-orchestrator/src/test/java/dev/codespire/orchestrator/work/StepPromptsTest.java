@@ -111,6 +111,24 @@ class StepPromptsTest {
         }
     }
 
+    /**
+     * The decision channel between steps is a file the agent writes (review of PR 287, H-1): every step's prompt names
+     * it, gives its JSON shape and its limits, and asks for it also when the step changed nothing. The first step too,
+     * since the second reads what it wrote.
+     */
+    @Test
+    void everyStepIsToldToWriteItsSummary() {
+        for (int index = 0; index < STEPS.size(); index++) {
+            String prompt = prompt(index, List.of());
+
+            assertTrue(prompt.contains("SPIRE_STEP_SUMMARY"), prompt);
+            assertTrue(prompt.contains("{\"decisions\": [...], \"alternativesRejected\": [...], \"deviations\": [...]}"), prompt);
+            assertTrue(prompt.contains("at most " + StepSummary.MAX_ITEMS + " items of at most " + StepSummary.MAX_ITEM_CHARS + " characters"), prompt);
+            assertTrue(prompt.contains("8 KiB"), prompt);
+            assertTrue(prompt.contains("also when you changed nothing"), prompt);
+        }
+    }
+
     @Test
     void aRetryCarriesItsFailureSection() {
         String prompt = StepPrompts.prompt(new StepPrompts.Input(SPEC, STEPS, 1, List.of(summary(0, "TEST-decision-1")),
