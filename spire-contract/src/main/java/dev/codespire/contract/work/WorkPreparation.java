@@ -126,7 +126,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         baseCommit = baseCommit.toLowerCase(java.util.Locale.ROOT);
         // Absent in older stored JSON, where every artifact was a tracker ticket.
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
-        if (bindingVersion < TRACKER_BINDING || bindingVersion > STEPS_BINDING)
+        if (bindingVersion < TRACKER_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
         effort = ThinkingLevel.normalise(effort);
         // A level under a version that does not hash it would be carried to the build without being part
