@@ -68,8 +68,8 @@ public class WorkRunWorker {
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
-            if(result instanceof RunResult.RunWorkReady)retireSuperseded(command);
-            if(result instanceof RunResult.RunWorkReady ready && ready.empty() && ready.startFromHead()==null)retireEmpty(command);
+            // An empty ready holds no bundle (amendment 3): it supersedes nothing, and nothing can start from it or publish it.
+            if(result instanceof RunResult.RunWorkReady ready){if(ready.empty())retireEmpty(command);else retireSuperseded(command);}
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
             LOG.errorf("run %s: held execution could not be recorded (%s); retained for recovery",id,failure.getClass().getSimpleName());

@@ -218,13 +218,16 @@ public final class PublishCycle {
     }
 
     /**
-     * A held plan step whose agent wrote no bundle at all committed nothing (M4 slice 3, §6.7): it is reported as an empty
-     * checkpoint where it started, but only when the run worker allowed it (decision 14). Called after DONE and the last
+     * A held plan step started from the base whose agent wrote no bundle at all committed nothing (M4 slice 3, §6.7): it is
+     * reported as an empty checkpoint at the base, but only when the run worker allowed it (decision 14). A run started
+     * from a checkpoint always bundles its start (amendment 3), so one without a bundle holds nothing and keeps today's
+     * missing checkpoint: reported empty, it would replace the run that holds the chain. Called after DONE and the last
      * drain, so no bundle can follow.
      */
     void reportEmpty() {
-        if (publication.mode() == PublicationPolicy.Mode.HELD && publication.emptyAllowed() && !bundleSeen) {
-            outcome.emptyCheckpoint(publication.startHead() != null ? publication.startHead() : baseCommit);
+        if (publication.mode() == PublicationPolicy.Mode.HELD && publication.emptyAllowed() && publication.startHead() == null
+                && !bundleSeen) {
+            outcome.emptyCheckpoint(baseCommit);
         }
     }
 

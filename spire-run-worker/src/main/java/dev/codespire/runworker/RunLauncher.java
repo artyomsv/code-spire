@@ -390,13 +390,12 @@ public class RunLauncher {
     }
 
     /**
-     * An empty checkpoint is a ready only for a plan step allowed to finish empty, at the head it started from (M4 slice 3,
-     * decision 14). Any other is today's idle build: no observed checkpoint.
+     * An empty checkpoint is a ready only for a plan step allowed to finish empty that started from the base (M4 slice 3,
+     * decision 14, amendment 3). A run started from a checkpoint always bundles its start, so an empty line from one means
+     * it wrote no bundle and holds nothing: it is today's idle build, no observed checkpoint, and its predecessor is kept.
      */
     private static boolean emptyRefused(RunCommand.ExecuteWorkRun work, RunCommand.ExecuteRun command, PublisherOutcome outcome) {
-        if (!outcome.checkpointEmpty()) return false;
-        String start = command.startFromHead();
-        return !work.emptyAllowed() || start != null && !start.equals(outcome.checkpointHead().orElseThrow());
+        return outcome.checkpointEmpty() && (!work.emptyAllowed() || command.startFromHead() != null);
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {

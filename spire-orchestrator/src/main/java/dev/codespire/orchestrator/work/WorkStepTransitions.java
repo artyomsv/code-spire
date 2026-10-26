@@ -84,18 +84,25 @@ public class WorkStepTransitions {
 
     /**
      * Whether a ready that says it committed nothing is refused (decision 14): one for an item without a plan cursor, for
-     * a finished cursor, inside a land fix, or at a head other than the step's start. It fails as a failed run does, so a
-     * composed item never verifies its unchanged base and an idle land fix is handed over. Read without the lock: none of
-     * these facts changes while the build attempt the ready names is the current one, which the completion checks under it.
+     * a finished cursor, inside a land fix, at a head other than the step's start, or from a run that started from a
+     * checkpoint, which always bundles its start and so holds nothing when it says it is empty (amendment 3). It fails as
+     * a failed run does, so a composed item never verifies its unchanged base and an idle land fix is handed over.
+     *
+     * <p>Judged only while the build attempt the ready names is the current one and still open: none of these facts
+     * changes then, and the completion checks the attempt again under the lock. A ready replayed after its completion
+     * committed, or one whose attempt was replaced, is left to that completion, which answers it as already applied or
+     * late; judged against the state its own completion left, it was refused and lost its step's summary.
      */
     boolean refusedEmpty(RunResult.RunWorkReady ready) {
         if (!ready.empty()) return false;
         List<EventEnvelope> history = store.history(ready.work().workItemId());
         if (history.isEmpty()) return false;
         WorkItemEvent item = (WorkItemEvent) history.getLast().payload();
-        boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
-        if (WorkStepLifecycle.acceptsEmpty(item, landFix, ready.head())) return false;
+        UUID attempt = ready.work().buildAttemptId();
         try (Connection c = dataSource.getConnection()) {
+            if (!attempt.equals(item.progress().attemptId()) || completed(c, attempt)) return false;
+            boolean landFix = WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(history));
+            if (ready.startFromHead() == null && WorkStepLifecycle.acceptsEmpty(item, landFix, ready.head())) return false;
             mismatch(c, ready.runId());
             return true;
         } catch (SQLException failed) {

@@ -232,6 +232,11 @@ deliver. Step k+1 starts from step k's checkpoint (`fromCheckpoint`), and becaus
 every checkpoint-started run's handoff carries the whole chain. When step k+1 is ready the run worker retires and removes
 step k's unit, as it does for any retried build. Deliver publishes through the newest step run that holds a bundle.
 
+Only a run started from the base may be reported empty. A checkpoint-started run that wrote no bundle (an image that
+skipped it, a failed `git bundle create`) holds nothing: the held publisher reports no checkpoint, the run fails as
+`PUBLISHER_FAILED "no observed checkpoint"`, and step k's unit, the only copy of the chain, is kept for the verify gate.
+An empty ready never retires the run it started from, and the orchestrator refuses one that names a start.
+
 A later step's start is required (`checkpointRequired`): there is **no base fallback**. When the unit it names is gone
 the worker fails the step as `CHECKPOINT_MISSING` without launching anything, and the orchestrator opens the verify gate.
 The held publisher is told the start as `SPIRE_START_HEAD` and refuses a checkpoint that does not descend from it

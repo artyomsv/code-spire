@@ -49,15 +49,19 @@ after that check fails the launch instead).
 `ExecuteWorkRun.emptyAllowed` (`allowingEmpty()`) marks every plan step outside a land fix: only its held publisher is
 given `SPIRE_EMPTY_ALLOWED=1`. Both are false on every other build and on a command decoded from before them, and every
 wither carries both.
-`RunWorkReady.empty` (`withEmpty`, §6.7, A3) says the held publisher saw no bundle at all after `DONE` and reported
-`checkpoint {head: <start or base>, changed: [], empty: true}`; it does so only with `SPIRE_EMPTY_ALLOWED=1`, and the
-run worker turns it into a ready only for an `emptyAllowed` command at its start head, otherwise today's
-`PUBLISHER_FAILED "no observed checkpoint"`. The record refuses `empty` with a `startFromHead` other than `head`; a
-ready decoded from before the field is not empty. An empty ready from the base holds no bundle, so the run worker
-retires its unit and releases its workspace once the ready is stored. The orchestrator refuses an `empty` ready for an
-item without a cursor, a finished cursor, a land fix or a head other than the step's start: `phase_evidence_mismatch`
-on the run effect, and the build fails as a failed run does (a composed item `failed / phase_failed`, a land fix
-`land_fix_run_failed`).
+`RunWorkReady.empty` (`withEmpty`, §6.7, A3) says the held publisher, started from the base, saw no bundle at all after
+`DONE` and reported `checkpoint {head: <base>, changed: [], empty: true}`; it does so only with `SPIRE_EMPTY_ALLOWED=1`
+and no `SPIRE_START_HEAD`, and the run worker turns it into a ready only for an `emptyAllowed` command with no start
+head, otherwise today's `PUBLISHER_FAILED "no observed checkpoint"`. A run started from a checkpoint always bundles its
+start (amendment 3), so one that wrote no bundle holds nothing: it fails so, and the run it started from, which holds
+the chain, is kept. The record refuses `empty` with a `startFromHead` other than `head`; a ready decoded from before the
+field is not empty. An empty ready holds no bundle, so the run worker retires its own unit, never the run it started
+from, and releases its workspace once the ready is stored. The orchestrator refuses an `empty` ready for an item without
+a cursor, a finished cursor, a land fix, a head other than the step's start, or a `startFromHead`:
+`phase_evidence_mismatch` on the run effect, and the build fails as a failed run does (a composed item
+`failed / phase_failed`, a land fix `land_fix_run_failed`, a later step the verify gate). It judges an empty ready only
+while the build attempt it names is current and open: one replayed after its completion committed is answered as
+already applied, and its step's summary is still recorded.
 `RunWorkReady.startFromHead` (`withStartFromHead`) is the head the build started from after any base fallback, null
 for a build from the base. The held publisher is told the same head as `SPIRE_START_HEAD` and refuses a checkpoint that
 does not descend from it as `START_NOT_DESCENDED`; the orchestrator refuses a plan step's ready whose `startFromHead`
@@ -162,7 +166,7 @@ start left is refused `step_checkpoint_lost` and the gate stays open with Stop. 
 A step's build whose head is the step's start head (the last changed step's head, or the base while none changed)
 completed empty, whether or not the ready said so (A3): `STEP_EMPTY`, no verify, and the step counts. Its result holds
 a bundle only when it started from a checkpoint, so an empty step from the base leaves the next step starting from the
-base, and an empty checkpoint-started step is itself the next step's start (decision 9). After the last step, deliver
+base, and an empty checkpoint-started step, whose run bundled its start, is itself the next step's start (decision 9). After the last step, deliver
 publishes through the newest run holding a bundle with the last changed step's head and passed verification; when every
 step was empty the item stops at `build / awaiting_input / plan_produced_no_change` (`PLAN_PRODUCED_NO_CHANGE`), where
 a recheck is refused `explicit_readmission_required` and only Readmit or Stop go on. The pull request body of a plan

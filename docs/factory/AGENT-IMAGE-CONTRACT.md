@@ -137,6 +137,12 @@ When the harness exits, the entrypoint must write at least one `*.bundle` to `/h
 commit the harness made. The agent container holds no git credential, so a bundle is the only way
 work leaves it.
 
+A run that starts from a checkpoint (a later plan step, or a retry) has commits since
+`$SPIRE_BASE_COMMIT` before the harness runs, so it must write a bundle even when the harness made
+none. The reference entrypoint does, because it always bundles `$SPIRE_BASE_COMMIT..HEAD`. Without
+one the run holds nothing and fails as `PUBLISHER_FAILED "no observed checkpoint"`; only a run from
+the base is reported empty.
+
 *Verified by:* running the image with a stub harness that makes one commit.
 
 ### `handoff-done-last` — `DONE` is written after the last bundle
