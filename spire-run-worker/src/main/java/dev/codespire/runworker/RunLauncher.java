@@ -395,7 +395,7 @@ public class RunLauncher {
      * it wrote no bundle and holds nothing: it is today's idle build, no observed checkpoint, and its predecessor is kept.
      */
     private static boolean emptyRefused(RunCommand.ExecuteWorkRun work, RunCommand.ExecuteRun command, PublisherOutcome outcome) {
-        return outcome.checkpointEmpty() && (!work.emptyAllowed() || command.startFromHead() != null);
+        return outcome.checkpointEmpty() && (work == null || command.startFromHead() != null);
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {
