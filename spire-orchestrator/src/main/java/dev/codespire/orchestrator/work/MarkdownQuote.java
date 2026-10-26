@@ -83,6 +83,7 @@ final class MarkdownQuote {
     }
 
     private static String replacement(MatchResult match) {
+        if (match.start() >= 0) return Matcher.quoteReplacement(match.group());
         if (match.group("url") != null) return Matcher.quoteReplacement(codeSpan(match.group("url")));
         if (match.group("text") == null) return IMAGE_REMOVED;
         String text = match.group("text"), address = codeSpan(match.group("href"));
