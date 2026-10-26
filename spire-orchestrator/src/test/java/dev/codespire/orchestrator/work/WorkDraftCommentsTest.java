@@ -23,7 +23,7 @@ class WorkDraftCommentsTest {
 
         assertTrue(text.startsWith(WorkDraftComments.SPECIFICATION_HEAD), text);
         assertTrue(text.contains(DIGEST), text);
-        assertEquals(2, text.split("\{noformat\}", -1).length - 1, text);
+        assertEquals(2, text.split("\\{noformat\\}", -1).length - 1, text);
         assertTrue(text.contains("{\u200Bnoformat}"), text);
         assertTrue(text.contains("[~accountid:TEST-1] !https://TEST.example.test/p.png!"), text);
     }
@@ -75,7 +75,7 @@ class WorkDraftCommentsTest {
 
         assertTrue(text.contains("@\u200BTEST-user"), text);
         assertFalse(Pattern.compile("@[^\u200B]").matcher(text).find(), text);
-        assertFalse(Pattern.compile("&[#\w]").matcher(text).find(), "an entity could decode to a mention: " + text);
+        assertFalse(Pattern.compile("&[#\\w]").matcher(text).find(), "an entity could decode to a mention: " + text);
     }
 
     /** GitHub and GitLab issue, pull request, merge request and label references link nothing. */
@@ -84,7 +84,7 @@ class WorkDraftCommentsTest {
         String text = markdown("#123, TEST-org/TEST-repo#45, GH-6, !7 and ~TEST-label");
 
         assertTrue(text.contains("#\u200B123"), text);
-        assertFalse(Pattern.compile("(#|!|GH-)\d|~\w").matcher(text).find(), text);
+        assertFalse(Pattern.compile("(#|!|GH-)\\d|~\\w").matcher(text).find(), text);
     }
 
     /** The specification is capped at 16 KiB; its most expanding content still fits one GitHub comment. */
@@ -128,7 +128,7 @@ class WorkDraftCommentsTest {
     void thePlanCommentIsNeutralisedOnJira() {
         String text = WorkDraftComments.plan(STEPS, DIGEST, UntrustedText.Markup.WIKI);
 
-        assertTrue(text.contains("2. \[\~accountid:TEST-1] \!https://TEST.example.test/p.png\!"), text);
+        assertTrue(text.contains("2. \\[\\~accountid:TEST-1] \\!https://TEST.example.test/p.png\\!"), text);
     }
 
     private static String markdown(String specification) {
