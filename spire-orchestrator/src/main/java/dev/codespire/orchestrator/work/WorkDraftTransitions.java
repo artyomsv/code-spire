@@ -11,12 +11,14 @@ import dev.codespire.contract.work.WorkGate;
 import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkItemLifecycle;
 import dev.codespire.contract.work.WorkPreparation;
+import dev.codespire.contract.work.WorkProgress;
 import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
@@ -76,18 +78,52 @@ public class WorkDraftTransitions {
 
     /**
      * Applies a stored draft result, only to the attempt the item is still running: a result for an attempt a revision,
-     * a readmission or a takeover replaced is refused {@code work_item_changed} and changes nothing (Review Focus 28).
+     * a readmission or a takeover replaced is refused {@code work_item_changed}: its artifact, the gate and the phase stay
+     * as they are (Review Focus 28), and only what the run bought is counted, by {@link #late}.
      */
     WorkItemTransitions.Outcome apply(String id, DraftResult result) {
         return transitions.underLock(id, (c, history, item) -> {
             String phase = result.kind() == WorkDraftBinding.Kind.SPEC ? "spec" : "plan";
+            Locked locked = new Locked(c, history, item);
             if (item.draft() == null || !result.attempt().equals(item.progress().attemptId()) || !"active".equals(item.workflowStatus())
                     || !phase.equals(item.phase()))
-                return new WorkItemTransitions.Outcome(409, "work_item_changed", item);
-            Locked locked = new Locked(c, history, item);
+                return late(locked, result);
             if (result.result() instanceof RunWorkArtifact artifact) return artifact(locked, result, artifact.text());
             return decided(locked, WorkDraftLifecycle.runFailed(item, result.usage()), "draft-failed:" + result.attempt());
         });
+    }
+
+    /**
+     * A result for an attempt the item no longer runs still bought its usage (review of PR 287, H-2): after a takeover,
+     * a retirement or a stop, the run's wall time, calls and cost are added to the item's counters, and unknown usage
+     * makes the item's usage unknown, as a late build is accounted. Once per attempt, under its key; an attempt already
+     * completed counted its usage when it completed, and the attempt still running is not late.
+     */
+    private WorkItemTransitions.Outcome late(Locked locked, DraftResult result) throws SQLException, java.io.IOException {
+        WorkItemEvent item = locked.item();
+        WorkItemTransitions.Outcome changed = new WorkItemTransitions.Outcome(409, "work_item_changed", item);
+        String key = "late-draft-result:" + result.attempt();
+        if (locked.history().stream().anyMatch(event -> key.equals(event.correlationId()))) return changed;
+        if (result.attempt().equals(item.progress().attemptId()) && "active".equals(item.workflowStatus())) return changed;
+        if (!uncounted(locked.c(), item.workItemId(), result.attempt())) return changed;
+        WorkDraftLifecycle.RunUsage usage = result.usage();
+        WorkProgress progress = item.progress().account(usage.wallSeconds(), usage.costMillicents(), usage.calls());
+        WorkItemEvent next = WorkItemLifecycle.state(item, item.workflowStatus(), item.reason(), "LATE_DRAFT_RESULT", item.gate(),
+                usage.known() ? progress : progress.unknownUsage());
+        store.appendDecision(locked.c(), locked.history(), next, key);
+        return new WorkItemTransitions.Outcome(409, "work_item_changed", next);
+    }
+
+    /** Whether the attempt is one of this item's draft attempts, dispatched and never completed. */
+    private static boolean uncounted(Connection c, String id, UUID attempt) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT 1 FROM work_phase_attempt a WHERE a.id=? AND a.work_item_id=? AND a.phase IN ('spec','plan')
+                   AND a.state<>'completed' AND EXISTS (SELECT 1 FROM work_prepare_effect e WHERE e.attempt_id=a.id)
+                """)) {
+            ps.setObject(1, attempt);
+            ps.setString(2, id);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next(); }
+        }
     }
 
     /** A validated artifact: its text as stored, the plan's steps (none for a specification), or why it was refused. */

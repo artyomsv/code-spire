@@ -319,7 +319,10 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
 
         saga.on(artifact(command, SPEC));
 
-        assertEquals(history, store.history(id).size());
+        // Only what the run bought is recorded (review of PR 287, H-2; WorkDraftLateUsageIT): one late-usage decision.
+        assertEquals(history + 1, store.history(id).size());
+        assertEquals("LATE_DRAFT_RESULT", store.load(id).milestone());
+        assertNull(store.load(id).draft().specification());
         assertEquals("suspended", store.load(id).workflowStatus());
         assertEquals(0, count("SELECT count(*) FROM work_tracker_outbox WHERE work_item_id=? AND effect_class='draft' AND state<>'refused'", id));
     }
