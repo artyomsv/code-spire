@@ -88,7 +88,7 @@ public class WorkItemRunBridge {
             // replays both, and the summary's key makes the replay insert nothing. Recorded under the step the run built.
             try(Connection c=dataSource.getConnection()) {
                 c.setAutoCommit(false);
-                summaries.record(c,checkpoint,WorkStepSummaries.stepIndexOf(c,runId));
+                summaries.recordBuilt(c,checkpoint,store.load(itemId));
                 try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")){ps.setString(1,runId);ps.executeUpdate();}
                 c.commit();
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}

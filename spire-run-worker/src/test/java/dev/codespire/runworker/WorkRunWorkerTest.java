@@ -162,6 +162,13 @@ class WorkRunWorkerTest {
         assertEquals("CHECKPOINT_MISSING",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());
         assertNull(retired,"a step that never ran retires nothing");
     }
+    /** A required start gone after the pre-check is still never replaced by the base (M4 slice 3, A2): the launch fails instead. */
+    @Test void aRequiredStartIsNeverReplacedByTheBase(){
+        var step=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work()).requiringCheckpoint();
+        var started=worker.readableStart(step);
+        assertEquals("TEST-gone",started.execution().startFromRunId());
+        assertEquals(step.execution().prompt(),started.execution().prompt(),"no base fallback note");
+    }
     /** Outside a plan the retry keeps starting from the base when its checkpoint is gone (review of PR #184). */
     @Test void aRetryOutsideAPlanStillFallsBack(){
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());

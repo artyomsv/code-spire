@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.work;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.work.StepSummary;
+import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -56,6 +57,11 @@ public class WorkStepSummaries {
             ps.setString(6, summary == null ? MISSING : RECORDED);
             ps.executeUpdate();
         }
+    }
+
+    /** Records the ready's summary under the step its run built. */
+    void recordBuilt(Connection c, RunResult.RunWorkReady ready, WorkItemEvent item) throws SQLException {
+        record(c, ready, stepIndexOf(c, ready.runId()));
     }
 
     /** The plan step a run was dispatched for; 0 for a build that is not a plan step. */

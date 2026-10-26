@@ -50,6 +50,7 @@ class WorkStepsIT extends WorkSpecRunFixture {
     @Inject WorkItemRunBridge bridge;
     @Inject FactoryRunProjection runs;
     @Inject RunCharges charges;
+    @Inject WorkStepSummaries summaries;
 
     @BeforeEach
     void stepsSetup() {
@@ -59,22 +60,29 @@ class WorkStepsIT extends WorkSpecRunFixture {
         twoRunsProfile();
     }
 
-    /** The fixture's profiles, plus TEST-two-runs: autonomous, but at most two build runs per item. */
+    /**
+     * The fixture's profiles, plus TEST-two-runs (autonomous, but at most two build runs per item) and
+     * TEST-build-approve (autonomous, but a build waits for a person).
+     */
     private void twoRunsProfile() {
+        Map<String, WorkPolicyRegistry.Pin> mapping = new HashMap<>();
+        profiles.forEach((name, profile) -> mapping.put("TEST-" + name, new WorkPolicyRegistry.Pin(profile.id(), 1)));
+        mapping.put("TEST-two-runs", new WorkPolicyRegistry.Pin(stepsProfile("two-runs", "auto", 2).id(), 1));
+        mapping.put("TEST-build-approve", new WorkPolicyRegistry.Pin(stepsProfile("build-approve", "approve", 5).id(), 1));
+        policies.save(repository, new WorkPolicyRegistry.Input(policies.get(repository).revision(),
+                new WorkPolicyRegistry.Pin(profiles.get("autonomous").id(), 1), mapping));
+    }
+
+    private WorkPolicy.Profile stepsProfile(String name, String build, int maxRuns) {
         Map<WorkPolicy.Phase, String> modes = new EnumMap<>(WorkPolicy.Phase.class);
         for (WorkPolicy.Phase phase : WorkPolicy.Phase.values()) modes.put(phase, switch (phase) {
-            case DELIVER -> "pr"; case LAND -> "auto_if_green"; default -> "auto";
+            case DELIVER -> "pr"; case LAND -> "auto_if_green"; case BUILD -> build; default -> "auto";
         });
         UUID id = UUID.randomUUID();
         extraProfiles.add(id);
-        WorkPolicy.Profile twoRuns = policies.createVersion(new WorkPolicy.Profile(id, "TEST-two-runs-" + id, 1,
+        return policies.createVersion(new WorkPolicy.Profile(id, "TEST-" + name + "-" + id, 1,
                 1_700_000_000 + Math.abs(id.hashCode() % 100_000_000), modes,
-                new WorkPolicyLimits(3600, 2, 20, 7200, 2_000_000, 40, Set.of("TEST-sensitive/**"))));
-        Map<String, WorkPolicyRegistry.Pin> mapping = new HashMap<>();
-        profiles.forEach((name, profile) -> mapping.put("TEST-" + name, new WorkPolicyRegistry.Pin(profile.id(), 1)));
-        mapping.put("TEST-two-runs", new WorkPolicyRegistry.Pin(twoRuns.id(), 1));
-        policies.save(repository, new WorkPolicyRegistry.Input(policies.get(repository).revision(),
-                new WorkPolicyRegistry.Pin(profiles.get("autonomous").id(), 1), mapping));
+                new WorkPolicyLimits(3600, maxRuns, 20, 7200, 2_000_000, 40, Set.of("TEST-sensitive/**"))));
     }
 
     private String plan(int steps) {
@@ -128,8 +136,12 @@ class WorkStepsIT extends WorkSpecRunFixture {
     }
 
     private WorkItemTransitions.Outcome retry(String id) {
+        return answer(id, true);
+    }
+
+    private WorkItemTransitions.Outcome answer(String id, boolean approve) {
         WorkGate gate = store.load(id).gate();
-        return transitions.answer(gate.id(), gate.version(), "TEST-retry-" + UUID.randomUUID(), true, "TEST retry", "TEST-spec-admin");
+        return transitions.answer(gate.id(), gate.version(), "TEST-answer-" + UUID.randomUUID(), approve, "TEST answer", "TEST-spec-admin");
     }
 
     private static RunResult.RunFailed runFailed(RunCommand.ExecuteWorkRun command, String cause) {
@@ -206,9 +218,60 @@ class WorkStepsIT extends WorkSpecRunFixture {
 
         saga.on(ready(second, "2".repeat(40), "TEST-decision-2").withStartFromHead("e".repeat(40)));
 
-        assertState(store.load(id), "build", "active", "phase_started");
+        // The step fails as a failed run does: a person decides at the verify gate, and the row leaves the recover window.
+        WorkItemEvent item = store.load(id);
+        assertState(item, "verify", "waiting_approval", "verify_unverified");
+        assertEquals("step_run_failed", item.progress().execution().verification().reason());
+        assertEquals("1".repeat(40), item.progress().execution().head(), "the gate stands on the chain's head, not the refused one");
         assertEquals(1, count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND reason='phase_evidence_mismatch'", second.runId()));
+        assertEquals(1, count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND ready_processed", second.runId()));
         assertEquals(1, count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=?", id), "only step 1 was verified");
+        assertEquals(List.of(0), integers("SELECT step_index FROM work_step_summary WHERE work_item_id=? ORDER BY step_index", id),
+                "a refused run's summary is not step 2's");
+    }
+
+    @Test
+    void aReadmitAfterALaterStepStillAsksBeforeTheFirstBuild() throws Exception {
+        String id = started("build-approve", 216);
+        saga.on(artifact(dispatched(), SPEC));
+        draftSweep.sweep();
+        saga.on(artifact(dispatched(), plan(3)));
+        assertState(store.load(id), "build", "waiting_approval", "approval_required");
+        assertEquals(200, answer(id, true).status());
+        dispatcher.drain();
+        passStep(id, "1".repeat(40), "TEST-decision-1");
+        failVerify(id, "2".repeat(40), "TEST-decision-2");
+        assertEquals(200, answer(id, false).status());
+        assertState(store.load(id), "verify", "stopped", "verify_stopped_by_operator");
+        int dispatched = heldCommands.size();
+
+        assertEquals(200, transitions.resume(id, store.history(id).size(), true).status());
+        dispatcher.drain();
+
+        WorkItemEvent item = store.load(id);
+        assertEquals(2, item.generation());
+        assertState(item, "build", "waiting_approval", "approval_required");
+        assertEquals(0, item.steps().index());
+        assertEquals(dispatched, heldCommands.size(), "nothing is built before a person approves");
+    }
+
+    @Test
+    void aLandFixSummaryAfterAPlanDoesNotStandInForAStep() throws Exception {
+        String id = building("autonomous", 217, 3);
+        passStep(id, "1".repeat(40), "TEST-decision-1");
+        passStep(id, "2".repeat(40), "TEST-decision-2");
+        passStep(id, "3".repeat(40), "TEST-decision-3");
+        // A land fix's build has no step index (factory_run.step_index NULL): it builds no step of the plan.
+        RunResult.RunWorkReady fix = new RunResult.RunWorkReady("TEST-land-fix-" + UUID.randomUUID(), last().work(), "4".repeat(40),
+                List.of("TEST-task.txt"), Map.of("INPUT", 1L), 9).withStepSummary(new StepSummary(List.of("TEST-fix-decision"), List.of(), List.of()));
+
+        try (Connection c = dataSource.getConnection()) {
+            summaries.recordBuilt(c, fix, store.load(id));
+        }
+
+        List<WorkStepSummaries.Step> steps = summaries.list(id, store.load(id).generation());
+        assertEquals(List.of(0, 1, 2), steps.stream().map(WorkStepSummaries.Step::stepIndex).toList());
+        assertEquals(List.of("TEST-decision-1"), steps.getFirst().summary().decisions(), "step 1 keeps its own decision");
     }
 
     @Test
