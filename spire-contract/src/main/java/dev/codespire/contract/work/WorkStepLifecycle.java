@@ -59,7 +59,7 @@ public final class WorkStepLifecycle {
         WorkSteps steps = item.steps().completedWith(new WorkSteps.StepResult(item.steps().index(), passed, false, true));
         WorkProgress progress = item.progress().completeStep();
         if (steps.done()) progress = progress.withExecution(delivered(steps));
-        return item.decision(item.policyRevision(), item.authority(), item.policy(), steps.done() ? "deliver" : "build",
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), !steps.done() ? "deliver" : "build",
                 "awaiting_input", "phase_completed", "STEP_COMPLETED", item.gate(), progress).stepped(steps);
     }
 
