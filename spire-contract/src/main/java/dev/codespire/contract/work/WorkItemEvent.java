@@ -9,7 +9,15 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
                             long generation, long policyRevision, WorkPolicy.Profile admittedProfile, Map<WorkPolicy.Phase,String> admittedModes,
                             Authority authority, WorkPolicy.Selection policy, String phase, String workflowStatus, String reason,
                             WorkPolicyLimits admittedLimits, String milestone, WorkGate gate, WorkProgress progress,
-                            WorkPreparation preparation, WorkControl control, WorkDraft draft) {
+                            WorkPreparation preparation, WorkControl control, WorkDraft draft, WorkSteps steps) {
+    /** Every event written before the plan cursor existed (M4 slice 3, A17) carried none. */
+    public WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId, WorkIssueLocation issue,
+                         long generation, long policyRevision, WorkPolicy.Profile admittedProfile, Map<WorkPolicy.Phase,String> admittedModes,
+                         Authority authority, WorkPolicy.Selection policy, String phase, String workflowStatus, String reason,
+                         WorkPolicyLimits admittedLimits, String milestone, WorkGate gate, WorkProgress progress,
+                         WorkPreparation preparation, WorkControl control, WorkDraft draft) {
+        this(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,control,draft,null);
+    }
     public WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId, WorkIssueLocation issue,
                          long generation, long policyRevision, WorkPolicy.Profile admittedProfile, Map<WorkPolicy.Phase,String> admittedModes,
                          Authority authority, WorkPolicy.Selection policy, String phase, String workflowStatus, String reason,
@@ -53,30 +61,35 @@ public record WorkItemEvent(String workItemId, UUID sourceId, UUID repositoryId,
 
     public WorkItemEvent withMilestone(String value) {
         return new WorkItemEvent(workItemId, sourceId, repositoryId, issue, generation, policyRevision, admittedProfile,
-                admittedModes, authority, policy, phase, workflowStatus, reason, admittedLimits, value, gate, progress,preparation,control,draft);
+                admittedModes, authority, policy, phase, workflowStatus, reason, admittedLimits, value, gate, progress,preparation,control,draft,steps);
     }
 
     public WorkItemEvent decision(long revision, Authority observed, WorkPolicy.Selection selection, String nextPhase,
                                   String status, String why, String event, WorkGate nextGate, WorkProgress nextProgress) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,revision,admittedProfile,admittedModes,
-                observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,draft);
+                observed,selection,nextPhase,status,why,admittedLimits,event,nextGate,nextProgress,preparation,control,draft,steps);
     }
     /** Carries the draft unchanged; what readmission keeps of it is slice 11's decision. */
     public WorkItemEvent readmit() {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation+1,policyRevision,policy.selected(),policy.effective(),
-                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false),preparation,control,draft);
+                authority,policy,"intake","awaiting_input","readmitted",policy.limits(),"READMITTED",null,progress.reserve(false),preparation,control,draft,steps);
     }
     public WorkItemEvent controlled(WorkControl value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
-                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,value,draft);
+                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,value,draft,steps);
     }
     public WorkItemEvent prepared(WorkPreparation value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
-                authority,policy,phase,workflowStatus,reason,admittedLimits,"ARTIFACTS_REGISTERED",gate,progress,value,control,draft);
+                authority,policy,phase,workflowStatus,reason,admittedLimits,"ARTIFACTS_REGISTERED",gate,progress,value,control,draft,steps);
     }
     /** The generated item's draft (M4 slice 3, A4); the milestone is the decision's that records it. */
     public WorkItemEvent drafted(WorkDraft value) {
         return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
-                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,control,value);
+                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,control,value,steps);
+    }
+    /** The plan cursor of a binding-6 build (M4 slice 3, A17); the milestone is the decision's that moves it. */
+    public WorkItemEvent stepped(WorkSteps value) {
+        return new WorkItemEvent(workItemId,sourceId,repositoryId,issue,generation,policyRevision,admittedProfile,admittedModes,
+                authority,policy,phase,workflowStatus,reason,admittedLimits,milestone,gate,progress,preparation,control,draft,value);
     }
 }

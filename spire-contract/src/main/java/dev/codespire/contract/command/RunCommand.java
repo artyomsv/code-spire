@@ -308,6 +308,11 @@ public sealed interface RunCommand {
         public ExecuteWorkRun withMergedBaseTip(String tip){return new ExecuteWorkRun(runId,execution,work,tip);}
         /** The same build over another execution of the same run; the base tip is the orchestrator's and stays. */
         public ExecuteWorkRun withExecution(ExecuteRun next){return new ExecuteWorkRun(runId,next,work,mergedBaseTip);}
+        /** RED: a plan step's start is not required yet, and no build may finish empty. */
+        public boolean checkpointRequired(){return false;}
+        public boolean emptyAllowed(){return false;}
+        public ExecuteWorkRun requiringCheckpoint(){return this;}
+        public ExecuteWorkRun allowingEmpty(){return this;}
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }

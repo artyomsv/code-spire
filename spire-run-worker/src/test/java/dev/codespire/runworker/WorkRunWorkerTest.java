@@ -154,6 +154,21 @@ class WorkRunWorkerTest {
         assertTrue(launched.execution().prompt().endsWith(WorkRunWorker.BASE_FALLBACK_NOTE));
         assertTrue(launched.execution().prompt().startsWith(retry.execution().prompt()));
     }
+    /** A plan step's start is required (M4 slice 3, A2): a vanished checkpoint fails the step, never rebases it on the base. */
+    @Test void aPlanStepNeverFallsBackToTheBase(){
+        var step=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work()).requiringCheckpoint();
+        worker.execute(Message.of((RunCommand)step,()->CompletableFuture.completedFuture(null)),step).toCompletableFuture().join();
+        assertEquals(0,launches,"nothing is launched from a start that is gone");
+        assertEquals("CHECKPOINT_MISSING",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());
+        assertNull(retired,"a step that never ran retires nothing");
+    }
+    /** Outside a plan the retry keeps starting from the base when its checkpoint is gone (review of PR #184). */
+    @Test void aRetryOutsideAPlanStillFallsBack(){
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals(1,launches);
+        assertNull(launched.execution().startFromRunId());
+    }
     /** A land fix's base tip is the orchestrator's, not the checkpoint's: starting from the base again keeps it. */
     @Test void aRetryStartingFromTheBaseKeepsItsLandFixBaseTip(){
         var e=command.execution();

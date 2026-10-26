@@ -87,7 +87,9 @@ public final class WorkItemLifecycle {
          * skipped, because under generated preparation the setting admits the run (A6). Off, unknown usage and the caps
          * still apply.
          */
-        DRAFT
+        DRAFT,
+        /** A later plan step (M4 slice 3, decision 13): build and verify skip their permission gates; off, usage and caps still apply. */
+        STEP
     }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
         return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);

@@ -257,6 +257,27 @@ it('says a retry starts from the base when the checkpoint could not be read', as
   expect(await screen.findByText(/starts again from the base/)).toBeInTheDocument();
   expect(screen.queryByText(/starts from this build's last commit/)).toBeNull();
 });
+// M4 slice 3, decision 7: a later plan step's run failed before verify; Retry builds that step again from its start.
+it('says a failed plan step builds again from where it started', async () => {
+  const stepFailed = { ...failedItem, reason: 'verify_unverified', progress: { execution: { verification: {
+    attemptId: 'TEST-attempt', head: 'a'.repeat(40), outcome: 'UNVERIFIED', reason: 'step_run_failed', checks: [] } } } } as unknown as typeof failedItem;
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(stepFailed);
+  show();
+  expect(await screen.findByText(/builds this step again from where it started/)).toBeInTheDocument();
+  expect(screen.queryByText(/starts again from the base/)).toBeNull();
+});
+// Decision 11: a plan step's commits are gone and never rebased on the base, so the way on is Readmit.
+it('says a plan step whose commits are gone needs a readmit', async () => {
+  const lost = { ...failedItem, reason: 'verify_unverified', preparation: { ...item.preparation, bindingVersion: 6 },
+    progress: { execution: { verification: {
+      attemptId: 'TEST-attempt', head: 'a'.repeat(40), outcome: 'UNVERIFIED', reason: 'checkpoint_missing', checks: [] } } } } as unknown as typeof failedItem;
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(lost);
+  show();
+  expect(await screen.findByText(/Readmit builds the plan again from step 1/)).toBeInTheDocument();
+  expect(screen.queryByText(/starts again from the base/)).toBeNull();
+});
 it('Retry build answers approve, and Stop answers reject', async () => {
   vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
   vi.mocked(gateway.getWorkItem).mockResolvedValue(failedItem);

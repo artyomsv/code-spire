@@ -63,6 +63,15 @@ public sealed interface RunResult {
         public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
             return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary);
         }
+
+        /** RED: the start head is not carried yet. */
+        public String startFromHead() {
+            return null;
+        }
+
+        public RunWorkReady withStartFromHead(String head) {
+            return this;
+        }
     }
 
     /**

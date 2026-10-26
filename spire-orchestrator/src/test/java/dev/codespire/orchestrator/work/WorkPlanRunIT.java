@@ -203,16 +203,16 @@ class WorkPlanRunIT extends WorkSpecRunFixture {
     }
 
     @Test
-    void aMultiStepPlanWaitsUntilStepsExist() throws Exception {
+    void aMultiStepPlanRegistersWithItsCursor() throws Exception {
         String id = planRunning("plan-approve", 126);
         saga.on(artifact(dispatched(), plan(3)));
 
         answer(id, true, null);
 
         WorkItemEvent item = store.load(id);
-        assertState(item, "plan", "awaiting_input", "plan_steps_unavailable");
-        assertNull(item.preparation());
-        assertEquals(0, count("SELECT count(*) FROM work_run_effect WHERE work_item_id=?", id));
+        assertState(item, "build", "active", "phase_started");
+        assertEquals(dev.codespire.contract.work.WorkSteps.of(3), item.steps(), "the build starts at step 1 of 3 (M4 slice 3, A17)");
+        assertEquals(1, count("SELECT count(*) FROM work_run_effect WHERE work_item_id=?", id));
     }
 
     @Test

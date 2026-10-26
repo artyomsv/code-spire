@@ -74,6 +74,14 @@ class PublicationPolicyTest {
         assertThrows(IllegalStateException.class, () -> PublicationPolicy.held().onExistingBranch("b".repeat(40), null));
     }
 
+    /** A plan step's held publisher refuses a head off the chain it started from (M4 slice 3, A2). */
+    @Test void aHeldPlanStepReadsItsStartHead() {
+        String start = "c".repeat(40);
+        assertEquals(start, PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of("SPIRE_START_HEAD", start)).startHead());
+        assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of()).startHead(), "a build from the base has none");
+        assertThrows(IllegalStateException.class, () -> PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of("SPIRE_START_HEAD", "abc")));
+    }
+
     @Test void aHeldLandFixGatesWithTheTrustedBaseTip() {
         // The held build sees the base merge first; without the tip it refuses before any permit exists.
         String tip = "c".repeat(40);

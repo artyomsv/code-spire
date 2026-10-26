@@ -164,6 +164,34 @@ class HeldPublicationTest {
         assertFalse(output.toString().contains("handoff_file_refused"), output.toString());
     }
 
+    /** A plan step's checkpoint must extend where the step started (M4 slice 3, A2): a rewritten history is refused. */
+    @Test void aHeadThatDoesNotDescendIsRefused() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST the start of the step");
+        String start = git(f.work, "rev-parse", "HEAD");
+        git(f.work, "reset", "--hard", f.base);
+        Path rewritten = f.bundle("work.txt", "TEST a history that left the start behind");
+        try (PublishRepo repo = f.publisher("held")) {
+            assertFalse(cycle(repo, f, PublicationPolicy.held(null, start), List.of()).handle(rewritten));
+        }
+        assertTrue(output.toString().contains("START_NOT_DESCENDED"), output.toString());
+        assertFalse(output.toString().contains("\"event\":\"checkpoint\""), output.toString());
+        assertEquals("", ref(f.origin, BRANCH));
+    }
+
+    @Test void aHeadOnTheChainIsACheckpoint() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST step one");
+        String start = git(f.work, "rev-parse", "HEAD");
+        Path next = f.bundle("work.txt", "TEST step two");
+        String head = git(f.work, "rev-parse", "HEAD");
+        try (PublishRepo repo = f.publisher("held")) {
+            assertTrue(cycle(repo, f, PublicationPolicy.held(null, start), List.of()).handle(next));
+        }
+        assertTrue(output.toString().contains("\"head\":\"" + head + "\""), output.toString());
+        assertFalse(output.toString().contains("START_NOT_DESCENDED"), output.toString());
+    }
+
     private PublicationPolicy permit(String head, Clock clock) {
         return PublicationPolicy.permitted(head, NOW, NOW.plusSeconds(60), clock);
     }

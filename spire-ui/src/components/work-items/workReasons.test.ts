@@ -123,8 +123,17 @@ describe('specification run reasons (M4 slice 3)', () => {
 });
 
 describe('plan run and revision reasons (M4 slice 3)', () => {
-  it.each(['plan_invalid', 'plan_written', 'draft_setup_changed', 'revision_limit_reached', 'revise_unavailable', 'plan_steps_unavailable'])(
+  it.each(['plan_invalid', 'plan_written', 'draft_setup_changed', 'revision_limit_reached', 'revise_unavailable'])(
     '%s has a sentence', reason => {
       expect(workReason(reason)).not.toBe(reason);
     });
+});
+
+describe('plan step reasons (M4 slice 3)', () => {
+  it.each(['step_run_failed', 'step_checkpoint_lost'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+  it('no longer says a plan of steps cannot be built', () => {
+    expect(workReason('plan_steps_unavailable')).toBe('plan_steps_unavailable');
+  });
 });

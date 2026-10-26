@@ -40,6 +40,43 @@ class WorkItemEventTest {
     }
 
     @Test
+    void everyWitherCarriesTheSteps() {
+        WorkSteps steps = WorkSteps.of(3);
+        WorkItemEvent stepped = item().stepped(steps);
+
+        assertEquals(steps, stepped.withMilestone("TEST-MILESTONE").steps(), "withMilestone");
+        assertEquals(steps, stepped.decision(2, stepped.authority(), stepped.policy(), "build", "active", "phase_started",
+                "PHASE_STARTED", null, stepped.progress()).steps(), "decision");
+        assertEquals(steps, stepped.controlled(null).steps(), "controlled");
+        assertEquals(steps, stepped.prepared(null).steps(), "prepared");
+        assertEquals(steps, stepped.drafted(WorkDraft.admitted()).steps(), "drafted");
+    }
+
+    /** Decision 12: the next generation builds the plan again from step 1, with its step count back at 0. */
+    @Test
+    void readmitResetsTheCursorAndTheStepCount() {
+        WorkSteps two = WorkSteps.of(3).completedWith(WorkStepsTest.step(0, "TEST-run-1", "b".repeat(40)))
+                .completedWith(WorkStepsTest.step(1, "TEST-run-2", "c".repeat(40)));
+        WorkItemEvent built = item();
+        WorkProgress used = new WorkProgress(null, null, null, false, null, 4, 2, 30, 500, 6);
+        built = built.decision(1, built.authority(), built.policy(), "build", "stopped", "TEST-stopped", "TEST", null, used).stepped(two);
+
+        WorkItemEvent readmitted = built.readmit();
+
+        assertEquals(new WorkSteps(3, 0, List.of(), Set.of()), readmitted.steps());
+        assertEquals(0, readmitted.progress().steps());
+        assertEquals(4, readmitted.progress().runs(), "runs survive a generation change");
+        assertEquals(500, readmitted.progress().costMillicents(), "spend survives a generation change");
+    }
+
+    @Test
+    void stepsSurviveTheStoredEventRoundTrip() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        WorkItemEvent stepped = item().stepped(WorkSteps.of(3).completedWith(WorkStepsTest.step(0, "TEST-run-1", "b".repeat(40))).lostCheckpoint("TEST-run-0"));
+        assertEquals(stepped, mapper.readValue(mapper.writeValueAsBytes(stepped), WorkItemEvent.class));
+    }
+
+    @Test
     void aDraftSurvivesTheStoredEventRoundTrip() throws Exception {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         WorkItemEvent drafted = item().drafted(WorkDraft.admitted());
@@ -52,6 +89,7 @@ class WorkItemEventTest {
         WorkItemEvent item = item();
         com.fasterxml.jackson.databind.node.ObjectNode json = mapper.valueToTree(item);
         json.remove("draft");
+        json.remove("steps");
         assertEquals(item, mapper.treeToValue(json, WorkItemEvent.class));
     }
 }

@@ -40,6 +40,15 @@ record PublicationPolicy(Mode mode, String head, Instant issuedAt, Instant expir
                 fullShaOrNull(mergedBaseTip));
     }
 
+    /** RED: the start head is not checked yet. */
+    static PublicationPolicy held(String mergedBaseTip, String startHead) {
+        return held(mergedBaseTip);
+    }
+
+    String startHead() {
+        return null;
+    }
+
     private static String fullShaOrNull(String mergedBaseTip) {
         if (mergedBaseTip != null && !mergedBaseTip.matches("[0-9a-f]{40}")) {
             throw new IllegalStateException("SPIRE_MERGED_BASE_TIP must be a full sha");

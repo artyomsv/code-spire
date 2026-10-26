@@ -50,6 +50,11 @@ public record WorkProgress(UUID attemptId, String attemptPhase, String attemptSt
         return new WorkProgress(attemptId,attemptPhase,attemptState,reserved,startedAt,runs,steps,
                 Math.addExact(wallSeconds,wall),Math.addExact(costMillicents,cost),Math.addExact(calls,callCount),usageUnknown,execution);
     }
+    /** RED: a completed plan step is not counted yet. */
+    public WorkProgress completeStep() { return this; }
+    public WorkProgress withSteps(long value) { return this; }
+    public boolean withinKeepingExecution(WorkPolicyLimits limits,String phase) { return within(limits,phase); }
+    public String limitReachedKeepingExecution(WorkPolicyLimits limits) { return limitReached(limits,"build"); }
     public boolean within(WorkPolicyLimits limits,String phase) {
         return !usageUnknown && (!"build".equals(phase) || runs<limits.maxRunsPerItem() && steps<limits.maxStepsPerPlan())
                 && wallSeconds<limits.maxWallClockSeconds() && costMillicents<limits.maxCostMillicents() && calls<limits.maxCallsPerItem();

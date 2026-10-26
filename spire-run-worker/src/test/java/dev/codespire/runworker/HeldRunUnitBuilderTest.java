@@ -85,6 +85,17 @@ class HeldRunUnitBuilderTest {
         assertEquals("existing",unit.publisher().environment().get("SPIRE_BRANCH_MODE"));
         assertFalse(unit.agent().environment().containsKey("SPIRE_FETCH_BRANCH"));
     }
+    /** A build that starts from a checkpoint tells its held publisher where, to refuse a head off that chain (M4 slice 3, A2). */
+    @Test void theHeldPublisherIsToldTheStartHead() throws Exception {
+        RunCommand.ExecuteWorkRun plain=command("TEST-run",null);
+        RunCommand.ExecuteWorkRun step=new RunCommand.ExecuteWorkRun(plain.execution().fromCheckpoint("TEST-previous","c".repeat(40)),binding);
+        RunUnitSpec unit=builder.buildHeld(step,new CodexAdapter());
+        assertEquals("c".repeat(40),unit.publisher().environment().get("SPIRE_START_HEAD"));
+        assertFalse(unit.agent().environment().containsKey("SPIRE_START_HEAD"),"the agent is not told");
+        assertFalse(builder.buildHeld(plain,new CodexAdapter()).publisher().environment().containsKey("SPIRE_START_HEAD"),"a build from the base has no start head");
+        RunUnitSpec fix=builder.buildHeld(new RunCommand.ExecuteWorkRun(landFix("TEST-run").execution().fromCheckpoint("TEST-previous","c".repeat(40)),binding),new CodexAdapter());
+        assertEquals("c".repeat(40),fix.publisher().environment().get("SPIRE_START_HEAD"),"on an existing branch too");
+    }
     @Test void aNewBranchItemBuildFetchesNothingExtra() throws Exception {
         RunUnitSpec unit=builder.buildHeld(command("TEST-run",null),new CodexAdapter());
         assertFalse(unit.init().environment().containsKey("SPIRE_FETCH_BRANCH"));
