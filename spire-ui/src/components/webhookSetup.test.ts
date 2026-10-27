@@ -94,7 +94,7 @@ describe('webhookSetupGuide per webhook kind', () => {
     for (const kind of ['REVIEWER', 'FACTORY', 'ISSUE'] as const) {
       const titles = webhookSetupGuide('github', kind)!.steps.map((s) => s.title);
       expect(titles[0]).toMatch(/Settings → Webhooks → Add webhook/);
-      expect(titles.at(-1)).toBe('Add webhook');
+      expect(titles[titles.length - 1]).toBe('Add webhook');
     }
   });
 });
