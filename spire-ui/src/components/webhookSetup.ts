@@ -37,6 +37,8 @@ interface ProviderGuide {
 // GitHubIngress.activity (FACTORY) and GitHubWorkIngress (ISSUE), and their GitLab and Bitbucket twins.
 const GITHUB_EVENTS = 'Choose “Let me select individual events” and enable:';
 const GITLAB_EVENTS = 'Under Trigger, enable:';
+// GitLab renamed the trigger; issues still arrive as an Issue Hook, so the guide names both labels.
+const GITLAB_ISSUES = 'Work item events (Issues events on older GitLab)';
 const BITBUCKET_PULL_REQUEST = 'Under Triggers → Pull request, enable:';
 
 const GUIDES: Record<string, ProviderGuide> = {
@@ -60,7 +62,7 @@ const GUIDES: Record<string, ProviderGuide> = {
     events: {
       REVIEWER: [{ title: GITLAB_EVENTS, events: ['Merge request events', 'Comments'] }],
       FACTORY: [{ title: GITLAB_EVENTS, events: ['Push events', 'Merge request events', 'Comments'] }],
-      ISSUE: [{ title: GITLAB_EVENTS, events: ['Issues events', 'Comments'] }],
+      ISSUE: [{ title: GITLAB_EVENTS, events: [GITLAB_ISSUES, 'Comments'] }],
     },
     steps: (eventSteps, kind) => [
       { title: 'Open your project → Settings → Webhooks → Add new webhook' },
@@ -72,7 +74,7 @@ const GUIDES: Record<string, ProviderGuide> = {
       ...eventSteps,
       {
         title: 'Add webhook',
-        detail: `Then use Test → ${kind === 'ISSUE' ? 'Issues events' : 'Merge request events'} to confirm a 2xx.`,
+        detail: `Then use Test → ${kind === 'ISSUE' ? GITLAB_ISSUES : 'Merge request events'} to confirm a 2xx.`,
       },
     ],
   },
@@ -110,11 +112,6 @@ export function webhookSetupGuide(providerType: string, eventKind: WebhookEventK
   const eventSteps = guide?.events[eventKind];
   if (!guide || !eventSteps) return null;
   return { providerLabel: guide.providerLabel, steps: guide.steps(eventSteps, eventKind) };
-}
-
-/** The forge's name for the rotation note, or null when no guide exists for the provider. */
-export function webhookProviderLabel(providerType: string): string | null {
-  return GUIDES[providerType]?.providerLabel ?? null;
 }
 
 // What to type in the target field differs per provider — GitHub owner/repo, a Bitbucket
