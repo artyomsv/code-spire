@@ -83,11 +83,23 @@ describe('webhookSetupGuide per webhook kind', () => {
     expect(events('gitlab', 'ISSUE')).toEqual(['Issues events', 'Comments']);
   });
 
-  it('lists the Bitbucket factory triggers and has no issue hook', () => {
-    expect(events('bitbucket-cloud', 'FACTORY')).toEqual(
-      ['Push', 'Updated', 'Merged', 'Declined', 'Comment created', 'Approved', 'Unapproved'],
-    );
+  it('lists the Bitbucket factory triggers per section and has no issue hook', () => {
+    const steps = webhookSetupGuide('bitbucket-cloud', 'FACTORY')!.steps.filter((s) => s.events);
+    expect(steps.map((s) => s.title)).toEqual(['Under Triggers → Repository, enable:', 'Under Triggers → Pull request, enable:']);
+    expect(steps[0].events).toEqual(['Push']);
+    expect(steps[1].events).toEqual(['Updated', 'Merged', 'Declined', 'Comment created', 'Approved', 'Approval removed']);
     expect(webhookSetupGuide('bitbucket-cloud', 'ISSUE')).toBeNull();
+  });
+
+  it('ends with a check that fits the kind, not the reviewer', () => {
+    const last = (providerType: string, kind: 'REVIEWER' | 'FACTORY' | 'ISSUE') => {
+      const steps = webhookSetupGuide(providerType, kind)!.steps;
+      return steps[steps.length - 1].detail ?? '';
+    };
+    expect(last('gitlab', 'ISSUE')).toMatch(/Test → Issues events/);
+    expect(last('gitlab', 'REVIEWER')).toMatch(/Test → Merge request events/);
+    expect(last('bitbucket-cloud', 'FACTORY')).not.toMatch(/review/i);
+    expect(last('bitbucket-cloud', 'REVIEWER')).toMatch(/first review/);
   });
 
   it('keeps the portal steps and the ping check for every kind', () => {

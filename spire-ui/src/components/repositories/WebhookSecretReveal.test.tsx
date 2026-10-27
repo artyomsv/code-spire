@@ -28,6 +28,20 @@ describe('WebhookSecretReveal', () => {
     expect(within(dialog).getByText('/webhooks/gitlab/TEST-key-FACTORY')).toBeInTheDocument();
   });
 
+  it('after a rotation tells the operator to replace the secret on the existing webhook, not to add one', () => {
+    render(<WebhookSecretReveal revealed={revealed('REVIEWER')} rotated onDone={vi.fn()} />);
+    const dialog = screen.getByRole('dialog', { name: 'Webhook secret' });
+    expect(within(dialog).getByText(/open the existing webhook on GitHub/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Add webhook/)).toBeNull();
+    expect(within(dialog).getByText('TEST-secret')).toBeInTheDocument();
+  });
+
+  it('names the path the way the steps refer to it', () => {
+    render(<WebhookSecretReveal revealed={revealed('REVIEWER')} onDone={vi.fn()} />);
+    expect(screen.getByText('Payload URL (path)')).toBeInTheDocument();
+    expect(screen.getByText(/Paste the Payload URL above/)).toBeInTheDocument();
+  });
+
   it('shows no steps for a forge without a guide', () => {
     render(<WebhookSecretReveal revealed={revealed('REVIEWER', 'bitbucket-dc')} onDone={vi.fn()} />);
     expect(screen.queryByText(/Next — set up on/)).toBeNull();
