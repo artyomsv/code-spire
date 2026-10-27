@@ -92,6 +92,16 @@ if its 20-page bound is exceeded. Live provider evidence,
 including token visibility, dismissal delivery, issue transfer payloads and renamed account
 observations, remains necessary to establish those deployment paths.
 
+**Live on 2026-10-27: a human push to an item branch, seen by the FACTORY webhook, suspends the item.** On
+`spire-test`, with a FACTORY webhook subscribed to Pushes, Pull requests, Pull request reviews, Pull request
+review comments and Issue comments, an empty commit was pushed by hand to the branch of item #79 while it waited
+at its land gate with pull request 81. GitHub delivered the push at 20:50:39.0 with a 202, the orchestrator
+recorded the `suspended` receipt 0.3 s later, and the item read `land / suspended / human_takeover` at 20:50:41.
+The factory's own push and the bot's review on the same hook were recorded as `recorded_machine`, not as
+takeovers. Still without live evidence: a native GitHub approval answering a gate, a `/fix` comment by an allowed
+person on a factory pull request, operator resume after this takeover, and the GitLab and Bitbucket activity
+hooks.
+
 The publication revocation does have an actual killed-JVM proof against a real local Git origin:
 the hold commits before the process dies, an otherwise valid permit is refused without an M1
 cancel claim, and a fresh worker/watchdog cannot publish it. This is separate from slice 8b's
