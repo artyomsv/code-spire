@@ -293,7 +293,7 @@ function SecretRevealModal({
           />
           <CopyField label="Secret" value={result.secret} hint="Copy it now — it won’t be shown again." />
 
-          <WebhookSetupChecklist providerType={result.repo.providerType} eventKind={result.repo.eventKind} />
+          <WebhookSetupChecklist providerType={result.repo.providerType} eventKind={result.repo.eventKind} rotated={rotated} />
 
           <div className="modal-actions">
             <button type="button" className="btn" onClick={onDone}>

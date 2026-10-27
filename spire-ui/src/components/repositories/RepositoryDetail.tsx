@@ -20,6 +20,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<WebhookRepoSecret | null>(null);
+  const [rotated, setRotated] = useState(false);
   const [verification, setVerification] = useState<string | null>(null);
   const isLegacyCandidate = (hook: WebhookRepoView, kind: WebhookEventKind) => !hook.repositoryId
     && hook.providerType === repository.scmType && hook.scope === 'repo' && hook.eventKind === kind
@@ -52,7 +53,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
       } else {
         const result = await createWebhookRepo({ providerType: repository.scmType, forgeOrigin: repository.forgeOrigin,
           repositoryId: repository.id, eventKind: kind, scope: 'repo', target: `${repository.workspace}/${repository.slug}`, enabled: true });
-        onHooksChanged([...current, result.repo]); setRevealed(result);
+        onHooksChanged([...current, result.repo]); setRotated(false); setRevealed(result);
       }
     } catch (failure) { setError(`Repository remains saved. Webhook could not be created: ${String(failure)}. Retry when ready.`); }
     finally { setBusy(false); }
@@ -82,7 +83,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
   async function rotate(hook: WebhookRepoView) {
     if (!window.confirm('Rotate this secret? Update the forge webhook with the new secret afterward.')) return;
     setBusy(true); setError(null);
-    try { setRevealed(await rotateWebhookSecret(hook.id)); }
+    try { setRotated(true); setRevealed(await rotateWebhookSecret(hook.id)); }
     catch (failure) { setError(String(failure)); }
     finally { setBusy(false); }
   }
@@ -119,6 +120,6 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
     <div className="prov-note">{repository.reviewer ? <ActorPicker accountId={repository.reviewer.id} accountType={repository.scmType} repositoryId={repository.id} />
       : <p>Select a reviewer account to edit fix overrides.</p>}</div>
     {error && <p className="prov-note prov-error" role="alert">{error}</p>}
-    {revealed && <WebhookSecretReveal revealed={revealed} onDone={() => setRevealed(null)} />}
+    {revealed && <WebhookSecretReveal revealed={revealed} rotated={rotated} onDone={() => setRevealed(null)} />}
   </div>;
 }
