@@ -111,6 +111,16 @@ are the contracts checked on 2026-09-13. Token-family visibility, Enterprise var
 transfer confirmation and real label attribution still need live evidence. A 404/410 is treated
 as unavailable, not proof of deletion. A partial audit never grants authority.
 
+**Live on 2026-10-27: the ISSUE webhook ("Turn on instant updates" on the Factory tab).** On `spire-test`,
+with a GitHub webhook subscribed to Issues and Issue comments, ticket #78 created with `spire:assisted`
+already set reached `spec / awaiting_input` 4 seconds after creation, from the `opened` and `labeled`
+deliveries (both 202); ticket #79 created without a label became an `intake / not_eligible` item in 3 seconds,
+and reached `spec` 2 seconds after the label was added. Every delivery was a webhook one, none from the
+scan, which stays the fallback. Real label attribution through the webhook sender is therefore live for
+GitHub. Still without live evidence: the GitLab Issue Hook, a label set by an actor outside the allowlist
+arriving by webhook, deletion and transfer deliveries, and the five-minute scan catching a label the
+webhook missed during downtime.
+
 Slice 6 adds a real PostgreSQL tracker outbox and a WireMock write that succeeds remotely before
 the client times out. A fresh dispatcher reads the durable uncertain claim and finds the exact
 comment marker, with one POST in the server journal. Missing recovery evidence leaves the effect
@@ -437,9 +447,9 @@ not establish support for person lookup, and are unchanged.
   decryption establish repository/role selection for manual, rerun, conversation, prompt, run,
   fix and proposal entry points. Separate choreography suites test later commands. No live
   run worker or new spend was used in this slice; slice 8b retains its live proof.
-- **FACTORY and ISSUE consumers are later work.** FACTORY activity is isolated on
-  cs.repository-activity; the later work-item slice consumes it. ISSUE hooks require source
-  metadata and SCM ingress rejects them; native work-source intake is not claimed implemented.
+- **FACTORY and ISSUE consumers were later work** (as of this slice). FACTORY activity is isolated on
+  cs.repository-activity and consumed by the work-item gates since M3; ISSUE hooks are consumed by
+  `WorkItemIntake` since M3 slice 5 and have live GitHub proof since 2026-10-27 (the work-source entry above).
 - **Token validation is not repository permission proof.** Bitbucket account-less validation
   uses the selected repository's namespace for the existing fallback request. WireMock tests
   establish same-kind/origin selection and account binding use; a successful workspace listing
