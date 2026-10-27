@@ -5,7 +5,7 @@ import { webhookSetupGuide } from './webhookSetup';
 interface Props {
   providerType: string;
   eventKind?: WebhookEventKind;
-  /** The secret was rotated: the forge webhook exists, so only its secret changes. */
+  /** The secret was rotated: the forge webhook may already exist, or the create response was lost. */
   rotated?: boolean;
 }
 
