@@ -8,6 +8,19 @@ import SettingField from '../SettingField';
 import DecisionEvidence from './DecisionEvidence';
 import * as approvalsApi from './approvalsApi';
 import { preparationEvidence, type PreparationEvidence } from './workPreparationApi';
+import SpecificationView from './SpecificationView';
+import PlanView from './PlanView';
+import { workDraft, type WorkDraftView } from './workDraftApi';
+
+/** Revisions a person may ask for per phase (§6.5); then only Approve or Reject remain. */
+const MAX_REVISIONS = 3;
+const DRAFT_NAMES: Record<string, string> = { spec: 'specification', plan: 'plan' };
+
+/** How many revisions are used, and Revise while any are left. The note it sends is the decision note. */
+function ReviseLine({ used }: { used: number }) {
+  if (used >= MAX_REVISIONS) return <p className="prov-note">All {MAX_REVISIONS} revisions are used. Approve or reject this decision.</p>;
+  return <p className="prov-note"><span>{used} of {MAX_REVISIONS} revisions used</span>. Revise sends the decision note to a new run.</p>;
+}
 
 const METHOD_WORDS: Record<string, string> = { merge: 'a merge commit', squash: 'a squash merge', rebase: 'a rebase merge' };
 
@@ -69,8 +82,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const { me } = useMe();
   const admin = canAdminister(me);
   const [loaded, setLoaded] = useState<Loaded | null>(null), [error, setError] = useState('');
-  const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | null>(null);
+  const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | 'revise' | null>(null);
   const [evidence, setEvidence] = useState<{ value: PreparationEvidence | null; error: string }>({ value: null, error: '' });
+  const [draft, setDraft] = useState<{ loaded: boolean; value: WorkDraftView | null }>({ loaded: false, value: null });
   // Reuse an answer identity after a transport failure, but never attach it to a different gate, answer or note.
   const attempt = useRef<{ key: string; gate: string; approve: boolean; note: string } | null>(null);
   const live = useRef(true);
@@ -99,6 +113,18 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     return () => { current = false; };
   }, [itemId, admin, gateKey, prepared]);
 
+  // A generated item's spec or plan gate binds what the factory wrote, not a prepared task (M4 slice 3, A6).
+  const gatePhase = loaded?.approval?.gate.phase;
+  const draftPhase = !preparation && (gatePhase === 'spec' || gatePhase === 'plan') && !!loaded?.approval?.gate.artifact;
+  useEffect(() => {
+    let current = true;
+    setDraft({ loaded: false, value: null });
+    if (!admin || !gateKey || !draftPhase) return;
+    workDraft(itemId).then(value => { if (current) setDraft({ loaded: true, value }); })
+      .catch(() => { if (current) setDraft({ loaded: true, value: null }); });
+    return () => { current = false; };
+  }, [itemId, admin, gateKey, draftPhase]);
+
   async function decide(approve: boolean) {
     const gate = loaded?.approval?.gate;
     if (!gate) return;
@@ -109,6 +135,20 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     try {
       await approvalsApi.answer(gate, decision.key, approve, note);
       if (live.current) onDecided(words.done(approve, gate.phase));
+    } catch (failure) { if (live.current) setError(String(failure)); }
+    finally { if (live.current) setAnswering(null); }
+  }
+
+  // Revise is a rejection that keeps the item going (decision 8): the note is what the next run is given.
+  async function reviseDraft() {
+    const gate = loaded?.approval?.gate;
+    if (!gate) return;
+    const previous = attempt.current, bound = `${gate.id}:${gate.version}:revise`;
+    const decision = previous && previous.gate === bound && previous.note === note ? previous : { key: crypto.randomUUID(), gate: bound, approve: false, note };
+    attempt.current = decision; setAnswering('revise'); setError('');
+    try {
+      await approvalsApi.revise(gate, decision.key, note);
+      if (live.current) onDecided(`Asked for a new ${DRAFT_NAMES[gate.phase] ?? gate.phase}. The factory writes it with your note.`);
     } catch (failure) { if (live.current) setError(String(failure)); }
     finally { if (live.current) setAnswering(null); }
   }
@@ -124,12 +164,18 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const needsTexts = !!preparation && !!gate && gate.phase !== 'land';
   // The decision and the item are read separately. A decision that binds a preparation the item no
   // longer has cannot be matched to any texts, so it is not approvable either.
-  const orphaned = !preparation && !!gate && gate.phase !== 'land' && gate.artifact !== null;
+  const written = !draftPhase ? null : gatePhase === 'plan' ? draft.value?.plan ?? null : draft.value?.specification ?? null;
+  const draftName = DRAFT_NAMES[gatePhase ?? ''] ?? 'specification';
+  const draftBound = !!written && written.sha256 === gate?.artifact;
+  const draftChanged = !!written && !draftBound;
+  const orphaned = !preparation && !!gate && gate.phase !== 'land' && gate.artifact !== null && (!draftPhase || draft.loaded && !written);
   const readable = !!evidence.value && !evidence.value.reason;
   const reported = evidence.value?.binding;
   const unreported = needsTexts && readable && reported === undefined;
   const mismatched = needsTexts && readable && reported !== undefined && reported !== gate?.artifact;
-  const bound = !orphaned && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
+  const bound = !orphaned && (!draftPhase || draftBound) && (!needsTexts || readable && reported !== undefined && reported === gate?.artifact);
+  const revisionsUsed = gatePhase === 'plan' ? draft.value?.revisions.plan ?? 0 : draft.value?.revisions.specification ?? 0;
+  const revisable = admin && draftBound && revisionsUsed < MAX_REVISIONS;
   const heading = headingFor(resultGate, gate?.phase);
   const verification = loaded?.item.progress?.execution?.verification;
   const subtitle = !loaded ? undefined : title ? `${title} · ${loaded.item.issueKey} · ${loaded.item.repository}` : `${loaded.item.issueKey} · ${loaded.item.repository}`;
@@ -137,6 +183,7 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     actions={<>
       {/* The footer sits outside the panel's fieldset, so the lock is repeated here. */}
       {admin && gate && <button className="btn" type="button" disabled={answeringNow || !bound} onClick={() => void decide(true)}>{answering === true ? words.yesBusy : words.yes}</button>}
+      {revisable && <button className="btn-ghost" type="button" disabled={answeringNow || !note.trim()} onClick={() => void reviseDraft()}>{answering === 'revise' ? 'Revising…' : 'Revise with a note'}</button>}
       {admin && gate && <button className="btn-ghost danger" type="button" disabled={answeringNow} onClick={() => void decide(false)}>{answering === false ? words.noBusy : words.no}</button>}
       <button className="btn-ghost" type="button" disabled={answeringNow} onClick={onClose}>{gate ? 'Cancel' : 'Close'}</button>
     </>}>
@@ -145,6 +192,12 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     {loaded && gate && <>
       {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">
         <h4>What the checks found</h4><VerifyResult verification={verification} /></section>}
+      {draftBound && written && <section className="decision-sec" aria-label="What you approve">
+        <h4>What you approve</h4>
+        {gatePhase === 'plan' && draft.value?.plan ? <PlanView plan={draft.value.plan} />
+          : <SpecificationView specification={written} ticketLink={draft.value?.ticketLink ?? loaded.item.trackerUrl} />}
+        {admin && <ReviseLine used={revisionsUsed} />}</section>}
+      {draftChanged && <p className="prov-error" role="alert">The {draftName} changed after this decision was opened, so it is not what this decision binds. Approve is not offered; answering only closes this decision.</p>}
       <DecisionEvidence item={loaded.item} approval={loaded.approval!} evidence={mismatched || unreported ? null : evidence.value} evidenceError={evidence.error} />
       {gate.phase === 'land' && <LandPreview item={loaded.item} />}
       {mismatched && <p className="prov-error" role="alert">The prepared task changed after this decision was opened, so these tickets are not what it binds. Approve is not offered; answering only closes this decision. Register the current versions to get a new one.</p>}

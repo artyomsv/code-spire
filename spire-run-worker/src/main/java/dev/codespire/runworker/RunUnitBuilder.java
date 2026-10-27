@@ -1,7 +1,6 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
-import dev.codespire.contract.work.WorkPublicationPermit;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
@@ -20,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Turns a command into the three-container run unit of ADR-039.
@@ -68,7 +66,7 @@ public class RunUnitBuilder {
     long maxWallClockSeconds;
 
     /** An agent can write an object bomb; the publisher refuses one larger than this. */
-    private static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
+    static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
 
     private static final long MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
 
@@ -116,7 +114,17 @@ public class RunUnitBuilder {
     EnterpriseEnvironmentConfig enterprise;
 
     public RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter) {
-        return build(command, adapter, "spire-publish");
+        return build(command, adapter, Topology.CONTINUOUS);
+    }
+
+    /**
+     * A specification or plan run's unit (M4 slice 3): init and agent as {@link #build}, and a publisher that runs
+     * {@code spire-publish-none} with the handoff and no write credential, so it cannot push even if its code were wrong.
+     */
+    public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter adapter) {
+        RunUnitSpec unit = build(draft.execution(), adapter, Topology.READ_ONLY);
+        return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), PublisherEnvironments.readOnly(unit.publisher()),
+                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
     }
 
     /** Where a retried build's init reads the previous run's handoff. */
@@ -158,31 +166,38 @@ public class RunUnitBuilder {
     }
 
     public RunUnitSpec buildHeld(RunCommand.ExecuteWorkRun command, HarnessAdapter adapter) {
-        RunUnitSpec unit = build(command.execution(), adapter, "spire-publish-held");
-        if (!command.execution().pushesToAnExistingBranch()) return unit;
+        RunUnitSpec unit = build(command.execution(), adapter, Topology.HELD);
+        ContainerSpec publisher = PublisherEnvironments.held(unit.publisher(), command);
+        if (!command.execution().pushesToAnExistingBranch())
+            return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), publisher,
+                    unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
         Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
         initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
         ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
-        return new RunUnitSpec(unit.runId(), init, unit.agent(), heldPublisher(unit.publisher(), command),
+        return new RunUnitSpec(unit.runId(), init, unit.agent(), publisher,
                 unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
     }
 
-    /**
-     * The held gate sees the base merge before any permit exists, so it excuses the same orchestrator-issued base
-     * tip the permit will; without it a base that edited a workflow is refused before any checkpoint. The agent
-     * never receives the tip.
-     */
-    private static ContainerSpec heldPublisher(ContainerSpec publisher, RunCommand.ExecuteWorkRun command) {
-        if (command.mergedBaseTip() == null) return publisher;
-        Map<String, String> env = new HashMap<>(publisher.environment());
-        env.put("SPIRE_MERGED_BASE_TIP", command.mergedBaseTip());
-        return new ContainerSpec(publisher.image(), publisher.argv(), Map.copyOf(env), publisher.mounts());
+    /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */
+    private enum Topology {
+        CONTINUOUS("spire-publish"), HELD("spire-publish-held"), READ_ONLY(PublisherEnvironments.READ_ONLY_COMMAND);
+
+        private final String publisherCommand;
+
+        Topology(String publisherCommand) {
+            this.publisherCommand = publisherCommand;
+        }
+
+        String prompt(String dispatched) {
+            return this == READ_ONLY ? AgentPrompts.withReadOnlyInstruction(dispatched)
+                    : AgentPrompts.withCommitInstruction(dispatched);
+        }
     }
 
-    private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, String publisherCommand) {
+    private RunUnitSpec build(RunCommand.ExecuteRun command, HarnessAdapter adapter, Topology topology) {
         if (command.maxWallClockSeconds() > maxWallClockSeconds) {
             throw new IllegalArgumentException("the command asks for a wall clock of " + command.maxWallClockSeconds()
                     + "s, over this worker's spire.run.max-wall-clock-seconds (" + maxWallClockSeconds
@@ -210,7 +225,7 @@ public class RunUnitBuilder {
         ContainerSpec init = new ContainerSpec(publisherImage, List.of("spire-clone"), Map.copyOf(initEnv), initMounts);
 
         HarnessInvocation invocation = new HarnessInvocation(command.runId(),
-                withCommitInstruction(command.prompt()),
+                topology.prompt(command.prompt()),
                 "/workspace", command.model(), harnessEnv,
                 Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort());
 
@@ -224,7 +239,7 @@ public class RunUnitBuilder {
             // this line a STDIN arm reads an empty prompt, produces nothing, exits 0 -- and the run
             // is reported as finished having done nothing, which is exactly what the harness SPI's
             // own javadoc warns about. It is never on argv (see thePromptIsNeverInTheAgentsArgv).
-            // The invocation's prompt, not the command's: the commit instruction is appended once,
+            // The invocation's prompt, not the command's: the topology's instruction is appended once,
             // and a STDIN arm reading the raw one would be the only delivery that never asks for a
             // commit — the difference invisible until a branch came back saying "work in progress".
             agentEnv.put("SPIRE_PROMPT", invocation.prompt());
@@ -238,8 +253,8 @@ public class RunUnitBuilder {
 
         ContainerSpec publisher = new ContainerSpec(
                 publisherImage,
-                List.of(publisherCommand),
-                publisherEnvironment(command, scm),
+                List.of(topology.publisherCommand),
+                PublisherEnvironments.publisherEnvironment(command, scm),
                 // Read-only, and the ONLY volume it sees. Not the workspace.
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
@@ -256,121 +271,18 @@ public class RunUnitBuilder {
             throw new IllegalArgumentException("Publication does not match the retained build");
         }
         Credentials.Scm scm = credentials.scm(request.runId(), request.scmCredential());
-        Map<String, String> env = new HashMap<>(publisherEnvironment(original.execution(), scm));
+        Map<String, String> env = new HashMap<>(PublisherEnvironments.publisherEnvironment(original.execution(), scm));
         // Preserve the original floor too: a policy edit cannot weaken a run's initial path bounds.
         var paths = new java.util.LinkedHashSet<>(original.execution().protectedPaths());
         paths.addAll(request.permit().protectedPaths());
         env.put("SPIRE_PROTECTED_PATHS", String.join(",", paths));
         env.put("SPIRE_PERMITTED_HEAD", request.permit().head());
         env.put("SPIRE_PERMIT_ISSUED_AT", request.permit().issuedAt().toString());
-        env.putAll(existingBranchEnvironment(original, request.permit()));
+        env.putAll(PublisherEnvironments.existingBranchEnvironment(original, request.permit()));
         env.put("SPIRE_PERMIT_EXPIRES_AT", request.permit().expiresAt().toString());
         ContainerSpec publisher = new ContainerSpec(held.publisher().image(), List.of("spire-publish-permitted"),
                 env, held.publisher().mounts());
         return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
                 held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
-    }
-
-    /**
-     * The land-fix half of a permit (M4 slice 7a). An existing-branch run publishes only with an expected remote
-     * head, and only the head it was built from: the run cloned that commit, so any other expectation would
-     * approve a push over work the run never saw. A new-branch run has no remote head to expect.
-     */
-    private static Map<String, String> existingBranchEnvironment(RunCommand.ExecuteWorkRun original,
-                                                                 WorkPublicationPermit permit) {
-        RunCommand.ExecuteRun execution = original.execution();
-        if (execution.pushesToAnExistingBranch() != permit.pushesToExistingBranch()) {
-            throw new IllegalArgumentException("A push to an existing branch needs an expected remote head, and only "
-                    + "an existing-branch run may carry one");
-        }
-        if (!permit.pushesToExistingBranch()) return Map.of();
-        if (!execution.baseCommit().equals(permit.expectedRemoteHead())) {
-            throw new IllegalArgumentException("The permit expects " + permit.expectedRemoteHead()
-                    + " but the run was built from " + execution.baseCommit());
-        }
-        // The checkpoint was gated with the held build's tip; another tip would widen or narrow the exclusion
-        // after the fact.
-        if (!Objects.equals(original.mergedBaseTip(), permit.mergedBaseTip())) {
-            throw new IllegalArgumentException("The permit excuses the base tip " + permit.mergedBaseTip()
-                    + " but the held build was gated with " + original.mergedBaseTip());
-        }
-        Map<String, String> env = new HashMap<>();
-        env.put("SPIRE_EXPECTED_REMOTE_HEAD", permit.expectedRemoteHead());
-        if (permit.mergedBaseTip() != null) env.put("SPIRE_MERGED_BASE_TIP", permit.mergedBaseTip());
-        return env;
-    }
-
-    /**
-     * The dispatched prompt, plus the one thing every run needs the agent to do with its work.
-     *
-     * <p><b>RUN-TOPOLOGY §"Two layers make the commits happen" describes a layer that did not
-     * exist.</b> It says the prompt instructs the agent to commit and the autosave backstops it;
-     * nothing anywhere told an agent to commit. So the autosave was the only writer, and every
-     * branch the factory has ever pushed carries its constant message — {@code autosave: work in
-     * progress} — describing nothing, on work a human is asked to review.
-     *
-     * <p><b>Appended HERE rather than in the prompt builders</b>, for three reasons. A fix run's
-     * prompt is built by {@code FixPrompt}, but a BUILD run's is the caller's text verbatim, so
-     * there is no second place to put it that covers both. It is delivery-agnostic: it rides
-     * {@code command.prompt()} whether the arm takes stdin or argv. And it lands AFTER the Kafka
-     * hop, so it cannot push a dispatch past {@code MAX_PROMPT_CHARS} and make a record unroutable.
-     *
-     * <p>The summary is the belt to the commit's braces: an agent that commits properly never needs
-     * it, and one that forgets still leaves a sentence behind instead of a constant.
-     */
-    static String withCommitInstruction(String prompt) {
-        return prompt + COMMIT_INSTRUCTION;
-    }
-
-    /**
-     * Deliberately does not name a path. {@code SPIRE_SUMMARY} is exported by the agent image's
-     * entrypoint, which owns where the file lives; naming the path here would put the same literal
-     * in two repositories' worth of places, free to disagree.
-     */
-    private static final String COMMIT_INSTRUCTION = """
-
-
-            ---
-            Commit your work as you go. Give each commit a message that says what changed and why.
-
-            When you have finished, write ONE line describing what you changed to the file named by
-            the SPIRE_SUMMARY environment variable. Anything you leave uncommitted is committed for
-            you, and that line becomes its message — without it the commit says only "work in
-            progress", which tells a reviewer nothing.""";
-
-    /**
-     * What the publisher is told, including where ADR-040 lets it push.
-     *
-     * <p>A {@code HashMap} rather than {@code Map.of}, because the two branch-mode variables are
-     * CONDITIONAL and {@code Map.of} cannot express that. Writing them unconditionally would be
-     * worse than verbose: {@code SPIRE_PROTECTED_BRANCH} set to an empty string reads to the
-     * publisher as "present but blank", which its own required-in-existing-mode check treats
-     * exactly as absent — so the distinction would survive here and be lost there.
-     *
-     * <p>The mode is written only when it is {@code existing}. An absent variable is the M0 rule,
-     * which is the safe direction and the one every run before ADR-040 used.
-     */
-    private static Map<String, String> publisherEnvironment(RunCommand.ExecuteRun command,
-                                                            Credentials.Scm scm) {
-        Map<String, String> env = new HashMap<>();
-        env.put("SPIRE_REMOTE_URI", command.remoteUri());
-        env.put("SPIRE_BRANCH", command.branch());
-        env.put("SPIRE_BRANCH_BASE", command.baseBranch());
-        env.put("SPIRE_BASE_COMMIT", command.baseCommit());
-        env.put("SPIRE_PROTECTED_PATHS", String.join(",", command.protectedPaths()));
-        env.put("SPIRE_BUNDLE_MAX_BYTES", Long.toString(BUNDLE_MAX_BYTES));
-        env.put("SPIRE_GIT_USERNAME", scm.writeUsername());
-        env.put("SPIRE_GIT_SECRET", scm.writeSecret());
-        if (command.pushesToAnExistingBranch()) {
-            env.put("SPIRE_BRANCH_MODE", "existing");
-        }
-        // Written whenever it is known, NOT only in existing mode. The publisher honours it in
-        // every mode, so gating it on the mode meant a pull request targeting a factory branch
-        // (spire/x as a DESTINATION) went unprotected in the default mode — a floor dropped by the
-        // caller rather than by the floor.
-        if (!command.protectedBranch().isBlank()) {
-            env.put("SPIRE_PROTECTED_BRANCH", command.protectedBranch());
-        }
-        return Map.copyOf(env);
     }
 }

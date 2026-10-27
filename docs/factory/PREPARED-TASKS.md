@@ -18,6 +18,16 @@ The specification body is nonempty text. Each body is bounded to 49,152 characte
 prompt is also checked against M2's 65,536-character limit. A failed or mismatched tracker read
 grants no authority. A changed artifact requires current registration and a new plan decision.
 
+A generated preparation (M4 slice 3) is registered by the factory itself, under preparation binding version 6
+(`STEPS_BINDING`). Version 6 hashes exactly what version 5 hashes, because the plan's digest already covers every step;
+it is a validation-rule version. Under it the plan is `schemaVersion: 2`: `specificationSha256` and 1 to
+`maxStepsPerPlan` `steps`, each with a unique `id`, a `title` (at most 120 characters), an `instruction` (at most
+4,000) and a `doneWhen` (at most 1,000), none blank, the whole plan at most 32 KiB. A version 1 plan is refused under
+binding 6, and `schemaVersion: 2` is refused under bindings 1 to 5, which keep exactly one step. A binding-6 plan is
+built step by step on one chain of held checkpoints and delivered as one pull request (ADR-049). It is registered only
+from an approved specification and plan the factory wrote, never from tracker references; readmission reuses it and
+Regenerate discards it. A human-prepared task keeps bindings 1 to 5 and its single step.
+
 The same prepared task follows the selected effective modes:
 
 | Profile example | Plan/build result |

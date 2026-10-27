@@ -52,6 +52,15 @@ it('sends a missing or moved task to its preparation', () => {
   expect(nextAction(row({ phase: 'spec', reason: 'specification_required' }))?.label).toBe('Prepare the task');
   expect(nextAction(row({ phase: 'plan', reason: 'artifacts_changed' }))?.to).toBe('/work-items/TEST-item');
 });
+// A generated item waits for the factory's own run (M4 slice 3), not for a person to prepare it.
+it('offers no preparation while the factory writes the draft', () => {
+  expect(nextAction(row({ phase: 'spec', reason: 'specification_to_write' }))).toBeNull();
+  expect(nextAction(row({ phase: 'plan', reason: 'plan_to_write' }))).toBeNull();
+});
+// Every plan step finished empty (M4 slice 3, §6.7): only Stop or Readmit go on, both on the item.
+it('sends a plan that changed nothing to the item to stop or readmit', () => {
+  expect(nextAction(row({ phase: 'build', reason: 'plan_produced_no_change' }))).toEqual({ label: 'Stop or readmit', to: '/work-items/TEST-item' });
+});
 it('offers nothing when the item waits on nobody', () => {
   expect(nextAction(row({ workflowStatus: 'active', reason: 'phase_started' }))).toBeNull();
   expect(nextAction(row({ workflowStatus: 'not_eligible', reason: 'no_eligible_label' }))).toBeNull();

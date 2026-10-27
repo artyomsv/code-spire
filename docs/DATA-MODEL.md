@@ -63,6 +63,67 @@ every land sweep, and deleted once settled or once the item is retired, complete
 V95 lets `work_land_effect.method` be `unknown`. The method is written when the merge is claimed, so a
 recovered merge records what was sent; a merge the factory did not make records `unknown`.
 
+## Specification, plan and steps (M4 slice 3, orchestrator V96–V103)
+
+V96 adds `repository_build_defaults.preparation` (`composed`, `generated`), default `composed` for every
+existing row; a repository with no row reads `composed` in code. A save that omits it keeps the stored value.
+Admission reads it for an item not admitted before (ADR-049); the feature flag that kept it dark until slice 11
+is gone. V96 also adds `factory_run.step_index` (null, or 0 and up): the plan step a
+run built. There is no `phase` column: verify is not a run, and `kind` already names spec, plan, build and fix.
+
+V97 replaces the `factory_run_failure_cause_closed` CHECK with V46's set plus `ARTIFACT_MISSING`: a specification
+or plan run that handed over no artifact. A run that did hand one over is `succeeded` with a null `pushed_ref`; the
+artifact's text is not stored on `factory_run`.
+
+V98 adds `work_prepare_effect`, one row per specification or plan attempt (`attempt_id`), inserted with the
+`PHASE_STARTED` that enters spec or plan for an item carrying a draft (`WorkDraftProjection`, `ON CONFLICT DO
+NOTHING`). `kind` is `SPEC` or `PLAN`; `state` runs `pending`, `uncertain`, `sent`, `done`, or ends `refused` (the
+invalidating milestones refuse a pending row with `work_item_invalidated`, as for the run and verify effects).
+`provisional_digest` and `setup_revision` are written by the dispatcher's claim; `note`, `validation_error` and
+`result_payload` are Tink-encrypted under AADs naming the attempt. V98 also adds `work_item.preparation_mode`
+(`composed`, `generated`), projected from the item's draft: the mode it was admitted under, which the copy sweep
+(`composed`) and the draft sweep (`generated`) select on, so a repository switched later changes only items admitted
+after the switch (A16). It widens the V93 `work_tracker_outbox.effect_class` CHECK with `draft`: a ticket comment
+carrying a written specification or plan, bound to the generation and the draft attempt, never the item revision.
+The plan named this migration V97; slice 4 took that number for `ARTIFACT_MISSING`.
+
+What the row holds (slice 6): the dispatcher's claim writes `run_id`, `provisional_digest` and `setup_revision`
+before the send. The automatic retry is a new row, inserted with `DRAFT_RETRY_REQUESTED`, whose `retry_of` names the
+refused attempt and whose `validation_error` is encrypted under `work-prepare-error:<attempt>`; `note` is encrypted
+under `work-prepare-note:<attempt>`. A terminal result is stored once in `result_payload`, encrypted under
+`work-prepare-result:<run_id>`, then applied and marked `result_processed` (`done`, or `refused` with the reason when
+the item no longer runs that attempt); a scheduled recovery applies any stored result a crash left unapplied. The
+written specification itself is a `work_item_artifact` row of kind `SPEC`, encrypted under its own id, and its ticket
+comment is a `draft` outbox row whose id is derived from the attempt, so a redelivered result enqueues nothing new; a
+takeover refuses it while it is still pending.
+
+V99 adds `work_prepare_effect.deferrals` and `retry_after`. A remote read before the claim that did not answer (the
+tracker's evidence or ticket read, or the base branch head) leaves the row `pending` with that read's reason, counts
+a deferral and sets `retry_after` 30 seconds out, doubling each time; the dispatcher drains only rows whose
+`retry_after` has passed. The fifth deferral in a row refuses the row and stops the item with the read's reason. A
+refusal the setup settles (`build_defaults_missing`, `repository_account_missing`, a changed policy) stops at once.
+
+V100 adds `work_step_summary`, keyed by `(work_item_id, generation, step_index, run_id)`: what a build step's agent
+said it decided (slice 8). The row is written when the run's ready result is applied, in the transaction that
+acknowledges it, so a replay inserts nothing (`ON CONFLICT DO NOTHING`). `summary` is the `StepSummary` JSON,
+Tink-encrypted under `work-step-summary:<item>:<generation>:<step>:<run>`; a ready without one is state
+`summary_missing` with no summary, so the steps view (`GET /api/work-items/{id}/steps`, admin only) can say the
+step recorded no decisions. The steps view returns the newest run's row per step of the current generation.
+`step_index` is the plan step the run was dispatched for (`factory_run.step_index`), 0 for a build that is not a plan
+step. The plan named this migration V98; earlier slices took V98 and V99.
+
+V101 adds `work_item.step_index` and `step_total` (slice 9, A17), the plan cursor projected from `WorkItemEvent.steps`
+when each event is appended: the next step (0-based, `step_total` once done) and the approved plan's step count, both
+NULL for an item without a cursor. V102 adds `work_run_effect.required_start_run_id` and `required_start_head`, written
+with the dispatch claim of a later plan step whose start is required: the orchestrator refuses a ready naming another
+start, and a `CHECKPOINT_MISSING` failure records that run as lost. V103 replaces the
+`factory_run_failure_cause_closed` CHECK with V97's set plus `CHECKPOINT_MISSING` (before it an alias of
+`CLONE_FAILED`) and `START_NOT_DESCENDED`. The plan named the cursor migration V99; earlier slices took V99 and V100.
+
+The draft itself is a fact on the item event, `WorkItemEvent.draft` (`WorkDraft`): the mode, the stored specification
+and plan references, the revision counts, the two approvals, the base commit the specification read and the setup
+revision. It holds references only; the text is stored encrypted, as a composed task's is.
+
 ## M3 repository ownership (ADR-042, slices 1–2)
 
 V60 adds `repository` (UUID, kind, canonical forge origin, workspace, slug, enabled, revision)

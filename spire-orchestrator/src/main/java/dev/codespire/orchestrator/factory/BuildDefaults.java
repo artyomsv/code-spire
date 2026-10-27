@@ -29,6 +29,9 @@ public class BuildDefaults {
 
     /** The verify time limit a setup gets when none is typed; capped by the deployment's wall clock. */
     public static final long DEFAULT_VERIFY_SECONDS = 1800, MIN_VERIFY_SECONDS = 60;
+    /** How a repository prepares its work (M4 slice 3): the ticket copied as one step, or a written spec and plan. */
+    public static final String COMPOSED = "composed", GENERATED = "generated";
+    private static final List<String> PREPARATIONS = List.of(COMPOSED, GENERATED);
 
     /**
      * @param revision 0 when the repository has none yet, with null coordinates — "not set" is a state
@@ -37,20 +40,28 @@ public class BuildDefaults {
      * @param payWith {@code API_KEY} or {@code SUBSCRIPTION} (M3.5 part F)
      * @param verifyCommands the checks verify runs, in order (M4); empty means builds stop as unverified
      * @param verifyTimeoutSeconds the limit for all of them together
+     * @param preparation {@link #COMPOSED} or {@link #GENERATED} (M4 slice 3); composed when no row exists
      */
     public record Defaults(long revision, String baseBranch, String harness, String model, String effort,
                            String payWith, List<String> verifyCommands, long verifyTimeoutSeconds,
-                           String updatedBy, Instant updatedAt) {
-        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null); }
+                           String updatedBy, Instant updatedAt, String preparation) {
+        public static Defaults none() { return new Defaults(0, null, null, null, null, null, List.of(), DEFAULT_VERIFY_SECONDS, null, null, COMPOSED); }
         public boolean set() { return revision > 0; }
     }
 
     /**
      * @param effort null for the model's own default
      * @param payWith null or blank for an API key, which is what every setup paid with before part F
+     * @param preparation null keeps the stored value: a form that does not offer the choice must not reset it
      */
     public record Input(long expectedRevision, String baseBranch, String harness, String model, String effort,
-                        String payWith, List<String> verifyCommands, Long verifyTimeoutSeconds) {
+                        String payWith, List<String> verifyCommands, Long verifyTimeoutSeconds, String preparation) {
+        /** Every caller written before the preparation setting keeps what is stored. */
+        public Input(long expectedRevision, String baseBranch, String harness, String model, String effort, String payWith,
+                     List<String> verifyCommands, Long verifyTimeoutSeconds) {
+            this(expectedRevision, baseBranch, harness, model, effort, payWith, verifyCommands, verifyTimeoutSeconds, null);
+        }
+
         /** Every caller written before M4 declares no checks and takes the default limit. */
         public Input(long expectedRevision, String baseBranch, String harness, String model, String effort, String payWith) {
             this(expectedRevision, baseBranch, harness, model, effort, payWith, List.of(), null);
@@ -84,7 +95,7 @@ public class BuildDefaults {
      * against the saved one INSIDE the transaction that registers the result (M3.5 part C).
      */
     public Defaults get(Connection c, UUID repository, boolean lock) throws SQLException {
-        String sql = "SELECT revision,base_branch,harness,model,effort,pay_with,updated_by,updated_at,verify_commands,verify_timeout_seconds"
+        String sql = "SELECT revision,base_branch,harness,model,effort,pay_with,updated_by,updated_at,verify_commands,verify_timeout_seconds,preparation"
                 + " FROM repository_build_defaults WHERE repository_id=?" + (lock ? " FOR UPDATE" : "");
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setObject(1, repository);
@@ -92,7 +103,7 @@ public class BuildDefaults {
                 if (!rs.next()) return Defaults.none();
                 return new Defaults(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
                         rs.getString(5), rs.getString(6), List.of((String[]) rs.getArray(9).getArray()), rs.getLong(10),
-                        rs.getString(7), rs.getTimestamp(8).toInstant());
+                        rs.getString(7), rs.getTimestamp(8).toInstant(), rs.getString(11));
             }
         }
     }
@@ -137,6 +148,7 @@ public class BuildDefaults {
                     + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(",")));
         }
         List<String> commands = verifyCommands(input.verifyCommands());
+        String preparation = preparation(input.preparation());
         long timeout = verifyTimeout(input.verifyTimeoutSeconds());
         try (Connection c = dataSource.getConnection()) {
             // Same lock order as the policy save: the repository row first, so a save cannot interleave
@@ -149,17 +161,20 @@ public class BuildDefaults {
                 throw new Refused("build_defaults_changed");
             try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,effort,updated_by,pay_with,
-                        verify_commands,verify_timeout_seconds)
-                    VALUES (?,?,?,?,?,?,?,?,?)
+                        verify_commands,verify_timeout_seconds,preparation)
+                    VALUES (?,?,?,?,?,?,?,?,?,COALESCE(?::text,'composed'))
                     ON CONFLICT (repository_id) DO UPDATE SET base_branch=excluded.base_branch,harness=excluded.harness,
                         model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=now(),
                         pay_with=excluded.pay_with,verify_commands=excluded.verify_commands,
                         verify_timeout_seconds=excluded.verify_timeout_seconds,
+                        preparation=CASE WHEN ?::text IS NULL THEN repository_build_defaults.preparation ELSE excluded.preparation END,
                         revision=repository_build_defaults.revision+1
                     """)) {
                 ps.setObject(1, repository); ps.setString(2, branch); ps.setString(3, harness);
                 ps.setString(4, model); ps.setString(5, effort); ps.setString(6, actor); ps.setString(7, payWith);
                 ps.setArray(8, c.createArrayOf("text", commands.toArray())); ps.setLong(9, timeout);
+                // Twice: null keeps what is stored, and a first save with none takes the column default.
+                ps.setString(10, preparation); ps.setString(11, preparation);
                 ps.executeUpdate();
             }
             // Saving a setup is the repair for "this repository has no build setup", so the items that
@@ -204,6 +219,18 @@ public class BuildDefaults {
                 : typed.stream().filter(command -> command != null && !command.isBlank()).map(String::strip).toList();
         if (!dev.codespire.contract.work.VerifyCommands.valid(commands)) throw new Refused("verify_command_invalid");
         return commands;
+    }
+
+    /**
+     * The preparation a save stores (M4 slice 3), or null to keep the stored one: a form that does not show
+     * the choice sends none, and must not switch a repository back. Refused by name before the table's CHECK
+     * would turn an unknown value into a 500.
+     */
+    private String preparation(String typed) {
+        String preparation = strip(typed);
+        if (preparation == null) return null;
+        if (!PREPARATIONS.contains(preparation)) throw new Refused("preparation_invalid");
+        return preparation;
     }
 
     /** At most the deployment's wall clock: a verify holds the run worker's one slot and its ack window. */

@@ -119,8 +119,8 @@ class LlmChargeSubjectTest {
         // unrelated pull request's cost card.
         String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
 
-        projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
+        projection.recordCharges(ChargeCall.forRun(new RunSpend(sharedId, "CANARY-RUN-" + sharedId, ChargeKind.BUILD, null),
+                "TEST-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L))));
         projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
                 ChargeKind.REVIEW, "TEST-MODEL",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));
@@ -135,8 +135,8 @@ class LlmChargeSubjectTest {
         // The other half. Without it the assertion above would also pass if the run's charge had
         // simply not been written — which is how a filter test becomes a test of nothing.
         String sharedId = "run::github:TEST-acme/app:shared-" + UUID.randomUUID() + ":1";
-        projection.recordCharges(ChargeCall.forRun(sharedId, "CANARY-RUN-" + sharedId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L)), null));
+        projection.recordCharges(ChargeCall.forRun(new RunSpend(sharedId, "CANARY-RUN-" + sharedId, ChargeKind.BUILD, null),
+                "TEST-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 999_000L))));
         projection.recordCharges(ChargeCall.forReview(sharedId, "CANARY-REVIEW-" + sharedId,
                 ChargeKind.REVIEW, "TEST-MODEL",
                 List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 1_000L))));

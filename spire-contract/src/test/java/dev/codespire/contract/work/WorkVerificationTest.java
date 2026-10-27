@@ -23,6 +23,10 @@ class WorkVerificationTest {
         assertThrows(IllegalArgumentException.class,()->new WorkVerification(attempt,head,WorkVerification.Outcome.FAILED,"tool_missing",List.of(check(127))));
         assertFalse(new WorkVerification(attempt,head,WorkVerification.Outcome.UNVERIFIED,"no_checks_declared",List.of()).passed());
     }
+    // A plan step's run that failed before verify leaves the chain run's head unverified, never failed (M4 slice 3, decision 7).
+    @Test void aStepRunThatFailedIsUnverified(){
+        assertFalse(new WorkVerification(attempt,head,WorkVerification.Outcome.UNVERIFIED,"step_run_failed",List.of()).passed());
+    }
     @Test void aPartialHeadIsRefused(){
         assertThrows(IllegalArgumentException.class,()->new WorkVerification(attempt,"abc",WorkVerification.Outcome.UNVERIFIED,"timed_out",List.of()));
     }

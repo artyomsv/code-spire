@@ -2219,3 +2219,23 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `auto_if_green` stays unwired; GitLab and Bitbucket cannot land. PR #243 merged to master on
   2026-10-25. Record: [land acceptance](factory/LAND-ACCEPTANCE.md). Next: M4's specification, plan
   and step continuity.
+
+- **Factory M4 slice 3: specification, plan and steps (2026-10-25 to 2026-10-26, PR #287), built, live
+  acceptance pending.** A repository chooses in its build setup between `composed`, the M3.5 copy of the
+  ticket, and `generated`. Generated, the factory writes the specification and then the plan with short
+  read-only harness runs on the build's harness, model and payment (ADR-049, which supersedes FR-F18's "one
+  model call"): a `READ_ONLY` publisher with no write credential reads `$SPIRE_ARTIFACT` from the handoff as a
+  regular file, the run worker scrubs the run's secrets from it, and the orchestrator validates it, retries
+  once, stores it encrypted, posts it to the ticket through a `draft` outbox effect, and gates it as a result
+  (Revise with a note from the dashboard, three per phase). Both approved, the system registers a binding-6
+  preparation, refused when the build setup changed since the plan was written. The plan builds step by step
+  on one chain of held checkpoints: each step must descend from the previous step's head, verifies, carries
+  every earlier step's summary into its prompt within a 48 KiB budget checked when the plan is accepted,
+  completes as empty when it commits nothing, and a lost checkpoint or a failed step run opens the verify
+  gate with the completed steps kept; the last change is delivered as one pull request. Readmit reuses an
+  approved specification and plan; Regenerate writes them again and is refused wherever readmit is. The
+  feature flag that kept the path dark while it was wired is deleted. Twelve slices ran, each RED then GREEN
+  in CI. The review rounds found a readmit gate that skipped step 1, an off-chain ready, a base fallback for
+  a later step, empty steps and bundle-less checkpoint steps that broke the chain, each fixed with a test that
+  failed first. Left open: everything is proven against fakes until the live proof on `spire-test`
+  (`docs/UNVERIFIED.md`), and the artifact passes through the run-worker host's Docker log.

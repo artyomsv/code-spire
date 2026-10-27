@@ -175,8 +175,8 @@ class RunDetailReadTest {
     }
 
     private void charge(String runId, ChargeLine line) {
-        ledger.recordCharges(ChargeCall.forRun(runId, "TEST-detail-" + UUID.randomUUID(),
-                "TEST-detail-model", List.of(line), null));
+        ledger.recordCharges(ChargeCall.forRun(new dev.codespire.orchestrator.llm.RunSpend(runId, "TEST-detail-" + UUID.randomUUID(),
+                dev.codespire.orchestrator.llm.ChargeKind.BUILD, null), "TEST-detail-model", List.of(line)));
     }
 
     private void sql(String query, String... args) throws Exception {

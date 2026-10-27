@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunVerification;
+import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkVerification;
 import dev.codespire.encryption.EncryptionService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -48,6 +49,52 @@ public class WorkVerifyHistory {
                 return Optional.of(new Previous(rs.getString(2), rs.getString(3), result.verification()));
             } catch (IOException unreadable) {
                 throw new IllegalStateException("The last verify of " + workItemId + " could not be read", unreadable);
+            }
+        }
+    }
+
+    /**
+     * The latest applied verify of this generation that did not pass, among the runs of the item's current plan step (M4
+     * slice 3, decision 11): an earlier step's failure is not this step's, and its failed checkpoint is not this step's
+     * start. The item, its generation and its cursor name the step, so no caller can cross a generation with an index.
+     */
+    public Optional<Previous> lastNotPassedAtCurrentStep(Connection c, WorkItemEvent item) throws SQLException {
+        String workItemId = item.workItemId();
+        int step = item.steps().index();
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT v.attempt_id,v.run_id,v.head,v.result FROM work_verify_effect v JOIN factory_run r ON r.run_id=v.run_id
+                WHERE v.work_item_id=? AND v.generation=? AND r.step_index=? AND v.state='applied' AND v.outcome<>'PASSED' AND v.reason IS NULL
+                ORDER BY v.created_at DESC LIMIT 1
+                """)) {
+            ps.setString(1, workItemId);
+            ps.setLong(2, item.generation());
+            ps.setInt(3, step);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return Optional.empty();
+                UUID attempt = rs.getObject(1, UUID.class);
+                RunVerification.RunWorkVerified result = mapper.readValue(
+                        encryption.decrypt(rs.getBytes(4), WorkVerifyResults.aad(attempt)), RunVerification.RunWorkVerified.class);
+                return Optional.of(new Previous(rs.getString(2), rs.getString(3), result.verification()));
+            } catch (IOException unreadable) {
+                throw new IllegalStateException("The last verify of step " + step + " of " + workItemId + " could not be read", unreadable);
+            }
+        }
+    }
+
+    /**
+     * Whether a run of the item's current plan step reached ready, which started its verify. The run worker released the
+     * step's start the moment the first run built from it was ready, so after that the start is gone for good (decision 11).
+     */
+    public boolean readyAtCurrentStep(Connection c, WorkItemEvent item) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT 1 FROM work_verify_effect v JOIN factory_run r ON r.run_id=v.run_id
+                WHERE v.work_item_id=? AND v.generation=? AND r.step_index=?
+                """)) {
+            ps.setString(1, item.workItemId());
+            ps.setLong(2, item.generation());
+            ps.setInt(3, item.steps().index());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
             }
         }
     }

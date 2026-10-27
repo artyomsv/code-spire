@@ -226,8 +226,8 @@ class LlmChargeProjectionIT {
     void aRunsChargeLandsInTheRowAsARunsCharge() {
         String runId = "run::github:TEST-acme/app:row-" + java.util.UUID.randomUUID() + ":1";
 
-        projection.recordCharges(ChargeCall.forRun(runId, "CANARY-RUN-" + runId, "TEST-MODEL",
-                List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L)), null));
+        projection.recordCharges(ChargeCall.forRun(new dev.codespire.orchestrator.llm.RunSpend(runId, "CANARY-RUN-" + runId, dev.codespire.orchestrator.llm.ChargeKind.BUILD, null),
+                "TEST-MODEL", List.of(ChargeLine.metered(TokenType.INPUT, 1_000_000, 200_000L))));
 
         assertEquals(List.of("RUN", "BUILD", "BUILD"), rowFacts(runId),
                 "subject_kind, capability and kind must all say this was a run -- money attributed"

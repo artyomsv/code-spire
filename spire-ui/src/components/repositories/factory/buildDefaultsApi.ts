@@ -15,10 +15,14 @@ export interface BuildDefaults {
   verifyCommands?: string[];
   /** The limit for all checks together, in seconds. Absent from an older server. */
   verifyTimeoutSeconds?: number;
+  /** How the specification and plan are made (M4 slice 3). Absent from an older server, which only copies. */
+  preparation?: Preparation;
   updatedBy: string | null;
   updatedAt: string | null;
 }
 export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
+/** `composed` copies the ticket as one step; `generated` writes a specification and plan with the build model. */
+export type Preparation = 'composed' | 'generated';
 
 /** One model a harness can run, as its agent image declares it. */
 export interface HarnessModel {
@@ -51,6 +55,8 @@ export interface BuildOptions {
   models?: Record<string, HarnessModels>;
   /** The longest verify time limit a save accepts. Absent from an older server. */
   verifyMaxSeconds?: number;
+  /** The preparations a save accepts here; `generated` only while the server offers it. Absent from an older server. */
+  preparations?: Preparation[];
 }
 /** `account` is the role whose account answered: a REVIEWER-read head is not proof the factory can push. */
 export interface BranchHead { branch: string; commit: string; account: string }
@@ -72,7 +78,7 @@ const base = (repository: string) => `/api/repositories/${encodeURIComponent(rep
 export const buildDefaults = (repository: string) => read<BuildDefaults>(`${base(repository)}/build`);
 export const buildOptions = (repository: string) => read<BuildOptions>(`${base(repository)}/build/options`);
 export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null; payWith: PayWith;
-  verifyCommands: string[]; verifyTimeoutSeconds: number }) =>
+  verifyCommands: string[]; verifyTimeoutSeconds: number; preparation?: Preparation }) =>
   read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);

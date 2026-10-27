@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import io.quarkus.scheduler.Scheduled;
@@ -21,6 +22,10 @@ public class WorkItemRunBridge {
     @Inject FactoryRunProjection runs;
     @Inject WorkItemStore store;
     @Inject WorkItemTransitions transitions;
+    @Inject WorkStepSummaries summaries;
+    @Inject WorkStepTransitions steps;
+    /** The failure an off-chain ready is routed as: no failure cause, so no checkpoint is recorded lost. */
+    private static final String OFF_THE_CHAIN="phase_evidence_mismatch";
 
     /** Validate the immutable dispatch binding before this message can project or charge a run. */
     public boolean acceptsBinding(RunResult result) {
@@ -45,6 +50,8 @@ public class WorkItemRunBridge {
         return true;
     }
     boolean record(RunResult result) {
+        // A draft run's artifact is not a work-run result: it has no work_run_effect row (M4 slice 3 gives it its own).
+        if(result instanceof RunWorkArtifact)return false;
         if(result instanceof RunResult.RunWorkReady) {
             if(!acceptsBinding(result))return false;
             try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET state='sent',reason=NULL,ready_payload=COALESCE(ready_payload,?) WHERE run_id=?")) {
@@ -78,9 +85,18 @@ public class WorkItemRunBridge {
         }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         catch(java.io.IOException failure){throw new IllegalStateException("Cannot decode work run result",failure);}
         if(ready instanceof RunResult.RunWorkReady checkpoint && !readyProcessed) {
-            if(!finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
-            try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")) {
-                ps.setString(1,runId);ps.executeUpdate();
+            // A plan step's ready that names another start than its dispatch required is refused (M4 slice 3, A2), and so
+            // is an empty ready anywhere but on a plan step's start (decision 14): the step fails as a failed run does, so
+            // a person decides, and its summary is not the step's.
+            boolean offTheChain=steps.offTheChain(checkpoint) || steps.refusedEmpty(checkpoint);
+            if(offTheChain?!refuseOffTheChain(itemId,attempt,checkpoint):!finishBuild(itemId,attempt,checkpoint,true,checkpoint.activeWallSeconds()))return;
+            // The summary (or that there was none, M4 slice 8) commits with the acknowledgement, so a crash before it
+            // replays both, and the summary's key makes the replay insert nothing. Recorded under the step the run built.
+            try(Connection c=dataSource.getConnection()) {
+                c.setAutoCommit(false);
+                if(!offTheChain)summaries.recordBuilt(c,checkpoint,store.load(itemId));
+                try(PreparedStatement ps=c.prepareStatement("UPDATE work_run_effect SET ready_processed=true WHERE run_id=?")){ps.setString(1,runId);ps.executeUpdate();}
+                c.commit();
             }catch(SQLException failure){throw WorkSourceRegistry.database(failure);}
         }
         if(terminal==null || resultProcessed)return;
@@ -111,23 +127,43 @@ public class WorkItemRunBridge {
         return "build".equals(item.phase()) && attempt.equals(item.progress().attemptId()) && execution!=null?execution.pullRequest():null;
     }
     private boolean finishBuild(String itemId,UUID attempt,RunResult result,boolean success,long wall) {
+        var usage=usage(new Spent(attempt,success,wall),result);
+        if(result instanceof RunResult.RunWorkReady ready)usage=new WorkItemTransitions.PhaseResult(attempt,success,wall,
+                usage.costMillicents(),usage.calls(),usage.usageKnown(),new dev.codespire.contract.work.WorkExecution(
+                        ready.runId(),ready.work(),ready.head(),null,null,keptPullRequest(itemId,attempt),null,null));
+        // A later plan step's failed run opens the verify gate rather than failing the item (M4 slice 3, decision 7).
+        var routed=result instanceof RunResult.RunFailed failed?steps.runFailed(itemId,new WorkStepTransitions.Failure(failed.runId(),failed.cause(),usage)):null;
+        return settled(itemId,routed!=null?routed:transitions.complete(itemId,usage),usage);
+    }
+    /**
+     * A ready off the chain fails its step as a failed run would (A2, decision 7), with what the run bought and no
+     * execution: the refused head is never put under a gate. Left at build, the item had no gate and its row was read
+     * again on every recover pass.
+     */
+    private boolean refuseOffTheChain(String itemId,UUID attempt,RunResult.RunWorkReady ready) {
+        var usage=usage(new Spent(attempt,false,ready.activeWallSeconds()),ready);
+        var routed=steps.runFailed(itemId,new WorkStepTransitions.Failure(ready.runId(),OFF_THE_CHAIN,usage));
+        return settled(itemId,routed!=null?routed:transitions.complete(itemId,usage),usage);
+    }
+    private boolean settled(String itemId,WorkItemTransitions.Outcome outcome,WorkItemTransitions.PhaseResult usage) {
+        if(outcome.status()==409 && Set.of("attempt_changed","item_not_active").contains(outcome.reason()))
+            outcome=transitions.recordLateResult(itemId,usage);
+        return outcome.status()==200;
+    }
+    /** The attempt a run result settles, whether it succeeded, and the wall time it is charged. */
+    private record Spent(UUID attempt,boolean success,long wall) {}
+    private WorkItemTransitions.PhaseResult usage(Spent spent,RunResult result) {
+        UUID attempt=spent.attempt();boolean success=spent.success();long wall=spent.wall();
         var row=runs.find(result.runId()).orElseThrow(()->new IllegalStateException("Associated run is missing"));
         // Reuse M2's cause-and-usage classification. A proven pre-agent failure bought no call;
         // a missing measurement after execution is unknown, never an invented zero.
         // A seat is not billed per token, so a seat run's spending is known to be 0 even when it reported no
         // token counts. Read as unknown, it blocked item #40 for ever after a refused seat (2026-10-08).
         boolean seat=dev.codespire.contract.work.PayWith.SUBSCRIPTION.equals(runs.paidByOf(result.runId()).orElse(null));
-        var usage=dev.codespire.orchestrator.factory.RunCharges.nothingWasBought(result)
+        return dev.codespire.orchestrator.factory.RunCharges.nothingWasBought(result)
                 ? new WorkItemTransitions.PhaseResult(attempt,success,wall,0,0,true)
                 : seat ? new WorkItemTransitions.PhaseResult(attempt,success,wall,0,1,true)
                 : new WorkItemTransitions.PhaseResult(attempt,success,wall,
                     row.cost().isKnown()?row.cost().millicents():0,1,row.cost().isKnown());
-        if(result instanceof RunResult.RunWorkReady ready)usage=new WorkItemTransitions.PhaseResult(attempt,success,wall,
-                usage.costMillicents(),usage.calls(),usage.usageKnown(),new dev.codespire.contract.work.WorkExecution(
-                        ready.runId(),ready.work(),ready.head(),null,null,keptPullRequest(itemId,attempt),null,null));
-        var outcome=transitions.complete(itemId,usage);
-        if(outcome.status()==409 && Set.of("attempt_changed","item_not_active").contains(outcome.reason()))
-            outcome=transitions.recordLateResult(itemId,usage);
-        return outcome.status()==200;
     }
 }

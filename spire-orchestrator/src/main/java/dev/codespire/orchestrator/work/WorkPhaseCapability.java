@@ -16,6 +16,9 @@ public class WorkPhaseCapability {
     @jakarta.inject.Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     public boolean available(WorkItemEvent item,String phase) {
         return switch(phase) {
+            // A generated item writes its specification and plan with short read-only runs on the build's transport (M4
+            // slice 3); an item without a draft keeps both unavailable, which keeps items parked before a switch parked (A16).
+            case "spec","plan" -> item.draft()!=null && runs.available();
             case "build" -> item.preparation()!=null && runs.available();
             // An empty command list is still available: it runs and answers no_checks_declared (M4, spec §4.2).
             case "verify" -> item.preparation()!=null && item.progress().execution()!=null && verifies.available();

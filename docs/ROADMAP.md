@@ -5,7 +5,7 @@ sizing, not commitments.
 
 ---
 
-## The software factory — M0 to M3.5, M4 verify and land, and GitHub reviews delivered (updated 2026-10-25)
+## The software factory — M0 to M3.5, M4 verify and land, and GitHub reviews delivered (updated 2026-10-26)
 
 The next phase extends Code Spire from a reviewer into an automated software factory: a tracker work
 item becomes a specification, a plan, sandboxed agent runs, a pushed branch, and a pull request that
@@ -15,7 +15,7 @@ bounded by an operator ceiling.
 It has its own document set because it is large enough to need one, and it does not change anything
 above: **[`docs/factory/`](factory/README.md)** — PRD (FR-F1..F32), architecture, module reference,
 execution layer, autonomy model, product packaging, prior art, and the M0–M6 build order. Decisions
-are **ADR-029..ADR-039** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
+are **ADR-029..040 and ADR-042..049** in [`DECISIONS.md`](DECISIONS.md); the design record for the session that
 produced it is
 [`superpowers/specs/2026-09-01-software-factory-design.md`](superpowers/specs/2026-09-01-software-factory-design.md).
 
@@ -30,8 +30,12 @@ verifies, delivers a pull request, gets a GitHub review with a verdict, and on a
 **M4 slice 2, land, is accepted** (2026-10-25, PR #243, ADR-048, [record](factory/LAND-ACCEPTANCE.md)): on
 GitHub an approved land merges the pull request at the approved head, deletes the branch and tells the
 ticket; a refusal caused by code loops through build, verify, delivery and review to a new land gate,
-anything else is handed to the operator, and a merge by hand completes the item. **Next is the rest of
-M4:** the specification, the multi-step plan and step continuity.
+anything else is handed to the operator, and a merge by hand completes the item. **M4 slice 3,
+specification, plan and steps, is built** on `feat/m4-spec-plan` (PR #287, ADR-049), live acceptance
+pending: a `generated` repository has the factory write the specification and the plan with short
+read-only harness runs, and the approved plan builds step by step on one chain of held checkpoints,
+delivered as one pull request. It is proven against fakes only (`UNVERIFIED.md`); its live proof on
+`spire-test` is M4's exit criterion.
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates.
 

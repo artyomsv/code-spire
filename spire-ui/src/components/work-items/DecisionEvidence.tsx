@@ -6,6 +6,7 @@ import type { Approval } from './approvalsApi';
 import type { Artifact } from './workPreparationApi';
 import { workRefusal } from './workReasons';
 import { isVerifyResultGate } from './VerifyResult';
+import { STEPS_BINDING } from './workPreparationApi';
 import type { PreparationEvidence } from './workPreparationApi';
 
 interface Props {
@@ -44,6 +45,16 @@ function ArtifactRef({ artifact }: { artifact: Artifact }) {
   return <>composed from <a href={artifact.location.link} target="_blank" rel="noreferrer">#{artifact.location.issueKey}</a></>;
 }
 
+/** What Retry build does, by why the build was not verified (M4; plan steps, M4 slice 3 decisions 7 and 11). */
+function retryCopy(item: WorkItemDetail): string {
+  const reason = item.progress?.execution?.verification?.reason;
+  if (reason === 'step_run_failed') return "The step's run failed before it was verified; Retry builds this step again from where it started.";
+  if (reason === 'checkpoint_missing' && item.preparation?.bindingVersion === STEPS_BINDING)
+    return "The earlier steps' commits are gone; Readmit builds the plan again from step 1.";
+  if (reason === 'checkpoint_missing') return "A new build starts again from the base, because this build's commits could not be read. The failure goes in its prompt.";
+  return "A new build starts from this build's last commit, with the failure in its prompt.";
+}
+
 export default function DecisionEvidence({ item, approval, evidence, evidenceError }: Props) {
   const { gate } = approval;
   const preparation = item.preparation;
@@ -72,9 +83,7 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
     <section className="decision-sec" aria-label="If you approve">
       <h4>If you approve</h4>
       {isVerifyResultGate(item)
-        ? <p>{item.progress?.execution?.verification?.reason === 'checkpoint_missing'
-            ? "A new build starts again from the base, because this build's commits could not be read. The failure goes in its prompt."
-            : "A new build starts from this build's last commit, with the failure in its prompt."} It counts against this item's run limit.</p>
+        ? <p>{retryCopy(item)} It counts against this item's run limit.</p>
         : gate.phase === 'plan' && limits
         ? <p>One build starts. It stops at <b>{formatCost(limits.maxCostMillicents)}</b> or after <b>{hours(limits.maxWallClockSeconds)}</b>, and this item may use up to <b>{limits.maxRunsPerItem}</b> runs.</p>
         : <p>The {gate.phase} phase continues within this item's limits.</p>}

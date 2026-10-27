@@ -16,6 +16,7 @@ import java.util.Objects;
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
+        @JsonSubTypes.Type(value = RunCommand.ExecuteWorkDraftRun.class, name = "ExecuteWorkDraftRun"),
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
@@ -281,10 +282,19 @@ public sealed interface RunCommand {
      * <p>{@code mergedBaseTip} is a land fix's pull request base as the orchestrator read it (M4 slice 7a), null for
      * every other build. The held build gates the base merge before any permit exists, so it excuses the same tip the
      * permit will; like the permit's, it never comes from the workspace.
+     *
+     * <p>{@code checkpointRequired} is a later plan step's start (M4 slice 3, A2, decision 11): the checkpoint it names
+     * must be read, and the worker fails the step with {@code CHECKPOINT_MISSING} rather than starting from the base.
+     * {@code emptyAllowed} says a plan step may finish with no commit (decision 14). Both are false for every other build,
+     * and for a command decoded from before they existed.
      */
     record ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work,
-                          String mergedBaseTip) implements RunCommand {
+                          String mergedBaseTip,boolean checkpointRequired,boolean emptyAllowed) implements RunCommand {
         static final String ITEM_BRANCH_PREFIX="spire/work-";
+        /** Every build written before plan steps (M4 slice 3) starts where its command says and may not finish empty. */
+        public ExecuteWorkRun(String runId,ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work,String mergedBaseTip) {
+            this(runId,execution,work,mergedBaseTip,false,false);
+        }
         public ExecuteWorkRun(ExecuteRun execution,dev.codespire.contract.work.WorkRunBinding work) {
             this(execution.runId(),execution,work,null);
         }
@@ -303,10 +313,43 @@ public sealed interface RunCommand {
                 throw new IllegalArgumentException("Only a build on the item's own branch merges its pull request base");
             if(mergedBaseTip!=null && !mergedBaseTip.matches("[0-9a-f]{40}"))
                 throw new IllegalArgumentException("A merged base tip must be a full commit sha");
+            if(checkpointRequired && execution.startFromRunId()==null)
+                throw new IllegalArgumentException("Only a build that starts from a checkpoint can require it");
         }
-        public ExecuteWorkRun withMergedBaseTip(String tip){return new ExecuteWorkRun(runId,execution,work,tip);}
-        /** The same build over another execution of the same run; the base tip is the orchestrator's and stays. */
-        public ExecuteWorkRun withExecution(ExecuteRun next){return new ExecuteWorkRun(runId,next,work,mergedBaseTip);}
+        public ExecuteWorkRun withMergedBaseTip(String tip){return new ExecuteWorkRun(runId,execution,work,tip,checkpointRequired,emptyAllowed);}
+        /** The same build over another execution of the same run; the base tip and both step flags are the orchestrator's and stay. */
+        public ExecuteWorkRun withExecution(ExecuteRun next){return new ExecuteWorkRun(runId,next,work,mergedBaseTip,checkpointRequired,emptyAllowed);}
+        /** A later plan step's start, which must be read and is never replaced by the base (A2). */
+        public ExecuteWorkRun requiringCheckpoint(){return new ExecuteWorkRun(runId,execution,work,mergedBaseTip,true,emptyAllowed);}
+        /** A plan step, which may finish with no commit (decision 14). */
+        public ExecuteWorkRun allowingEmpty(){return new ExecuteWorkRun(runId,execution,work,mergedBaseTip,checkpointRequired,true);}
+        @Override public String scmCredential(){return execution.scmCredential();}
+        @Override public String harnessCredential(){return execution.harnessCredential();}
+    }
+
+    /**
+     * A specification or plan run (M4 slice 3, ADR-049): a fresh clone of the base, read by the agent, and its
+     * artifact handed back as {@code RunWorkArtifact}. Nothing is pushed. A distinct discriminator, for the reason
+     * {@link ExecuteWorkRun} has one: an older worker must refuse it, never run it as a pushing {@link ExecuteRun}.
+     *
+     * <p>{@code execution.branch()} is the clone's local branch, {@code spire/draft-<attempt>}; it never reaches a
+     * remote, and naming it after the attempt keeps it from ever looking like an item branch.
+     */
+    record ExecuteWorkDraftRun(String runId, ExecuteRun execution, dev.codespire.contract.work.WorkDraftBinding draft)
+            implements RunCommand {
+        public static final String DRAFT_BRANCH_PREFIX = "spire/draft-";
+        public ExecuteWorkDraftRun {
+            Objects.requireNonNull(execution, "A draft execution is required");
+            Objects.requireNonNull(draft, "A draft binding is required");
+            if (!execution.runId().equals(runId)) throw new IllegalArgumentException("The draft command must name its execution run");
+            // Refused here rather than left to the read-only publisher, which could not push either: a draft reads the
+            // base, so a checkpoint start or a push target is a command that should never have been built.
+            if (execution.startFromRunId() != null) throw new IllegalArgumentException("A draft run starts from the base, never a checkpoint");
+            if (execution.existingBranch()) throw new IllegalArgumentException("A draft run pushes nothing, so it names no existing branch");
+            if (!execution.branch().equals(DRAFT_BRANCH_PREFIX + draft.attemptId()))
+                throw new IllegalArgumentException("A draft run clones onto " + DRAFT_BRANCH_PREFIX + draft.attemptId()
+                        + ", not " + execution.branch());
+        }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }

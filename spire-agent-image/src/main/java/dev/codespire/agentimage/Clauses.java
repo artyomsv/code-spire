@@ -39,6 +39,12 @@ public final class Clauses {
     /** DONE means "everything I produced is here", so writing it early truncates the run. */
     public static final String HANDOFF_DONE_LAST = "handoff-done-last";
 
+    /**
+     * {@code $SPIRE_ARTIFACT} and {@code $SPIRE_STEP_SUMMARY} reach the handoff as regular files before DONE, or a
+     * specification run returns nothing and a plan step's decisions are lost (M4 slice 3).
+     */
+    public static final String HANDOFF_FILES = "handoff-files";
+
     /** M4 verify runs each check as {@code /bin/sh -c <command>} in this image, overriding its entrypoint. */
     public static final String SHELL = "shell";
 
@@ -83,7 +89,7 @@ public final class Clauses {
     /** Every clause this checker proves, in report order. */
     public static final List<String> VERIFIED = List.of(
             ENTRYPOINT, NON_ROOT, MOUNT_POINTS, GIT, CA_CERTIFICATES, SHELL, UID_1001,
-            PROMPT_ON_STDIN, HANDOFF_BUNDLES, HANDOFF_DONE_LAST);
+            PROMPT_ON_STDIN, HANDOFF_BUNDLES, HANDOFF_DONE_LAST, HANDOFF_FILES);
 
     /**
      * Every clause the image may declare and this checker will not prove.

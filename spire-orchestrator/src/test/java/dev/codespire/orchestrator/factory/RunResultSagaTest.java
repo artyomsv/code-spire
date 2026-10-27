@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -52,6 +53,12 @@ class RunResultSagaTest {
         saga.charges = charges;
         // This fixture represents standalone runs; item lookup is asserted by the work bridge service tests.
         saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override public boolean accept(RunResult result) { return false; }
+        };
+        // Standalone runs are no draft runs either. Both methods the saga reaches are overridden: the real ones read
+        // work_prepare_effect, a database call from a plain unit test (CLAUDE.md, saga test fakes).
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
             @Override public boolean accept(RunResult result) { return false; }
         };
         // Same reason, and the same trap arriving again with a new collaborator: RunCredentialFeedback
@@ -122,6 +129,98 @@ class RunResultSagaTest {
         saga.pullRequests=new FactoryPullRequests(){@Override public void propose(RunResult result){proposed.add(result);}};
         var result=new RunResult.RunFinished(RUN_ID,"refs/heads/spire/TEST-item",List.of("TEST-file"),List.of(),Map.of("INPUT",1L),false);saga.on(result);
         assertEquals(List.of(result),continued);assertTrue(proposed.isEmpty(),"An associated result belongs exclusively to the item continuation");
+    }
+
+    /**
+     * A specification or plan run (M4 slice 3) is projected and charged, and goes no further: it pushed nothing to
+     * propose, and the work-run inbox has no row for it (slice 6 gives drafts their own).
+     */
+    @Test
+    void anArtifactIsNeverProposedAsAPullRequest() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> continued = new ArrayList<>();
+        List<RunResult> proposed = new ArrayList<>();
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override
+            public boolean accept(RunResult result) {
+                continued.add(result);
+                return false;
+            }
+        };
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override
+            public void propose(RunResult result) {
+                proposed.add(result);
+            }
+        };
+        RunResult artifact = new RunWorkArtifact(RUN_ID, new dev.codespire.contract.work.WorkDraftBinding(
+                "TEST-item", 1, java.util.UUID.fromString("00000000-0000-4000-8000-000000000005"),
+                dev.codespire.contract.work.WorkDraftBinding.Kind.SPEC, "d".repeat(64)),
+                "TEST-specification", false, Map.of("INPUT", 3L), 2);
+
+        saga.on(artifact);
+
+        assertEquals(List.of(artifact), projection.applied);
+        assertEquals(List.of(artifact), charges.charged);
+        assertTrue(proposed.isEmpty(), "an artifact pushed nothing to propose");
+        assertTrue(continued.isEmpty(), "a draft run has no work-run row to continue");
+    }
+
+    /**
+     * A draft run's result (M4 slice 3) belongs to the draft inbox alone: after the projection and the charge, neither
+     * the work-run bridge nor the pull request proposal sees it, a failure included.
+     */
+    @Test
+    void aDraftResultGoesNoFurtherThanItsInbox() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> drafted = new ArrayList<>();
+        List<RunResult> continued = new ArrayList<>();
+        List<RunResult> proposed = new ArrayList<>();
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
+            @Override public boolean accept(RunResult result) {
+                assertEquals(List.of(result), projection.applied);
+                assertEquals(List.of(result), charges.charged);
+                drafted.add(result);
+                return true;
+            }
+        };
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override public boolean accept(RunResult result) { continued.add(result); return false; }
+        };
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override public void propose(RunResult result) { proposed.add(result); }
+        };
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L));
+
+        saga.on(failed);
+
+        assertEquals(List.of(failed), drafted);
+        assertTrue(continued.isEmpty(), "a draft run has no work-run row");
+        assertTrue(proposed.isEmpty(), "a draft run is never proposed");
+    }
+
+    /** A draft result whose binding is not the effect row's is neither projected nor charged nor applied. */
+    @Test
+    void aForeignDraftBindingStopsTheResult() {
+        RecordingProjection projection = new RecordingProjection();
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        List<RunResult> drafted = new ArrayList<>();
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return false; }
+            @Override public boolean accept(RunResult result) { drafted.add(result); return true; }
+        };
+
+        saga.on(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L)));
+
+        assertTrue(projection.applied.isEmpty());
+        assertTrue(charges.charged.isEmpty());
+        assertTrue(drafted.isEmpty());
     }
 
     @Test

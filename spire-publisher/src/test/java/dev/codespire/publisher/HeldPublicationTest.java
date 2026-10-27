@@ -132,6 +132,137 @@ class HeldPublicationTest {
         assertEquals("2", git(f.work, "rev-list", "--count", "HEAD"), "one base and one build commit");
     }
 
+    /** The held publisher serves every plan step, and each step's summary travels beside its checkpoint (§6.8). */
+    @Test void theHeldPublisherReportsTheStepSummary() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        Files.writeString(dir.resolve(HandoffFiles.STEP_SUMMARY), "{\"decisions\":[\"TEST-decision\"]}");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+        PublisherConfig config = new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(),
+                10_000_000L, null, dir, null);
+
+        assertEquals(0, PublisherMain.publish(config, PublicationPolicy.held(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        int checkpoint = lines.indexOf("\"event\":\"checkpoint\"");
+        int summary = lines.indexOf("{\"event\":\"step_summary\",\"json\":\"{\\\"decisions\\\":[\\\"TEST-decision\\\"]}\"}");
+        assertTrue(checkpoint >= 0, lines);
+        assertTrue(summary > checkpoint, "the summary follows the final checkpoint: " + lines);
+        assertEquals("", ref(f.origin, BRANCH), "held work must never reach the real origin");
+    }
+
+    /** A step that wrote no summary still completes: no line, and no failure (§6.8 "summary_missing"). */
+    @Test void aHeldRunWithoutASummaryStillSucceeds() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+        PublisherConfig config = new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(),
+                10_000_000L, null, dir, null);
+
+        assertEquals(0, PublisherMain.publish(config, PublicationPolicy.held(), outcomes), output.toString());
+        assertFalse(output.toString().contains("step_summary"), output.toString());
+        assertFalse(output.toString().contains("handoff_file_refused"), output.toString());
+    }
+
+    /** A plan step's checkpoint must extend where the step started (M4 slice 3, A2): a rewritten history is refused. */
+    @Test void aHeadThatDoesNotDescendIsRefused() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST the start of the step");
+        String start = git(f.work, "rev-parse", "HEAD");
+        git(f.work, "reset", "--hard", f.base);
+        Path rewritten = f.bundle("work.txt", "TEST a history that left the start behind");
+        try (PublishRepo repo = f.publisher("held")) {
+            assertFalse(cycle(repo, f, PublicationPolicy.held(null, start), List.of()).handle(rewritten));
+        }
+        assertTrue(output.toString().contains("START_NOT_DESCENDED"), output.toString());
+        assertFalse(output.toString().contains("\"event\":\"checkpoint\""), output.toString());
+        assertEquals("", ref(f.origin, BRANCH));
+    }
+
+    @Test void aHeadOnTheChainIsACheckpoint() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST step one");
+        String start = git(f.work, "rev-parse", "HEAD");
+        Path next = f.bundle("work.txt", "TEST step two");
+        String head = git(f.work, "rev-parse", "HEAD");
+        try (PublishRepo repo = f.publisher("held")) {
+            assertTrue(cycle(repo, f, PublicationPolicy.held(null, start), List.of()).handle(next));
+        }
+        assertTrue(output.toString().contains("\"head\":\"" + head + "\""), output.toString());
+        assertFalse(output.toString().contains("START_NOT_DESCENDED"), output.toString());
+    }
+
+    /** A plan step whose agent committed nothing (M4 slice 3, §6.7, decision 14): an empty checkpoint at the base. */
+    @Test void theHeldPublisherSignalsAnEmptyFirstStep() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        assertEquals(0, PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("\"event\":\"checkpoint\",\"head\":\"" + f.base + "\""), lines);
+        assertTrue(lines.contains("\"empty\":true"), lines);
+        assertFalse(lines.contains("\"event\":\"failed\""), lines);
+        assertEquals("", ref(f.origin, BRANCH));
+    }
+
+    @Test void aBundleIsNeverEmpty() throws Exception {
+        Fixture f = fixture();
+        f.bundle("work.txt", "TEST work");
+        String head = git(f.work, "rev-parse", "HEAD");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        assertEquals(0, PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes), output.toString());
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("\"head\":\"" + head + "\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    /**
+     * Only a start from the base may be reported empty (amendment 3): a run that started from a checkpoint and wrote no
+     * bundle holds nothing, so it keeps today's missing checkpoint and its predecessor keeps the chain.
+     */
+    @Test void aCheckpointStartWithoutABundleIsNotEmpty() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held(null, f.base).allowingEmpty(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertFalse(lines.contains("\"event\":\"checkpoint\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    /** Only a plan step may finish empty (decision 14): every other held build keeps today's missing checkpoint. */
+    @Test void anIdleBuildWithoutTheAllowanceStillFails() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertFalse(lines.contains("\"event\":\"checkpoint\""), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    /** An unreadable bundle is still a bundle: the agent committed something, so the run is never reported empty. */
+    @Test void anUnreadableBundleIsNotEmpty() throws Exception {
+        Fixture f = fixture();
+        Files.writeString(dir.resolve("1.bundle"), "TEST not a bundle");
+        Files.writeString(dir.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        PublisherMain.publish(config(f), PublicationPolicy.held().allowingEmpty(), outcomes);
+
+        String lines = output.toString(StandardCharsets.UTF_8);
+        assertTrue(lines.contains("BUNDLE_UNREADABLE"), lines);
+        assertFalse(lines.contains("\"empty\""), lines);
+    }
+
+    private PublisherConfig config(Fixture f) {
+        return new PublisherConfig(f.origin.toUri().toString(), "main", f.base, BRANCH, List.of(), 10_000_000L, null, dir, null);
+    }
+
     private PublicationPolicy permit(String head, Clock clock) {
         return PublicationPolicy.permitted(head, NOW, NOW.plusSeconds(60), clock);
     }

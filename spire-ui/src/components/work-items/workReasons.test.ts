@@ -89,3 +89,55 @@ describe('every land reason (M4 land)', () => {
     expect(landReason('land_blocked', null)).toBe(workReason('land_blocked'));
   });
 });
+
+describe('preparation setting reasons (M4 slice 3)', () => {
+  it.each(['preparation_invalid'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+
+  // The item's refusal talks about the item, not about the build setup.
+  it('keeps the item refusal about the item', () => {
+    expect(workReason('preparation_unavailable')).toContain('under way or finished');
+    expect(workReason('preparation_unavailable')).not.toContain('specifications and plans');
+  });
+});
+
+describe('readmit and regenerate reasons (M4 slice 3, A7)', () => {
+  it.each(['regenerated', 'regenerate_unavailable', 'preparation_generated'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+describe('draft reasons (M4 slice 3)', () => {
+  it.each(['specification_to_write', 'plan_to_write'])('every new reason has a sentence: %s', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+
+  // The factory writes these itself; the sentence must not send the reader to prepare the task by hand.
+  it('says the factory writes the draft', () => {
+    expect(workReason('specification_to_write')).toContain('factory');
+    expect(workReason('plan_to_write')).toContain('factory');
+  });
+});
+
+describe('specification run reasons (M4 slice 3)', () => {
+  it.each(['spec_invalid', 'draft_run_failed', 'specification_written', 'draft_binding_mismatch'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+});
+
+describe('plan run and revision reasons (M4 slice 3)', () => {
+  it.each(['plan_invalid', 'plan_written', 'draft_setup_changed', 'revision_limit_reached', 'revise_unavailable'])(
+    '%s has a sentence', reason => {
+      expect(workReason(reason)).not.toBe(reason);
+    });
+});
+
+describe('plan step reasons (M4 slice 3)', () => {
+  it.each(['step_run_failed', 'step_checkpoint_lost', 'plan_produced_no_change'])('%s has a sentence', reason => {
+    expect(workReason(reason)).not.toBe(reason);
+  });
+  it('no longer says a plan of steps cannot be built', () => {
+    expect(workReason('plan_steps_unavailable')).toBe('plan_steps_unavailable');
+  });
+});

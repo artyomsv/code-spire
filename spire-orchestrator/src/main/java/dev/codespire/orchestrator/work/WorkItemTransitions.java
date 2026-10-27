@@ -23,6 +23,8 @@ public class WorkItemTransitions {
     @Inject WorkPhaseCapability capability;
     @Inject WorkArtifacts artifacts;
     @Inject dev.codespire.orchestrator.factory.WorkRunAssembly runAssembly;
+    @Inject WorkDraftRegistration registration;
+    @Inject WorkStepAssembly stepAssembly;
     public record Observation(WorkSourceRegistry.Source source, WorkPolicyRegistry.Policy policy, WorkEvidence evidence, WorkArtifacts.Evidence artifacts,WorkPreparation preparation) {
         public Observation(WorkSourceRegistry.Source source,WorkPolicyRegistry.Policy policy,WorkEvidence evidence) {
             this(source,policy,evidence,WorkArtifacts.Evidence.absent(),null);
@@ -80,7 +82,8 @@ public class WorkItemTransitions {
                 String expectedHead=item.progress().execution()!=null && item.progress().execution().pullRequest()!=null
                         ?item.progress().execution().head():item.preparation()==null?null:item.preparation().baseCommit();
                 if(!Objects.equals(head,expectedHead) || observed.artifacts().failure()!=null)
-                    next=next.prepared(null).withMilestone("OPERATOR_RESUMED");
+                    // A generated item writes its draft again with it: an approved draft without its preparation has no way on.
+                    next=WorkDraftLifecycle.unprepared(next).withMilestone("OPERATOR_RESUMED");
                 store.appendDecision(c,history,next,"operator-resume:"+UUID.randomUUID());history=store.history(id);
                 next=enterPrepared(c,history,next,false,clock.now(),WorkItemLifecycle.EntryMode.ORDINARY);history=store.history(id);
                 store.appendDecision(c,history,next,"resume-transition:"+UUID.randomUUID());
@@ -162,7 +165,8 @@ public class WorkItemTransitions {
                 if(expected>=0 && history.size()!=expected)return new Outcome(409,"work_item_changed",item);
                 if(!Objects.equals(item.preparation(),observed.preparation()))return new Outcome(503,"artifacts_changed_during_read",item);
                 // Derived here, under the lock, because the decider sees no history (A9).
-                WorkItemLifecycle.EntryMode mode=entryMode(history);boolean landFix=mode==WorkItemLifecycle.EntryMode.LAND_FIX;
+                // entered stays how this result's phase was entered; mode moves on with a readmit or a completed step.
+                WorkItemLifecycle.EntryMode mode=entryMode(history),entered=mode;
                 if(result!=null) {
                     try(PreparedStatement ps=c.prepareStatement("SELECT state FROM work_phase_attempt WHERE id=? AND work_item_id=?")) {
                         ps.setObject(1,result.attemptId());ps.setString(2,id);try(ResultSet rs=ps.executeQuery()) {
@@ -184,6 +188,8 @@ public class WorkItemTransitions {
                     next=next.readmit();
                     store.appendDecision(c,history,next,"readmit:"+UUID.randomUUID());
                     history=store.history(id);
+                    // The readmit rewound the cursor to step 1: a mode read before it would skip step 1's build gate.
+                    mode=entryMode(history);
                 }
                 if(result!=null && !result.successful() && "verify".equals(item.phase())
                         && result.execution()!=null && result.execution().verification()!=null) {
@@ -209,7 +215,8 @@ public class WorkItemTransitions {
                     WorkProgress progress=next.progress().finish(result.wallSeconds(),result.costMillicents(),result.calls());
                     if(result.execution()!=null)progress=progress.withExecution(result.execution());
                     if(!result.usageKnown())progress=progress.unknownUsage();
-                    if(!result.successful() && landFix && "build".equals(item.phase())) {
+                    if(result.successful())progress=WorkStepLifecycle.composedStepCompleted(item,progress,entered);
+                    if(!result.successful() && entered==WorkItemLifecycle.EntryMode.LAND_FIX && "build".equals(item.phase())) {
                         // A failed fix run fails the fix, not the item: its pull request is still open (Review Focus 16).
                         next=WorkItemLifecycle.landHanded(state(next,next.workflowStatus(),next.reason(),next.milestone(),next.gate(),progress),"land_fix_run_failed");
                         store.appendDecision(c,history,next,"phase-result:"+result.attemptId());
@@ -220,7 +227,12 @@ public class WorkItemTransitions {
                     next=decide(c,new Decision(history,next,"phase-result:"+result.attemptId()));
                     if(!result.successful())return new Outcome(200,next.reason(),next);
                     history=store.history(id);
-                    next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
+                    // A plan step's completion is the step loop's decision (M4 slice 3, A17); a land fix is never a step.
+                    WorkItemEvent stepped=WorkStepLifecycle.asks(item,entered)?WorkStepLifecycle.next(next):null;
+                    if(stepped!=null){store.appendDecision(c,history,stepped,"step-completed:"+result.attemptId());history=store.history(id);next=stepped;mode=entryMode(history);
+                        // Every step changed nothing (§6.7): nothing is entered, and only Stop or Readmit go on.
+                        if(WorkStepLifecycle.NO_CHANGE.equals(stepped.reason()))return new Outcome(200,stepped.reason(),stepped);}
+                    else next=next.decision(next.policyRevision(),next.authority(),next.policy(),nextPhase(item.phase()),next.workflowStatus(),next.reason(),next.milestone(),next.gate(),next.progress());
                 }
                 if(observed.evidence().failure()!=null)next=state(next,"awaiting_input",observed.evidence().failure(),"AUTHORITY_UNAVAILABLE",next.gate(),next.progress().reserve(false));
                 else if(observed.artifacts().failure()!=null)next=state(next,"awaiting_input",observed.artifacts().failure(),"ARTIFACTS_REQUIRED",next.gate(),next.progress().reserve(false));
@@ -265,9 +277,12 @@ public class WorkItemTransitions {
     static List<WorkItemEvent> facts(List<dev.codespire.contract.event.EventEnvelope> history) {
         return history.stream().map(event->(WorkItemEvent)event.payload()).toList();
     }
-    /** {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9). */
+    /**
+     * {@link WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress (A9), and
+     * {@link WorkItemLifecycle.EntryMode#STEP} between the steps of a plan (M4 slice 3, decision 13).
+     */
     static WorkItemLifecycle.EntryMode entryMode(List<dev.codespire.contract.event.EventEnvelope> history) {
-        return WorkItemLifecycle.landFixInProgress(facts(history))?WorkItemLifecycle.EntryMode.LAND_FIX:WorkItemLifecycle.EntryMode.ORDINARY;
+        return WorkStepLifecycle.entryMode(facts(history));
     }
     /**
      * Why a recheck may not continue this item: it stopped or is running, so only readmission may; or land handed it
@@ -277,6 +292,8 @@ public class WorkItemTransitions {
         if(Set.of("active","waiting_approval","not_eligible","stopped","failed","retired","suspended","completed").contains(item.workflowStatus()))
             return new Outcome(409,"explicit_readmission_required",item);
         if(WorkItemLifecycle.landHandedOver(item))return new Outcome(409,"retry_land_required",item);
+        // A plan whose every step was empty has nothing left to build: a recheck would start a step past its end.
+        if(WorkStepLifecycle.NO_CHANGE.equals(item.reason()))return new Outcome(409,"explicit_readmission_required",item);
         return null;
     }
     /**
@@ -284,7 +301,7 @@ public class WorkItemTransitions {
      * names the strongest reason first: a merged pull request cannot be built again beside itself (spec §7.9), then
      * anything that still holds the delivered pull request open, then a merge whose outcome is not recorded yet.
      */
-    private static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
+    static Outcome readmitRefusal(Connection c,List<dev.codespire.contract.event.EventEnvelope> history,WorkItemEvent item) throws SQLException {
         WorkItemLifecycle.EntryMode mode=entryMode(history);
         if(Set.of("active","waiting_approval","retired","suspended").contains(item.workflowStatus()))return new Outcome(409,"readmission_unavailable",item);
         if(landed(history,item))return new Outcome(409,"readmission_landed",item);
@@ -434,6 +451,11 @@ public class WorkItemTransitions {
                     }
                     // A result gate asks about a verify result, not permission to run verify (M4, spec §4.2).
                     boolean verifyResult="verify".equals(gate.phase()) && WorkItemLifecycle.VERIFY_RESULT_REASONS.contains(current.reason());
+                    // So does a generated item's spec or plan gate: it asks about the written artifact (M4 slice 3, A6).
+                    boolean draftResult=WorkDraftLifecycle.resultGate(current,gate);
+                    // A plan step whose start is gone cannot be built again: Retry is refused and Stop stays (M4 slice 3, decision 11).
+                    String lost=verifyResult && approve?stepAssembly.retryRefusal(c,history):null;
+                    if(lost!=null)return new Outcome(409,lost,current);
                     // Retry build rewinds to build: the human chose to build again, which also answers a build: approve gate.
                     next=current.decision(observed.policy().revision(),authority(observed.source()),selection,verifyResult && approve?"build":current.phase(),current.workflowStatus(),current.reason(),"GATE_RESOLVED",
                             gate.resolve(approve?"APPROVED":"REJECTED",resolver,channel,key,note),current.progress().reserve(false));
@@ -442,7 +464,9 @@ public class WorkItemTransitions {
                         WorkItemLifecycle.EntryMode mode=entryMode(history);
                         store.appendDecision(c,history,next,"gate-answer:"+gateId+":"+key);
                         history=store.history(id);
-                        next=enterPrepared(c,history,next,true,now,mode);
+                        if(draftResult){next=WorkDraftLifecycle.approved(next);store.appendDecision(c,history,next,"draft-approved:"+gateId+":"+key);history=store.history(id);}
+                        // An approved plan is registered before anything builds (M4 slice 3, A4).
+                        next=draftResult?registration.afterApproval(c,history,next):enterPrepared(c,history,next,true,now,mode);
                         history=store.history(id);
                     }
                     else next=state(next,"stopped",verifyResult?"verify_stopped_by_operator":"gate_rejected","GATE_RESOLVED",next.gate(),next.progress());
@@ -539,6 +563,8 @@ public class WorkItemTransitions {
                 lockItem(c,id);var history=store.history(id);WorkItemEvent current=(WorkItemEvent)history.getLast().payload();
                 if(history.size()!=expectedRevision)return new Outcome(409,"work_item_changed",current);
                 if(Set.of("active","retired","suspended","completed").contains(current.workflowStatus()))return new Outcome(409,"preparation_unavailable",current);
+                // The factory writes a generated item's specification and plan: a copied task beside its draft wedges it (A7).
+                if(current.draft()!=null)return new Outcome(409,"preparation_generated",current);
                 try(PreparedStatement ps=c.prepareStatement("SELECT count(*) FROM work_phase_attempt WHERE work_item_id=? AND generation=?")) {
                     ps.setString(1,id);ps.setLong(2,current.generation());try(ResultSet rs=ps.executeQuery()) {
                         rs.next();if(rs.getLong(1)>0)return new Outcome(409,"explicit_readmission_required",current);

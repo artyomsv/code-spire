@@ -22,9 +22,12 @@ public class WorkItemResource {
     @Inject WorkSourceRegistry sources;
     @Inject WorkItemTransitions transitions;
     @Inject WorkItemControl control;
+    @Inject WorkDraftTransitions drafts;
     @Inject io.quarkus.security.identity.SecurityIdentity identity;
-    public record Resume(long expectedRevision,boolean readmit,String note) {
-        public Resume(long expectedRevision,boolean readmit) {this(expectedRevision,readmit,null);}
+    /** @param regenerate with {@code readmit}: write a generated item's specification and plan again (A7); ignored without it */
+    public record Resume(long expectedRevision,boolean readmit,String note,boolean regenerate) {
+        public Resume(long expectedRevision,boolean readmit,String note) {this(expectedRevision,readmit,note,false);}
+        public Resume(long expectedRevision,boolean readmit) {this(expectedRevision,readmit,null,false);}
     }
     @POST @Path("/{id}/resume") @RolesAllowed("spire-admin")
     @Consumes(MediaType.APPLICATION_JSON)
@@ -33,7 +36,9 @@ public class WorkItemResource {
         String subject=dev.codespire.orchestrator.security.OidcSubjects.of(identity);
         if(subject.isBlank())throw new ForbiddenException("A verified operator identity is required");
         var item=store.load(id);
-        var result=item!=null && "suspended".equals(item.workflowStatus())
+        // Regenerate is a readmission: its refusals, a suspended item's included, are readmission's own.
+        var result=input.readmit() && input.regenerate()?drafts.regenerate(id,input.expectedRevision())
+                :item!=null && "suspended".equals(item.workflowStatus())
                 ?control.resume(id,input.expectedRevision(),subject,input.note())
                 :transitions.resume(id,input.expectedRevision(),input.readmit());
         return jakarta.ws.rs.core.Response.status(result.status()).entity(result.body()).build();
@@ -101,7 +106,9 @@ public class WorkItemResource {
                         * The operators this history names (gate resolvers, land command operators) as they last signed
                         * in, so the screen shows a name and not a subject. Never an email: the directory keeps none.
                         */
-                       List<dev.codespire.orchestrator.operator.OperatorDirectory.Operator> operators) {}
+                       List<dev.codespire.orchestrator.operator.OperatorDirectory.Operator> operators,
+                       /** The factory writes this item's specification and plan (M4 slice 3), so readmit may regenerate them. */
+                       boolean generated) {}
     /**
      * @param message GitHub's own words when it refused, so the operator reads the cause and not a code
      * @param checks the check summary last read, for "n of m done" and the failed names
@@ -194,7 +201,8 @@ public class WorkItemResource {
                 item.policy().effective(), item.admittedModes(), item.policy().reason(), item.policy().ceiling() == null ? null
                         : new Profile(item.policy().ceiling().id(), item.policy().ceiling().name(), item.policy().ceiling().version()), item.policy().applied(),
                 item.policy().limits(),item.admittedLimits(),item.gate(),item.progress(),item.preparation(),builds(id),item.control(),labelAppliers(source.allowedPeople(),item.policy().applied()),
-                sweep.health(id,item.generation()).orElse(null),land(id,item,events),operators.named(WorkItemMilestones.operatorSubjects(events)));
+                sweep.health(id,item.generation()).orElse(null),land(id,item,events),operators.named(WorkItemMilestones.operatorSubjects(events)),
+                item.draft()!=null);
     }
 
     @Inject dev.codespire.orchestrator.operator.OperatorDirectory operators;

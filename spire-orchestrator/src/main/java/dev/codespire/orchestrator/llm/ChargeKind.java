@@ -13,7 +13,7 @@ public enum ChargeKind {
     /** A conversation follow-up answer. */
     FOLLOWUP,
     /**
-     * A factory run: one agent, one wall clock, one branch.
+     * A factory run that builds a work item or a REST request: one agent, one wall clock, one branch.
      *
      * <p>The run is charged as ONE call although the agent made many model calls inside its
      * sandbox. That is not an approximation glossed over — the harness reports only its own
@@ -29,5 +29,14 @@ public enum ChargeKind {
      * what it finds. Collapsing them would make the second unanswerable, and it is the one M2 exists
      * to make true. The V42 CHECK has admitted this value since the ledger learned about runs.
      */
-    FIX
+    FIX,
+    /**
+     * A read-only factory run that writes a work item's specification (M4). Charged under the
+     * {@link ChargeCapability#BUILD} capability like every run: spec and plan are in the Build pack
+     * ({@code docs/factory/PACKAGING.md} section 2), and only the kind tells them apart. The V42
+     * {@code llm_charge_kind} CHECK has admitted this value since the ledger learned about runs.
+     */
+    SPEC,
+    /** A read-only factory run that writes a work item's plan (M4). Charged like {@link #SPEC}. */
+    PLAN
 }

@@ -15,7 +15,9 @@ public record WorkVerification(UUID attemptId, String head, Outcome outcome, Str
     /** Bounded so an agent-controlled log cannot grow an event, a row or a screen without limit. */
     public static final int MAX_TAIL_CHARS = 64 * 1024;
     public static final Set<String> UNVERIFIED_REASONS = Set.of("no_checks_declared", "tool_missing", "timed_out",
-            "checkpoint_missing", "verify_could_not_run");
+            "checkpoint_missing", "verify_could_not_run",
+            // A later plan step's run failed before it was verified (M4 slice 3, decision 7): its start is kept unverified.
+            "step_run_failed");
 
     /** @param exitCode null when the container never started */
     public record CheckResult(String command, Integer exitCode, long wallMillis, String outputTail) {

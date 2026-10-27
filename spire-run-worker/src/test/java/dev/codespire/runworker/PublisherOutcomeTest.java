@@ -24,6 +24,24 @@ class PublisherOutcomeTest {
         assertFalse(outcome.refused());
     }
 
+    /** A plan step that committed nothing (M4 slice 3, §6.7): the held publisher's checkpoint says so. */
+    @Test
+    void readsAnEmptyCheckpoint() {
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "a".repeat(40) + "\",\"changed\":[],\"empty\":true}");
+
+        assertEquals("a".repeat(40), outcome.checkpointHead().orElseThrow());
+        assertTrue(outcome.checkpointEmpty());
+    }
+
+    @Test
+    void aLaterCheckpointWithCommitsIsNotEmpty() {
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "a".repeat(40) + "\",\"changed\":[],\"empty\":true}");
+        outcome.accept("{\"event\":\"checkpoint\",\"head\":\"" + "b".repeat(40) + "\",\"changed\":[]}");
+
+        assertFalse(outcome.checkpointEmpty(), "the last checkpoint decides");
+        assertFalse(new PublisherOutcome().checkpointEmpty(), "no checkpoint is not an empty one");
+    }
+
     @Test
     void theLastPushWins() {
         // Continuous checkpointing means several pushes per run, each superseding the last.
@@ -136,6 +154,68 @@ class PublisherOutcomeTest {
                 {"event":"pushed","ref":"refs/heads/a","changed":[{"path":"a.md","kind":"MODIFIED"}]}""");
 
         assertEquals(List.of("a.md"), outcome.changedPaths());
+    }
+
+    @Test
+    void theArtifactLineIsKept() {
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"TEST-spec\\n## Outcome\"}");
+
+        assertEquals("TEST-spec\n## Outcome", outcome.artifact().orElseThrow());
+        assertTrue(outcome.handoffRefusals().isEmpty());
+    }
+
+    /** Truncation would turn an over-long specification into a shorter, valid-looking one. */
+    @Test
+    void anOverCapArtifactLineIsRefusedNotTruncated() {
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"" + "T".repeat(32 * 1024 + 1) + "\"}");
+
+        assertTrue(outcome.artifact().isEmpty(), "an over-cap artifact is dropped, never truncated");
+        assertEquals(List.of("artifact.md:TOO_LARGE"), outcome.handoffRefusals());
+    }
+
+    /** The cap is in UTF-8 bytes: 16 Ki two-byte characters plus one is over it, though fewer characters. */
+    @Test
+    void theArtifactCapCountsBytesNotCharacters() {
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"" + "ü".repeat(16 * 1024) + "\"}");
+        assertTrue(outcome.artifact().isPresent(), "exactly the cap is kept");
+
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"" + "ü".repeat(16 * 1024) + "T\"}");
+        assertTrue(outcome.artifact().isEmpty(), "one byte over is dropped");
+    }
+
+    @Test
+    void theLastArtifactLineWins() {
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"TEST-first\"}");
+        outcome.accept("{\"event\":\"artifact\",\"text\":\"TEST-second\"}");
+
+        assertEquals("TEST-second", outcome.artifact().orElseThrow());
+    }
+
+    @Test
+    void theStepSummaryIsKeptAndCapped() {
+        outcome.accept("{\"event\":\"step_summary\",\"json\":\"{\\\"decisions\\\":[]}\"}");
+        assertEquals("{\"decisions\":[]}", outcome.stepSummary().orElseThrow());
+
+        outcome.accept("{\"event\":\"step_summary\",\"json\":\"" + "T".repeat(8 * 1024 + 1) + "\"}");
+        assertTrue(outcome.stepSummary().isEmpty(), "an over-cap summary is dropped, never truncated");
+        assertEquals(List.of("step-summary.json:TOO_LARGE"), outcome.handoffRefusals());
+    }
+
+    @Test
+    void aRepositoryChangeIsCounted() {
+        outcome.accept("{\"event\":\"repository_changed\",\"bundles\":2}");
+
+        assertEquals(2, outcome.repositoryChanged());
+        assertTrue(outcome.pushedRef().isEmpty(), "a repository change is not a push");
+        assertTrue(outcome.failureCause().isEmpty(), "a repository change is a warning, not a failure");
+    }
+
+    @Test
+    void aRefusedHandoffFileIsListed() {
+        outcome.accept("{\"event\":\"handoff_file_refused\",\"file\":\"artifact.md\",\"why\":\"SYMLINK\"}");
+
+        assertEquals(List.of("artifact.md:SYMLINK"), outcome.handoffRefusals());
+        assertTrue(outcome.artifact().isEmpty());
     }
 
     @Test

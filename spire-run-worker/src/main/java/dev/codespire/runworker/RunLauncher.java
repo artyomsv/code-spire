@@ -89,8 +89,21 @@ public class RunLauncher {
         return launch(command.execution(), command, observer, prepared);
     }
 
-    private RunResult launch(RunCommand.ExecuteRun command, RunCommand.ExecuteWorkRun work,
+    /**
+     * A specification or plan run (M4 slice 3): a read-only unit whose artifact comes back as {@code RunWorkArtifact}.
+     * The unit is destroyed once the result is decided, like an ordinary run's, and is never retained as held.
+     */
+    public RunResult launchReadOnly(RunCommand.ExecuteWorkDraftRun draft, RunObserver observer) {
+        return launch(draft.execution(), draft, observer, unit -> {});
+    }
+
+    /**
+     * {@code wrapper} says which unit this is: null for an ordinary run, the held build, or the read-only draft.
+     * One parameter rather than one per kind, because at most one of them is ever present.
+     */
+    private RunResult launch(RunCommand.ExecuteRun command, RunCommand wrapper,
                              RunObserver observer, java.util.function.Consumer<RunUnitSpec> prepared) {
+        RunCommand.ExecuteWorkRun work = wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
         HarnessAdapter adapter;
         RunUnitSpec unit;
         try {
@@ -98,7 +111,7 @@ public class RunLauncher {
             if (work != null && !(runtime instanceof dev.codespire.runtime.PublicationRuntime)) {
                 throw new IllegalArgumentException("The runtime cannot retain publication");
             }
-            unit = work == null ? builder.build(command, adapter) : builder.buildHeld(work, adapter);
+            unit = topology(command, wrapper, adapter);
         } catch (RuntimeException e) {
             // Nothing was created, so nothing needs salvaging. Not retryable: the same command
             // would be rejected identically, and retrying a malformed dispatch is a loop.
@@ -130,7 +143,18 @@ public class RunLauncher {
         // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
         announce(command, handle, watchers);
-        return observe(command, adapter, handle, watchers, work, activeStarted);
+        return observe(command, adapter, handle, watchers, wrapper, activeStarted);
+    }
+
+    private RunUnitSpec topology(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter) {
+        if (wrapper instanceof RunCommand.ExecuteWorkRun held) return builder.buildHeld(held, adapter);
+        if (wrapper instanceof RunCommand.ExecuteWorkDraftRun draft) return builder.buildReadOnly(draft, adapter);
+        return builder.build(command, adapter);
+    }
+
+    /** Active wall time in whole seconds, rounded up, so a run that ran at all never reports zero. */
+    private static long wallSecondsSince(long activeStarted) {
+        return (System.nanoTime() - activeStarted + 999_999_999L) / 1_000_000_000L;
     }
 
     /**
@@ -165,7 +189,8 @@ public class RunLauncher {
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
     private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
-                              Watchers watchers, RunCommand.ExecuteWorkRun work, long activeStarted) {
+                              Watchers watchers, RunCommand wrapper, long activeStarted) {
+        RunCommand.ExecuteWorkRun work = wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
         RunEventStream transcript = watchers.transcript();
         RunEventFold seen = new RunEventFold();
         PublisherOutcome outcome = new PublisherOutcome();
@@ -225,14 +250,23 @@ public class RunLauncher {
             if (finished.pushedRef() != null) {
                 result = failure(command, "PUBLISHER_FAILED", "Publication escaped the initial hold at " + finished.pushedRef())
                         .withUsage(finished.tokenUsage());
-            } else if (outcome.checkpointHead().isPresent()) {
-                long wall = (System.nanoTime() - activeStarted + 999_999_999L) / 1_000_000_000L;
+            } else if (outcome.checkpointHead().isPresent() && !emptyRefused(work, command, outcome)) {
                 result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
-                        finished.changedPaths(), finished.tokenUsage(), wall);
+                        finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted))
+                        .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)))
+                        // Where it started, after any base fallback: the orchestrator compares it with the start it chose (A2).
+                        .withStartFromHead(command.startFromHead())
+                        .withEmpty(outcome.checkpointEmpty());
             } else {
                 result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
                         .withUsage(finished.tokenUsage());
             }
+        }
+
+        if (wrapper instanceof RunCommand.ExecuteWorkDraftRun draft) {
+            // The named read-only branch (A1), decided before the destroy below. A failed salvage returned earlier,
+            // through the same unobserved ranking as any run, and preserves the unit for inspection.
+            result = new ReadOnlyResults(failures, draft).of(result, outcome, wallSecondsSince(activeStarted));
         }
 
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
@@ -353,6 +387,15 @@ public class RunLauncher {
             LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
                     command.runId(), outcome.omittedPaths());
         }
+    }
+
+    /**
+     * An empty checkpoint is a ready only for a plan step allowed to finish empty that started from the base (M4 slice 3,
+     * decision 14, amendment 3). A run started from a checkpoint always bundles its start, so an empty line from one means
+     * it wrote no bundle and holds nothing: it is today's idle build, no observed checkpoint, and its predecessor is kept.
+     */
+    private static boolean emptyRefused(RunCommand.ExecuteWorkRun work, RunCommand.ExecuteRun command, PublisherOutcome outcome) {
+        return outcome.checkpointEmpty() && (!work.emptyAllowed() || command.startFromHead() != null);
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {

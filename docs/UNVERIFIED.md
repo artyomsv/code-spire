@@ -33,6 +33,44 @@ evidence would settle it**.
 
 ---
 
+## Specification, plan and steps (M4 slice 3, ADR-049, 2026-10-26)
+
+**The claim.** A generated repository writes a specification and a plan with read-only harness runs, posts both to
+the ticket, builds the plan step by step on one chain of held checkpoints with each step verified, carries every
+step's summary into the later steps' prompts, completes a step that changes nothing as empty, and delivers one pull
+request; Revise changes the specification; readmit reuses an approved draft and Regenerate writes a new one.
+
+**Why nothing catches it today.** Every part is proven against a TEST run transport, a WireMock GitHub and a local
+origin (`WorkSpecRunIT`, `WorkPlanRunIT`, `WorkStepsIT`, `WorkEmptyStepsIT`, `WorkDraftReadmitIT`), and the
+read-only publisher and handoff files against a local Docker daemon. No real agent has written a specification or a
+plan, so whether a real model meets the headings, the plan schema and the 48 KiB prompt budget at a useful rate is
+unknown; nor has a real chain of three steps run on one branch, nor a real agent written `$SPIRE_STEP_SUMMARY`.
+Every step's dispatched prompt names that file, its JSON shape and its limits (`everyDispatchedStepIsToldWhereItsDecisionsGo`),
+but whether a real model writes it, also for a step that changed nothing, is unobserved.
+
+- **The artifact and the summary pass through the run-worker host's Docker log.** The publisher prints them as
+  outcome lines on its stdout, which Docker keeps for the unit's life. The run worker scrubs the run's secrets
+  before it sends them on (`theArtifactIsScrubbedOfTheRunsSecrets`), but the Docker log itself is not ours to
+  scrub, so "never logged" holds for our services only (A9). Unobserved on a real host: how long that log
+  outlives the unit under the deployment's log driver.
+- **A Jira or GitLab ticket comment** carrying a specification is proven against fakes of their markups only.
+- **No GitLab quick action runs from a draft comment** rests on reading GitLab's extractor, not on a live note: it
+  runs only lines that start with a slash at column 0. So the specification and the plan's step titles are quoted as
+  a Markdown blockquote, every line starting with `>`; no note has been posted to a live GitLab to watch `/close` stay
+  text.
+- **The quoted specification renders and does nothing** is proven against strings only (`WorkDraftCommentsTest`,
+  `UntrustedTextTest`), not against GitHub's or GitLab's renderer. It rests on CommonMark and the forges' reference
+  rules: a zero-width space after `<`, `@`, `&`, `]` before `(`, `[` or `:`, `:` before `//`, `www.`, and the sigils
+  of `#1`, `!1`, `$1`, `GH-1`, `~x`, `%x`, `^x` stops each from opening a tag, a mention, an entity, a link or a
+  reference. Not broken: a bare commit SHA, which GitHub links when it names a commit of the repository.
+
+**What would settle it.** The live proof the plan names, recorded in `docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md`: a
+title-only ticket on `spire-test` becomes a specification with criteria, a plan of three or more steps, steps that
+each verify, one pull request, review and land; step 3's recorded prompt contains step 1's decision; a step told to
+change nothing completes as empty; a Revise with a note changes the specification.
+
+---
+
 ## External work approvals and takeover (M3 slice 9, 2026-09-14)
 
 Slice 9's native GitHub approval reads and GitHub/GitLab/Bitbucket activity payloads are tested

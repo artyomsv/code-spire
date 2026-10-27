@@ -252,7 +252,7 @@ public final class AgentImageVerifier {
     }
 
     /**
-     * The entrypoint's own behaviour: the prompt on stdin, a bundle, and DONE last.
+     * The entrypoint's own behaviour: the prompt on stdin, a bundle, DONE last, and the handoff files before it.
      *
      * <p>A stub harness rather than a real one — it reads stdin, writes what it saw, and makes one
      * commit. Running a real harness would need a model credential and would make a conformance
@@ -262,6 +262,7 @@ public final class AgentImageVerifier {
         String stub = String.join("; ",
                 "cat > /tmp/seen",
                 "grep -q " + PROMPT_SENTINEL + " /tmp/seen && echo stdin=" + YES + " || echo stdin=no",
+                HandoffFilesProbe.harnessCommands(),
                 "cd " + WORKSPACE,
                 "echo conformance > probe.txt");
 
@@ -282,13 +283,15 @@ public final class AgentImageVerifier {
                 result.output().contains("stdin=" + YES) ? YES : "no"));
         verified.add(bundlesClause(result));
         verified.add(doneClause(result));
+        verified.add(HandoffFilesProbe.clause(result));
         return verified;
     }
 
     private static List<ConformanceReport.Verification> handoffUnknown(String why) {
         return List.of(unknown(Clauses.PROMPT_ON_STDIN, why),
                 unknown(Clauses.HANDOFF_BUNDLES, why),
-                unknown(Clauses.HANDOFF_DONE_LAST, why));
+                unknown(Clauses.HANDOFF_DONE_LAST, why),
+                unknown(Clauses.HANDOFF_FILES, why));
     }
 
     private static ConformanceReport.Verification bundlesClause(ImageProbe.Result result) {

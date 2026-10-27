@@ -100,6 +100,24 @@ class WorkRunStoreTest {
         assertEquals(finished,restarted.find(command.runId()).orElseThrow().terminal(),"first terminal evidence remains stable");
     }
 
+    @Test void aStoredReadyKeepsItsSummary() {
+        // What recover() resends after a restart is what find() decodes: a summary dropped here never reaches the orchestrator.
+        var command=prepared();var summary=new dev.codespire.contract.work.StepSummary(List.of("TEST-decision"),List.of("TEST-alternative"),List.of("TEST-deviation"));
+        var ready=ready(command).withStepSummary(summary);store.buildResult(ready);
+        WorkRunStore restarted=new WorkRunStore();restarted.dataSource=dataSource;restarted.mapper=mapper;restarted.encryption=encryption;
+        var read=restarted.find(command.runId()).orElseThrow().ready();
+        assertEquals(summary,read.stepSummary());assertEquals(ready,read);
+    }
+
+    /** An empty step's flag and its start survive a restart (M4 slice 3, §6.7): recover() resends what find() decodes. */
+    @Test void aStoredReadyKeepsItsEmptyFlag() {
+        var command=prepared();
+        var ready=ready(command).withStartFromHead("b".repeat(40)).withEmpty(true);store.buildResult(ready);
+        WorkRunStore restarted=new WorkRunStore();restarted.dataSource=dataSource;restarted.mapper=mapper;restarted.encryption=encryption;
+        var read=restarted.find(command.runId()).orElseThrow().ready();
+        assertTrue(read.empty());assertEquals("b".repeat(40),read.startFromHead());assertEquals(ready,read);
+    }
+
     @Test void aReadyResultCannotClaimAnotherPreparation() {
         var command=prepared();
         var wrong=new WorkRunBinding(command.work().workItemId(),command.work().generation(),command.work().buildAttemptId(),"f".repeat(64));

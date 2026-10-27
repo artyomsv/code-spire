@@ -53,18 +53,21 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
     }
 
     /**
-     * A factory run's spend: the build capability, against a runId.
+     * A factory run's spend against a runId, under the run's own kind and always the Build capability.
+     * Spec and plan are how a work item becomes a pull request, so they are in the Build pack with
+     * build, verify and deliver ({@code docs/factory/PACKAGING.md} section 2, ADR-035). Autonomy is the
+     * absence of the human, not a phase: charging preparation to it would put a Build-only deployment's
+     * spend under a pack it never bought, and V42 never backfills the capability.
      *
      * <p>V42 added {@code llm_charge.credential_ref} for exactly this and nothing wrote it, because
      * until the credential pool there was no per-run key identity to write. On an UNMETERED
      * deployment every run charge is an asserted zero, so "which key spent this" was unanswerable by
      * any other route — the money column cannot distinguish two keys that both cost nothing.
      *
-     * @param credentialRef which pool member paid, or null when the run names none
+     * @param spend the run, its key, its kind and the pool member that paid
      */
-    public static ChargeCall forRun(String runId, String callRef, String model, List<ChargeLine> lines,
-                                    String credentialRef) {
-        return new ChargeCall(runId, ChargeSubject.RUN, ChargeCapability.BUILD,
-                callRef, ChargeKind.BUILD, model, lines, credentialRef);
+    public static ChargeCall forRun(RunSpend spend, String model, List<ChargeLine> lines) {
+        return new ChargeCall(spend.runId(), ChargeSubject.RUN, ChargeCapability.BUILD,
+                spend.callRef(), spend.kind(), model, lines, spend.credentialRef());
     }
 }

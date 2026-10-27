@@ -18,6 +18,11 @@ public record WorkGate(UUID id, long version, String state, String phase, long g
     public static String artifactOf(WorkItemEvent item) {
         if ("land".equals(item.phase()))
             return item.progress().execution()==null?null:item.progress().execution().head();
+        // A generated item's spec or plan gate asks about the written artifact (M4 slice 3, A6).
+        if(item.draft()!=null && java.util.Set.of("spec","plan").contains(item.phase())) {
+            WorkPreparation.Artifact written=item.draft().artifactFor(item.phase());
+            return written==null?null:written.sha256();
+        }
         return item.preparation()==null?null:item.preparation().binding();
     }
 }

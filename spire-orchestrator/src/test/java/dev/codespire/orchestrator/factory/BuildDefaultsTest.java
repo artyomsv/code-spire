@@ -398,6 +398,73 @@ class BuildDefaultsTest {
         assertTrue(refusal(input("main", "codex", unpriced, 0)).startsWith("model_pricing_incomplete:"));
     }
 
+    /** A setup that names a preparation; every other coordinate is one this class already saves. */
+    private BuildDefaults.Input preparing(String preparation) {
+        return new BuildDefaults.Input(defaults.get(repository).revision(), "main", "codex", model, null, null, List.of(), null,
+                preparation);
+    }
+
+    /** M4 slice 3: a repository nobody switched keeps the copied preparation it has always had. */
+    @Test
+    void noRowReadsComposed() {
+        assertEquals("composed", defaults.get(repository).preparation());
+    }
+
+    /** A row written before V96 knew the column, so the column's own default is what it reads. */
+    @Test
+    void anExistingRowMigratesComposed() throws java.sql.SQLException {
+        try (java.sql.Connection c = dataSource.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO repository_build_defaults(repository_id,base_branch,harness,model,updated_by) VALUES (?,?,?,?,?)")) {
+            ps.setObject(1, repository); ps.setString(2, "main"); ps.setString(3, "codex"); ps.setString(4, model);
+            ps.setString(5, "TEST-operator");
+            ps.executeUpdate();
+        }
+        assertEquals("composed", defaults.get(repository).preparation());
+    }
+
+    /** Refused by name, before the table's CHECK would turn it into a 500. */
+    @Test
+    void anUnknownPreparationIsRefused() {
+        assertEquals("preparation_invalid", refusal(preparing("TEST-other")));
+        assertEquals(0, defaults.get(repository).revision());
+    }
+
+    @Test
+    void composedCanBeSaved() {
+        assertEquals("composed", defaults.save(repository, preparing("composed"), "TEST-operator").preparation());
+    }
+
+    /** No phase column (A18): the step index is the only new run column, and a negative one is a writer bug. */
+    @Test
+    void stepIndexAdmitsNullAndRefusesNegative() throws java.sql.SQLException {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String unstepped = "TEST-step-none-" + suffix, negative = "TEST-step-negative-" + suffix;
+        try (java.sql.Connection c = dataSource.getConnection()) {
+            try {
+                insertRun(c, unstepped, null);
+                java.sql.SQLException refused = assertThrows(java.sql.SQLException.class, () -> insertRun(c, negative, -1));
+                assertEquals("23514", refused.getSQLState(), refused.getMessage());
+            } finally {
+                try (java.sql.PreparedStatement ps = c.prepareStatement("DELETE FROM factory_run WHERE run_id IN (?,?)")) {
+                    ps.setString(1, unstepped); ps.setString(2, negative); ps.executeUpdate();
+                }
+            }
+        }
+    }
+
+    private static void insertRun(java.sql.Connection c, String runId, Integer stepIndex) throws java.sql.SQLException {
+        try (java.sql.PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt,
+                                         status, harness, model, base_branch, base_commit, branch, step_index)
+                VALUES (?, 'github', 'TEST-WS', 'TEST-REPO', 'TEST-SUBJECT', 1,
+                        'queued', 'codex', 'TEST-MODEL', 'main', 'TESTSHA0', 'spire/TEST-SUBJECT', ?)
+                """)) {
+            ps.setString(1, runId);
+            if (stepIndex == null) ps.setNull(2, java.sql.Types.INTEGER); else ps.setInt(2, stepIndex);
+            ps.executeUpdate();
+        }
+    }
+
     /**
      * Two operators saving at once. Without a transaction the two FOR UPDATE locks release immediately,
      * both reads see the same revision and the second write silently overwrites the first — the loss the

@@ -226,4 +226,28 @@ class WorkPreparationBindingVersionTest {
         json.remove("verifyTimeoutSeconds");
         assertEquals(v4.binding(), mapper.treeToValue(json, WorkPreparation.class).binding());
     }
+
+    private static WorkPreparation checked(int version) {
+        return new WorkPreparation(
+                new WorkPreparation.Artifact(ticket("71"), SPEC_SHA, WorkPreparation.Origin.STORED, new UUID(0, 1)),
+                new WorkPreparation.Artifact(ticket("72"), PLAN_SHA, WorkPreparation.Origin.STORED, new UUID(0, 2)),
+                "main", COMMIT, "codex", "TEST-model", "TEST-operator", version, null, null, java.util.List.of("TEST-check"), 60);
+    }
+
+    /** Version 6 is a validation-rule version (M4 slice 3, A14): the plan digest already covers the steps. */
+    @Test
+    void bindingSixHashesWhatFiveHashes() {
+        assertEquals(checked(WorkPreparation.VERIFY_BINDING).binding(), checked(WorkPreparation.STEPS_BINDING).binding());
+    }
+
+    @Test
+    void bindingSixIsAccepted() {
+        assertEquals(6, WorkPreparation.STEPS_BINDING);
+        assertEquals(WorkPreparation.STEPS_BINDING, checked(WorkPreparation.STEPS_BINDING).bindingVersion());
+    }
+
+    @Test
+    void bindingSevenIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> checked(WorkPreparation.STEPS_BINDING + 1));
+    }
 }

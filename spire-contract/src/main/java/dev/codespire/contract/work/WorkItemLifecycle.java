@@ -13,7 +13,7 @@ public final class WorkItemLifecycle {
                                           long policyRevision, WorkItemEvent.Authority authority, WorkPolicy.Selection policy, WorkItemEvent previous) {
         if(previous!=null && previous.policyRevision()==policyRevision && previous.authority().equals(authority)
                 && previous.policy().equals(policy) && previous.issue().equals(issue))return previous;
-        if (previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus()) || previous.preparation() != null || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1))
+        if (keepsPlace(previous))
             return previous.decision(policyRevision,authority,policy,previous.phase(),previous.workflowStatus(),previous.reason(),
                     "POLICY_OBSERVED",previous.gate(),previous.progress());
         String intake = policy.effective().getOrDefault(WorkPolicy.Phase.INTAKE, "off");
@@ -37,12 +37,26 @@ public final class WorkItemLifecycle {
             status = "capability_unavailable";
             reason = "intake_approval_unavailable";
         } else if (policy.selected() != null) reason = "intake_off";
-        return new WorkItemEvent(id, source, repository, issue, previous == null ? 1 : previous.generation(),
+        WorkItemEvent rebuilt = new WorkItemEvent(id, source, repository, issue, previous == null ? 1 : previous.generation(),
                 policyRevision, previous != null && previous.admittedProfile() != null ? previous.admittedProfile()
                         : policy.selected(), previous != null && previous.admittedProfile() != null ? previous.admittedModes()
                         : policy.effective(), authority, policy, phase, status, reason,
                 previous != null && previous.admittedProfile() != null ? previous.admittedLimits() : policy.limits(), "POLICY_OBSERVED")
                 .controlled(previous==null?null:previous.control());
+        // A draft with nothing written is rebuilt as a composed item is, and keeps its draft (review of slice 5).
+        if (previous == null || previous.draft() == null) return rebuilt;
+        return WorkDraftLifecycle.awaitSpecification(rebuilt.drafted(previous.draft()), "POLICY_OBSERVED");
+    }
+
+    /**
+     * Whether the item holds something a policy observation must not rebuild over: a stop, a preparation, a written
+     * draft artifact, an attempt, a gate, or a later generation. A draft with nothing written is not such a thing, so a
+     * relabel or a fixed profile moves it again as it moves a composed item, with no Readmit.
+     */
+    private static boolean keepsPlace(WorkItemEvent previous) {
+        return previous != null && (java.util.Set.of("suspended","retired").contains(previous.workflowStatus())
+                || previous.preparation() != null || previous.draft() != null && previous.draft().specification() != null
+                || previous.progress().attemptId() != null || previous.gate() != null || previous.generation() > 1);
     }
 
     public static boolean clampChanged(WorkItemEvent previous, WorkItemEvent next) {
@@ -67,7 +81,14 @@ public final class WorkItemLifecycle {
          * The build and deliver gates are skipped, because the new land approval is the one human check (operator,
          * 2026-10-21), and a build keeps the pull request it fixes. Verify and land keep their gates.
          */
-        LAND_FIX
+        LAND_FIX,
+        /**
+         * A specification or plan run started by the draft sweep (M4 slice 3, decision 10): the permission gate is
+         * skipped, because under generated preparation the setting admits the run (A6). Off, unknown usage and the caps
+         * still apply.
+         */
+        DRAFT,
+        /** A later plan step (M4 slice 3, decision 13): build and verify skip their permission gates; off, usage and caps apply. */ STEP
     }
     public static WorkItemEvent enter(WorkItemEvent item,WorkItemEvent previous,long historySize,boolean approved,java.time.Instant now,boolean available,UUID decisionId) {
         return enter(item,previous,historySize,approved,now,available,decisionId,EntryMode.ORDINARY);
@@ -79,8 +100,10 @@ public final class WorkItemLifecycle {
         String mode=item.policy().effective().getOrDefault(WorkPolicy.Phase.valueOf(item.phase().toUpperCase(Locale.ROOT)),"off");
         if("off".equals(mode))return state(item,"not_eligible",item.phase()+"_off","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
         if(item.progress().usageUnknown())return state(item,"awaiting_input","run_usage_unknown","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        if(!item.progress().within(item.policy().limits(),item.phase()))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
-        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase());
+        if(!(landFix?item.progress().withinKeepingExecution(item.policy().limits(),item.phase()):item.progress().within(item.policy().limits(),item.phase())))return state(item,"stopped","policy_cap_reached","WORK_ITEM_REFUSED",item.gate(),item.progress().reserve(false));
+        WorkItemEvent drafted=WorkDraftLifecycle.enter(item,new WorkDraftLifecycle.Entry(entry==EntryMode.DRAFT,available,decisionId,now));
+        if(drafted!=null)return drafted;
+        boolean fixSkipsGate=landFix && java.util.Set.of("build","deliver").contains(item.phase()) || entry==EntryMode.STEP && java.util.Set.of("build","verify").contains(item.phase());
         if("approve".equals(mode) && !approved && !fixSkipsGate) {
             long eventRevision=historySize+1+(WorkItemLifecycle.clampChanged(previous,item)?1:0);
             WorkGate gate=new WorkGate(decisionId,1,"OPEN",item.phase(),item.generation(),eventRevision,item.policyRevision(),item.authority(),WorkGate.artifactOf(item),

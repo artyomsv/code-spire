@@ -200,6 +200,55 @@ has been adding entries to that list for a decade.
 > **The rule, stated once:** never run git-with-a-token inside a directory the agent could write to.
 > It is not about which pod. It is about which **directory**.
 
+### 4.4 Handoff files and the four publisher commands (M4)
+
+Two files travel beside the bundles. The harness writes `$SPIRE_ARTIFACT` (a specification or plan) and
+`$SPIRE_STEP_SUMMARY` (a plan step's decisions, JSON) in its scratch directory; after the final
+checkpoint and before `DONE` the entrypoint copies each to `/handoff/artifact.md` and
+`/handoff/step-summary.json`, as content and never as a link ([AGENT-IMAGE-CONTRACT.md](./AGENT-IMAGE-CONTRACT.md),
+clause `handoff-files`). The publisher reads them as regular files only, without following a link, capped at
+32 KiB and 8 KiB, and as UTF-8 only, and reports them as outcome lines (`artifact`, `step_summary`, or
+`handoff_file_refused` naming why). It never fails a run over them; the run worker decides.
+
+The publisher image has four sidecar commands, chosen by the run unit and never by anything in the handoff:
+
+| Command | Mode | Pushes | Credential |
+|---|---|---|---|
+| `spire-publish` | `AUTOMATIC` | every checkpoint, continuously | write |
+| `spire-publish-held` | `HELD` | nothing; reports each checkpoint and the step summary | write (clones the base) |
+| `spire-publish-permitted` | `PERMITTED` | the one permitted head | write |
+| `spire-publish-none` | `READ_ONLY` | nothing, ever; no clone | **none** |
+
+`spire-publish-none` serves specification and plan runs. It waits for `DONE`, reports the artifact and
+summary, and counts the bundles by name without reading them: a run that committed anyway is reported
+as `repository_changed`, a warning, and its change is discarded with the unit. Holding no credential
+is the guard, not the code path: with no secret in its environment it cannot push even if its code
+were wrong.
+
+### 4.5 A plan's steps on one chain (M4 slice 3, A2)
+
+Each plan step is its own held run on its own `spire/work-<attempt>` branch name; nothing reaches the forge before
+deliver. Step k+1 starts from step k's checkpoint (`fromCheckpoint`), and because the entrypoint bundles `$BASE..HEAD`,
+every checkpoint-started run's handoff carries the whole chain. When step k+1 is ready the run worker retires and removes
+step k's unit, as it does for any retried build. Deliver publishes through the newest step run that holds a bundle.
+
+Only a run started from the base may be reported empty. A checkpoint-started run that wrote no bundle (an image that
+skipped it, a failed `git bundle create`) holds nothing: the held publisher reports no checkpoint, the run fails as
+`PUBLISHER_FAILED "no observed checkpoint"`, and step k's unit, the only copy of the chain, is kept for the verify gate.
+An empty ready never retires the run it started from, and the orchestrator refuses one that names a start.
+
+A later step's start is required (`checkpointRequired`): there is **no base fallback**. When the unit it names is gone
+the worker fails the step as `CHECKPOINT_MISSING` without launching anything, and the orchestrator opens the verify gate.
+The held publisher is told the start as `SPIRE_START_HEAD` and refuses a checkpoint that does not descend from it
+(`START_NOT_DESCENDED`, no checkpoint line). Step 1, or a step after only empty steps that started from the base, starts
+from the base, and its retry keeps today's fallback, since the base is its own start.
+
+A step that commits nothing completes as empty (§6.7). From the base the agent writes no bundle at all; a plan step's
+held publisher alone is given `SPIRE_EMPTY_ALLOWED=1` and then reports `checkpoint ... empty: true` at the base after
+`DONE`. That unit holds nothing to start from or publish, so the run worker retires it and releases its workspace once
+the ready is stored. From a checkpoint the agent still bundles its start, so the publisher reports an ordinary
+checkpoint and the orchestrator sees the step's start head; that unit holds the chain and the next step starts from it.
+
 ---
 
 ## 5. Continuous checkpointing
@@ -219,7 +268,9 @@ Two layers make the commits happen, because relying on a model to remember is no
 
 1. **The prompt** instructs the agent to commit after each logical step, and to write one line
    describing what it changed to the file named by `SPIRE_SUMMARY`. `RunUnitBuilder` appends this to
-   every dispatched prompt — a fix run's and a build run's alike, whatever the harness's delivery.
+   every pushing run's prompt — a fix run's and a build run's alike, whatever the harness's delivery.
+   A specification or plan run is never told to commit: its prompt ends instead with the instruction that
+   the repository is read-only and the result goes to `$SPIRE_ARTIFACT` (`AgentPrompts`).
 2. **An autosave loop in the agent container** commits anything dirty every N minutes. This is safe
    precisely because it runs in the container that holds **no token**. The FINAL autosave uses the
    summary as its commit message; a mid-run one cannot, because nothing has been summarised yet.

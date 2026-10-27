@@ -48,9 +48,10 @@ public class RepositoryBuildResource {
      * there too, so the screen is told both rather than guessing at either.
      *
      * @param verifyMaxSeconds the longest verify time limit a save accepts: this deployment's wall clock (M4)
+     * @param preparations the preparation values a save accepts (M4 slice 3)
      */
     public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes,
-                          Map<String, HarnessModels> models, long verifyMaxSeconds) {}
+                          Map<String, HarnessModels> models, long verifyMaxSeconds, List<String> preparations) {}
 
     /**
      * The models a harness can run, as its image declares them, and why there are none when there are none.
@@ -80,7 +81,7 @@ public class RepositoryBuildResource {
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)),
-                config.wallClockSeconds());
+                config.wallClockSeconds(), List.of(BuildDefaults.COMPOSED, BuildDefaults.GENERATED));
     }
 
     private HarnessModels modelsOf(String harness) {

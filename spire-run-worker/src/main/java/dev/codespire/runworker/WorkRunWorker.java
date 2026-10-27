@@ -4,6 +4,7 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import dev.codespire.runtime.*;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -49,6 +50,9 @@ public class WorkRunWorker {
             RunResult result;
             if(claims.taken(id,RunDispatcher.CANCEL_SLOT) || store.revoked(command)) {
                 result=failures.of(command.execution(),"CANCELLED","Cancelled before the held build started");
+            } else if(startGone(command)) {
+                // A plan step never falls back to the base (M4 slice 3, A2): nothing is launched and nothing is bought.
+                result=failures.of(command.execution(),RunFailureCause.CHECKPOINT_MISSING.name(),"The checkpoint this plan step starts from is gone");
             } else if(!leases.take(id)) {
                 result=failures.of(command.execution(),"WORKER_FAILED","No lease was taken; the held build was not started");
             } else {
@@ -65,7 +69,8 @@ public class WorkRunWorker {
             }
             if(cancelled(id) || store.revoked(command)) result=cancelledResult(command,result);
             store.buildResult(result);
-            if(result instanceof RunResult.RunWorkReady)retireSuperseded(command);
+            // An empty ready holds no bundle (amendment 3): it supersedes nothing, and nothing can start from it or publish it.
+            if(result instanceof RunResult.RunWorkReady ready){if(ready.empty())retireEmpty(command);else retireSuperseded(command);}
         } catch(RuntimeException failure) {
             // No raw exception text: it can quote the retained topology's decrypted environment.
             LOG.errorf("run %s: held execution could not be recorded (%s); retained for recovery",id,failure.getClass().getSimpleName());
@@ -196,18 +201,39 @@ public class WorkRunWorker {
         }
     }
 
+    /**
+     * An empty plan step that started from the base holds no bundle (M4 slice 3, §6.7): nothing can start from it or
+     * publish it, and nothing else would ever release it. Its row is closed locally once the ready is stored, which is
+     * still sent, and its workspace released, as {@link #retireSuperseded} does.
+     */
+    private void retireEmpty(RunCommand.ExecuteWorkRun command) {
+        if(!(runtime instanceof PublicationRuntime publication))return;
+        try {
+            if(store.retire(command.runId(),failures.of(command.execution(),"CANCELLED","An empty plan step holds no bundle to publish")))
+                releaseRetired(command.runId(),command.work().publicationKey(),publication);
+        } catch(RuntimeException failure) {
+            LOG.warnf("run %s: the empty held build was not released (%s)",command.runId(),failure.getClass().getSimpleName());
+        }
+    }
+
     /** Corrects a retry prompt that promised the previous build's commits, when they cannot be read here. */
     static final String BASE_FALLBACK_NOTE="\n\nNote: the previous build's commits are not available, so this build starts again from the base,"
             +" not from its last commit. Make the whole change, then fix what the checks found.";
 
+    /** A plan step's required start whose held unit is no longer on this daemon (M4 slice 3, A2, decision 11). */
+    private boolean startGone(RunCommand.ExecuteWorkRun command) {
+        return command.checkpointRequired() && localUnit(command.execution().startFromRunId()).isEmpty();
+    }
+
     /**
      * A retried build reads the previous held run's bundles (M4). When that unit is no longer on this daemon the
      * read would refuse the whole build, and a refused build fails the item; starting from the base instead keeps
-     * the retry the operator asked for, and the prompt is corrected to say so.
+     * the retry the operator asked for, and the prompt is corrected to say so. A plan step's required start is never
+     * replaced (A2): one released after {@link #startGone} looked fails the launch instead of building from the base.
      */
     RunCommand.ExecuteWorkRun readableStart(RunCommand.ExecuteWorkRun command) {
         String previous=command.execution().startFromRunId();
-        if(previous==null || localUnit(previous).isPresent())return command;
+        if(previous==null || command.checkpointRequired() || localUnit(previous).isPresent())return command;
         LOG.warnf("run %s: the checkpoint of %s is gone; the retried build starts from the base",command.runId(),previous);
         return command.withExecution(command.execution().fromBaseInstead(BASE_FALLBACK_NOTE));
     }
@@ -263,6 +289,8 @@ public class WorkRunWorker {
         if(result instanceof RunResult.RunFinished finished && finished.pushedRef()!=null)return result;
         var usage=switch(result) {
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
+            // Never stored here: a draft run is launched read-only by the dispatcher, outside this worker.
+            case RunWorkArtifact artifact -> artifact.tokenUsage();
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;

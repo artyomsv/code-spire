@@ -45,6 +45,14 @@ class HeldRunLauncherTest {
         assertEquals(COMMAND.work(),ready.work());assertEquals(HEAD,ready.head());assertEquals(List.of("TEST-file"),ready.changedPaths());
         assertEquals(Map.of("INPUT",7L),ready.tokenUsage());assertTrue(ready.activeWallSeconds()>0);
     }
+    @Test void theReadyResultCarriesTheSummary(){
+        // The summary is scrubbed in the worker: the agent ran with the model key and can quote it into the file (A9).
+        runtime.publisherLines=List.of(CHECKPOINT,"{\"event\":\"step_summary\",\"json\":\"{\\\"decisions\\\":[\\\"TEST-decision "+RunLauncherTest.MODEL_KEY+"\\\"]}\"}");
+        var ready=assertInstanceOf(RunResult.RunWorkReady.class,launch());
+        assertNotNull(ready.stepSummary());var decision=ready.stepSummary().decisions().getFirst();
+        assertTrue(decision.startsWith("TEST-decision "),decision);assertFalse(decision.contains(RunLauncherTest.MODEL_KEY),"the model key reached the summary");
+    }
+    @Test void noSummaryLineMeansNull(){assertNull(assertInstanceOf(RunResult.RunWorkReady.class,launch()).stepSummary());}
     @Test void aFinishedHeldBuildRetainsItsUnit(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.destroyed.isEmpty());}
     @Test void anAlreadyStoppedHeldBuildNeedsNoCancellation(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.cancelled.isEmpty());}
     @Test void heldCreationUsesTheFullPublicationBinding(){launch();assertEquals(new PublicationKey(COMMAND.work().publicationKey()),runtime.binding);}
@@ -69,6 +77,31 @@ class HeldRunLauncherTest {
     @Test void noCheckpointCannotBecomeReadiness(){
         runtime.publisherLines=List.of();var result=assertInstanceOf(RunResult.RunFailed.class,launch());
         assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));assertEquals(Map.of("INPUT",7L),result.tokenUsage());
+    }
+    /** The held publisher's empty checkpoint at the base (M4 slice 3, §6.7). */
+    static final String EMPTY_CHECKPOINT="{\"event\":\"checkpoint\",\"head\":\""+"b".repeat(40)+"\",\"changed\":[],\"empty\":true}";
+    @Test void anEmptyCheckpointIsReady(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var ready=assertInstanceOf(RunResult.RunWorkReady.class,launcher.launchHeld(COMMAND.allowingEmpty(),RunObserver.IGNORING,unit->{}));
+        assertTrue(ready.empty());assertEquals("b".repeat(40),ready.head());assertNull(ready.startFromHead());
+        assertEquals(Map.of("INPUT",7L),ready.tokenUsage());
+    }
+    /** Only a plan step may finish empty (decision 14): a forged or misrouted empty line fails as today's idle build. */
+    @Test void anEmptyCheckpointWithoutTheAllowanceFails(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var result=assertInstanceOf(RunResult.RunFailed.class,launch());
+        assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));
+        assertEquals(Map.of("INPUT",7L),result.tokenUsage());
+    }
+    /** A run started from a checkpoint always bundles its start (amendment 3): an empty line from one is never a ready. */
+    @Test void anEmptyCheckpointFromACheckpointStartFails(){
+        runtime.publisherLines=List.of(EMPTY_CHECKPOINT);
+        var fromCheckpoint=new RunCommand.ExecuteWorkRun(COMMAND.execution().fromCheckpoint("TEST-previous","b".repeat(40)),COMMAND.work()).allowingEmpty();
+        var result=assertInstanceOf(RunResult.RunFailed.class,launcher.launchHeld(fromCheckpoint,RunObserver.IGNORING,unit->{}));
+        assertEquals("PUBLISHER_FAILED",result.cause());assertTrue(result.detail().contains("no observed checkpoint"));
+    }
+    @Test void anOrdinaryCheckpointIsNeverEmpty(){
+        assertFalse(assertInstanceOf(RunResult.RunWorkReady.class,launcher.launchHeld(COMMAND.allowingEmpty(),RunObserver.IGNORING,unit->{})).empty());
     }
     @Test void aRefusedCheckpointCannotBecomeReadiness(){
         runtime.publisherLines=List.of(CHECKPOINT,"{\"event\":\"gate_refused\",\"blocked\":[{\"path\":\"TEST-file\",\"kind\":\"MODIFIED\"}]}");

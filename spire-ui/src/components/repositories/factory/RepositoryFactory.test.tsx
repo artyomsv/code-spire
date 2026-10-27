@@ -297,6 +297,55 @@ describe('build setup', () => {
     expect(within(await step(5)).getByText(/checks: make test/)).toBeInTheDocument();
   });
 
+  // M4 slice 3 (§6.1, A20): the preparation setting, offered only when the server can honour it.
+  const offeringGenerated = () => vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'],
+    reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, preparations: ['composed', 'generated'] });
+  const fillCoordinates = async () => {
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+  };
+
+  it('the build step offers written preparation with its runner', async () => {
+    offeringGenerated();
+    renderFactory();
+    await open();
+    await fillCoordinates();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Pay with' }), { target: { value: 'SUBSCRIPTION' } });
+    expect(await screen.findByRole('radio', { name: 'Copy the ticket as one step' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /^Write them with the build model/ }))
+      .toHaveAccessibleName(/runs on codex · TEST-model · seat/);
+  });
+
+  it('it warns of spend before the first approval', async () => {
+    offeringGenerated();
+    renderFactory();
+    await open();
+    expect(await screen.findByText('Before the first approval this spends two short runs, and up to one automatic retry each, '
+      + 'when the specification and plan phases are set to run without approval.')).toBeInTheDocument();
+  });
+
+  it('the choice is hidden when the server does not offer it', async () => {
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'],
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, preparations: ['composed'] });
+    renderFactory();
+    await open();
+    await fillCoordinates();
+    expect(screen.queryByRole('radio', { name: /^Write them with the build model/ })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Copy the ticket as one step' })).toBeNull();
+  });
+
+  it('saving sends the chosen preparation', async () => {
+    offeringGenerated();
+    renderFactory();
+    await open();
+    await fillCoordinates();
+    fireEvent.click(await screen.findByRole('radio', { name: /^Write them with the build model/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id, expect.objectContaining({
+      preparation: 'generated' })));
+  });
+
   /** A model with no output price is refused at dispatch, so it cannot be chosen here either. */
   // A subscription is not priced per token (M3.5 part F): an unpriced model can be picked and saved.
   it('pays with a subscription without needing a price for the model', async () => {

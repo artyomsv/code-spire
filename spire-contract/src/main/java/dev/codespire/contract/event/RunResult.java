@@ -12,10 +12,12 @@ import java.util.Objects;
 @JsonSubTypes({
         @JsonSubTypes.Type(value = RunResult.RunStarted.class, name = "RunStarted"),
         @JsonSubTypes.Type(value = RunResult.RunWorkReady.class, name = "RunWorkReady"),
+        @JsonSubTypes.Type(value = RunWorkArtifact.class, name = "RunWorkArtifact"),
         @JsonSubTypes.Type(value = RunResult.RunFinished.class, name = "RunFinished"),
         @JsonSubTypes.Type(value = RunResult.RunFailed.class, name = "RunFailed")
 })
-public sealed interface RunResult {
+public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWorkReady, RunWorkArtifact, RunResult.RunFinished,
+        RunResult.RunFailed {
 
     String runId();
 
@@ -30,10 +32,26 @@ public sealed interface RunResult {
      * A completed build whose checkpoint remains unpublished. This is not a terminal publication
      * result. The same measured token map rides the eventual terminal result under the same charge
      * key; active wall time excludes the human hold between these two observations.
+     *
+     * <p>{@code stepSummary} is what the agent said it decided (M4 slice 8, §6.8), already capped and scrubbed by the
+     * worker. Null means the build handed over none, or none that was a JSON object: the orchestrator records that as
+     * {@code summary_missing}, never as an empty summary. A ready written before the field existed reads as null.
+     * The six-component constructor carries none; rebuild through {@link #withStepSummary}, which enumerates the
+     * components once, next to the record.
+     *
+     * <p>{@code startFromHead} is the checkpoint head the build started from (M4 slice 3, A2), null for a build from the
+     * base; the orchestrator refuses a plan step's ready whose start is not the one it chose. Set through
+     * {@link #withStartFromHead}.
+     *
+     * <p>{@code empty} says the held publisher saw no commit at all (M4 slice 3, §6.7, A3): a plan step that changed
+     * nothing, reported at the head it started from. Only a step started from the base can be empty this way; a
+     * checkpoint-started idle step still bundles its start and is judged empty by the orchestrator. A ready written
+     * before the field existed reads as false. Set through {@link #withEmpty}.
      */
     record RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                         List<String> changedPaths, Map<String, Long> tokenUsage,
-                        long activeWallSeconds) implements RunResult {
+                        long activeWallSeconds, dev.codespire.contract.work.StepSummary stepSummary,
+                        String startFromHead, boolean empty) implements RunResult {
         public RunWorkReady {
             if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A ready run needs its identity");
             Objects.requireNonNull(work, "A ready run needs its work binding");
@@ -45,6 +63,31 @@ public sealed interface RunResult {
                 tokenUsage = Map.copyOf(tokenUsage);
             }
             if (activeWallSeconds < 0) throw new IllegalArgumentException("Active wall time cannot be negative");
+            if (startFromHead != null && !startFromHead.matches("[0-9a-f]{40}"))
+                throw new IllegalArgumentException("A start head is a full checkpoint head");
+            // A build that committed nothing stands where it started; from the base, the orchestrator checks the base.
+            if (empty && startFromHead != null && !head.equals(startFromHead))
+                throw new IllegalArgumentException("An empty ready reports its start " + startFromHead + ", not " + head);
+        }
+
+        public RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
+                            List<String> changedPaths, Map<String, Long> tokenUsage, long activeWallSeconds) {
+            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null, null, false);
+        }
+
+        /** Rebuild carrying the agent's step summary, enumerating the components once. */
+        public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary, startFromHead, empty);
+        }
+
+        /** Rebuild carrying the head the build started from, enumerating the components once. */
+        public RunWorkReady withStartFromHead(String start) {
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, start, empty);
+        }
+
+        /** Rebuild saying whether the build committed nothing, enumerating the components once. */
+        public RunWorkReady withEmpty(boolean nothingCommitted) {
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, startFromHead, nothingCommitted);
         }
     }
 

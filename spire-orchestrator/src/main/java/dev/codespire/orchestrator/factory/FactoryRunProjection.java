@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.factory;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunIds;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -167,6 +168,24 @@ public class FactoryRunProjection {
         }
     }
 
+    /**
+     * What this run was dispatched to do, empty for a run this deployment never queued.
+     *
+     * @throws IllegalStateException when the row cannot be read. Not "empty": an unreadable specification
+     *     run read as a build would charge its spend to the wrong capability.
+     */
+    public Optional<RunKind> kindOf(String runId) {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement("SELECT kind FROM factory_run WHERE run_id = ?")) {
+            ps.setString(1, runId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(RunKind.valueOf(rs.getString("kind"))) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("What run " + runId + " was dispatched to do could not be read", e);
+        }
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -201,8 +220,11 @@ public class FactoryRunProjection {
                           Instant startedAt, Instant endedAt, RunCost cost, RunSpend spend, RunPublication publication) {
     }
 
-    /** Held-build facts, distinct from a remote push and from a completed work item. */
-    public record RunPublication(String workItemId,String checkpointHead,Instant readyAt,Long activeWallSeconds) {}
+    /**
+     * Held-build facts, distinct from a remote push and from a completed work item. {@code stepIndex} is the plan step the
+     * run built (0-based) and {@code stepTotal} the item's plan length, both null for a build that is no plan step (§6.9).
+     */
+    public record RunPublication(String workItemId,String checkpointHead,Instant readyAt,Long activeWallSeconds,Integer stepIndex,Integer stepTotal) {}
 
     /**
      * One row of the runs list — a LIST shape, deliberately not {@link RunView}.
@@ -278,6 +300,7 @@ public class FactoryRunProjection {
                        r.pushed_ref, r.review_id, r.finding_ref, r.failure_cause,
                        r.started_at, r.ended_at, r.pr_url, r.pr_error, r.agent_started_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
+                       r.step_index, w.step_total,
                        c.priced_millicents, c.unpriced_lines, c.line_count
                   FROM factory_run r
                   LEFT JOIN (
@@ -295,6 +318,7 @@ public class FactoryRunProjection {
                          WHERE subject_kind = 'RUN' AND archived_at IS NULL
                          GROUP BY subject_id
                   ) c ON c.subject_id = r.run_id
+                  LEFT JOIN work_item w ON w.id = r.work_item_id
                  WHERE 1 = 1
                 """);
         List<String> bound = new ArrayList<>();
@@ -393,14 +417,25 @@ public class FactoryRunProjection {
      * @param paidBy              {@code API_KEY} or {@code SUBSCRIPTION}: how the run pays, which decides
      *                            how it is charged. Kept apart from the credential because a re-arm
      *                            clears that and must not change this (M3.5 part F).
+     * @param stepIndex           which plan step this run builds (0-based), or null for a run that is
+     *                            not a plan step (A18). Part of the re-arm comparison, like the kind.
      */
     public record QueuedRun(String runId, String harness, String model, String baseBranch,
                             String baseCommit, String branch, String pushedAs,
                             UUID harnessCredentialId, String kind, String reviewId,
-                            String findingRef, String commentId, String paidBy) {
+                            String findingRef, String commentId, String paidBy, Integer stepIndex) {
 
         public QueuedRun {
             paidBy = dev.codespire.contract.work.PayWith.normalise(paidBy);
+        }
+
+        /** A run that is not a plan step. */
+        public QueuedRun(String runId, String harness, String model, String baseBranch,
+                         String baseCommit, String branch, String pushedAs,
+                         UUID harnessCredentialId, String kind, String reviewId,
+                         String findingRef, String commentId, String paidBy) {
+            this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, paidBy, null);
         }
 
         /** Every run before M3.5 part F paid with an API key. */
@@ -409,14 +444,38 @@ public class FactoryRunProjection {
                          UUID harnessCredentialId, String kind, String reviewId,
                          String findingRef, String commentId) {
             this(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, kind, reviewId, findingRef, commentId, null);
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, null, null);
         }
 
         /** The same row, paid by a signed-in subscription seat. */
         public QueuedRun paidBySubscription() {
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
                     harnessCredentialId, kind, reviewId, findingRef, commentId,
-                    dev.codespire.contract.work.PayWith.SUBSCRIPTION);
+                    dev.codespire.contract.work.PayWith.SUBSCRIPTION, stepIndex);
+        }
+
+        /**
+         * The same row, dispatched as another kind of run: a specification or plan run (M4).
+         *
+         * <p>A wither for the reason {@link #asFixFor} gives. FIX goes through that one instead, because a
+         * fix must name the review, the finding and the comment, which V54 and V56 refuse it without.
+         */
+        public QueuedRun ofKind(RunKind runKind) {
+            if (runKind == RunKind.FIX) {
+                throw new IllegalArgumentException("a fix run is recorded through asFixFor, which names "
+                        + "the review, the finding and the comment it fixes");
+            }
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, runKind.name(), reviewId, findingRef, commentId, paidBy, stepIndex);
+        }
+
+        /** The same row, recorded as building plan step {@code step} (0-based). */
+        public QueuedRun atStep(int step) {
+            if (step < 0) {
+                throw new IllegalArgumentException("a plan step is 0-based, so " + step + " names none");
+            }
+            return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
+                    harnessCredentialId, kind, reviewId, findingRef, commentId, paidBy, step);
         }
 
         /** A build run: what every dispatch was before M2, and what the REST endpoint still sends. */
@@ -458,7 +517,7 @@ public class FactoryRunProjection {
                         + "it, or a redelivery of that comment buys a second run with no symptom");
             }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
-                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId, paidBy);
+                    harnessCredentialId, RunKind.FIX.name(), reviewId, findingRef, commentId, paidBy, stepIndex);
         }
     }
 
@@ -539,8 +598,8 @@ public class FactoryRunProjection {
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status,
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
-                                         comment_id, task_summary, repository_id, paid_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         comment_id, task_summary, repository_id, paid_by, step_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -587,6 +646,9 @@ public class FactoryRunProjection {
                    -- it would move a claim from one request to another while the unique index --
                    -- which is an INDEX, not a row comparison -- saw nothing move.
                    AND factory_run.comment_id IS NOT DISTINCT FROM EXCLUDED.comment_id
+                   -- And the plan step, which is part of what the run IS like its kind: a retry for
+                   -- another step re-armed here would leave this step's result on a row naming that one.
+                   AND factory_run.step_index IS NOT DISTINCT FROM EXCLUDED.step_index
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
@@ -614,8 +676,9 @@ public class FactoryRunProjection {
             ps.setString(19, taskSummary);
             ps.setObject(20, repositoryId);
             ps.setString(21, row.paidBy());
-            ps.setString(22, FAILED);
-            ps.setString(23, DISPATCH_FAILED);
+            ps.setObject(22, row.stepIndex(), java.sql.Types.INTEGER);
+            ps.setString(23, FAILED);
+            ps.setString(24, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             changed = ps.executeUpdate() == 1;
@@ -784,6 +847,7 @@ public class FactoryRunProjection {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
+            case RunWorkArtifact artifact -> artifactWritten(artifact);
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
@@ -811,6 +875,16 @@ public class FactoryRunProjection {
                   AND
                 """ + LIVE, ready.runId(), ready.head(), ready.activeWallSeconds(), ready.runId(), ready.head(),
                 ready.work().workItemId(), ready.work().generation(), ready.work().buildAttemptId(),ready.work().preparationBinding());
+    }
+
+    /**
+     * A specification or plan run handed back its artifact (M4 slice 3): it did what it was for, and pushed nothing.
+     * The text itself is not stored here; the draft's own effect row holds it, encrypted (slice 6).
+     */
+    private void artifactWritten(RunWorkArtifact artifact) {
+        update("UPDATE factory_run SET status = ?, pushed_ref = NULL, active_wall_seconds = ?, failure_cause = NULL,"
+                        + " failure_detail = NULL, ended_at = now() WHERE run_id = ? AND " + LIVE,
+                artifact.runId(), SUCCEEDED, artifact.activeWallSeconds(), artifact.runId());
     }
 
     private void started(String runId, String unitId) {
@@ -1069,9 +1143,11 @@ public class FactoryRunProjection {
                        r.workspace, r.slug, r.subject, r.attempt, r.base_branch, r.base_commit, r.branch, r.pushed_as,
                        r.review_id, r.finding_ref, r.task_summary, r.started_at, r.ended_at,
                        r.work_item_id, r.checkpoint_head, r.work_ready_at, r.active_wall_seconds,
+                       r.step_index, w.step_total,
                        h.label AS credential_label, h.type AS credential_type, h.auth_mode AS credential_auth_mode
                   FROM factory_run r
                   LEFT JOIN harness_credential h ON h.id = r.harness_credential_id
+                  LEFT JOIN work_item w ON w.id = r.work_item_id
                  WHERE r.run_id = ?
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -1108,6 +1184,12 @@ public class FactoryRunProjection {
 
     private static RunPublication publicationOf(ResultSet rs) throws SQLException {
         String item=rs.getString("work_item_id");
-        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class));
+        return item==null?null:new RunPublication(item,rs.getString("checkpoint_head"),instant(rs,"work_ready_at"),rs.getObject("active_wall_seconds",Long.class),
+                stepIndexOf(rs),stepIndexOf(rs)==null?null:rs.getObject("step_total",Integer.class));
+    }
+
+    /** The plan step a run built, read once as a nullable column: getInt would turn "no step" into step 1. */
+    private static Integer stepIndexOf(ResultSet rs) throws SQLException {
+        return rs.getObject("step_index",Integer.class);
     }
 }

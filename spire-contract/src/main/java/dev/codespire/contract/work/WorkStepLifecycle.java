@@ -1,0 +1,170 @@
+package dev.codespire.contract.work;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * The step loop of a binding-6 build (M4 slice 3, §6.6, A17): build step k, verify it, then build step k+1 or deliver.
+ * {@link WorkItemLifecycle} keeps the phase order; this class decides only what a plan step changes in it, so the
+ * hard-coded order stays as it is for every other item.
+ */
+public final class WorkStepLifecycle {
+    private WorkStepLifecycle() {}
+
+    /** A registered binding-6 plan gets its cursor (A17); any other preparation builds as one step, with none. */
+    public static WorkItemEvent planRegistered(WorkItemEvent registered, int steps) {
+        WorkPreparation preparation = registered.preparation();
+        if (preparation == null || preparation.bindingVersion() != WorkPreparation.STEPS_BINDING) return registered;
+        return registered.stepped(WorkSteps.of(steps));
+    }
+
+    /**
+     * Whether the step loop decides what follows a completed phase: a cursor not finished yet, outside a land fix. A land
+     * fix after a delivered plan is one more build on its pull request, never a plan step (decision 12).
+     *
+     * @param mode how the phase that completed was entered, {@link #entryMode} under the item lock
+     */
+    public static boolean asks(WorkItemEvent item, WorkItemLifecycle.EntryMode mode) {
+        return mode != WorkItemLifecycle.EntryMode.LAND_FIX && stepping(item);
+    }
+
+    private static boolean stepping(WorkItemEvent item) {
+        return item.steps() != null && !item.steps().done();
+    }
+
+    /**
+     * How the next entry of this item is made, derived under the item lock from its history (decisions 12, 13): {@link
+     * WorkItemLifecycle.EntryMode#LAND_FIX} while this generation's latest land fix is in progress, {@link
+     * WorkItemLifecycle.EntryMode#STEP} between the steps of a plan, so a later step opens no permission gate. Step 0 is the
+     * first build of the approved plan and asks as today's single build does; a land fix wins.
+     *
+     * @param history the item's facts, oldest first; the last is the item as it stands
+     */
+    public static WorkItemLifecycle.EntryMode entryMode(List<WorkItemEvent> history) {
+        if (history.isEmpty()) return WorkItemLifecycle.EntryMode.ORDINARY;
+        if (WorkItemLifecycle.landFixInProgress(history)) return WorkItemLifecycle.EntryMode.LAND_FIX;
+        WorkSteps steps = history.getLast().steps();
+        return steps != null && steps.index() > 0 && steps.index() < steps.total()
+                ? WorkItemLifecycle.EntryMode.STEP : WorkItemLifecycle.EntryMode.ORDINARY;
+    }
+
+    /** Every step of the plan completed empty (§6.7): nothing is delivered, and only Stop or Readmit go on. */
+    public static final String NO_CHANGE = "plan_produced_no_change";
+
+    /**
+     * What follows a completed phase of a plan step, or null when the hard-coded order decides it. A passed verify
+     * completes the step: the next one builds, or the last one delivers. A build whose head is the step's start head
+     * changed nothing (A3): it completes as empty and is not verified, whether the publisher said so or not.
+     *
+     * @param completed the item as the phase's completion left it, with the passed execution on its progress
+     * @throws IllegalStateException on a finished cursor, so a missed guard fails instead of moving past the plan
+     */
+    public static WorkItemEvent next(WorkItemEvent completed) {
+        WorkSteps steps = completed.steps();
+        if (steps == null || steps.done())
+            throw new IllegalStateException("No plan step of " + completed.workItemId() + " is in progress, so nothing completes one");
+        if ("build".equals(completed.phase())) return idle(completed) ? stepEmpty(completed) : null;
+        if (!"verify".equals(completed.phase())) return null;
+        return stepPassed(completed);
+    }
+
+    /**
+     * Whether a ready that says it committed nothing may complete the current step (decision 14): only a plan step that is
+     * building, outside a land fix, at the head the step started from. Anything else is refused, so a composed item never
+     * verifies and delivers its unchanged base, and an idle land fix is handed over instead of looping through fixes.
+     */
+    public static boolean acceptsEmpty(WorkItemEvent item, WorkItemLifecycle.EntryMode mode, String head) {
+        return asks(item, mode) && "build".equals(item.phase()) && item.preparation() != null
+                && item.steps().startHead(item.preparation().baseCommit()).equals(head);
+    }
+
+    /** The build's head is where the step started: the last change made, or the base while nothing was (A3). */
+    private static boolean idle(WorkItemEvent built) {
+        WorkExecution execution = built.progress().execution();
+        return execution != null && built.preparation() != null
+                && built.steps().startHead(built.preparation().baseCommit()).equals(execution.head());
+    }
+
+    /**
+     * An empty step completes without verify (§6.7) and counts (A11). Its run holds a bundle only when it started from a
+     * checkpoint, which every step does once an earlier run holds one (decision 9); a base-started empty run holds nothing.
+     * When every step was empty nothing is delivered.
+     */
+    private static WorkItemEvent stepEmpty(WorkItemEvent item) {
+        WorkSteps before = item.steps();
+        WorkSteps steps = before.completedWith(new WorkSteps.StepResult(before.index(), item.progress().execution(), true,
+                before.chainRun().isPresent()));
+        WorkProgress progress = item.progress().completeStep();
+        if (steps.done() && steps.lastNonEmpty().isEmpty())
+            return item.decision(item.policyRevision(), item.authority(), item.policy(), "build", "awaiting_input", NO_CHANGE,
+                    "PLAN_PRODUCED_NO_CHANGE", item.gate(), progress.reserve(false)).stepped(steps);
+        if (steps.done()) progress = progress.withExecution(delivered(steps));
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), steps.done() ? "deliver" : "build",
+                "awaiting_input", "phase_completed", "STEP_EMPTY", item.gate(), progress).stepped(steps);
+    }
+
+    /** Counted on completion, never on a start (A11): a retried step counts once. */
+    private static WorkItemEvent stepPassed(WorkItemEvent item) {
+        WorkExecution passed = item.progress().execution();
+        WorkSteps steps = item.steps().completedWith(new WorkSteps.StepResult(item.steps().index(), passed, false, true));
+        WorkProgress progress = item.progress().completeStep();
+        if (steps.done()) progress = progress.withExecution(delivered(steps));
+        return item.decision(item.policyRevision(), item.authority(), item.policy(), steps.done() ? "deliver" : "build",
+                "awaiting_input", "phase_completed", "STEP_COMPLETED", item.gate(), progress).stepped(steps);
+    }
+
+    /**
+     * What deliver publishes (decision 9): the newest step run that holds a bundle, whose handoff carries the whole chain,
+     * with the head and passed verification of the last step that changed something.
+     */
+    static WorkExecution delivered(WorkSteps steps) {
+        WorkExecution chain = steps.chainRun().orElseThrow(() -> new IllegalStateException("No step holds a bundle to deliver")).execution();
+        WorkExecution last = steps.lastNonEmpty().orElseThrow(() -> new IllegalStateException("No step changed anything to deliver")).execution();
+        return new WorkExecution(chain.runId(), chain.build(), last.head(), last.verificationAttempt(), last.verification(), null, null, null);
+    }
+
+    /** An item without a cursor completes its one step when verify passes, and a land fix completes none (decision 12). */
+    public static WorkProgress composedStepCompleted(WorkItemEvent item, WorkProgress progress, WorkItemLifecycle.EntryMode mode) {
+        return item.steps() == null && mode != WorkItemLifecycle.EntryMode.LAND_FIX && "verify".equals(item.phase()) ? progress.completeStep() : progress;
+    }
+
+    /**
+     * Whether a failed run of the current step opens the verify gate instead of failing the item (decision 7): only when
+     * an earlier step's run holds a bundle. With none there is no execution to put under a gate, and the run's failure is
+     * today's.
+     */
+    public static boolean routesRunFailure(WorkItemEvent item, WorkItemLifecycle.EntryMode mode) {
+        return mode != WorkItemLifecycle.EntryMode.LAND_FIX && laterStepRunning(item);
+    }
+
+    private static boolean laterStepRunning(WorkItemEvent item) {
+        return "build".equals(item.phase()) && stepping(item) && item.steps().chainRun().isPresent();
+    }
+
+    /**
+     * A step run that failed before it was verified.
+     *
+     * @param attemptId the failed build attempt, which the unverified result names
+     * @param lostRun the run whose checkpoint the start found gone; null unless {@code checkpointMissing}
+     */
+    public record RunFailure(UUID attemptId, boolean checkpointMissing, String lostRun, WorkDraftLifecycle.RunUsage usage) {}
+
+    /**
+     * The run of a later step failed (decision 7, A2): the completed steps are kept and the verify gate opens on the chain
+     * run's head, unverified, so Retry builds this step again from where it started and Stop stops. A missing checkpoint
+     * records the lost run, so no retry starts from it again (decision 11).
+     */
+    public static WorkItemEvent stepRunFailed(WorkItemEvent item, RunFailure failure, WorkItemLifecycle.GateOpening opening) {
+        if (!laterStepRunning(item) || !"active".equals(item.workflowStatus()))
+            throw new IllegalStateException("Only a running later step with commits behind it fails into the verify gate, not "
+                    + item.phase() + " / " + item.workflowStatus() + " / " + item.reason());
+        WorkExecution chain = item.steps().chainRun().orElseThrow().execution();
+        WorkVerification unverified = new WorkVerification(failure.attemptId(), chain.head(), WorkVerification.Outcome.UNVERIFIED,
+                failure.checkpointMissing() ? "checkpoint_missing" : "step_run_failed", List.of());
+        WorkSteps steps = failure.checkpointMissing() && failure.lostRun() != null ? item.steps().lostCheckpoint(failure.lostRun()) : item.steps();
+        WorkProgress progress = failure.usage().finish(item.progress()).withExecution(chain.verified(unverified));
+        WorkItemEvent atVerify = item.decision(item.policyRevision(), item.authority(), item.policy(), "verify", "active",
+                "step_run_failed", "STEP_RUN_FAILED", item.gate(), progress).stepped(steps);
+        return WorkItemLifecycle.verifyResultGate(atVerify, item, opening.historySize(), opening.now(), opening.decisionId(), unverified);
+    }
+}

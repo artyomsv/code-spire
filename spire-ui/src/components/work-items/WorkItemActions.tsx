@@ -23,12 +23,13 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [busy, setBusy] = useState<'resume' | 'readmit' | 'compose' | 'retry' | 'stop' | null>(null), [error, setError] = useState('');
-  const [note, setNote] = useState(''), [landNote, setLandNote] = useState('');
+  const [note, setNote] = useState(''), [landNote, setLandNote] = useState(''), [regenerate, setRegenerate] = useState(false);
   const landHintId = useId(), resumeHintId = useId();
   async function resume(readmit: boolean) {
     const number = started(); setBusy(readmit ? 'readmit' : 'resume'); setError('');
     try {
-      const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note) : await resumeWorkItem(item, readmit);
+      const outcome = item.workflowStatus === 'suspended' ? await resumeWorkItem(item, readmit, note)
+        : readmit && regenerate ? await resumeWorkItem(item, true, undefined, true) : await resumeWorkItem(item, readmit);
       if (active.current) changed(outcome.detail ? workRefusal(outcome.reason, outcome.detail) : undefined, number);
     }
     catch (failure) { if (active.current) setError(String(failure)); } finally { if (active.current) setBusy(null); }
@@ -72,7 +73,9 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   const handedAtLand = item.land?.handedOver === true;
   const waitingAtLand = item.phase === 'land' && ['awaiting_input', 'capability_unavailable', 'not_eligible'].includes(item.workflowStatus);
   const stoppableAtLand = item.land?.stoppable === true;
-  const canResume = !handedAtLand && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
+  // A plan whose every step was empty has nothing left to build (M4 slice 3, §6.7): the server refuses a recheck there.
+  const canResume = !handedAtLand && item.reason !== 'plan_produced_no_change'
+    && ['awaiting_input', 'capability_unavailable', 'suspended'].includes(item.workflowStatus);
   // A land fix keeps its pull request open; readmit would build a second one beside it. Only the server sees the history.
   const fixing = item.land?.fixInProgress === true;
   const canReadmit = !landed && !waitingAtLand && !fixing
@@ -89,7 +92,8 @@ export default function WorkItemActions({ item, started, changed }: Props) {
   // rule — an approximation of work_phase_attempt, and deliberately the conservative one: it hides a
   // button the server might have allowed rather than offering one it must refuse.
   const attempted = (item.builds ?? []).some(build => build.generation === item.generation);
-  const canCompose = !attempted
+  // A generated item's specification and plan are written by the factory; the server refuses to copy its ticket.
+  const canCompose = !attempted && item.generated !== true
     && ['awaiting_input', 'capability_unavailable', 'not_eligible', 'stopped', 'waiting_approval'].includes(item.workflowStatus);
   if (!canResume && !canReadmit && !canCompose && !stoppableAtLand) return null;
   // A disabled button gives no reason by itself (live land acceptance: Stop land seemed to do nothing), so the
@@ -116,6 +120,10 @@ export default function WorkItemActions({ item, started, changed }: Props) {
         {busy === 'resume' ? 'Rechecking…' : 'Recheck and resume'}</button>}
       {canReadmit && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void resume(true)}>
         {busy === 'readmit' ? 'Re-admitting…' : 'Re-admit under current policy'}</button>}
+      {/* Readmit reuses the approved specification and plan of an item the factory writes them for; this writes them again (A7). */}
+      {canReadmit && item.generated === true && <label className="field-check">
+        <input type="checkbox" disabled={busy !== null} checked={regenerate} onChange={event => setRegenerate(event.target.checked)} />
+        <span>Regenerate specification and plan</span></label>}
       {canCompose && <button className="btn-ghost sm" type="button" disabled={busy !== null} onClick={() => void compose()}>
         {busy === 'compose' ? 'Preparing…' : 'Prepare again from the ticket'}</button>}
     </div>

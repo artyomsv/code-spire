@@ -74,6 +74,32 @@ class PublicationPolicyTest {
         assertThrows(IllegalStateException.class, () -> PublicationPolicy.held().onExistingBranch("b".repeat(40), null));
     }
 
+    /** A plan step's held publisher refuses a head off the chain it started from (M4 slice 3, A2). */
+    @Test void aHeldPlanStepReadsItsStartHead() {
+        String start = "c".repeat(40);
+        assertEquals(start, PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of("SPIRE_START_HEAD", start)).startHead());
+        assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of()).startHead(), "a build from the base has none");
+        assertThrows(IllegalStateException.class, () -> PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of("SPIRE_START_HEAD", "abc")));
+    }
+
+    /** Only a held plan step's trusted environment lets an agent finish with no commit (M4 slice 3, decision 14). */
+    @Test void aHeldPlanStepReadsEmptyAllowedFromTheTrustedEnvironment() {
+        String start = "c".repeat(40);
+        PublicationPolicy step = PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                Map.of("SPIRE_EMPTY_ALLOWED", "1", "SPIRE_START_HEAD", start));
+        assertTrue(step.emptyAllowed(), "a plan step may report an empty checkpoint");
+        assertEquals(PublicationPolicy.Mode.HELD, step.mode());
+        assertEquals(start, step.startHead(), "allowing empty keeps the chain it started from");
+        assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD, Map.of()).emptyAllowed(),
+                "every other held build keeps the missing checkpoint");
+        for (String other : new String[]{"0", "true", " "}) {
+            assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.HELD,
+                    Map.of("SPIRE_EMPTY_ALLOWED", other)).emptyAllowed(), other);
+        }
+        assertFalse(PublicationPolicy.fromEnv(PublicationPolicy.Mode.AUTOMATIC,
+                Map.of("SPIRE_EMPTY_ALLOWED", "1")).emptyAllowed(), "only a held build reports an empty checkpoint");
+    }
+
     @Test void aHeldLandFixGatesWithTheTrustedBaseTip() {
         // The held build sees the base merge first; without the tip it refuses before any permit exists.
         String tip = "c".repeat(40);
@@ -89,6 +115,17 @@ class PublicationPolicyTest {
         }
         assertNull(PublicationPolicy.fromEnv(PublicationPolicy.Mode.AUTOMATIC,
                 Map.of("SPIRE_MERGED_BASE_TIP", tip)).mergedBaseTip(), "only a land fix's build merges its base");
+    }
+
+    @Test void readOnlyIsItsOwnMode() {
+        PublicationPolicy readOnly = PublicationPolicy.readOnly();
+        assertEquals(PublicationPolicy.Mode.READ_ONLY, readOnly.mode());
+        assertEquals(PublicationPolicy.Mode.READ_ONLY, PublicationPolicy.fromEnv(PublicationPolicy.Mode.READ_ONLY,
+                Map.of("SPIRE_PERMITTED_HEAD", HEAD, "SPIRE_MERGED_BASE_TIP", "c".repeat(40))).mode());
+        assertNull(readOnly.mergedBaseTip(), "a read-only run merges nothing");
+        assertNull(readOnly.head(), "a read-only run is permitted no head");
+        assertThrows(IllegalStateException.class, () -> readOnly.onExistingBranch("b".repeat(40), null),
+                "only a permitted publisher pushes to an existing branch");
     }
 
     private PublicationPolicy at(Instant now) {

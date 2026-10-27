@@ -159,17 +159,22 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   backfill, on the first scan of an existing backlog — bypasses the check entirely.
 - **FR-F17 — Eight phases [M3/M4].** A work item moves through `intake → spec → plan → build →
   verify → deliver → review → land`. Each phase is separately gateable. Delivery opens the pushed
-  pull request the existing reviewer needs (ADR-045). M3 can accept a human-prepared specification
-  and single-step plan; it does not claim that M4's generation or verification executors exist.
+  pull request the existing reviewer needs (ADR-045). M3's handoff accepts a human-prepared
+  specification and single-step plan, the path of a `composed` repository; a `generated` repository
+  has the factory write both (ADR-049), and verify runs the repository's checks (ADR-046).
 - **FR-F18 — Specification phase [M4].** A vague ticket is refined into an outcome, context and
   acceptance criteria, **written back to the tracker as a comment** — never into the repository,
   which would create a second source of truth and a diff the reviewer must review before any code
-  exists. `spec` and `plan` are **single model calls through the existing `LlmProvider`**: they edit
-  no files, their context already arrives through `ContextProvider`, and a sandbox buys them nothing.
-  A consequence worth having: both are metered through the existing ledger even where `build` is not.
+  exists. *Superseded by ADR-049:* `spec` and `plan` are not model calls; they are **short read-only
+  harness runs** on the repository's build harness, model and payment, because a plan of vertical slices
+  must read the repository and a subscription seat pays nothing extra per run. They push nothing, are
+  charged under the Build capability as kinds `SPEC` and `PLAN`, and are chosen per repository
+  (`generated`); `composed`, M3.5's copy of the ticket, stays the default.
 - **FR-F19 — Plan phase [M4].** A specification is decomposed into ordered steps sized as vertical
   slices — each ending at something runnable — and executed one at a time with a completion gate
-  between steps.
+  between steps. *As built (ADR-049):* the gate between steps is the step's verify, or the step being
+  empty; no human gate opens between passing steps, and the land approval remains the human check.
+  All steps build on one chain of held checkpoints and deliver as one pull request.
 - **FR-F20 — Verify phase [M4].** A step is verified by repository-owned checks — build, tests,
   linters and any gate command — declared by the operator in the repository's build setup (M4). A
   repository-declared file is a later option (H1: the repository proposes, the operator pins);
@@ -179,7 +184,9 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   verification killing the item would discard every completed step. `unverified` propagates upward as
   a fact the gate sees, not as a verdict that pre-empts it. The phase also emits a **licence
   provenance report** (NFR-F10) rather than a gate: a blocking check needs a false-positive rate
-  nobody has measured, and a gate that cries wolf gets switched off.
+  nobody has measured, and a gate that cries wolf gets switched off. *As built (ADR-049):* a step that
+  fails or loses its checkpoint opens the verify gate with its completed steps kept; the plan
+  coordinator and its retry budget are later work.
 - **FR-F21 — Review phase [M2].** A delivered pull request is reviewed by the existing reviewer, with
   reconciliation across rounds. The review model and prompt must differ from the build model and
   prompt.
@@ -224,7 +231,9 @@ Tags: **[M0]**–**[M6]** map to the build order in [ROADMAP.md](./ROADMAP.md).
   prepended to the next step's prompt. Fresh context per step is the point (it keeps every run in the
   model's good zone), but the repository carries *what* was done and never *why*, so without this a
   later step re-derives or contradicts an earlier choice and the completion gate has no record to
-  judge against.
+  judge against. *As built (ADR-049):* the summary is the optional `$SPIRE_STEP_SUMMARY` file of the
+  image contract, stored encrypted per step and quoted into every later step's prompt, not only the
+  next one; a step that records none says so.
 - **FR-F32 — Bounded fix chains [M2], on two axes.** A fix run records **both** the finding it
   addresses and the review it belongs to; dispatch refuses past N fix runs for one finding **and**
   past M for one review. Two axes because one does not bound the loop this requirement is about:

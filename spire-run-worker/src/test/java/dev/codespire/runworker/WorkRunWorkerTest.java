@@ -154,6 +154,28 @@ class WorkRunWorkerTest {
         assertTrue(launched.execution().prompt().endsWith(WorkRunWorker.BASE_FALLBACK_NOTE));
         assertTrue(launched.execution().prompt().startsWith(retry.execution().prompt()));
     }
+    /** A plan step's start is required (M4 slice 3, A2): a vanished checkpoint fails the step, never rebases it on the base. */
+    @Test void aPlanStepNeverFallsBackToTheBase(){
+        var step=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work()).requiringCheckpoint();
+        worker.execute(Message.of((RunCommand)step,()->CompletableFuture.completedFuture(null)),step).toCompletableFuture().join();
+        assertEquals(0,launches,"nothing is launched from a start that is gone");
+        assertEquals("CHECKPOINT_MISSING",assertInstanceOf(RunResult.RunFailed.class,terminal).cause());
+        assertNull(retired,"a step that never ran retires nothing");
+    }
+    /** A required start gone after the pre-check is still never replaced by the base (M4 slice 3, A2): the launch fails instead. */
+    @Test void aRequiredStartIsNeverReplacedByTheBase(){
+        var step=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work()).requiringCheckpoint();
+        var started=worker.readableStart(step);
+        assertEquals("TEST-gone",started.execution().startFromRunId());
+        assertEquals(step.execution().prompt(),started.execution().prompt(),"no base fallback note");
+    }
+    /** Outside a plan the retry keeps starting from the base when its checkpoint is gone (review of PR #184). */
+    @Test void aRetryOutsideAPlanStillFallsBack(){
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-gone",ready.head()),command.work());
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals(1,launches);
+        assertNull(launched.execution().startFromRunId());
+    }
     /** A land fix's base tip is the orchestrator's, not the checkpoint's: starting from the base again keeps it. */
     @Test void aRetryStartingFromTheBaseKeepsItsLandFixBaseTip(){
         var e=command.execution();
@@ -169,6 +191,27 @@ class WorkRunWorkerTest {
         var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
         worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
         assertEquals("TEST-previous",launched.execution().startFromRunId());
+    }
+    /** An empty step from the base holds no bundle (M4 slice 3, §6.7): nothing can start from it or publish it, so it is released. */
+    @Test void anEmptyBaseStepReleasesItsUnit(){
+        buildResult=ready.withEmpty(true);
+        execute();
+        assertEquals(command.runId(),retired,"the empty unit is closed locally");
+        assertEquals(1,deletions,"and its workspace released, not held until the watchdog");
+        assertTrue(events.contains("released"));assertTrue(events.contains("release-lease"));
+        assertTrue(reported.contains(buildResult),"the empty ready itself is still sent");
+    }
+    /**
+     * An empty ready holds no bundle (amendment 3), so it never supersedes the run it started from: that run's workspace
+     * is the only copy of the chain's commits. Only its own unit is released.
+     */
+    @Test void anEmptyReadyNeverRetiresTheRunItStartedFrom(){
+        alsoPresent="TEST-previous";
+        var retry=new RunCommand.ExecuteWorkRun(command.execution().fromCheckpoint("TEST-previous",ready.head()),command.work());
+        buildResult=ready.withStartFromHead(ready.head()).withEmpty(true);
+        worker.execute(Message.of((RunCommand)retry,()->CompletableFuture.completedFuture(null)),retry).toCompletableFuture().join();
+        assertEquals(command.runId(),retired,"only its own unit is closed");
+        assertEquals(1,deletions,"the predecessor's workspace is kept");
     }
     @Test void aFirstBuildRetiresNothing(){
         execute();

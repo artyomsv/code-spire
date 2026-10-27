@@ -15,6 +15,13 @@
 # FINAL checkpoint uses it as the commit message; a mid-run autosave does not, because at that point
 # nothing has been summarised and a stale line would describe work that is not in the commit.
 #
+# $SPIRE_ARTIFACT and $SPIRE_STEP_SUMMARY name two more files the harness may write, beside the others
+# and outside the working tree: a specification or plan run's result, and a plan step's decisions as
+# JSON. After the final checkpoint and before DONE each one that exists is copied onto the handoff as
+# artifact.md and step-summary.json. The copy reads through a link the agent left in scratch, so the
+# handoff always holds a regular file, and it is capped one byte past the publisher's cap so an
+# oversize stays detectable rather than arriving truncated into something that looks complete.
+#
 # POSIX sh on purpose: this runs in whatever image an operator builds FROM the reference one, and
 # busybox is the floor.
 set -u
@@ -27,7 +34,13 @@ SCRATCH="${TMPDIR:-/tmp}/spire-agent.$$"
 PROMPT_FILE="$SCRATCH/prompt"
 STOP_FILE="$SCRATCH/stop"
 SUMMARY_FILE="$SCRATCH/summary"
+ARTIFACT_FILE="$SCRATCH/artifact.md"
+STEP_SUMMARY_FILE="$SCRATCH/step-summary.json"
 AUTOSAVE_MESSAGE="autosave: work in progress"
+
+# The publisher's caps for the two handoff files (HandoffFiles), in bytes.
+ARTIFACT_MAX_BYTES=32768
+STEP_SUMMARY_MAX_BYTES=8192
 
 # The longest commit SUBJECT taken from the summary, in BYTES. Beyond this git's own tooling starts
 # wrapping and the forge truncates, so a longer line is one nobody reads in full anyway. Named for
@@ -99,11 +112,29 @@ checkpoint() {
   fi
 }
 
+# Copies one harness file onto the handoff as $2, if the harness wrote one. head reads through a link
+# and writes a new regular file; the tmp-then-rename keeps a half-written copy from ever being read.
+# Only a regular file (or a link to one) is copied, so a FIFO left in scratch cannot block this.
+hand_over() {
+  src=$1
+  name=$2
+  max=$3
+  [ -f "$src" ] || return 0
+  tmp="$HANDOFF/.$name.tmp"
+  if head -c "$((max + 1))" "$src" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$HANDOFF/$name"
+  else
+    rm -f "$tmp"
+  fi
+}
+
 printf '%s' "${SPIRE_PROMPT:-}" > "$PROMPT_FILE"
 unset SPIRE_PROMPT
 
-# Exported, not merely set: the harness is a child process and reads this from its environment.
+# Exported, not merely set: the harness is a child process and reads these from its environment.
 export SPIRE_SUMMARY="$SUMMARY_FILE"
+export SPIRE_ARTIFACT="$ARTIFACT_FILE"
+export SPIRE_STEP_SUMMARY="$STEP_SUMMARY_FILE"
 
 # The loop is stopped by a flag and WAITED for, never killed: a kill landing inside git bundle
 # would leave the last commit unbundled, which is the loss this whole file exists to prevent.
@@ -132,6 +163,9 @@ status=$?
 : > "$STOP_FILE"
 wait "$autosave"
 checkpoint "$(final_message)"
+# Before DONE, never after: the publisher reads both files when DONE appears and then exits.
+hand_over "$ARTIFACT_FILE" artifact.md "$ARTIFACT_MAX_BYTES"
+hand_over "$STEP_SUMMARY_FILE" step-summary.json "$STEP_SUMMARY_MAX_BYTES"
 rm -rf "$SCRATCH"
 : > "$HANDOFF/DONE"
 exit "$status"

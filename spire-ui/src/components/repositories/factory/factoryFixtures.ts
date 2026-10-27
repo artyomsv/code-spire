@@ -23,7 +23,7 @@ export const profile: Profile = { id: 'TEST-profile', name: 'TEST-assisted', ver
   limits: { gateTtlSeconds: 3600, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] } };
 export const policy = (overrides: Partial<Policy> = {}): Policy => ({ revision: 7, ceiling: profile, mappings: { 'TEST-work': profile }, ...overrides });
 export const buildSetup = (overrides: Partial<import('./buildDefaultsApi').BuildDefaults> = {}): import('./buildDefaultsApi').BuildDefaults => ({
-  revision: 0, baseBranch: null, harness: null, model: null, updatedBy: null, updatedAt: null, ...overrides });
+  revision: 0, baseBranch: null, harness: null, model: null, preparation: 'composed', updatedBy: null, updatedAt: null, ...overrides });
 export const landSetup = (overrides: Partial<import('./landSettingsApi').LandSettings> = {}): import('./landSettingsApi').LandSettings => ({
   revision: 0, mergeMethod: 'merge', ticketRule: 'comment', fixAttempts: 3, updatedBy: null, updatedAt: null, ...overrides });
 export const issueHook: WebhookRepoView = { id: 'TEST-hook', repositoryId: repository.id, eventKind: 'ISSUE', sourceId: 'TEST-source', forgeOrigin: repository.forgeOrigin,

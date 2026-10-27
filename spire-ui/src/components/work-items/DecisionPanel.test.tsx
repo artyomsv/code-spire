@@ -1,10 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as gateway from '../../api';
 import * as auth from '../../auth';
 import * as api from './approvalsApi';
 import * as preparation from './workPreparationApi';
+import * as draft from './workDraftApi';
 import DecisionPanel from './DecisionPanel';
 import PastDecisions from './PastDecisions';
 
@@ -256,6 +257,29 @@ it('says a retry starts from the base when the checkpoint could not be read', as
   expect(await screen.findByText(/starts again from the base/)).toBeInTheDocument();
   expect(screen.queryByText(/starts from this build's last commit/)).toBeNull();
 });
+// M4 slice 3, decision 7: a later plan step's run failed before verify; Retry builds that step again from its start.
+it('says a failed plan step builds again from where it started', async () => {
+  const stepFailed = { ...failedItem, reason: 'verify_unverified', progress: { execution: { verification: {
+    attemptId: 'TEST-attempt', head: 'a'.repeat(40), outcome: 'UNVERIFIED', reason: 'step_run_failed', checks: [] } } } } as unknown as typeof failedItem;
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(stepFailed);
+  show();
+  // The reason's sentence also shows with the result; the approve section is where Retry is explained.
+  const approve = await screen.findByRole('region', { name: 'If you approve' });
+  expect(within(approve).getByText(/builds this step again from where it started/)).toBeInTheDocument();
+  expect(screen.queryByText(/starts again from the base/)).toBeNull();
+});
+// Decision 11: a plan step's commits are gone and never rebased on the base, so the way on is Readmit.
+it('says a plan step whose commits are gone needs a readmit', async () => {
+  const lost = { ...failedItem, reason: 'verify_unverified', preparation: { ...item.preparation, bindingVersion: 6 },
+    progress: { execution: { verification: {
+      attemptId: 'TEST-attempt', head: 'a'.repeat(40), outcome: 'UNVERIFIED', reason: 'checkpoint_missing', checks: [] } } } } as unknown as typeof failedItem;
+  vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue(lost);
+  show();
+  expect(await screen.findByText(/Readmit builds the plan again from step 1/)).toBeInTheDocument();
+  expect(screen.queryByText(/starts again from the base/)).toBeNull();
+});
 it('Retry build answers approve, and Stop answers reject', async () => {
   vi.mocked(api.approvals).mockResolvedValue([resultGateRow]);
   vi.mocked(gateway.getWorkItem).mockResolvedValue(failedItem);
@@ -269,4 +293,68 @@ it('Retry build answers approve, and Stop answers reject', async () => {
   fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
   await waitFor(() => expect(decided).toHaveBeenCalledWith('Stopped after verification.'));
   expect(api.answer).toHaveBeenLastCalledWith(resultGateRow.gate, expect.any(String), false, expect.any(String));
+});
+
+// A generated item's spec gate asks about the written specification (M4 slice 3, A6), so that text is the evidence.
+const writtenSha = 'b'.repeat(64);
+function specGate(sha256: string) {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'spec', artifact: writtenSha } }]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, phase: 'spec', reason: 'specification_written', preparation: null });
+  vi.spyOn(draft, 'workDraft').mockResolvedValue({ specification: { text: '## Outcome\nTEST-written outcome', sha256, comment: { state: 'sent', ref: null } },
+    plan: null, revisions: { specification: 0, plan: 0 }, ticketLink: 'https://TEST.example/issues/42' });
+}
+it('a spec gate shows the specification as evidence', async () => {
+  specGate(writtenSha);
+  show();
+  expect(await screen.findByLabelText('Specification text')).toHaveTextContent('TEST-written outcome');
+  expect(await approvable()).toBeEnabled();
+  expect(screen.queryByText(/binds a prepared task the item no longer has/)).toBeNull();
+});
+it('a spec gate on another specification is not approvable', async () => {
+  specGate('c'.repeat(64));
+  show();
+  expect(await screen.findByRole('alert')).toHaveTextContent('The specification changed after this decision was opened');
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+});
+
+// A generated item's plan gate asks about the written plan (M4 slice 3, A6), and offers Revise beside Approve and Reject.
+const planSha = 'd'.repeat(64);
+function planGate(revisions: number) {
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, phase: 'plan', artifact: planSha } }]);
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, phase: 'plan', reason: 'plan_written', preparation: null });
+  vi.spyOn(draft, 'workDraft').mockResolvedValue({
+    specification: { text: '## Outcome\nTEST-written outcome', sha256: writtenSha, comment: null },
+    plan: { text: '{}', sha256: planSha, comment: null, steps: [{ id: 'TEST-s1', title: 'TEST-step-1', instruction: 'TEST-instruction', doneWhen: 'TEST-done-1' }] },
+    revisions: { specification: 0, plan: revisions }, ticketLink: 'https://TEST.example/issues/42' });
+  vi.spyOn(api, 'revise').mockResolvedValue();
+}
+it('a plan gate shows the steps as evidence', async () => {
+  planGate(0);
+  show();
+  expect(await screen.findByRole('list', { name: 'Plan steps' })).toHaveTextContent('TEST-step-1');
+  expect(await approvable()).toBeEnabled();
+});
+it('Revise needs a note and hides after three', async () => {
+  planGate(1);
+  show();
+  const revise = await screen.findByRole('button', { name: 'Revise with a note' });
+  expect(revise).toBeDisabled();
+  expect(screen.getByText('1 of 3 revisions used')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Decision note', { selector: 'textarea' }), { target: { value: 'TEST-split the step' } });
+  expect(revise).toBeEnabled();
+  fireEvent.click(revise);
+  await waitFor(() => expect(decided).toHaveBeenCalledWith('Asked for a new plan. The factory writes it with your note.'));
+  expect(api.revise).toHaveBeenCalledWith(expect.objectContaining({ id: row.gate.id, phase: 'plan' }), expect.any(String), 'TEST-split the step');
+  cleanup();
+
+  planGate(3);
+  show();
+  expect(await screen.findByText(/All 3 revisions are used/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Revise with a note' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+});
+it('offers no Revise on a permission decision', async () => {
+  show();
+  await approvable();
+  expect(screen.queryByRole('button', { name: 'Revise with a note' })).toBeNull();
 });

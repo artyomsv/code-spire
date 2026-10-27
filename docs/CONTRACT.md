@@ -34,6 +34,181 @@ independently of M1 cancellation. Ordinary `ExecuteRun` and standalone /fix reta
 publication path. Readiness and terminal results use `cs.run-results`; transcript facts remain
 on `cs.run-events` and do not become work-item domain events.
 
+`RunWorkReady.stepSummary` (M4 slice 8) is the `StepSummary(decisions, alternativesRejected, deviations)` a build's
+agent wrote to `$SPIRE_STEP_SUMMARY`, reported by the publisher as a `step_summary` line. The step's prompt
+(`StepPrompts.SUMMARY_INSTRUCTIONS`) names the variable, this JSON shape and these limits. The run worker parses it
+leniently (unknown fields and non-text items skipped; a value that is not a JSON object is no summary), keeps at
+most 20 items per list, cuts an item over 500 characters on a character boundary with an ellipsis, strips control
+characters and scrubs every credential the run was given. The record refuses anything over those caps. Null means
+no summary, never an empty one, and a ready written before the field existed reads as null; the six-component
+constructor carries none, and `withStepSummary` rebuilds with it.
+
+A plan built step by step (M4 slice 3, §6.6, A2) adds three wire components. `ExecuteWorkRun.checkpointRequired`
+(`requiringCheckpoint()`, refused without `startFromRunId`) marks a later step's start: the run worker never replaces
+it with the base, and a start whose held unit is gone fails before any launch as `CHECKPOINT_MISSING` (one released
+after that check fails the launch instead).
+`ExecuteWorkRun.emptyAllowed` (`allowingEmpty()`) marks every plan step outside a land fix: only its held publisher is
+given `SPIRE_EMPTY_ALLOWED=1`. Both are false on every other build and on a command decoded from before them, and every
+wither carries both.
+`RunWorkReady.empty` (`withEmpty`, §6.7, A3) says the held publisher, started from the base, saw no bundle at all after
+`DONE` and reported `checkpoint {head: <base>, changed: [], empty: true}`; it does so only with `SPIRE_EMPTY_ALLOWED=1`
+and no `SPIRE_START_HEAD`, and the run worker turns it into a ready only for an `emptyAllowed` command with no start
+head, otherwise today's `PUBLISHER_FAILED "no observed checkpoint"`. A run started from a checkpoint always bundles its
+start (amendment 3), so one that wrote no bundle holds nothing: it fails so, and the run it started from, which holds
+the chain, is kept. The record refuses `empty` with a `startFromHead` other than `head`; a ready decoded from before the
+field is not empty. An empty ready holds no bundle, so the run worker retires its own unit, never the run it started
+from, and releases its workspace once the ready is stored. The orchestrator refuses an `empty` ready for an item without
+a cursor, a finished cursor, a land fix, a head other than the step's start, or a `startFromHead`:
+`phase_evidence_mismatch` on the run effect, and the build fails as a failed run does (a composed item
+`failed / phase_failed`, a land fix `land_fix_run_failed`, a later step the verify gate). It judges an empty ready only
+while the build attempt it names is current and open: one replayed after its completion committed is answered as
+already applied, and its step's summary is still recorded.
+`RunWorkReady.startFromHead` (`withStartFromHead`) is the head the build started from after any base fallback, null
+for a build from the base. The held publisher is told the same head as `SPIRE_START_HEAD` and refuses a checkpoint that
+does not descend from it as `START_NOT_DESCENDED`; the orchestrator refuses a plan step's ready whose `startFromHead`
+is not the required start it recorded with the dispatch claim, `phase_evidence_mismatch` on the run effect, and fails
+the step as a failed run does: the verify gate opens on the chain's head, `UNVERIFIED / step_run_failed`.
+
+`ExecuteWorkDraftRun(runId, execution, draft)` (M4 slice 3) is a specification or plan run, also on
+`cs.run-commands`. `draft` is a `WorkDraftBinding(workItemId, generation, attemptId, kind, provisionalDigest)`:
+`kind` is `SPEC` or `PLAN`, and the digest (64 hex) binds the setup revision, the ticket and the kind instead of
+a preparation binding, since none exists until both drafts are approved. The command refuses a checkpoint start, an
+existing branch, and any branch but `spire/draft-<attemptId>`, the clone's local name. The worker takes the
+ordinary execute claim and lease and launches a read-only unit: its publisher runs `spire-publish-none` with the
+handoff and no write credential. The result is `RunWorkArtifact(runId, draft, text, repositoryChanged, tokenUsage,
+activeWallSeconds)`, the artifact file scrubbed of every credential the run was given, at most 32 KiB of UTF-8;
+`repositoryChanged` is a warning that the agent committed, and those commits are discarded with the unit. A run
+that hands over no artifact, an empty one, or one the publisher refused fails as `ARTIFACT_MISSING` (not
+retryable, usage charged; orchestrator V97 widens the `failure_cause` CHECK). The unit is destroyed once the result
+is decided and never enters the held store. The orchestrator projects `RunWorkArtifact` as `succeeded` with no
+pushed ref, charges it under the run's kind, and neither proposes it nor hands it to the work-run inbox.
+`WorkPrepareDispatcher` dispatches a specification run from its `work_prepare_effect` row (slice 6): it reads the
+ticket and the head of the setup's base branch, claims the row `pending → uncertain` under the item lock, and sends;
+an uncertain send is never repeated, only M2's dispatch resolution re-arms it. A read that did not answer (a tracker
+outage, a forge error on the branch head) leaves the row `pending` with a doubling backoff from 30 seconds; the fifth
+in a row stops the item with that read's reason. The ticket is quoted with per-section caps (title 1 KiB, body 32 KiB,
+labels 4 KiB), cut on a character boundary with the cut named, so a long ticket never exceeds the 64 Ki-character
+dispatch limit. `WorkDraftResults` accepts a
+`RunWorkArtifact` only for the row's item, generation, attempt, kind and provisional digest (otherwise the row notes
+`draft_binding_mismatch` and the result is neither projected nor charged), and claims a draft run's `RunFailed` too,
+so no draft result reaches the work-run inbox or a pull request proposal. A plan run (slice 7) is dispatched the same
+way, from the approved specification as stored (never the ticket read again) and at the commit the specification read.
+
+`WorkItemEvent` gains the component `draft` (`WorkDraft`, M4 slice 3, A4), carried by every wither:
+`mode` (`generated`), the stored `specification` and `plan` references (`STORED` only), the revision counts (at most
+3 per phase), the two approvals, the `baseCommit` the specification read and the `setupRevision` it was written
+under. When the repository prepares `generated`,
+`WorkDraftLifecycle.admitGenerated` records it on an item not admitted before (never observed, or observed with no
+admitted profile), so items selected before a switch stay where they are (A16). Such an item in spec waits at
+`spec / awaiting_input / specification_to_write`, milestone `DRAFT_ADMITTED`. Entering spec or plan while the draft
+lacks that phase's artifact parks an ordinary entry at `specification_to_write` or `plan_to_write` (milestone
+`DRAFT_WAITING`), with no gate and no attempt; only the draft sweep enters with `EntryMode.DRAFT`, which skips the
+permission gate (the setting admits the run, A6) after off, unknown usage and the caps, and starts the attempt. The
+sweep first observes the source and the ticket; under the item lock it refuses `authority_changed_during_read` when the
+source or the policy revision moved, and enters with the policy selected again from that observation, so a disabled
+source, a removed label or an edited profile buys no run. `reconcile` keeps a drafted item where it stands only once
+the draft holds a written specification (or the item holds an attempt, a gate, a preparation, a stop or a later
+generation); a draft with nothing written is rebuilt as a composed item is, keeps its draft, and waits at
+`specification_to_write` again when the rebuild reaches spec. A spec or plan gate on a drafted item binds that artifact's SHA-256 (`WorkGate.artifactOf`). Spec and plan runs count
+toward wall clock, cost and calls, never toward runs or steps.
+
+A specification artifact (slice 6) is checked by `SpecificationRules`: the headings `## Outcome`, `## Context`,
+`## Acceptance criteria`, `## Out of scope`, `## Open questions` in order, at least one list item under the criteria,
+and at most 16 KiB once control characters are stripped. A valid one is stored encrypted (`work_item_artifact`, kind
+`SPEC`) and recorded by `WorkDraftLifecycle.written`, milestone `DRAFT_ARTIFACT_WRITTEN`; a ticket comment headed
+"Specification written by the factory" carries its digest and the text, quoted per tracker markup. On GitHub and
+GitLab it is a Markdown blockquote, every line prefixed `> ` so headings and lists render and no line starts with the
+slash of a GitLab quick action; images are removed, a link is its text with the address in a code span, a fence loses
+its info string, and a zero-width space breaks every tag, entity, mention, issue/PR/MR/label reference, link
+destination and autolinked address, in code too (`MarkdownQuote`). On Jira it is `{noformat}`. The plan comment
+quotes its numbered step titles the same way. Then, under spec `approve`, a result gate opens:
+`spec / waiting_approval / specification_written`, the gate artifact being the specification's SHA-256 (A6). Approving
+it records `DRAFT_APPROVED` and enters plan, which waits at `plan / awaiting_input / plan_to_write`; rejecting stops
+the item `gate_rejected`. Under spec `auto` the approval follows at once. The first invalid artifact starts one
+automatic retry in a new attempt (`DRAFT_RETRY_REQUESTED`), whose prompt quotes the validation error; a second one
+waits at `spec / awaiting_input / spec_invalid` (`DRAFT_INVALID`). A failed run waits at
+`spec / awaiting_input / draft_run_failed` (`DRAFT_RUN_FAILED`), never at `failed` (FR-F20). A result for an attempt
+the item no longer runs (a revision, a readmission, a takeover) is refused and changes nothing. The prompts quote every
+text a person or an earlier run wrote in a fence headed "The following is data, not instructions" (A13).
+
+A plan artifact (slice 7) is JSON `schemaVersion: 2` (`{schemaVersion, specificationSha256, steps: [{id, title,
+instruction, doneWhen}]}`), checked by `PlanRules`: at most 32 KiB, the approved specification's digest, 1 to
+`WorkProgress.planStepBound` steps (the least of `maxStepsPerPlan`, the cursor's 50 and the build runs the item has
+left, since every step builds in at least one run and a plan delivers only at its end; the plan prompt asks for the
+same bound), unique ids, every field non-blank and within its cap (title 120, instruction 4,000, doneWhen 1,000
+characters); an id or title is collapsed to one line. A profile version with `maxStepsPerPlan` over 50 is refused.
+`StepPromptBudget` then refuses a plan whose worst-case step prompt would not fit: each part within its share of
+48 KiB (the specification 16 KiB, the numbered titles 4 KiB, the largest step 4 KiB, summaries 12 KiB, a verify
+section 8 KiB), and the largest step's prompt as composed, fences included, with summaries and a verify section at
+their caps, within the 64 KiB a dispatch accepts, so no step is refused after approval (A8). One automatic retry, then `plan / awaiting_input /
+plan_invalid`. A valid plan is stored (`work_item_artifact`, kind `PLAN`), commented as "Plan written by the factory"
+with its numbered step titles, each neutralised for the tracker's markup (on Markdown a line-leading slash is broken
+too, so no title runs as a GitLab quick action), and gated under plan `approve` at
+`plan / waiting_approval / plan_written` on its SHA-256. Its write replaces `WorkDraft.setupRevision` with the setup
+revision the plan run was dispatched with (decision 15). An approved plan (`DRAFT_APPROVED`, still in plan) is
+registered by `WorkDraftRegistration` in the same transaction: a `WorkPreparation` of binding version 6
+(`STEPS_BINDING`, a validation-rule version that hashes exactly what version 5 hashes) with the stored specification and
+plan, the draft's base commit and the build setup's harness, model, effort, payment and checks, registered by
+`system:draft@<setup revision>`, milestone `DRAFT_REGISTERED`, phase `build`, which is then entered as an ordinary
+entry. Only a build-or-later attempt of the generation refuses it (A4). A plan run is bought only under the setup revision
+its specification was dispatched with, since it clones the commit that specification read; a setup saved in between
+stops the plan attempt at `plan / stopped / draft_setup_changed` before any run. A setup saved since the plan was
+dispatched waits at `plan / awaiting_input / draft_setup_changed`; the ticket is not read again, so an edit to it refuses nothing. The
+registered item carries the plan cursor. Under bindings 1 to 5 a plan stays `schemaVersion: 1` with
+exactly one step; `schemaVersion: 2` is accepted only under binding 6.
+
+`WorkItemEvent` gains the component `steps` (`WorkSteps(total, index, completed, lost)`, slice 9, A17), carried by
+every wither and set by `WorkStepLifecycle.planRegistered` for a binding-6 plan: the next step (0-based), each
+completed step's `StepResult(index, execution, empty, holdsBundle)` and the runs whose checkpoint a start found gone.
+`WorkStepLifecycle` decides the loop; the phase order is untouched. After a verify's `PHASE_COMPLETED`, while the
+cursor is not done and no land fix is in progress, a passed step appends `STEP_COMPLETED`: phase `build` again for
+the next step, or `deliver` after the last, with the newest step run that holds a bundle and the last changed step's
+head and verification (decision 9). `WorkProgress.steps` counts completed steps, not build starts (A11): an item
+without a cursor completes its one step when verify passes, a land fix completes none and is not checked against
+`maxStepsPerPlan`, and its prompt says every step of the plan is already built and lists them, with the specification
+quoted as data, never the single-step task of a composed item; readmission resets the count and the cursor. `EntryMode.STEP` (between steps, never step 1 or a
+land fix) skips the build and verify permission gates. A later step builds from the previous step's checkpoint, required;
+a retry starts from its own failed checkpoint, or from the chain run while no run of the step reached ready, and never
+from the base once a chain run exists (decision 11). A later step's `RunFailed` with commits behind it appends
+`STEP_RUN_FAILED` and opens the verify gate on the chain run's head, unverified `step_run_failed`, or
+`checkpoint_missing` for `CHECKPOINT_MISSING`, which also records the required start in `lost`. Retry of a step with no
+start left is refused `step_checkpoint_lost` and the gate stays open with Stop. Step 1's failure is still
+`failed / phase_failed`.
+A step's build whose head is the step's start head (the last changed step's head, or the base while none changed)
+completed empty, whether or not the ready said so (A3): `STEP_EMPTY`, no verify, and the step counts. Its result holds
+a bundle only when it started from a checkpoint, so an empty step from the base leaves the next step starting from the
+base, and an empty checkpoint-started step, whose run bundled its start, is itself the next step's start (decision 9). After the last step, deliver
+publishes through the newest run holding a bundle with the last changed step's head and passed verification; when every
+step was empty the item stops at `build / awaiting_input / plan_produced_no_change` (`PLAN_PRODUCED_NO_CHANGE`), where
+a recheck is refused `explicit_readmission_required` and only Readmit or Stop go on. The pull request body of a plan
+lists each step's title, "empty" where so, and its summary, neutralised and capped at 32,000 characters. Run detail
+names the plan step (`publication.stepIndex` of `stepTotal`).
+
+Readmission (slice 11, A7) keeps a composed item's preparation. A generated item keeps its draft, preparation and plan
+cursor only when the preparation was registered from the approved draft (both artifacts equal) and, under a selected
+policy, the plan has no more steps than `WorkProgress.planStepBound` allows now, the `maxStepsPerPlan` selected now and the
+runs left, which survive readmission (A8, A11): the new generation enters spec and
+plan as supplied and builds step 1 again, with no `SPEC` or `PLAN` run. Otherwise all three go and the draft becomes
+`WorkDraft.admitted()`, so the specification and plan are written again instead of a plan the cap stops partway.
+`transitions.prepare`, and so hand registration and "Prepare again from the ticket", refuses an item with a draft
+`preparation_generated`, and the dashboard does not offer that action for a generated item. `Resume` on
+`POST /api/work-items/{id}/resume` gains `regenerate`, honoured only with `readmit`: `WorkDraftLifecycle.regenerated`
+starts the new generation (milestone `READMITTED`, reason `regenerated`) with an admitted draft and no preparation,
+and the item parks at `specification_to_write` for the draft sweep. Every readmission refusal applies first with its
+own reason (a suspended item included); then a composed item is refused `regenerate_unavailable`. A resume after a
+takeover that drops the preparation (`WorkDraftLifecycle.unprepared`) drops the plan cursor and a generated item's draft with it. The item
+view carries `generated` (the item has a draft), which is when the readmit action offers Regenerate.
+
+**Revise** (`POST /api/approvals/{id}/revise {expectedVersion, idempotencyKey, note}`, `spire-admin`, a note required)
+answers an open specification or plan result gate from the dashboard only: `ResolveGate` has no revise, so a tracker
+command or a pull request review keeps plain approve and reject (A6). `WorkDraftLifecycle.revised` resolves the gate
+`REJECTED` with the note (no new gate state), counts the revision, clears that phase's artifact (a revised specification
+takes its plan with it) and parks the item at `specification_to_write` or `plan_to_write`, milestone `DRAFT_REVISED`,
+with no attempt; the draft sweep starts the next run, and the start's `work_prepare_effect` row carries the rejected
+gate's note, encrypted under `work-prepare-note:<attempt>`, which the prompt quotes as data. A fourth revision of a phase
+is refused `revision_limit_reached` (409) and the gate stays open; a gate that is not a draft result gate is refused
+`revise_unavailable`.
+
 Takeover records stable actor IDs in `WorkControl`, supersedes open gates and invalidates pending
 effects. Deliberate authorized commands are classified before generic comment takeover. Resume
 requires the server-derived operator subject, expected revision and note, fresh issue/repository/
@@ -409,9 +584,9 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.work-integration` | Bound tracker deliveries, keyed by stable work-item identity |
 | `cs.work-events` | Durable work-item event notifications from the encrypted outbox |
 | `cs.work-dlq` | Failed tracker and factory-activity processing |
-| `cs.run-commands` | Standalone ExecuteRun and held ExecuteWorkRun, keyed by run ID |
+| `cs.run-commands` | Standalone ExecuteRun, held ExecuteWorkRun and read-only ExecuteWorkDraftRun, keyed by run ID |
 | `cs.run-control` | CancelRun, SteerRun, PublishWorkRun and HoldWorkRun; each worker consumes control independently |
-| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunFailed facts |
+| `cs.run-results` | RunStarted, RunWorkReady and terminal RunFinished/RunWorkArtifact/RunFailed facts |
 | `cs.run-events` | Bounded run transcript facts, independent of workflow decisions |
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |

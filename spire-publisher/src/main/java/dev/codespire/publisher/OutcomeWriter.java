@@ -9,6 +9,7 @@ import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * One JSON line per outcome, on stdout.
@@ -20,6 +21,20 @@ import java.util.Map;
 public final class OutcomeWriter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    /**
+     * The longest line the run worker receives whole: {@code DockerRunRuntime.MAX_LINE_CHARS}, which delivers a longer
+     * one clipped, and {@code PublisherOutcome} skips a clipped line it cannot parse. The artifact's 32 KiB file cap
+     * counts bytes, and JSON escaping can grow them up to six times, so the line is checked as well.
+     */
+    static final int MAX_LINE_CHARS = 64 * 1024;
+
+    /**
+     * C0 control characters other than newline and tab, which Jackson escapes as six characters each. The orchestrator
+     * strips them from untrusted text anyway (amendment 13); dropping them here keeps an artifact full of copied
+     * terminal colour codes inside one line.
+     */
+    private static final Pattern CONTROL_CHARACTERS = Pattern.compile("[\\x00-\\x08\\x0B-\\x1F]");
 
     private final PrintStream out;
 
@@ -72,6 +87,11 @@ public final class OutcomeWriter {
         write(entry("event", "checkpoint", "head", head, "changed", describe(changed)));
     }
 
+    /** A held plan step that committed nothing (M4 slice 3, §6.7): its checkpoint is where it started. */
+    public void emptyCheckpoint(String head) {
+        write(entry("event", "checkpoint", "head", head, "changed", List.of(), "empty", true));
+    }
+
     /** The verify workspace holds exactly {@code head} (M4, {@code spire-verify-prepare}). */
     public void prepared(String head) {
         write(entry("event", "prepared", "head", head));
@@ -83,6 +103,36 @@ public final class OutcomeWriter {
      */
     public void refused(List<ChangedPath> blocked, List<ChangedPath> changed) {
         write(entry("event", "gate_refused", "blocked", describe(blocked), "changed", describe(changed)));
+    }
+
+    /**
+     * The agent's specification or plan, read from the handoff (M4 slice 3), without its control characters. Text that
+     * would still pass {@link #MAX_LINE_CHARS} once escaped is refused as {@code TOO_LARGE} rather than lost in transport.
+     */
+    public void artifact(String text) {
+        // Controls go first: a credential split by an escape byte would otherwise pass the scrub and close up after it.
+        String cleaned = scrub.clean(CONTROL_CHARACTERS.matcher(text).replaceAll(""));
+        String line = serialise(entry("event", "artifact", "text", cleaned));
+        if (line.length() > MAX_LINE_CHARS) {
+            handoffFileRefused(HandoffFiles.ARTIFACT, HandoffFiles.Refusal.TOO_LARGE.name());
+            return;
+        }
+        emit(line);
+    }
+
+    /** The agent's step summary, as the JSON text it wrote; parsed and capped by the run worker. */
+    public void stepSummary(String json) {
+        write(entry("event", "step_summary", "json", scrub.clean(json)));
+    }
+
+    /** A read-only run that committed anyway: {@code bundles} were left on the handoff and none was read. */
+    public void repositoryChanged(int bundles) {
+        write(entry("event", "repository_changed", "bundles", bundles));
+    }
+
+    /** A handoff file that was not read, and why ({@code SYMLINK}, {@code NOT_REGULAR}, ...). */
+    public void handoffFileRefused(String file, String why) {
+        write(entry("event", "handoff_file_refused", "file", file, "why", why));
     }
 
     public void failed(String cause, String detail) {
@@ -104,15 +154,22 @@ public final class OutcomeWriter {
     }
 
     private void write(Map<String, Object> payload) {
+        emit(serialise(payload));
+    }
+
+    private static String serialise(Map<String, Object> payload) {
         try {
-            out.println(JSON.writeValueAsString(payload));
-            out.flush();
+            return JSON.writeValueAsString(payload);
         } catch (JsonProcessingException e) {
             // A publisher that cannot describe what it did is still a publisher that pushed. Never
             // crash here: the alternative is losing the push AND the report. Only serialization can
-            // fail in this block -- println on a PrintStream swallows its own errors by contract.
-            out.println("{\"event\":\"failed\",\"cause\":\"REPORT_FAILED\"}");
-            out.flush();
+            // fail here -- println on a PrintStream swallows its own errors by contract.
+            return "{\"event\":\"failed\",\"cause\":\"REPORT_FAILED\"}";
         }
+    }
+
+    private void emit(String line) {
+        out.println(line);
+        out.flush();
     }
 }

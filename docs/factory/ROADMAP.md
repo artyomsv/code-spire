@@ -327,7 +327,7 @@ decision taken during the build, not by a change of mind here.
 | `attempt > 1` per subject | `RunResource.FIRST_ATTEMPT = 1` and a 409 on any repeat — "M0 runs each subject once". FR-F32's N is unreachable until this moves |
 | `review_id` + `finding_ref` + `kind` on `factory_run` (V54) | Nothing today joins a run to a review, so neither the cap nor "run cost on the pull request" can be computed |
 | A finding reference on `ReviewDetail.FindingView`, and `GET /api/runs` | The dashboard has no id to dispatch with, and no list to render |
-| `ChargeKind.FIX` | `ChargeCall.forRun` hard-codes `BUILD`; V42 already admits `FIX` |
+| `ChargeKind.FIX` | `ChargeCall.forRun` hard-coded `BUILD`; V42 already admits `FIX`. Done in M4: the kind is read from `factory_run.kind` |
 | The **factory-authored attribute** on the review row | ADR-038 requires it and nothing writes it — zero hits in `.java` or `.sql` |
 | Allowing the machine account as a pull-request AUTHOR | ADR-038's role split covers the push identity only. Same-branch fixes are fine (the author stays the human); a NEW factory pull request is skipped by `IntegrationSaga`'s allowlist unless the operator lists the account |
 | **`spire-run-worker` in `deploy/`** | It is in no compose file, no GHCR compose and no Helm chart. M2 is the shippable boundary and there is currently no way to ship the factory at all |
@@ -454,8 +454,18 @@ recognised, and a landed item cannot be readmitted. GitHub only; `auto_if_green`
 proof on `spire-test` merged under both ticket rules, fixed a conflict and merged on a new gate, completed
 two hand merges, and handed a ruleset block to the operator; it found that a hand merge went unseen on a
 repository with no FACTORY webhook, now caught by the reviewer's close and a 2-minute pull request read.
-The failing-check fix, exhausted attempts and Retry land are proven against fakes only. **Next:** the
-specification, the multi-step plan and step continuity below.
+The failing-check fix, exhausted attempts and Retry land are proven against fakes only.
+
+**Slice 3, specification, plan and steps: built on `feat/m4-spec-plan` (PR #287, ADR-049), live acceptance
+pending.** A repository whose build setup says `generated` has the factory write the specification and the plan
+with short read-only runs on the build's harness, model and payment, post both to the ticket and gate them as
+results (Revise with a note from the dashboard, three per phase). An approved plan of up to `maxStepsPerPlan` steps
+builds step by step on one chain of held checkpoints: each step verifies, a step that commits nothing completes as
+empty, a lost checkpoint opens the verify gate instead of falling back to the base, every step's summary is carried
+into the later steps' prompts, and the last change is delivered as one pull request. Readmit reuses the approved
+specification and plan; Regenerate writes them again. `composed`, the M3.5 copy, stays the default. Everything is
+proven against fakes only until the live proof (`docs/UNVERIFIED.md`). **Next:** that proof, recorded in
+`M4-SPEC-PLAN-ACCEPTANCE.md`, which is this milestone's exit criterion.
 
 **Delivers.** The `spec` phase — a vague ticket refined into outcome, context and acceptance
 criteria, written back to the tracker. The `plan` phase — decomposition into ordered vertical slices,

@@ -17,9 +17,9 @@ intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► 
 | Phase | What happens | Output |
 |---|---|---|
 | **intake** | eligibility, labels, ceiling, actor allowlist, budget reservation | admitted or refused |
-| **spec** | vague ticket → outcome, context, acceptance criteria — *one model call, no sandbox* | specification commented back to the tracker |
-| **plan** | specification → ordered steps, each a vertical slice — *one model call, no sandbox* | plan, ready for a gate |
-| **build** | one sandboxed run per step — *harness* | commits on a branch |
+| **spec** | vague ticket → outcome, context, acceptance criteria — *a read-only harness run* (ADR-049) | specification commented back to the tracker |
+| **plan** | specification → ordered steps, each a vertical slice — *a read-only harness run* (ADR-049) | plan, ready for a gate |
+| **build** | one sandboxed run per step, each on the previous step's checkpoint — *harness* | commits on a branch |
 | **verify** | the repository's own back-pressure runs — *harness* | pass / fail / **unverified** (fails the step, never the item) |
 | **deliver** | push and open a pull request | pull request URL |
 | **review** | the existing reviewer reviews the delivered pull request | findings, reconciled across rounds |
@@ -27,9 +27,19 @@ intake ─► spec ─► plan ─► build ─► verify ─► deliver ─► 
 
 Delivery precedes review because the existing reviewer consumes an actual pushed pull request
 (ADR-045). M3's [prepared task handoff](PREPARED-TASKS.md) accepts existing specification and
-single-step plan references; generation and verification remain M4 capabilities. Slice 8a proves
-the plan/build policy boundary with an explicit test transport. Production item builds remain
-unavailable until slice 8b supplies the publication hold; missing phases never report completion.
+single-step plan references, and stays the path of a `composed` repository; a `generated` repository
+has the factory write both (ADR-049), and verify runs the repository's own checks (ADR-046). Missing
+phases never report completion.
+
+Spec and plan run as written above only for a repository whose build setup says `generated` (M4 slice 3,
+ADR-049, which supersedes the "one model call, no sandbox" of the first draft). Each is a short read-only run
+on the repository's build harness, model and payment; under `approve` its gate approves the written artifact,
+and the dashboard may also send it back once per revision with a note (three per phase). A plan builds step by
+step on one chain of held checkpoints: each step verifies, a step that changes nothing completes as empty, and
+the last change is delivered as one pull request. No gate opens between passing steps, even under a build or
+verify `approve`, which asks before the first step only: that is the author's call, and the land approval
+remains the human check. A `composed` repository, the default, copies the ticket as one step as M3.5 did.
+Readmit reuses an approved specification and plan; Regenerate writes them again.
 
 Land's "merged, or handed to a human" is literal on GitHub since M4 slice 2 (ADR-048). An approved land
 merges at exactly the head the gate approved, with the repository's merge method. A refusal caused by code (a

@@ -50,6 +50,9 @@ public final class PublishCycle {
 
     private boolean published;
 
+    /** Whether any bundle reached this cycle, readable or not: only a run with none may be reported empty. */
+    private boolean bundleSeen;
+
     public PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                         long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome) {
         this(repo, baseCommit, branch, profileGlobs, bundleMaxBytes, credential, outcome,
@@ -69,6 +72,11 @@ public final class PublishCycle {
     PublishCycle(PublishRepo repo, String baseCommit, String branch, List<String> profileGlobs,
                  long bundleMaxBytes, GitCredential credential, OutcomeWriter outcome,
                  PublicationPolicy publication, String landingBranch) {
+        // A read-only run publishes nothing (M4 slice 3): its executable never builds a cycle, and this refusal keeps
+        // a future wiring mistake from reaching the push below with that policy.
+        if (publication.mode() == PublicationPolicy.Mode.READ_ONLY) {
+            throw new IllegalArgumentException("A read-only publisher never pushes, so it has no publish cycle");
+        }
         this.repo = repo;
         this.baseCommit = baseCommit;
         this.branch = branch;
@@ -94,10 +102,29 @@ public final class PublishCycle {
     }
 
     /**
+     * Whether a held checkpoint extends the head its build started from (M4 slice 3, A2). A rewritten history under a
+     * plan step is refused and reported, with no checkpoint, so nothing downstream can verify or deliver it.
+     */
+    private boolean onTheChain(String sha) {
+        String start = publication.startHead();
+        try {
+            if (start == null || repo.descendsFrom(sha, start)) {
+                return true;
+            }
+        } catch (IOException unreadable) {
+            outcome.failed("START_NOT_DESCENDED", "The ancestry of " + sha + " could not be read: " + unreadable.getMessage());
+            return false;
+        }
+        outcome.failed("START_NOT_DESCENDED", sha + " does not descend from the start " + start);
+        return false;
+    }
+
+    /**
      * @return whether the run may continue. False means the gate refused, and a gate trip
      *         TERMINATES the run — the next bundle would carry the same refused commit plus more.
      */
     public boolean handle(Path bundle) {
+        bundleSeen = true;
         ChangeSet changes;
         String sha;
         try {
@@ -131,6 +158,9 @@ public final class PublishCycle {
         }
 
         if (publication.mode() == PublicationPolicy.Mode.HELD) {
+            if (!onTheChain(sha)) {
+                return false;
+            }
             outcome.checkpoint(sha, changes.paths());
             return true;
         }
@@ -185,6 +215,20 @@ public final class PublishCycle {
         outcome.failed("REMOTE_HEAD_MOVED", "Expected " + branch + " at " + expected + " but the remote has "
                 + remote.orElse("no such branch"));
         return true;
+    }
+
+    /**
+     * A held plan step started from the base whose agent wrote no bundle at all committed nothing (M4 slice 3, §6.7): it is
+     * reported as an empty checkpoint at the base, but only when the run worker allowed it (decision 14). A run started
+     * from a checkpoint always bundles its start (amendment 3), so one without a bundle holds nothing and keeps today's
+     * missing checkpoint: reported empty, it would replace the run that holds the chain. Called after DONE and the last
+     * drain, so no bundle can follow.
+     */
+    void reportEmpty() {
+        if (publication.mode() == PublicationPolicy.Mode.HELD && publication.emptyAllowed() && publication.startHead() == null
+                && !bundleSeen) {
+            outcome.emptyCheckpoint(baseCommit);
+        }
     }
 
     /** No agent will produce another bundle during permitted publication. Missing work is visible. */

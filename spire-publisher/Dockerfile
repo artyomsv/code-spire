@@ -1,5 +1,6 @@
 # The publisher image: one JRE, the publisher distribution, and the two entrypoints a run unit
-# names (RunUnitBuilder): `spire-clone` for the init container, `spire-publish` for the sidecar.
+# names (RunUnitBuilder): `spire-clone` for the init container, `spire-publish` for the sidecar, and the
+# sidecar variants for held, permitted and read-only (`spire-publish-none`) publication.
 #
 #   ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
 #
@@ -30,6 +31,7 @@ COPY --chmod=755 docker/spire-clone.sh /usr/local/bin/spire-clone
 COPY --chmod=755 docker/spire-publish.sh /usr/local/bin/spire-publish
 COPY --chmod=755 docker/spire-publish-held.sh /usr/local/bin/spire-publish-held
 COPY --chmod=755 docker/spire-publish-permitted.sh /usr/local/bin/spire-publish-permitted
+COPY --chmod=755 docker/spire-publish-none.sh /usr/local/bin/spire-publish-none
 COPY --chmod=755 docker/spire-verify-prepare.sh /usr/local/bin/spire-verify-prepare
 
 USER 1001:1001

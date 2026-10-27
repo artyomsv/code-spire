@@ -1,5 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.orchestrator.llm.ChargeKind;
+
 /**
  * What a factory run was dispatched to do — {@code factory_run.kind}.
  *
@@ -12,9 +14,8 @@ package dev.codespire.orchestrator.factory;
  * <p><b>Not the same enum as {@link dev.codespire.orchestrator.llm.ChargeKind}, and the difference is
  * the point.</b> That one names a KIND OF CALL against the ledger and includes {@code REVIEW},
  * {@code RECONCILE} and {@code FOLLOWUP}, which no factory run can be; this one names a kind of RUN
- * and includes {@code SPEC} and {@code PLAN}, which are not calls the ledger charges yet. They
- * overlap on two names, and merging them would force each to carry members the other's column
- * refuses.
+ * and nothing else. Every run kind is also a charge kind ({@link #chargeKind}), but not the reverse,
+ * and merging them would force this one to carry members V54's column refuses.
  *
  * <p>The values match V54's CHECK exactly. Nothing enforces that they stay matched — that is stated
  * in the migration too, honestly, rather than claimed as a guarantee no mechanism provides.
@@ -27,9 +28,19 @@ public enum RunKind {
     /** A run dispatched to fix a review finding (FR-F27). Names the review and the finding it fixes. */
     FIX,
 
-    /** M4: a vague ticket refined into outcome, context and acceptance criteria. Not built. */
+    /** M4: a read-only run that refines a ticket into a specification. */
     SPEC,
 
-    /** M4: decomposition into ordered vertical slices. Not built. */
-    PLAN
+    /** M4: a read-only run that decomposes the approved specification into ordered steps. */
+    PLAN;
+
+    /** The ledger's name for this run's spend, so a run's charge row carries the run's own kind. */
+    public ChargeKind chargeKind() {
+        return switch (this) {
+            case BUILD -> ChargeKind.BUILD;
+            case FIX -> ChargeKind.FIX;
+            case SPEC -> ChargeKind.SPEC;
+            case PLAN -> ChargeKind.PLAN;
+        };
+    }
 }

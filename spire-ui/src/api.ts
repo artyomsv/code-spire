@@ -32,6 +32,8 @@ export interface WorkItemPage {
 export interface WorkItemDetail extends WorkItemSummary {
   control?: { operator: string | null; note: string | null; observedHead: string | null } | null;
   preparation?: Preparation | null;
+  /** The factory writes this item's specification and plan (M4 slice 3): readmit may regenerate them. */
+  generated?: boolean;
   builds?: WorkBuild[];
   progress?: { execution?: WorkExecution | null; runs?: number; wallSeconds?: number; costMillicents?: number; calls?: number; usageUnknown?: boolean };
   effectiveLimits?: import('./components/work-items/workPolicyApi').Limits;
@@ -104,9 +106,10 @@ export interface LandView {
 /** What a recheck reached. `detail` names the rule when a moved or invalid ticket stopped it. */
 export interface WorkItemOutcome { reason: string; detail?: string }
 
-export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string): Promise<WorkItemOutcome> {
+/** `regenerate` with `readmit` writes a generated item's specification and plan again instead of reusing them (M4 slice 3, A7). */
+export async function resumeWorkItem(item: WorkItemSummary, readmit: boolean, note?: string, regenerate?: boolean): Promise<WorkItemOutcome> {
   const response = await apiFetch(`/api/work-items/${encodeURIComponent(item.id)}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedRevision: item.revision, readmit, note }) });
+    body: JSON.stringify({ expectedRevision: item.revision, readmit, note, regenerate }) });
   if (!response.ok) return throwResponse(response, 'The work item could not continue; refresh its current policy');
   return response.json();
 }
@@ -1165,7 +1168,9 @@ export interface RunListEntry {
   prUrl: string | null;
   prError: string | null;
   /** Absent on standalone runs and older servers; these are observed held-build facts. */
-  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null } | null;
+  /** stepIndex (0-based) and stepTotal name the plan step a run built (M4 slice 3); null or absent for any other build. */
+  publication?: { workItemId: string; checkpointHead: string | null; readyAt: string | null; activeWallSeconds: number | null;
+    stepIndex?: number | null; stepTotal?: number | null } | null;
 }
 
 export interface RunFilter {

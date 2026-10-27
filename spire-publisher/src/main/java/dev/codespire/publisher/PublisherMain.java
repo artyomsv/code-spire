@@ -55,9 +55,17 @@ public final class PublisherMain {
             System.exit(2);
             return;
         }
-        OutcomeWriter outcome = new OutcomeWriter(System.out, config.credential().username(), config.credential().secret());
-        int exitCode = 0;
+        int exitCode = publish(config, publication,
+                new OutcomeWriter(System.out, config.credential().username(), config.credential().secret()));
+        if (exitCode != 0) {
+            System.exit(exitCode);
+        }
+    }
 
+    /** One publication from start to finish, as an exit code; separated from {@link #run} so a test can drive it. */
+    static int publish(PublisherConfig config, PublicationPolicy publication, OutcomeWriter outcome) {
+        PublicationPolicy.Mode mode = publication.mode();
+        int exitCode = 0;
         try (PublishRepo repo = PublishRepo.cloneBranch(config.remoteUri(), config.baseBranch(),
                 Files.createTempDirectory("spire-publish-clone-"), config.credential())) {
 
@@ -77,6 +85,12 @@ public final class PublisherMain {
                 // The agent is gone; take whatever it wrote in its last moments before exiting.
                 carryOn = drain(watcher, cycle);
             }
+            if (carryOn && mode == PublicationPolicy.Mode.HELD) {
+                cycle.reportEmpty();
+                // A plan step's decisions travel beside its checkpoint (M4 slice 3); a missing or refused summary
+                // is reported, never a failure.
+                HandoffReport.stepSummary(config.handoffDir(), outcome);
+            }
             if (!carryOn || !cycle.finish()) {
                 exitCode = 1;
             }
@@ -92,9 +106,7 @@ public final class PublisherMain {
             // publisher held its pack windows open on the way out.
             PublishRepo.releaseAllPackWindows();
         }
-        if (exitCode != 0) {
-            System.exit(exitCode);
-        }
+        return exitCode;
     }
 
     private static boolean drain(HandoffWatcher watcher, PublishCycle cycle) throws IOException {

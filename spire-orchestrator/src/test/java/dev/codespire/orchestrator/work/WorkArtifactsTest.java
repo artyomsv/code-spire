@@ -62,4 +62,24 @@ class WorkArtifactsTest {
     @Test void aDifferentTrackerTypeIsNotTheSelectedSource(){wrongScope(new WorkIssueRef(WorkSourceType.GITLAB,source.origin(),source.projectId(),"TEST-spec"));}
     @Test void aDifferentOriginIsNotTheSelectedSource(){wrongScope(new WorkIssueRef(source.type(),"https://other.example.test",source.projectId(),"TEST-spec"));}
     @Test void aDifferentProjectIsNotTheSelectedSource(){wrongScope(new WorkIssueRef(source.type(),source.origin(),"TEST-other-project","TEST-spec"));}
+    /** A generated item's plan (M4 slice 3, A14): stored bytes, schema version 2, N steps under binding 6. */
+    @Test void bindingSixAcceptsNSteps(){
+        String specText="TEST-specification";
+        StringBuilder steps=new StringBuilder("[");
+        for(int n=1;n<=3;n++)steps.append(n>1?",":"").append("{\"id\":\"TEST-s").append(n).append("\",\"title\":\"TEST-step-").append(n)
+                .append("\",\"instruction\":\"TEST-instruction-").append(n).append("\",\"doneWhen\":\"TEST-done-").append(n).append("\"}");
+        String planText=planBody("2",WorkPreparation.digest(specText),steps.append("]").toString());
+        UUID specId=UUID.randomUUID(),planId=UUID.randomUUID();
+        artifacts.stored=new WorkItemArtifacts(){@Override public Optional<String> read(String workItemId,UUID id){
+            assertEquals("TEST-item",workItemId);return Optional.of(id.equals(specId)?specText:planText);}};
+        var prepared=new WorkPreparation(new WorkPreparation.Artifact(spec,WorkPreparation.digest(specText),WorkPreparation.Origin.STORED,specId),
+                new WorkPreparation.Artifact(plan,WorkPreparation.digest(planText),WorkPreparation.Origin.STORED,planId),"main","a".repeat(40),
+                "TEST-harness","TEST-model","system:draft@1",WorkPreparation.STEPS_BINDING,null,null,List.of("TEST-check"),60);
+        var evidence=artifacts.observe(source,"TEST-item",prepared);
+        assertNull(evidence.failure(),evidence.detail());
+        assertEquals(List.of("TEST-s1","TEST-s2","TEST-s3"),evidence.steps().stream().map(WorkArtifacts.Step::id).toList());
+        assertEquals("TEST-instruction-1",evidence.instruction(),"the one-step build reads the first step until steps are built one by one");
+        assertEquals(0,reads,"stored bytes are not read from the tracker");
+    }
+    @Test void aVersionOnePlanStillCarriesItsOneStep(){var evidence=artifacts.observe(source,valid());assertEquals(1,evidence.steps().size());assertEquals("TEST-step",evidence.steps().getFirst().id());}
 }

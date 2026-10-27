@@ -82,6 +82,13 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
      */
     public static final int VERIFY_BINDING = 5;
 
+    /**
+     * A plan of several steps (M4 slice 3, A14). A validation-rule version, not a new hash: {@link #binding()} hashes
+     * exactly what version 5 hashes, because the plan digest already covers every step. Under it a plan may carry
+     * {@code schemaVersion: 2} and more than one step; under version 5 and below it keeps exactly one.
+     */
+    public static final int STEPS_BINDING = 6;
+
     /** The bounds the run worker applies; refused here so a preparation never carries what a verify refuses. */
     public static final int MAX_VERIFY_COMMANDS = VerifyCommands.MAX_COMMANDS, MAX_VERIFY_COMMAND_CHARS = VerifyCommands.MAX_COMMAND_CHARS;
 
@@ -119,7 +126,7 @@ public record WorkPreparation(Artifact specification, Artifact plan, String base
         baseCommit = baseCommit.toLowerCase(java.util.Locale.ROOT);
         // Absent in older stored JSON, where every artifact was a tracker ticket.
         bindingVersion = bindingVersion == 0 ? TRACKER_BINDING : bindingVersion;
-        if (bindingVersion < TRACKER_BINDING || bindingVersion > VERIFY_BINDING)
+        if (bindingVersion < TRACKER_BINDING || bindingVersion > STEPS_BINDING)
             throw new IllegalArgumentException("Unknown preparation binding version " + bindingVersion);
         effort = ThinkingLevel.normalise(effort);
         // A level under a version that does not hash it would be carried to the build without being part

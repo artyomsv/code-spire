@@ -138,6 +138,18 @@ public class ProviderClients {
         };
     }
 
+    /**
+     * Whether a tracker renders a comment in wiki markup rather than Markdown (M4 slice 3, A13): Jira posts the v2
+     * comment body as wiki markup, GitHub and GitLab render Markdown. The per-type answer lives here, the composition
+     * root, so the code that quotes a specification onto a ticket never names a tracker.
+     */
+    public static boolean commentsInWikiMarkup(dev.codespire.worksource.WorkSourceType type) {
+        return switch (type) {
+            case GITHUB, GITLAB -> false;
+            case JIRA -> true;
+        };
+    }
+
     public boolean compatibleWorkAccount(dev.codespire.worksource.WorkSourceType type, ScmProvider account) {
         return supportsWorkAccount(type, account.type(), account.authKind());
     }

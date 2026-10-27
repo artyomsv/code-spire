@@ -1357,6 +1357,14 @@
   .factory-outcome b { font-weight: 620; }
   .factory-runs { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .factory-runs li, .factory-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  /* A plan's steps in the Build step (M4 slice 3): one row each, with the agent's summary expandable beneath. */
+  .step-rows { margin-top: 10px; }
+  .step-row { align-items: baseline; }
+  .step-row.empty, .step-row.waiting { color: var(--text-3); }
+  .step-state { font-size: 12px; color: var(--text-3); }
+  .step-summary { flex-basis: 100%; margin: 4px 0 0 16px; font-size: 12.5px; line-height: 1.55; }
+  .step-summary dt { color: var(--text-3); }
+  .step-summary dd { margin: 0 0 2px 12px; white-space: pre-wrap; }
   .factory-row .grow, .factory-top .grow { flex: 1; }
   .factory-arrow { color: var(--text-3); }
   .factory-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }

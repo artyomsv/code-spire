@@ -572,6 +572,19 @@ it('offers no re-admission while a land fix is in progress', async () => {
     land: { state: 'fixing', reason: 'land_checks_failed', message: null, checks: null, method: 'merge', ticketRule: 'comment', branchDeleted: null, note: null,
       attempt: 1, attemptsAllowed: 3, fixInProgress: true, handedOver: false, stoppable: false } })).toBe(false);
 });
+// M4 slice 3 (§6.11, A7): readmit reuses a generated item's approved specification and plan; Regenerate writes them again.
+it('the readmit dialog offers Regenerate only for generated items', async () => {
+  const finished: Detail = { ...detail(), phase: 'complete', workflowStatus: 'completed', reason: 'all_phases_completed' };
+  expect(await readmitOffered(finished)).toBe(true);
+  expect(screen.queryByRole('checkbox', { name: 'Regenerate specification and plan' })).toBeNull();
+  cleanup();
+  vi.spyOn(api, 'resumeWorkItem').mockResolvedValue({ reason: 'specification_to_write' });
+  const generated: Detail = { ...finished, generated: true };
+  expect(await readmitOffered(generated)).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Regenerate specification and plan' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Re-admit under current policy' }));
+  await waitFor(() => expect(api.resumeWorkItem).toHaveBeenCalledWith(generated, true, undefined, true));
+});
 // M4 land slice 8 (spec §7.6, A3): a handed item goes on with Retry land or Stop, both with a note; Recheck would reopen land without one.
 /** The land view the server sends; whether the item was handed over, and whether Stop land ends it, are the server's to say. */
 function landView(state: string, handedOver: boolean, stoppable: boolean): NonNullable<Detail['land']> {
@@ -818,6 +831,21 @@ it('adds no drift notice while the ticket still composes to what was prepared', 
   expect(screen.queryByText(/The ticket changed after it was prepared/)).not.toBeInTheDocument();
 });
 
+// A generated item's specification is the factory's text, not a composition of the ticket, so the composed digest
+// never matches it (review of PR 287, M-3). No source-ticket digest is kept to compare, so no drift is claimed, and
+// a ticket that could not be composed says nothing about a specification the factory wrote.
+it('adds no drift notice to a generated item', async () => {
+  const snapshot = { ...prepared(), specification: { ...prepared().specification, origin: 'STORED' as const, storedId: 'TEST-stored' } };
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'waiting_approval', preparation: snapshot, generated: true });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-title-only', trackerStatus: 'open',
+    composedSha256: null, composedRefusal: 'ticket_body_empty' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByText(/The ticket changed after it was prepared/)).not.toBeInTheDocument();
+});
+
 // An assisted item sits at its plan decision. That is exactly when an operator reads the ticket again
 // and edits it, so the button has to be reachable there rather than only before anything is prepared.
 // A ticket somebody emptied has drifted further from what was prepared than an edited one. It used to
@@ -856,6 +884,17 @@ it('still offers to compose again when the build belonged to an earlier generati
   showDetail();
 
   expect(await screen.findByRole('button', { name: 'Prepare again from the ticket' })).toBeInTheDocument();
+});
+
+// The factory writes a generated item's specification and plan, and the server refuses to copy its ticket instead.
+it('does not offer to compose a generated item from its ticket', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'awaiting_input', generated: true, builds: [] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  showDetail();
+
+  await screen.findByText('TEST-title');await act(async () => {});
+  expect(screen.queryByRole('button', { name: 'Prepare again from the ticket' })).not.toBeInTheDocument();
 });
 
 it('offers composing again while a plan decision is open', async () => {

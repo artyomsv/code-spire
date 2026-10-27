@@ -21,12 +21,14 @@ import java.util.concurrent.*;
  * <p>Two classes of row (M4 land, spec §7.7, A1). A {@code phase} row is bound to the revision and phase that
  * enqueued it and to that phase's current policy mode. A {@code post_land} row is the ticket after land: enqueued
  * with WORK_ITEM_LANDED and sent whatever the item's phase or status afterwards, checked against the repository's
- * ticket rule instead of a phase mode.
+ * ticket rule instead of a phase mode. A {@code draft} row (M4 slice 3) is a written specification or plan on the
+ * ticket: bound to the generation and the draft attempt, sent like a post-land comment whatever the item does next, and
+ * refused by a takeover or a new generation.
  */
 @ApplicationScoped
 public class WorkSourceEffects {
     private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(WorkSourceEffects.class);
-    static final String PHASE="phase", POST_LAND="post_land";
+    static final String PHASE="phase", POST_LAND="post_land", DRAFT="draft";
     @Inject DataSource dataSource;
     @Inject WorkItemStore store;
     @Inject WorkSourceRegistry sources;
@@ -92,6 +94,27 @@ public class WorkSourceEffects {
         }
     }
 
+    /** A written artifact's comment: the item, the draft attempt that wrote it, and the text to post. */
+    record DraftComment(String itemId, UUID attempt, String text) {}
+
+    /** On the caller's connection, in the transaction that records the artifact; a redelivery finds its {@link #draftId row}. */
+    void enqueueDraft(Connection c, DraftComment row) throws SQLException {
+        UUID id = draftId(row.attempt());
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO work_tracker_outbox(effect_id,work_item_id,generation,item_revision,phase,payload,effect_class)
+                SELECT ?,id,generation,revision,phase,?,'draft' FROM work_item WHERE id=?
+                ON CONFLICT(effect_id) DO NOTHING
+                """)) {
+            ps.setObject(1,id); ps.setBytes(2,encode(id,new Intent(Kind.COMMENT,row.text()))); ps.setString(3,row.itemId());
+            ps.executeUpdate();
+        }
+    }
+
+    /** One comment per draft attempt. */
+    static UUID draftId(UUID attempt) {
+        return UUID.nameUUIDFromBytes(("draft-comment:"+attempt).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     /** One post-land row per item, generation and kind: a landing is recorded once per generation (spec §7.9). */
     static UUID postLandId(String itemId, long generation, Kind kind) {
         return UUID.nameUUIDFromBytes(("post-land:"+itemId+":"+generation+":"+kind).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -143,7 +166,8 @@ public class WorkSourceEffects {
         WorkSourceRegistry.Source source=sources.get(item.sourceId()).orElseThrow();
         if(!source.enabled()) { mark(id,effect.state(),effect.state().equals("pending")?"refused":"uncertain",null,"source_unavailable");return false; }
         if(effect.state().equals("uncertain")) return recover(effect,item,source);
-        if(POST_LAND.equals(effect.effectClass())) return dispatchPostLand(effect,item,source);
+        // A draft comment is sent as a post-land comment is: only the generation must still match.
+        if(POST_LAND.equals(effect.effectClass()) || DRAFT.equals(effect.effectClass())) return dispatchPostLand(effect,item,source);
         Optional<WorkPolicy.Phase> phase=phase(item.phase());
         // A phase row on an item past its phases (complete) has no mode to check; it is refused, never thrown on every pass.
         if(phase.isEmpty() || phase(effect.phase()).isEmpty()) { mark(id,"pending","refused",null,"unknown_phase");return false; }

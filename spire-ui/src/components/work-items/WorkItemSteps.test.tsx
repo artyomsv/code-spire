@@ -1,9 +1,12 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { Gate } from './approvalsApi';
 import WorkItemSteps from './WorkItemSteps';
-import type { WorkExecution } from './workPreparationApi';
+import * as draftApi from './workDraftApi';
+import type { WrittenPlan } from './workDraftApi';
+import * as preparationApi from './workPreparationApi';
+import type { StepRow, WorkExecution } from './workPreparationApi';
 
 afterEach(cleanup);
 const ASSISTED = { INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto', VERIFY: 'auto', DELIVER: 'draft_pr', REVIEW: 'auto', LAND: 'approve' };
@@ -193,4 +196,59 @@ it('shows the note of a land retry on the Land step', () => {
     events: [{ sequence: 30, type: 'LAND_RETRY_REQUESTED', reason: 'approval_required', occurredAt: '2026-10-23T12:00:00Z', phase: 'land',
       workflowStatus: 'waiting_approval', operator: 'TEST-operator-subject', note: 'TEST-the code owners approved', generation: 1 }] }));
   expect(step('Land').getByText(/^Land retry requested by TEST-operator-subject/)).toHaveTextContent('TEST-the code owners approved');
+});
+
+// A plan the factory wrote builds step by step (M4 slice 3, §6.10): the Build step shows one row per plan step.
+it('the build step lists plan steps', async () => {
+  const rows: StepRow[] = [
+    { index: 0, title: 'TEST-step-1', state: 'passed', head: '1'.repeat(40), summaryState: 'recorded', summary: { decisions: ['TEST-decision'], alternativesRejected: [], deviations: [] } },
+    { index: 1, title: 'TEST-step-2', state: 'building', head: null, summaryState: null, summary: null },
+  ];
+  const read = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows });
+  const stored = (key: string) => ({ sha256: 'c'.repeat(64), origin: 'STORED' as const, storedId: 'TEST-stored-' + key,
+    location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
+  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null, preparation: { specification: stored('81'), plan: stored('81'),
+    baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'system:draft@1', bindingVersion: 6 } }));
+  expect(await step('Build').findByText(/TEST-step-1/)).toBeInTheDocument();
+  expect(step('Build').getByText(/TEST-step-2/)).toBeInTheDocument();
+  expect(read).toHaveBeenCalledWith('TEST-item');
+});
+it('asks for no plan steps for a one-step preparation', () => {
+  const read = vi.spyOn(preparationApi, 'workSteps');
+  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null }));
+  expect(read).not.toHaveBeenCalled();
+});
+
+// A draft is read again whenever its generation writes another one (review of PR 287, M-2): a revised specification
+// replaces the text first shown, and a plan written after the specification appears without a reload.
+const written = (sequence: number): Item['events'][number] =>
+  ({ sequence, type: 'DRAFT_ARTIFACT_WRITTEN', reason: 'specification_written', occurredAt: '2026-10-26T00:00:00Z', generation: 1 });
+const specification = (text: string) => ({ text, sha256: 'a'.repeat(64), comment: null });
+it('shows a revised specification once it is written', async () => {
+  let text = '## Outcome\nTEST-first outcome';
+  vi.spyOn(draftApi, 'workDraft').mockImplementation(async () => ({ specification: specification(text), plan: null,
+    revisions: { specification: 1, plan: 0 }, ticketLink: 'https://TEST.example/81' }));
+  const spec = item({ phase: 'spec', workflowStatus: 'waiting_approval', reason: 'specification_written', gate: { ...gate, phase: 'spec' } });
+  const { rerender } = show({ ...spec, events: [written(3)] });
+  await waitFor(() => expect(step('Specification').getByLabelText('Specification text')).toHaveTextContent('TEST-first outcome'));
+
+  text = '## Outcome\nTEST-revised outcome';
+  rerender(<MemoryRouter><WorkItemSteps item={{ ...spec, events: [written(3), written(7)] }} current={null} /></MemoryRouter>);
+
+  await waitFor(() => expect(step('Specification').getByLabelText('Specification text')).toHaveTextContent('TEST-revised outcome'));
+});
+it('shows a plan written after the specification', async () => {
+  let plan: WrittenPlan | null = null;
+  vi.spyOn(draftApi, 'workDraft').mockImplementation(async () => ({ specification: specification('## Outcome\nTEST-outcome'), plan,
+    revisions: { specification: 0, plan: 0 }, ticketLink: 'https://TEST.example/81' }));
+  const running = item({ phase: 'plan', workflowStatus: 'active', reason: 'phase_started', gate: null });
+  const { rerender } = show({ ...running, events: [written(3)] });
+  await waitFor(() => expect(step('Specification').getByLabelText('Specification text')).toHaveTextContent('TEST-outcome'));
+  expect(step('Plan').queryByRole('list', { name: 'Plan steps' })).toBeNull();
+
+  plan = { text: '{"schemaVersion":2}', sha256: 'c'.repeat(64), comment: null,
+    steps: [{ id: 'TEST-s1', title: 'TEST-written step', instruction: 'TEST-instruction', doneWhen: 'TEST-done' }] };
+  rerender(<MemoryRouter><WorkItemSteps item={{ ...running, workflowStatus: 'waiting_approval', events: [written(3), written(8)] }} current={null} /></MemoryRouter>);
+
+  expect(await step('Plan').findByRole('list', { name: 'Plan steps' })).toHaveTextContent('TEST-written step');
 });

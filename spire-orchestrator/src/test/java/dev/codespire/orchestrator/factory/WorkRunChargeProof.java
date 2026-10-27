@@ -44,6 +44,8 @@ public final class WorkRunChargeProof {
                 @Override public Optional<UUID> harnessCredentialOf(String id){return Optional.empty();}
                 // Overridden for the trap RunChargesTest names: the real one reads a row this proof never wrote.
                 @Override public Optional<String> paidByOf(String id){return Optional.of("API_KEY");}
+                // Overridden for the same trap: RunCharges reads the run's kind from the row this proof never wrote.
+                @Override public Optional<RunKind> kindOf(String id){return Optional.of(RunKind.BUILD);}
                 @Override protected void push(String id){ /* TEST: no dashboard websocket */ }
             };
             charges.pricer=new LlmModelPricer(){@Override public List<ChargeLine> priceCall(String model,ModelUsage usage){

@@ -212,6 +212,18 @@ class WorkLandFixIT extends WorkLandFixture {
         assertEquals("maxRunsPerItem",latestEffect(id,"note"));
         assertEquals(1,heldCommands.size(),"no fix run");
     }
+    /** A land fix builds no plan step (A11): an item whose steps reached the step limit still gets its fix, never a hand-off. */
+    @Test void anItemAtItsStepLimitStillGetsALandFix() throws Exception {
+        String id=approved();
+        WorkItemEvent item=store.load(id);WorkProgress p=item.progress();
+        append(id,WorkItemLifecycle.state(item,item.workflowStatus(),item.reason(),"TEST_STEPS_USED",item.gate(),p.withSteps(item.policy().limits().maxStepsPerPlan())));
+        openAt(HEAD,"unstable","failure");
+        land.drain();
+        assertEquals(1,fixes(id));
+        WorkItemEvent fixing=store.load(id);
+        assertEquals("build",fixing.phase());assertEquals("active",fixing.workflowStatus(),fixing.reason());
+        dispatchedFix();
+    }
     @Test void aBlockedReviewOfAFixIsHanded() throws Exception {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         RunCommand.ExecuteWorkRun fix=dispatchedFix();pushed(id,fix,built(id,fix,FIXED));
@@ -473,6 +485,29 @@ class WorkLandFixIT extends WorkLandFixture {
         handedAtLand(id,"land_fix_run_failed");
         assertEquals(calls+1,store.load(id).progress().calls(),"the failed run's usage is accounted");
         assertEquals(409,transitions.resume(id,store.history(id).size(),true).status(),"readmit would build beside the open pull request");
+    }
+    /** Only a plan step may finish empty (M4 slice 3, decision 14): an idle land fix is handed over, never looped. */
+    @Test void anIdleLandFixIsStillHandedOver() throws Exception {
+        String id=approved();openAt(HEAD,"unstable","failure");land.drain();
+        RunCommand.ExecuteWorkRun fix=dispatchedFix();
+        assertFalse(fix.emptyAllowed(),"a land fix's publisher keeps today's missing-checkpoint failure");
+        long verifies=count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=?",id);
+        saga.on(new RunResult.RunWorkReady(fix.runId(),fix.work(),HEAD,List.of(),Map.of("INPUT",1L),9).withEmpty(true));
+        handedAtLand(id,"land_fix_run_failed");
+        assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND reason='phase_evidence_mismatch'",fix.runId()));
+        assertEquals(verifies,count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=?",id),"nothing is verified or delivered");
+        assertEquals(1,fixes(id),"no second fix is counted");
+    }
+    /** A composed item has no plan steps (decision 14): an empty ready never verifies and delivers its unchanged base. */
+    @Test void aComposedIdleBuildStillFails() throws Exception {
+        String id=admit("autonomous-land",62);register(id);dispatcher.drain();
+        RunCommand.ExecuteWorkRun build=heldCommands.getLast();
+        assertFalse(build.emptyAllowed());
+        saga.on(new RunResult.RunWorkReady(build.runId(),build.work(),build.execution().baseCommit(),List.of(),Map.of("INPUT",1L),9).withEmpty(true));
+        assertEquals("build",store.load(id).phase());assertEquals("failed",store.load(id).workflowStatus());assertEquals("phase_failed",store.load(id).reason());
+        assertEquals(1,count("SELECT count(*) FROM work_run_effect WHERE run_id=? AND reason='phase_evidence_mismatch'",build.runId()));
+        assertEquals(0,count("SELECT count(*) FROM work_verify_effect WHERE work_item_id=?",id));
+        assertEquals(0,count("SELECT count(*) FROM work_delivery_effect WHERE work_item_id=?",id));
     }
     @Test void aFailedBuildOutsideAFixStillFails() throws Exception {
         String id=admit("autonomous-land",61);register(id);dispatcher.drain();
