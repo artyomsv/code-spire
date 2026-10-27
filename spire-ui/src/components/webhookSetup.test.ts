@@ -59,3 +59,42 @@ describe('webhookTargetHelp', () => {
     expect(webhookTargetHelp('', 'org').placeholder).toBe('owner');
   });
 });
+
+describe('webhookSetupGuide per webhook kind', () => {
+  const events = (providerType: string, kind: 'REVIEWER' | 'FACTORY' | 'ISSUE') =>
+    (webhookSetupGuide(providerType, kind)?.steps ?? []).flatMap((s) => s.events ?? []);
+
+  it('defaults to the reviewer events', () => {
+    expect(webhookSetupGuide('github')).toEqual(webhookSetupGuide('github', 'REVIEWER'));
+  });
+
+  it('lists what the GitHub factory hook must send: pushes, pull requests, reviews and comments', () => {
+    expect(events('github', 'FACTORY')).toEqual(
+      ['Pushes', 'Pull requests', 'Pull request reviews', 'Pull request review comments', 'Issue comments'],
+    );
+  });
+
+  it('lists only issues and issue comments for the GitHub issue hook', () => {
+    expect(events('github', 'ISSUE')).toEqual(['Issues', 'Issue comments']);
+  });
+
+  it('lists the GitLab triggers per kind', () => {
+    expect(events('gitlab', 'FACTORY')).toEqual(['Push events', 'Merge request events', 'Comments']);
+    expect(events('gitlab', 'ISSUE')).toEqual(['Issues events', 'Comments']);
+  });
+
+  it('lists the Bitbucket factory triggers and has no issue hook', () => {
+    expect(events('bitbucket-cloud', 'FACTORY')).toEqual(
+      ['Push', 'Updated', 'Merged', 'Declined', 'Comment created', 'Approved', 'Unapproved'],
+    );
+    expect(webhookSetupGuide('bitbucket-cloud', 'ISSUE')).toBeNull();
+  });
+
+  it('keeps the portal steps and the ping check for every kind', () => {
+    for (const kind of ['REVIEWER', 'FACTORY', 'ISSUE'] as const) {
+      const titles = webhookSetupGuide('github', kind)!.steps.map((s) => s.title);
+      expect(titles[0]).toMatch(/Settings → Webhooks → Add webhook/);
+      expect(titles.at(-1)).toBe('Add webhook');
+    }
+  });
+});
