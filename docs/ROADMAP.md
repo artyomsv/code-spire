@@ -31,11 +31,12 @@ verifies, delivers a pull request, gets a GitHub review with a verdict, and on a
 GitHub an approved land merges the pull request at the approved head, deletes the branch and tells the
 ticket; a refusal caused by code loops through build, verify, delivery and review to a new land gate,
 anything else is handed to the operator, and a merge by hand completes the item. **M4 slice 3,
-specification, plan and steps, is built** on `feat/m4-spec-plan` (PR #287, ADR-049), live acceptance
-pending: a `generated` repository has the factory write the specification and the plan with short
-read-only harness runs, and the approved plan builds step by step on one chain of held checkpoints,
-delivered as one pull request. It is proven against fakes only (`UNVERIFIED.md`); its live proof on
-`spire-test` is M4's exit criterion.
+specification, plan and steps, is accepted** (2026-10-27, PR #287, ADR-049,
+[record](factory/M4-SPEC-PLAN-ACCEPTANCE.md)): a `generated` repository has the factory write the
+specification and the plan with short read-only harness runs, post them to the ticket, and build the approved
+plan step by step on one chain of held checkpoints, delivered as one pull request. Its live proof on `spire-test`
+met M4's exit criterion: #75 went from no acceptance criteria to three verified steps and one pull request, with
+step 1's recorded decision in step 3's prompt. **M4 is delivered**; M5 is next.
 **M0–M2 is a shippable product on its own** — *the reviewer now fixes what it finds* — needing no
 tracker, no plan engine and no gates.
 
