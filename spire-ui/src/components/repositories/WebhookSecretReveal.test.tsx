@@ -28,11 +28,13 @@ describe('WebhookSecretReveal', () => {
     expect(within(dialog).getByText('/webhooks/gitlab/TEST-key-FACTORY')).toBeInTheDocument();
   });
 
-  it('after a rotation tells the operator to replace the secret on the existing webhook, not to add one', () => {
-    render(<WebhookSecretReveal revealed={revealed('REVIEWER')} rotated onDone={vi.fn()} />);
+  it('after a rotation tells the operator to replace the secret on an existing webhook, and keeps the steps for one not created yet', () => {
+    render(<WebhookSecretReveal revealed={revealed('ISSUE')} rotated onDone={vi.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'Webhook secret' });
-    expect(within(dialog).getByText(/open the existing webhook on GitHub/i)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/Add webhook/)).toBeNull();
+    expect(within(dialog).getByText(/webhook already exists on GitHub/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/not created it yet/i)).toBeInTheDocument();
+    expect(within(dialog).getByText('Add webhook')).toBeInTheDocument();
+    expect(within(dialog).getByText('Issues')).toBeInTheDocument();
     expect(within(dialog).getByText('TEST-secret')).toBeInTheDocument();
   });
 

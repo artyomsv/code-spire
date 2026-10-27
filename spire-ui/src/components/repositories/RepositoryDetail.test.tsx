@@ -106,7 +106,8 @@ describe('RepositoryDetail secret rotation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rotate FACTORY secret' }));
     const dialog = await screen.findByRole('dialog', { name: 'Webhook secret' });
     expect(within(dialog).getByText('TEST-rotated-secret')).toBeInTheDocument();
-    expect(within(dialog).getByText(/open the existing webhook on GitLab/i)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/Add new webhook/)).toBeNull();
+    expect(within(dialog).getByText(/webhook already exists on GitLab/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Add new webhook/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Push events')).toBeInTheDocument();
   });
 });

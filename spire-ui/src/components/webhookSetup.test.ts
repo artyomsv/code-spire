@@ -80,7 +80,7 @@ describe('webhookSetupGuide per webhook kind', () => {
 
   it('lists the GitLab triggers per kind', () => {
     expect(events('gitlab', 'FACTORY')).toEqual(['Push events', 'Merge request events', 'Comments']);
-    expect(events('gitlab', 'ISSUE')).toEqual(['Issues events', 'Comments']);
+    expect(events('gitlab', 'ISSUE')).toEqual(['Work item events (Issues events on older GitLab)', 'Comments']);
   });
 
   it('lists the Bitbucket factory triggers per section and has no issue hook', () => {
@@ -96,7 +96,8 @@ describe('webhookSetupGuide per webhook kind', () => {
       const steps = webhookSetupGuide(providerType, kind)!.steps;
       return steps[steps.length - 1].detail ?? '';
     };
-    expect(last('gitlab', 'ISSUE')).toMatch(/Test → Issues events/);
+    expect(last('gitlab', 'ISSUE')).toMatch(/Test → Work item events/);
+    expect(last('gitlab', 'ISSUE')).toMatch(/Issues events/);
     expect(last('gitlab', 'REVIEWER')).toMatch(/Test → Merge request events/);
     expect(last('bitbucket-cloud', 'FACTORY')).not.toMatch(/review/i);
     expect(last('bitbucket-cloud', 'REVIEWER')).toMatch(/first review/);
@@ -104,9 +105,11 @@ describe('webhookSetupGuide per webhook kind', () => {
 
   it('keeps the portal steps and the ping check for every kind', () => {
     for (const kind of ['REVIEWER', 'FACTORY', 'ISSUE'] as const) {
-      const titles = webhookSetupGuide('github', kind)!.steps.map((s) => s.title);
-      expect(titles[0]).toMatch(/Settings → Webhooks → Add webhook/);
-      expect(titles[titles.length - 1]).toBe('Add webhook');
+      const steps = webhookSetupGuide('github', kind)!.steps;
+      expect(steps[0].title).toMatch(/Settings → Webhooks → Add webhook/);
+      const last = steps[steps.length - 1];
+      expect(last.title).toBe('Add webhook');
+      expect(last.detail).toMatch(/ping.*204/);
     }
   });
 });
