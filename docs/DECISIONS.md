@@ -6,8 +6,10 @@ Architecture decision records for Code Spire. Newest first.
 
 ## ADR-049 — Specification and plan are read-only harness runs; steps build on one chain
 
-**Status:** implemented on `feat/m4-spec-plan` (PR #287), 2026-10-26. Live proof pending
-(`docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md` when it lands). Supersedes the mechanism sentence of FR-F18
+**Status:** implemented on `feat/m4-spec-plan` (PR #287), 2026-10-26. Accepted on its live proof on `spire-test`,
+2026-10-26 to 2026-10-27: four one-line tickets became specifications and plans, built step by step on one chain
+with each step verified, and #75 met M4's exit criterion ([specification, plan and steps acceptance record](factory/M4-SPEC-PLAN-ACCEPTANCE.md)).
+PR #287 merged to master on 2026-10-27. Supersedes the mechanism sentence of FR-F18
 (`docs/factory/PRD.md`) and of AUTONOMY §1, which said spec and plan were "one model call, no sandbox".
 
 **Context.** M3.5 copies the ticket into a specification and writes a fixed one-step plan, so a vague ticket

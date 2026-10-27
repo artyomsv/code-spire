@@ -440,8 +440,8 @@ The design is [the M3.5 specification](../superpowers/specs/2026-09-16-factory-m
 **Slice 1, verify: accepted 2026-10-08 ([record](./M4-VERIFY-ACCEPTANCE.md)).** GitHub reviews followed on
 PR #196 (accepted 2026-10-18, [record](./GITHUB-REVIEWS-ACCEPTANCE.md)); land is slice 2, below. The operator's checks run on a clean
 copy of the checkpoint, with passed, failed and unverified outcomes, a result gate (Retry build or
-Stop), and a retry that starts from the failed checkpoint (ADR-046). The plan coordinator, with
-automatic retries, specifications and multi-step plans, comes in later slices.
+Stop), and a retry that starts from the failed checkpoint (ADR-046). Specifications and multi-step plans
+came in slice 3, below.
 
 **Slice 2, land: accepted 2026-10-25 ([record](./LAND-ACCEPTANCE.md); PR #243, ADR-048).** An approved
 land merges the delivered pull request at exactly the approved head with the repository's merge method,
@@ -456,16 +456,19 @@ two hand merges, and handed a ruleset block to the operator; it found that a han
 repository with no FACTORY webhook, now caught by the reviewer's close and a 2-minute pull request read.
 The failing-check fix, exhausted attempts and Retry land are proven against fakes only.
 
-**Slice 3, specification, plan and steps: built on `feat/m4-spec-plan` (PR #287, ADR-049), live acceptance
-pending.** A repository whose build setup says `generated` has the factory write the specification and the plan
-with short read-only runs on the build's harness, model and payment, post both to the ticket and gate them as
-results (Revise with a note from the dashboard, three per phase). An approved plan of up to `maxStepsPerPlan` steps
-builds step by step on one chain of held checkpoints: each step verifies, a step that commits nothing completes as
-empty, a lost checkpoint opens the verify gate instead of falling back to the base, every step's summary is carried
-into the later steps' prompts, and the last change is delivered as one pull request. Readmit reuses the approved
-specification and plan; Regenerate writes them again. `composed`, the M3.5 copy, stays the default. Everything is
-proven against fakes only until the live proof (`docs/UNVERIFIED.md`). **Next:** that proof, recorded in
-`M4-SPEC-PLAN-ACCEPTANCE.md`, which is this milestone's exit criterion.
+**Slice 3, specification, plan and steps: accepted 2026-10-27 ([record](./M4-SPEC-PLAN-ACCEPTANCE.md); PR #287
+merged as `6583d915`, ADR-049).** A repository whose build setup says `generated` has the factory write the
+specification and the plan with short read-only runs on the build's harness, model and payment, post both to the
+ticket as a Markdown blockquote and gate them as results (Revise with a note from the dashboard, three per phase).
+An approved plan of up to `maxStepsPerPlan` steps builds step by step on one chain of held checkpoints: each step
+verifies, a step that commits nothing completes as empty, a lost checkpoint opens the verify gate instead of falling
+back to the base, every step's summary is carried into the later steps' prompts, and the last change is delivered as
+one pull request. Readmit reuses the approved specification and plan; Regenerate writes them again. `composed`, the
+M3.5 copy, stays the default. The live proof on `spire-test` ran four one-line tickets: the whole chain (#70),
+Regenerate, Revise and an empty step (#71), the exit criterion (#75) and, after the two fixes the proof made, a
+readable specification and a plan that split on its own (#77). Left to fakes: a lost checkpoint, a failed step, the
+Revise limit, other models and harnesses; the run row of a step that is not the last keeps `awaiting_delivery`
+(`docs/UNVERIFIED.md`).
 
 **Delivers.** The `spec` phase — a vague ticket refined into outcome, context and acceptance
 criteria, written back to the tracker. The `plan` phase — decomposition into ordered vertical slices,
@@ -481,7 +484,9 @@ to judge against.
 
 **Exit criterion.** A ticket with no acceptance criteria becomes a specification, then a plan of
 three or more steps, then three branches that each verify, then one pull request — **and step 3's
-prompt demonstrably contains step 1's recorded decision.**
+prompt demonstrably contains step 1's recorded decision.** **Met on 2026-10-26 by `spire-test` #75**
+([record](./M4-SPEC-PLAN-ACCEPTANCE.md)): the steps ran as three checkpoints on one branch (A2), not three
+branches.
 
 **FRs:** FR-F18..F20, F31.
 

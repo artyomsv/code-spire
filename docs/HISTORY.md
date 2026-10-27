@@ -2220,8 +2220,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   2026-10-25. Record: [land acceptance](factory/LAND-ACCEPTANCE.md). Next: M4's specification, plan
   and step continuity.
 
-- **Factory M4 slice 3: specification, plan and steps (2026-10-25 to 2026-10-26, PR #287), built, live
-  acceptance pending.** A repository chooses in its build setup between `composed`, the M3.5 copy of the
+- **Factory M4 slice 3: specification, plan and steps (2026-10-25 to 2026-10-27, PR #287).** A repository chooses in its build setup between `composed`, the M3.5 copy of the
   ticket, and `generated`. Generated, the factory writes the specification and then the plan with short
   read-only harness runs on the build's harness, model and payment (ADR-049, which supersedes FR-F18's "one
   model call"): a `READ_ONLY` publisher with no write credential reads `$SPIRE_ARTIFACT` from the handoff as a
@@ -2237,5 +2236,17 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   feature flag that kept the path dark while it was wired is deleted. Twelve slices ran, each RED then GREEN
   in CI. The review rounds found a readmit gate that skipped step 1, an off-chain ready, a base fallback for
   a later step, empty steps and bundle-less checkpoint steps that broke the chain, each fixed with a test that
-  failed first. Left open: everything is proven against fakes until the live proof on `spire-test`
-  (`docs/UNVERIFIED.md`), and the artifact passes through the run-worker host's Docker log.
+  failed first. The live proof on `spire-test` (preparation `generated`, Codex on a seat, verify
+  `test -f README.md`, squash) ran four one-line tickets: #70 through the whole chain to a landed pull
+  request; #71 stopped at a rejected land, readmitted with Regenerate, revised to a three-step plan whose
+  first step changed nothing and completed as empty; #75 from no acceptance criteria to a specification, a
+  three-step plan after one Revise, three verified checkpoints on one chain and one pull request, with
+  step 1's recorded decision in the prompt dispatched for step 3, which is M4's exit criterion; and #77,
+  after the fixes, with a readable specification and a two-step plan without a Revise. The proof found
+  the specification posted as a code block (now a Markdown blockquote with references neutralised) and
+  plans of one step whatever the ticket (the prompt now asks for one step per verifiable outcome), each
+  fixed with a test that failed first and a mutant killed in CI. Left open: the run row of a step that is
+  not the last keeps `awaiting_delivery`; one model and one harness were used; a lost checkpoint, a failed
+  step and the Revise limit are proven against fakes only; the artifact passes through the run-worker
+  host's Docker log. PR #287 merged to master on 2026-10-27. Record:
+  [specification, plan and steps acceptance](factory/M4-SPEC-PLAN-ACCEPTANCE.md). Next: M5.

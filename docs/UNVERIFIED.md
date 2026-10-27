@@ -33,21 +33,31 @@ evidence would settle it**.
 
 ---
 
-## Specification, plan and steps (M4 slice 3, ADR-049, 2026-10-26)
+## Specification, plan and steps (M4 slice 3, ADR-049, accepted 2026-10-27)
 
 **The claim.** A generated repository writes a specification and a plan with read-only harness runs, posts both to
 the ticket, builds the plan step by step on one chain of held checkpoints with each step verified, carries every
 step's summary into the later steps' prompts, completes a step that changes nothing as empty, and delivers one pull
-request; Revise changes the specification; readmit reuses an approved draft and Regenerate writes a new one.
+request; Revise changes the plan; readmit reuses an approved draft and Regenerate writes a new one.
 
-**Why nothing catches it today.** Every part is proven against a TEST run transport, a WireMock GitHub and a local
-origin (`WorkSpecRunIT`, `WorkPlanRunIT`, `WorkStepsIT`, `WorkEmptyStepsIT`, `WorkDraftReadmitIT`), and the
-read-only publisher and handoff files against a local Docker daemon. No real agent has written a specification or a
-plan, so whether a real model meets the headings, the plan schema and the 48 KiB prompt budget at a useful rate is
-unknown; nor has a real chain of three steps run on one branch, nor a real agent written `$SPIRE_STEP_SUMMARY`.
-Every step's dispatched prompt names that file, its JSON shape and its limits (`everyDispatchedStepIsToldWhereItsDecisionsGo`),
-but whether a real model writes it, also for a step that changed nothing, is unobserved.
+**What is proven live** ([acceptance record](factory/M4-SPEC-PLAN-ACCEPTANCE.md)): on `spire-test`, with Codex
+`gpt-6-astra` on a seat, four one-line tickets became specifications and plans posted to the ticket; #75 built
+three verified checkpoints on one chain, delivered one pull request, and the prompt dispatched for step 3 carried
+step 1's recorded decision (M4's exit criterion); #71 was readmitted with Regenerate, revised to three steps, and
+its first step completed as empty; #77 rendered the specification as a readable blockquote and split its plan into
+two steps without a Revise. Everything below is proven against a TEST run transport, a WireMock GitHub and a local
+origin only (`WorkSpecRunIT`, `WorkPlanRunIT`, `WorkStepsIT`, `WorkEmptyStepsIT`, `WorkDraftReadmitIT`).
 
+- **The run row of a step that is not the last keeps `awaiting_delivery` and no end time.** Only the last step's
+  run is delivered, and delivery is what sets a build run's final status. Seen on #71 and #75 steps 1 and 2. The
+  item, `work_step_summary` and `work_verify_effect` record the steps correctly; the run list does not.
+- **One model and one harness.** Whether another model meets the headings, the plan schema and the 48 KiB prompt
+  budget at a useful rate is unobserved; so are a plan over the budget, a specification invalid twice
+  (`spec_invalid`) and `maxStepsPerPlan` reached.
+- **A lost checkpoint** (`checkpoint_missing`), a failed step run opening the verify gate with the completed steps
+  kept, Retry build from a step, and Revise refused after three per phase have not run live.
+- **The empty step is proven once,** on a step the plan was told to make empty. An agent that changes nothing of
+  its own accord, and whether it still writes `$SPIRE_STEP_SUMMARY`, has not been met.
 - **The artifact and the summary pass through the run-worker host's Docker log.** The publisher prints them as
   outcome lines on its stdout, which Docker keeps for the unit's life. The run worker scrubs the run's secrets
   before it sends them on (`theArtifactIsScrubbedOfTheRunsSecrets`), but the Docker log itself is not ours to
@@ -58,16 +68,15 @@ but whether a real model writes it, also for a step that changed nothing, is uno
   runs only lines that start with a slash at column 0. So the specification and the plan's step titles are quoted as
   a Markdown blockquote, every line starting with `>`; no note has been posted to a live GitLab to watch `/close` stay
   text.
-- **The quoted specification renders and does nothing** is proven against strings only (`WorkDraftCommentsTest`,
-  `UntrustedTextTest`), not against GitHub's or GitLab's renderer. It rests on CommonMark and the forges' reference
-  rules: a zero-width space after `<`, `@`, `&`, `]` before `(`, `[` or `:`, `:` before `//`, `www.`, and the sigils
-  of `#1`, `!1`, `$1`, `GH-1`, `~x`, `%x`, `^x` stops each from opening a tag, a mention, an entity, a link or a
-  reference. Not broken: a bare commit SHA, which GitHub links when it names a commit of the repository.
+- **The quoted specification does nothing on GitHub** is proven against strings (`WorkDraftCommentsTest`,
+  `UntrustedTextTest`) and by eye on #77, where a quoted specification rendered as headings and lists. The zero-width
+  space after `<`, `@`, `&`, `]` before `(`, `[` or `:`, `:` before `//`, `www.`, and the sigils of `#1`, `!1`, `$1`,
+  `GH-1`, `~x`, `%x`, `^x` is not proven to stop each reference on a live forge. Not broken: a bare commit SHA, which
+  GitHub links when it names a commit of the repository.
 
-**What would settle it.** The live proof the plan names, recorded in `docs/factory/M4-SPEC-PLAN-ACCEPTANCE.md`: a
-title-only ticket on `spire-test` becomes a specification with criteria, a plan of three or more steps, steps that
-each verify, one pull request, review and land; step 3's recorded prompt contains step 1's decision; a step told to
-change nothing completes as empty; a Revise with a note changes the specification.
+**What would settle it.** A second harness or model through the same four tickets; a step whose checkpoint is
+removed by hand before the next step starts; a live GitLab note with a quoted `/close`; and a run-status fix for
+steps that are not the last, with the run list read after a three-step item.
 
 ---
 
