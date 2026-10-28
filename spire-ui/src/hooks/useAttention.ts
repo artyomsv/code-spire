@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AttentionItem } from '../api';
 import { writeLive } from '../liveCache';
@@ -107,23 +108,24 @@ export function useAttention(): { items: AttentionItem[] } {
 const feedKey = (key: FeedKey) => ['attention', key] as const;
 
 /**
- * One feed's state. A frame replaces the feed's list. A drop clears it, so stale rows never stand beside the
- * synthesized "unavailable" row, and only a socket that actually failed reaches 'down' (useLiveSocket asks whether
- * the session or a sibling service's session lapsed first, so an expired login is not reported as an outage).
+ * One feed's state. A frame replaces the feed's list. A drop changes nothing until useLiveSocket has asked why it
+ * happened (an expired login is not an outage), so the last list stands meanwhile. Once the drop is an outage, the
+ * synthesized "unavailable" row stands until a fresh list arrives: a socket that merely reopened has said nothing yet.
  */
 function useFeed({ key, path }: (typeof FEEDS)[number]): FeedState {
   const client = useQueryClient();
   const rows = useQuery<AttentionItem[]>({ queryKey: feedKey(key), queryFn: skipToken }).data;
+  const [outage, setOutage] = useState(false);
   const socket = useLiveSocket({
     path,
     onFrame: (frame) => {
-      if (Array.isArray(frame)) writeLive(client, feedKey(key), frame.filter(isAttentionItem));
-    },
-    onClose: () => {
-      void client.resetQueries({ queryKey: feedKey(key), exact: true });
-      return 'reconnect';
+      if (!Array.isArray(frame)) return;
+      writeLive(client, feedKey(key), frame.filter(isAttentionItem));
+      setOutage(false);
     },
   });
-  if (socket.status === 'down') return { status: 'down' };
+  // Derived during render rather than in an effect, so the outage row never lags a frame behind the socket's state.
+  if (socket.status === 'down' && !outage) setOutage(true);
+  if (outage || socket.status === 'down') return { status: 'down' };
   return rows ? { status: 'live', rows } : { status: 'connecting' };
 }
