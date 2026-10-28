@@ -149,9 +149,16 @@ class DockerVerifyIT {
                 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024, timeout);
     }
 
+    /**
+     * Waits for a CHECK container to run, not merely a verify container: the prepare container carries the same run
+     * and attempt labels. Waking on prepare let the cancel land after prepare exited and before the check existed, so
+     * it killed nothing and the check slept its full 60 s past the test's bound (CI, 2026-10-28). Check containers are
+     * named {@code <volume>-check-<index>} by {@code DockerVerifyUnits.checkContainer}.
+     */
     private void awaitRunningCheck(String id) throws InterruptedException {
         for (int i = 0; i < 120; i++) {
-            boolean running = verifyResources(id).stream().anyMatch(container -> "running".equals(container.getState()));
+            boolean running = verifyResources(id).stream().anyMatch(container -> "running".equals(container.getState())
+                    && List.of(container.getNames()).stream().anyMatch(name -> name.matches(".*-check-\\d+$")));
             if (running) return;
             Thread.sleep(250);
         }
