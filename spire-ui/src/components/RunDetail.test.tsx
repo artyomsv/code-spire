@@ -193,23 +193,34 @@ it('refreshes a historic run on a reconnect snapshot even when absent from the n
   await waitFor(() => expect(api.getRun).toHaveBeenCalledTimes(2));
 });
 
-// Each run is read under its own key, so a push for the run the operator left must not reach the one on screen.
-it('does not re-read or show the previous run after moving to another run', async () => {
+// Each run is read under its own key: neither a late REST answer nor a push for the run the operator left may reach
+// the one on screen.
+it('keeps the run on screen when the run left behind answers late or is pushed', async () => {
   const first = runView({ runId: 'TEST-run-a', status: 'running' });
   const second = runView({ runId: 'TEST-run-b', status: 'succeeded' });
-  vi.mocked(api.getRun).mockImplementation(async (id) => id === first.runId ? first : second);
+  let answerFirst: (run: api.RunView) => void = () => {};
+  vi.mocked(api.getRun).mockImplementation((id) => id === first.runId
+    ? new Promise((resolve) => { answerFirst = resolve; })
+    : Promise.resolve(second));
   render(<MemoryRouter initialEntries={[`/runs/${encodeURIComponent(first.runId)}`]}>
     <Link to={`/runs/${encodeURIComponent(second.runId)}`}>TEST-next run</Link>
     <Routes><Route path="/runs/*" element={<RunDetail />} /></Routes>
   </MemoryRouter>, { wrapper: queryWrapper() });
-  await screen.findByText('Running');
+  await waitFor(() => expect(api.getRun).toHaveBeenCalledWith(first.runId));
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next run' }));
-  await screen.findByText('Succeeded');
+  expect(await screen.findByRole('heading', { name: second.runId })).toBeInTheDocument();
+
+  await act(async () => answerFirst(first));
   const reads = vi.mocked(api.getRun).mock.calls.length;
   pushRun({ ...first, status: 'failed' });
   await act(async () => {});
+
   expect(api.getRun).toHaveBeenCalledTimes(reads);
+  expect(screen.getByRole('heading', { name: second.runId })).toBeInTheDocument();
+  expect(screen.getByText('Succeeded')).toBeInTheDocument();
   expect(screen.queryByText('Running')).toBeNull();
+  expect(document.querySelector('.run-heading .pill')).toHaveTextContent(/^Succeeded$/);
+  expect(screen.queryByRole('heading', { name: first.runId })).toBeNull();
 });
 
 it('ignores an older detail response arriving after a newer push response', async () => {

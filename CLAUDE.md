@@ -274,6 +274,14 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
 - **Sensitive fields (findings/context — may quote source) are Tink-encrypted at rest** in
   app-managed stores; the Kafka bus is covered by short retention + broker disk encryption
   (ADR-014), not app-layer crypto.
+- **One way for the dashboard to get server data** ([live-data design](docs/superpowers/specs/2026-10-28-live-data-design.md)):
+  React Query (`spire-ui/src/queryClient.ts`, provider in `main.tsx`) keeps it, and WebSocket push tells a screen
+  that it changed; no screen polls. Sockets open only through `hooks/useLiveSocket.ts` (close order: `onClose`,
+  session check, gateway sign-in, reconnect after 1.5 s), and frames reach the cache only through `liveCache.ts`,
+  which cancels a REST read of the same key first so an older answer never replaces a newer frame. Tests render
+  inside `test/queryWrapper.tsx`, and `vitest.setup.ts` delivers React Query notices synchronously. Moved so far
+  (step 1): the runs list and run detail. Reviews, attention, transcript and timeline sockets still use their own
+  hooks; the work-item screens still poll until their change feed (steps 4–5) lands.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

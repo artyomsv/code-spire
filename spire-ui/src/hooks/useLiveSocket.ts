@@ -31,6 +31,91 @@ export interface LiveSocketState {
 
 const CONNECTING: LiveSocketState = { status: 'connecting', closeReason: null };
 
+function socketUrl(path: string): string {
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${scheme}//${location.host}${path}`;
+}
+
+/** The frame, or `undefined` for one that is not JSON: a malformed frame must not blank a feed that was working. */
+function parseFrame(data: string): { frame: unknown } | undefined {
+  try {
+    return { frame: JSON.parse(data) };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why a socket dropped, decided before anything reconnects. An expired or missing session closes a handshake with no
+ * useful code, so reconnecting blindly hammered the identity provider on every expiry (useLiveReviews, before this
+ * hook). And signed in to /api does not mean signed in to /gw: each service keeps its own session, and a handshake
+ * cannot follow the redirect that says so (useAttention, before this hook).
+ *
+ * @returns 'reconnect' when the session is fine; 'handled' when a sign-in started or the screen went away.
+ */
+async function diagnoseDrop(gone: () => boolean): Promise<'reconnect' | 'handled'> {
+  const me = await fetchMe();
+  if (gone()) return 'handled';
+  if (needsLogin(me)) {
+    goToFullLogin();
+    return 'handled';
+  }
+  if (await ensureServiceSessions()) return 'handled';
+  return gone() ? 'handled' : 'reconnect';
+}
+
+interface SocketWiring {
+  callbacks: { readonly current: LiveSocketOptions };
+  report: (state: LiveSocketState) => void;
+  /** True once this socket was replaced or abandoned: it must not speak for the screen any more. */
+  stale: () => boolean;
+  dropped: () => void;
+}
+
+/** Installs the four handlers of one socket. */
+function wire(socket: WebSocket, { callbacks, report, stale, dropped }: SocketWiring): void {
+  socket.onopen = () => {
+    if (stale()) return;
+    report({ status: 'live', closeReason: null });
+    callbacks.current.onOpen?.();
+  };
+  socket.onmessage = (event) => {
+    const parsed = stale() ? undefined : parseFrame(event.data);
+    if (parsed) callbacks.current.onFrame(parsed.frame);
+  };
+  socket.onclose = (event) => {
+    if (stale() || isLeavingForAuth()) return;
+    if (callbacks.current.onClose?.({ code: event.code, reason: event.reason }) !== 'stop') dropped();
+    else report({ status: 'refused', closeReason: event.reason || null });
+  };
+  socket.onerror = () => socket.close();
+}
+
+/** Opens the socket and keeps it open until the returned cleanup runs. */
+function runLiveSocket(path: string, callbacks: SocketWiring['callbacks'], report: SocketWiring['report']): () => void {
+  let closed = false;
+  let socket: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  const gone = () => closed || isLeavingForAuth();
+  const dropped = async () => {
+    if (await diagnoseDrop(gone) === 'handled') return;
+    report({ status: 'down', closeReason: null });
+    reconnectTimer = setTimeout(connect, RECONNECT_MS);
+  };
+  const connect = () => {
+    if (gone()) return;
+    const current = new WebSocket(socketUrl(path));
+    socket = current;
+    wire(current, { callbacks, report, stale: () => closed || current !== socket, dropped: () => void dropped() });
+  };
+  connect();
+  return () => {
+    closed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    socket?.close();
+  };
+}
+
 /**
  * The dashboard's one socket client (docs/superpowers/specs/2026-10-28-live-data-design.md §3.2). The callbacks are
  * read through a ref, so a new callback each render does not reopen the socket; only the path and `enabled` do.
@@ -40,71 +125,10 @@ export function useLiveSocket(options: LiveSocketOptions): LiveSocketState {
   callbacks.current = options;
   const { path, enabled = true } = options;
   const [state, setState] = useState<LiveSocketState>(CONNECTING);
-
   useEffect(() => {
     if (!enabled) return;
-    let closed = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     setState(CONNECTING);
-
-    const connect = () => {
-      if (closed || isLeavingForAuth()) return;
-      const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const current = new WebSocket(`${scheme}//${location.host}${path}`);
-      socket = current;
-      // A socket this hook has replaced or abandoned must not speak for the screen any more.
-      const stale = () => closed || current !== socket;
-      current.onopen = () => {
-        if (stale()) return;
-        setState({ status: 'live', closeReason: null });
-        callbacks.current.onOpen?.();
-      };
-      current.onmessage = (event) => {
-        if (stale()) return;
-        let frame: unknown;
-        try {
-          frame = JSON.parse(event.data);
-        } catch {
-          return; // a malformed frame must not blank a feed that was working
-        }
-        callbacks.current.onFrame(frame);
-      };
-      current.onclose = (event) => {
-        if (stale() || isLeavingForAuth()) return;
-        if (callbacks.current.onClose?.({ code: event.code, reason: event.reason }) === 'stop') {
-          setState({ status: 'refused', closeReason: event.reason || null });
-          return;
-        }
-        void afterDrop();
-      };
-      current.onerror = () => current.close();
-    };
-
-    // An expired or missing session closes a handshake with no useful code, so ask why before reacting: reconnecting
-    // blindly hammered the identity provider on every expiry (useLiveReviews, before this hook).
-    const afterDrop = async () => {
-      const me = await fetchMe();
-      if (closed || isLeavingForAuth()) return;
-      if (needsLogin(me)) {
-        goToFullLogin();
-        return;
-      }
-      // Signed in to /api does not mean signed in to /gw: each service keeps its own session, and a handshake
-      // cannot follow the redirect that says so (useAttention, before this hook).
-      if (await ensureServiceSessions()) return;
-      if (closed || isLeavingForAuth()) return;
-      setState({ status: 'down', closeReason: null });
-      reconnectTimer = setTimeout(connect, RECONNECT_MS);
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      socket?.close();
-    };
+    return runLiveSocket(path, callbacks, setState);
   }, [path, enabled]);
-
   return state;
 }
