@@ -39,7 +39,11 @@ export function useRunTranscript(runId: string) {
   const own = (values: unknown[]) => values.filter(isEvent).filter((event) => event.runId === runId);
   const query = useQuery({
     queryKey: key,
-    queryFn: async () => merge(client.getQueryData<Transcript>(key) ?? EMPTY, own(await getRunTranscript(runId))),
+    queryFn: async () => {
+      const page = own(await getRunTranscript(runId));
+      // Read the entry only once the page has arrived: frames merged while the read was out must survive it.
+      return merge(client.getQueryData<Transcript>(key) ?? EMPTY, page);
+    },
   });
   const socket = useLiveSocket({
     path: `/api/ws/runs/transcript?runId=${encodeURIComponent(runId)}`,

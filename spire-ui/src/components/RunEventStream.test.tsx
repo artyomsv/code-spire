@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../api';
 import * as auth from '../auth';
 import { RunSocket, runEvent, runRow } from '../test/liveRuns';
+import { queryWrapper } from '../test/queryWrapper';
 import RunEventStream from './RunEventStream';
 
 beforeEach(() => {
@@ -13,7 +14,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function show() { render(<RunEventStream runId={runRow().runId} />); }
+function show() { render(<RunEventStream runId={runRow().runId} />, { wrapper: queryWrapper() }); }
 function rows() { return within(screen.getByRole('region', { name: 'Run events' })).queryAllByRole('listitem'); }
 
 it('renders snapshot and append text safely, retaining the server clipping marker', () => {
