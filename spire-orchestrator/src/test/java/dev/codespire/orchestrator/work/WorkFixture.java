@@ -110,6 +110,17 @@ abstract class WorkFixture {
         }
     }
 
+    /** Another item row on this fixture's source, copied from {@code template}; {@link #cleanWork} removes it. */
+    String copyItem(String template) throws SQLException {
+        String copy="TEST-extra-"+UUID.randomUUID();
+        extraItems.add(copy);
+        executeWith("""
+                INSERT INTO work_item(id,source_id,repository_id,issue_id,issue_key,tracker_url,generation,policy_revision,phase,workflow_status,reason,revision,updated_at)
+                SELECT ?,source_id,repository_id,?,'TEST-1',tracker_url,1,policy_revision,phase,workflow_status,reason,1,now() FROM work_item WHERE id=?""",
+                copy,"TEST-issue-"+copy,template);
+        return copy;
+    }
+
     void execute(String sql,Object value) throws SQLException {
         try(Connection c=dataSource.getConnection();PreparedStatement ps=c.prepareStatement(sql)){ps.setObject(1,value);ps.executeUpdate();}
     }
