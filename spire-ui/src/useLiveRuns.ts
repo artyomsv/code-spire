@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRuns, type RunListEntry } from './api';
 import { isLeavingForAuth } from './auth';
-import { isRunEntry, useRunsSocket } from './hooks/useRunsSocket';
+import { useLiveSocket } from './hooks/useLiveSocket';
+import { updateLive, upsertBy, writeLive } from './liveCache';
 
 export const MAX_LIVE_RUNS = 200;
+/** The runs list: the REST snapshot and the `/api/ws/runs` feed write the same entry. */
+export const RUNS_KEY = ['runs', 'live'] as const;
+
+export function isRunEntry(value: unknown): value is RunListEntry {
+  return typeof value === 'object' && value !== null
+    && typeof (value as { runId?: unknown }).runId === 'string';
+}
+
 /** PostgreSQL retains microseconds; Date.parse alone would tie different queue times. */
 function queuedTime(value: string | null): bigint {
   const milliseconds = Date.parse(value ?? '');
@@ -21,39 +30,29 @@ function sortRuns(rows: RunListEntry[]): RunListEntry[] {
   }).slice(0, MAX_LIVE_RUNS);
 }
 
+/**
+ * The newest runs, kept live. The socket's snapshot frame replaces the list and a row frame updates one run; either
+ * cancels a REST snapshot still out, so that older answer never overwrites them (liveCache.ts).
+ */
 export function useLiveRuns() {
-  const [runs, setRuns] = useState<RunListEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const wsDelivered = useRef(false);
-
-  useEffect(() => {
-    let closed = false;
-    wsDelivered.current = false;
-    // Same snapshot size as the socket, with no server-side filters. Once a socket frame lands,
-    // this possibly older REST response must never overwrite it (useLiveReviews' race guard).
-    getRuns({ limit: MAX_LIVE_RUNS }).then((rows) => {
-      if (closed || wsDelivered.current) return;
-      setRuns(sortRuns(rows.filter(isRunEntry)));
-      setLoading(false);
-    }).catch((failure: unknown) => {
-      if (closed || wsDelivered.current || isLeavingForAuth()) return;
-      setError(failure instanceof Error ? failure.message : 'Failed to load runs');
-      setLoading(false);
-    });
-
-    return () => { closed = true; };
-  }, []);
-
-  useRunsSocket((data) => {
-    if (Array.isArray(data)) setRuns(sortRuns(data));
-    else setRuns((previous) => sortRuns(previous.some((row) => row.runId === data.runId)
-      ? previous.map((row) => row.runId === data.runId ? data : row)
-      : [...previous, data]));
-    wsDelivered.current = true;
-    setLoading(false);
-    setError(null);
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: RUNS_KEY,
+    // Same snapshot size as the socket, with no server-side filters.
+    queryFn: async () => sortRuns((await getRuns({ limit: MAX_LIVE_RUNS })).filter(isRunEntry)),
   });
 
-  return { runs, loading, error };
+  useLiveSocket({
+    path: '/api/ws/runs',
+    onFrame: (frame) => {
+      if (Array.isArray(frame)) writeLive(client, RUNS_KEY, sortRuns(frame.filter(isRunEntry)));
+      else if (isRunEntry(frame)) {
+        updateLive<RunListEntry[]>(client, RUNS_KEY, previous => sortRuns(upsertBy(previous ?? [], frame, row => row.runId)));
+      }
+    },
+  });
+
+  // A failure while the window leaves for a login or a logout is that departure, not something to report.
+  const error = query.error && !isLeavingForAuth() ? query.error.message || 'Failed to load runs' : null;
+  return { runs: query.data ?? [], loading: query.data === undefined && error === null, error };
 }
