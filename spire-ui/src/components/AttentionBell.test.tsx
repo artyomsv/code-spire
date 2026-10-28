@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AttentionBell from './AttentionBell';
@@ -40,6 +40,7 @@ const failed: AttentionItem = {
 class FakeSocket {
   static open = new Map<string, FakeSocket>();
 
+  onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   /** A browser always passes the close event; the shared socket hook reads its code. */
   onclose: ((ev: { code: number; reason: string }) => void) | null = null;
@@ -209,6 +210,38 @@ describe('AttentionBell', () => {
 
     await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
     expect(screen.getByTestId('attention-count').className).toContain('blocking');
+  });
+
+  /**
+   * Why a socket closed is asked before anything changes (an expired session is not an outage), and that question can
+   * take a while. Until it is answered the feed's last list is still the best knowledge; blanking it read as
+   * "Nothing needs attention" with a blocking condition open.
+   */
+  it('keeps a feed\'s rows while it asks why the socket closed', async () => {
+    await renderWithFeeds([], [blocking]);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {}))); // the session check never answers
+
+    await act(async () => FakeSocket.drop(GATEWAY));
+
+    expect(screen.getByTestId('attention-count')).toHaveTextContent('1');
+    expect(screen.getByTestId('attention-count').className).toContain('blocking');
+  });
+
+  /** An open socket that has said nothing yet is not a recovered feed: only a fresh list replaces the outage row. */
+  it('keeps the unavailable row after a reconnect until a fresh list arrives', async () => {
+    await renderWithFeeds([warning], []);
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('1'));
+    const dropped = FakeSocket.open.get(GATEWAY);
+
+    await act(async () => FakeSocket.drop(GATEWAY));
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent('2'));
+    await waitFor(() => expect(FakeSocket.open.get(GATEWAY)).not.toBe(dropped), { timeout: 3000 });
+    await act(async () => FakeSocket.open.get(GATEWAY)?.onopen?.());
+
+    expect(screen.getByTestId('attention-count')).toHaveTextContent('2');
+    await act(async () => FakeSocket.push(GATEWAY, []));
+    expect(screen.getByTestId('attention-count')).toHaveTextContent('1');
   });
 
   /** A malformed frame must not blank a feed that was working. */
