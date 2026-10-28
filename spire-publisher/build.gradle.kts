@@ -23,7 +23,7 @@ dependencies {
     // The scrubber the failure lines go through; not via spire-workspace, so both callers depend on
     // the same JDK-only module rather than one inheriting the other's git library.
     implementation(project(":spire-secrets"))
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
     // JGit logs through SLF4J 1.7. With no binding it prints a three-line warning to stderr at
     // every start, which the worker's log stream then carries for every run. The publisher's
     // reporting channel is its stdout JSON lines by design (ADR-039); a logger adds nothing.

@@ -20,7 +20,7 @@ function item(overrides: Partial<Item> = {}): Item {
 function show(value: Item, current = <button type="button">TEST-current action</button>) {
   return render(<MemoryRouter><WorkItemSteps item={value} current={current} /></MemoryRouter>);
 }
-const step = (name: string) => within(screen.getByRole('listitem', { name: new RegExp(`^Step \\d: ${name}$`) }));
+const step = (name: string) => within(screen.getByRole('listitem', { name: (accessible) => /^Step \d: (.*)$/.exec(accessible)?.[1] === name }));
 
 it('marks the current step and keeps the actions inside it', () => {
   show(item());

@@ -18,7 +18,7 @@ repositories {
 dependencies {
     implementation(project(":spire-harness"))
     // Jackson databind only: this module is an adapter, not a pure module, so it may parse JSON.
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

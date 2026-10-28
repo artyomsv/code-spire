@@ -15,7 +15,7 @@ function renderFactory(options: { accounts?: gateway.ProviderView[]; hooks?: gat
   return render(<RepositoryFactory repository={options.repo ?? repository} accounts={options.accounts ?? [account(), account('gitlab'), account('atlassian')]}
     webhooks={{ hooks: options.hooks ?? [], unavailable: options.unavailable ?? false, changed: changedHooks }} onChanged={vi.fn()} />);
 }
-const step = (number: number) => screen.findByRole('listitem', { name: new RegExp(`^Step ${number}:`) });
+const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {
   vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
   vi.spyOn(sources, 'createWorkSource').mockResolvedValue(source());
