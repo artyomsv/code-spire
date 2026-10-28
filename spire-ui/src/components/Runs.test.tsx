@@ -5,6 +5,7 @@ import Runs, { isRunUnfinished, runStatusLabel, runStatusPill } from './Runs';
 import * as api from '../api';
 import type { RunListEntry } from '../api';
 import { RunSocket } from '../test/liveRuns';
+import { queryWrapper } from '../test/queryWrapper';
 
 beforeEach(() => {
   RunSocket.sockets = [];
@@ -86,6 +87,7 @@ function show(rows: RunListEntry[]) {
     <MemoryRouter>
       <Runs />
     </MemoryRouter>,
+    { wrapper: queryWrapper() },
   );
 }
 
@@ -298,6 +300,7 @@ describe('the runs screen', () => {
       <MemoryRouter>
         <Runs />
       </MemoryRouter>,
+      { wrapper: queryWrapper() },
     );
 
     expect(await screen.findByText('Failed to load runs')).toBeTruthy();

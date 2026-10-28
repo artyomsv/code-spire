@@ -1,9 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../api';
 import * as auth from '../auth';
 import { RunSocket, runView } from '../test/liveRuns';
+import { queryWrapper } from '../test/queryWrapper';
 import RunDetail from './RunDetail';
 import Runs from './Runs';
 
@@ -23,7 +24,7 @@ function show(run = runView()) {
   vi.mocked(api.getRun).mockResolvedValue(run);
   return render(<MemoryRouter initialEntries={[`/runs/${encodeURIComponent(run.runId)}`]}>
     <Routes><Route path="/runs/*" element={<RunDetail />} /></Routes>
-  </MemoryRouter>);
+  </MemoryRouter>, { wrapper: queryWrapper() });
 }
 
 async function loaded() {
@@ -38,7 +39,7 @@ function pushRun(value: unknown) {
 it('opens the encoded list link for an id containing slashes and colons', async () => {
   render(<MemoryRouter initialEntries={['/runs']}><Routes>
     <Route path="/runs" element={<Runs />} /><Route path="/runs/*" element={<RunDetail />} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter>, { wrapper: queryWrapper() });
   const link = await screen.findByRole('link', { name: 'task:1' });
   expect(link).toHaveAttribute('href', `/runs/${encodeURIComponent(runView().runId)}`);
   fireEvent.click(link);
@@ -187,6 +188,25 @@ it('refreshes a historic run on a reconnect snapshot even when absent from the n
   await loaded();
   pushRun([]);
   await waitFor(() => expect(api.getRun).toHaveBeenCalledTimes(2));
+});
+
+// Each run is read under its own key, so a push for the run the operator left must not reach the one on screen.
+it('does not re-read or show the previous run after moving to another run', async () => {
+  const first = runView({ runId: 'TEST-run-a', status: 'running' });
+  const second = runView({ runId: 'TEST-run-b', status: 'succeeded' });
+  vi.mocked(api.getRun).mockImplementation(async (id) => id === first.runId ? first : second);
+  render(<MemoryRouter initialEntries={[`/runs/${encodeURIComponent(first.runId)}`]}>
+    <Link to={`/runs/${encodeURIComponent(second.runId)}`}>TEST-next run</Link>
+    <Routes><Route path="/runs/*" element={<RunDetail />} /></Routes>
+  </MemoryRouter>, { wrapper: queryWrapper() });
+  await screen.findByText('Running');
+  fireEvent.click(screen.getByRole('link', { name: 'TEST-next run' }));
+  await screen.findByText('Succeeded');
+  const reads = vi.mocked(api.getRun).mock.calls.length;
+  pushRun({ ...first, status: 'failed' });
+  await act(async () => {});
+  expect(api.getRun).toHaveBeenCalledTimes(reads);
+  expect(screen.queryByText('Running')).toBeNull();
 });
 
 it('ignores an older detail response arriving after a newer push response', async () => {

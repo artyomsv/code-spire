@@ -4,6 +4,7 @@ import type { RunEvent, RunListEntry, RunView } from '../api';
 /** Controllable browser transport shared by the run hook and its consuming screens. */
 export class RunSocket {
   static sockets: RunSocket[] = [];
+  onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
@@ -19,6 +20,11 @@ export class RunSocket {
     const socket = RunSocket.sockets[RunSocket.sockets.length - 1];
     if (!socket) throw new Error('no run socket opened');
     return socket;
+  }
+
+  /** The newest socket finishes its handshake. */
+  static open() {
+    act(() => RunSocket.latest.onopen?.());
   }
 
   static push(value: unknown) {
