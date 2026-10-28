@@ -134,6 +134,9 @@ describe('useLiveReviews', () => {
     FakeSocket.open = [];
     vi.stubGlobal('WebSocket', FakeSocket);
     respondWith([]);
+    // The login test below runs the real goToFullLogin, which sets auth's "leaving for a login" flag for the rest of
+    // the module; a hook on a page that is leaving rightly opens no socket and reports no error.
+    vi.spyOn(auth, 'isLeavingForAuth').mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -348,6 +351,7 @@ describe('useLiveReviews — archived rows', () => {
     FakeSocket.open = [];
     vi.stubGlobal('WebSocket', FakeSocket);
     respondByUrl([NEWER], [NEWER, ARCHIVED]);
+    vi.spyOn(auth, 'isLeavingForAuth').mockReturnValue(false);
   });
 
   afterEach(() => {
