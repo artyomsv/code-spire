@@ -97,8 +97,9 @@ observations, remains necessary to establish those deployment paths.
 review comments and Issue comments, an empty commit was pushed by hand to the branch of item #79 while it waited
 at its land gate with pull request 81. GitHub delivered the push at 20:50:39.0 with a 202, the orchestrator
 recorded the `suspended` receipt 0.3 s later, and the item read `land / suspended / human_takeover` at 20:50:41.
-The factory's own push and the bot's review on the same hook were recorded as `recorded_machine`, not as
-takeovers. Still without live evidence: a native GitHub approval answering a gate, a `/fix` comment by an allowed
+The factory's own push on the same hook was recorded as `recorded_machine`, not as a takeover. The bot's two
+approving reviews on that pull request (the repository lets the reviewer approve) were delivered with a 202 and
+ignored: an approval by the machine writes no receipt, answers no gate and suspends nothing. Still without live evidence: a native GitHub approval answering a gate, a `/fix` comment by an allowed
 person on a factory pull request, operator resume after this takeover, and the GitLab and Bitbucket activity
 hooks.
 
