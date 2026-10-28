@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AttentionBell from './AttentionBell';
 import type { AttentionItem } from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 const blocking: AttentionItem = {
   code: 'LLM_DEFAULT_MISSING',
@@ -40,7 +41,8 @@ class FakeSocket {
   static open = new Map<string, FakeSocket>();
 
   onmessage: ((ev: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  /** A browser always passes the close event; the shared socket hook reads its code. */
+  onclose: ((ev: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
 
@@ -50,7 +52,7 @@ class FakeSocket {
 
   close() {
     this.closed = true;
-    this.onclose?.();
+    this.onclose?.({ code: 1005, reason: '' });
   }
 
   static pathOf(url: string): string {
@@ -63,7 +65,7 @@ class FakeSocket {
   }
 
   static drop(path: string) {
-    FakeSocket.open.get(path)?.onclose?.();
+    FakeSocket.open.get(path)?.onclose?.({ code: 1006, reason: '' });
   }
 }
 
@@ -75,6 +77,7 @@ const renderBell = () =>
     <MemoryRouter>
       <AttentionBell />
     </MemoryRouter>,
+    { wrapper: queryWrapper() },
   );
 
 /** Both feeds connected and reporting, which is the precondition for most assertions below. */
