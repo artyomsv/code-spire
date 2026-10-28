@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLiveReviews } from './useLiveReviews';
 import type { ReviewSummary } from './api';
+import * as auth from './auth';
+import { queryWrapper } from './test/queryWrapper';
 
 /**
  * The reviews list is fed by two sources at once — a REST snapshot on mount and a WebSocket that
@@ -14,8 +16,10 @@ import type { ReviewSummary } from './api';
 class FakeSocket {
   static open: FakeSocket[] = [];
 
+  onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  /** A browser always passes the close event; the shared socket hook reads its code. */
+  onclose: ((ev: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
 
@@ -140,7 +144,7 @@ describe('useLiveReviews', () => {
   it('sorts the REST snapshot newest first and stops loading', async () => {
     respondWith([OLDER, NEWER]);
 
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id, OLDER.id]);
@@ -150,7 +154,7 @@ describe('useLiveReviews', () => {
   it('surfaces a REST failure as an error rather than an empty list', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network is down'))));
 
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
 
     await waitFor(() => expect(result.current.error).toBe('network is down'));
     expect(result.current.loading).toBe(false);
@@ -164,7 +168,7 @@ describe('useLiveReviews', () => {
    */
   it('ignores a REST snapshot that arrives after the socket has delivered', async () => {
     const rest = deferredFetch();
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(FakeSocket.open).toHaveLength(1));
 
     FakeSocket.push([NEWER]);
@@ -179,7 +183,7 @@ describe('useLiveReviews', () => {
   /** Same guard on the failure path: a live list on screen must not be captioned with an error. */
   it('ignores a REST failure that arrives after the socket has delivered', async () => {
     const rest = deferredFetch();
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(FakeSocket.open).toHaveLength(1));
 
     FakeSocket.push([NEWER]);
@@ -190,7 +194,7 @@ describe('useLiveReviews', () => {
   });
 
   it('replaces the list from an array frame and upserts from an object frame', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     FakeSocket.push([OLDER]);
@@ -207,7 +211,7 @@ describe('useLiveReviews', () => {
   });
 
   it('drops the row a removal frame names, and leaves the others', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     FakeSocket.push([OLDER, NEWER]);
 
@@ -221,7 +225,7 @@ describe('useLiveReviews', () => {
    * merge into each other, and an upsert that can never match. Dropping it is the hook's contract.
    */
   it('drops a payload that carries no string id', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     FakeSocket.push([NEWER, { workspace: 'TEST-WS', pr: 9 }]);
@@ -230,7 +234,7 @@ describe('useLiveReviews', () => {
   });
 
   it('ignores a frame that is not JSON instead of tearing down the socket', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     FakeSocket.push([NEWER]);
 
@@ -247,18 +251,34 @@ describe('useLiveReviews', () => {
     // The shared harness already answers /api/reviews; this makes /api/me unreachable, so the hook
     // must carry on rather than read "unknown session" as a login prompt.
     vi.useFakeTimers();
-    renderHook(() => useLiveReviews());
+    renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     expect(FakeSocket.open).toHaveLength(1);
 
     // The close handler now awaits a session check before scheduling anything, so the microtasks
     // must be flushed before the timer it arms even exists.
     await act(async () => {
-      FakeSocket.latest.onclose?.();
+      FakeSocket.latest.onclose?.({ code: 1006, reason: '' });
     });
     act(() => {
       vi.advanceTimersByTime(1500);
     });
 
+    expect(FakeSocket.open).toHaveLength(2);
+  });
+
+  it('asks about a lapsed service session before it reconnects the reviews feed', async () => {
+    vi.useFakeTimers();
+    const sessions = vi.spyOn(auth, 'ensureServiceSessions').mockResolvedValue(false);
+    renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
+
+    await act(async () => {
+      FakeSocket.latest.onclose?.({ code: 1006, reason: '' });
+    });
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+
+    expect(sessions).toHaveBeenCalledTimes(1);
     expect(FakeSocket.open).toHaveLength(2);
   });
 
@@ -276,9 +296,9 @@ describe('useLiveReviews', () => {
     const assign = vi.fn();
     vi.stubGlobal('location', { assign, protocol: 'http:', host: 'localhost' });
 
-    renderHook(() => useLiveReviews());
+    renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await act(async () => {
-      FakeSocket.latest.onclose?.();
+      FakeSocket.latest.onclose?.({ code: 1006, reason: '' });
     });
 
     // Chained: an expired dashboard session means no session on any prefix, so all three are asked for
@@ -294,11 +314,11 @@ describe('useLiveReviews', () => {
    */
   it('closes the socket on unmount and schedules no further reconnect', async () => {
     vi.useFakeTimers();
-    const { unmount } = renderHook(() => useLiveReviews());
+    const { unmount } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     const socket = FakeSocket.latest;
 
     act(() => {
-      socket.onclose?.(); // a close already in flight when the page navigates away
+      socket.onclose?.({ code: 1006, reason: '' }); // a close already in flight when the page navigates away
     });
     unmount();
     act(() => {
@@ -335,7 +355,7 @@ describe('useLiveReviews — archived rows', () => {
   });
 
   it('fetches archived rows only once asked, and drops them again when unasked', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]);
 
@@ -346,6 +366,20 @@ describe('useLiveReviews — archived rows', () => {
     await waitFor(() => expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]));
   });
 
+  /** "Show archived" checked over a failed read must say so, not look like there is no archived work. */
+  it('reports a failed archived read instead of showing no archived rows', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => url.includes('includeArchived=true')
+      ? Promise.reject(new Error('TEST-archive unavailable'))
+      : Promise.resolve({ ok: true, json: () => Promise.resolve([NEWER]) } as unknown as Response)));
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.setShowArchived(true));
+
+    await waitFor(() => expect(result.current.error).toBe('TEST-archive unavailable'));
+    expect(result.current.reviews.map((r) => r.id)).toEqual([NEWER.id]);
+  });
+
   /**
    * The guard the whole two-list arrangement exists for. The socket carries LIVE rows only, and its
    * snapshot frame REPLACES the client list — so if archived rows lived in that same list they would
@@ -353,7 +387,7 @@ describe('useLiveReviews — archived rows', () => {
    * case rather than a rare one. The operator would watch rows disappear from a checked box.
    */
   it('keeps archived rows through a socket snapshot that carries only live work', async () => {
-    const { result } = renderHook(() => useLiveReviews());
+    const { result } = renderHook(() => useLiveReviews(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setShowArchived(true));
     await waitFor(() => expect(result.current.reviews).toHaveLength(2));
