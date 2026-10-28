@@ -1,0 +1,92 @@
+import { QueryClientProvider, useQuery, type QueryClient } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { expect, it, vi } from 'vitest';
+import { invalidateLive, updateLive, upsertBy, writeLive } from './liveCache';
+import { createQueryClient } from './queryClient';
+
+const KEY = ['TEST-key'] as const;
+
+function pending<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function read(queryFn: () => Promise<string[]>) {
+  const client: QueryClient = createQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const hook = renderHook(() => useQuery({ queryKey: KEY, queryFn }), { wrapper });
+  return { client, ...hook };
+}
+
+// The race the socket hooks guarded by hand: a slower REST snapshot must never replace a newer frame.
+it('keeps a frame written while the REST read is out, and drops the late answer', async () => {
+  const rest = pending<string[]>();
+  const { client, result } = read(() => rest.promise);
+  act(() => writeLive(client, KEY, ['TEST-frame']));
+  expect(result.current.data).toEqual(['TEST-frame']);
+  await act(async () => rest.resolve(['TEST-rest']));
+  expect(result.current.data).toEqual(['TEST-frame']);
+});
+
+it('drops a late REST failure after a frame', async () => {
+  const rest = pending<string[]>();
+  const { client, result } = read(() => rest.promise);
+  act(() => writeLive(client, KEY, ['TEST-frame']));
+  await act(async () => rest.reject(new Error('TEST-late failure')));
+  expect(result.current.error).toBeNull();
+  expect(result.current.data).toEqual(['TEST-frame']);
+});
+
+it('clears an earlier read error when a frame arrives', async () => {
+  const { client, result } = read(() => Promise.reject(new Error('TEST-unavailable')));
+  await waitFor(() => expect(result.current.error?.message).toBe('TEST-unavailable'));
+  act(() => writeLive(client, KEY, ['TEST-frame']));
+  expect(result.current.error).toBeNull();
+  expect(result.current.data).toEqual(['TEST-frame']);
+});
+
+it('updates from undefined when nothing is cached', () => {
+  const client = createQueryClient();
+  const update = vi.fn((previous: string[] | undefined) => [...(previous ?? []), 'TEST-row']);
+  updateLive(client, KEY, update);
+  expect(update).toHaveBeenCalledWith(undefined);
+  expect(client.getQueryData(KEY)).toEqual(['TEST-row']);
+});
+
+it('keeps a frame update while the REST read is out', async () => {
+  const rest = pending<string[]>();
+  const { client, result } = read(() => rest.promise);
+  act(() => updateLive<string[]>(client, KEY, previous => [...(previous ?? []), 'TEST-row']));
+  await act(async () => rest.resolve(['TEST-rest']));
+  expect(result.current.data).toEqual(['TEST-row']);
+});
+
+it('re-reads an invalidated key that a screen shows', async () => {
+  const queryFn = vi.fn().mockResolvedValue(['TEST-rest']);
+  const { client, result } = read(queryFn);
+  await waitFor(() => expect(result.current.data).toEqual(['TEST-rest']));
+  act(() => invalidateLive(client, KEY));
+  await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+});
+
+// A notice can arrive while the first read is out, and that read may have started before the change it announces.
+it('starts a fresh read when invalidated while the first read is out', async () => {
+  const first = pending<string[]>();
+  const queryFn = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(['TEST-after change']);
+  const { client, result } = read(queryFn);
+  await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+  act(() => invalidateLive(client, KEY));
+  await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+  await act(async () => first.resolve(['TEST-before change']));
+  await waitFor(() => expect(result.current.data).toEqual(['TEST-after change']));
+});
+
+it('replaces a matching row in place, appends an unseen one and leaves the input alone', () => {
+  const rows = [{ id: 'a', v: 1 }, { id: 'b', v: 1 }];
+  expect(upsertBy(rows, { id: 'a', v: 2 }, row => row.id)).toEqual([{ id: 'a', v: 2 }, { id: 'b', v: 1 }]);
+  expect(upsertBy(rows, { id: 'c', v: 1 }, row => row.id)).toEqual([...rows, { id: 'c', v: 1 }]);
+  expect(rows).toEqual([{ id: 'a', v: 1 }, { id: 'b', v: 1 }]);
+});

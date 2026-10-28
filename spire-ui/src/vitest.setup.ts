@@ -4,6 +4,13 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+import { notifyManager } from '@tanstack/react-query';
+
+// React Query tells a screen about a cache change on a `setTimeout(0)` (query-core's `systemSetTimeoutZero`, read at
+// call time). A test that asserts right after a socket frame inside a synchronous act() then sees the previous data,
+// and a test on fake timers never sees the change at all. Tests deliver those notices synchronously instead; the
+// production scheduler is left as it is, since the delay changes when a screen repaints, not what it shows.
+notifyManager.setScheduler((callback) => callback());
 
 // jsdom implements no media queries at all, so a component that asks about one throws unless
 // something supplies `matchMedia` — the reviews list checks prefers-reduced-motion on mount.

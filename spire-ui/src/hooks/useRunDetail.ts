@@ -1,42 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getRun, type RunView } from '../api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getRun } from '../api';
 import { isLeavingForAuth } from '../auth';
-import { useRunsSocket } from './useRunsSocket';
+import { invalidateLive } from '../liveCache';
+import { isRunEntry } from '../useLiveRuns';
+import { useLiveSocket } from './useLiveSocket';
 
+/** One run's detail, keyed on its id so a read for another run can never land here. */
+export const runKey = (runId: string) => ['run', runId] as const;
+
+/**
+ * One run, read over REST and read again whenever the runs feed mentions it. A feed row is a list row and lacks the
+ * detail's fields, so it is a notice to re-read rather than data to show.
+ */
 export function useRunDetail(runId: string) {
-  const [run, setRun] = useState<RunView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const sequence = useRef(0);
-  const active = useRef(false);
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: runKey(runId), queryFn: () => getRun(runId) });
 
-  const refresh = useCallback(() => {
-    const request = ++sequence.current;
-    void getRun(runId).then((value) => {
-      if (!active.current || request !== sequence.current) return;
-      setRun(value);
-      setError(null);
-      setLoading(false);
-    }).catch((failure: unknown) => {
-      if (!active.current || request !== sequence.current || isLeavingForAuth()) return;
-      setError(failure instanceof Error ? failure.message : 'Failed to load run');
-      setLoading(false);
-    });
-  }, [runId]);
-
-  useEffect(() => {
-    active.current = true;
-    setRun(null);
-    setLoading(true);
-    setError(null);
-    refresh();
-    return () => { active.current = false; ++sequence.current; };
-  }, [refresh]);
-
-  useRunsSocket((frame) => {
-    // Reconnect snapshots also refresh older runs absent from the newest-200 list.
-    if (Array.isArray(frame) || frame.runId === runId) refresh();
+  useLiveSocket({
+    path: '/api/ws/runs',
+    onFrame: (frame) => {
+      // A reconnect snapshot also refreshes an older run that is absent from the newest-200 list.
+      if (Array.isArray(frame) || (isRunEntry(frame) && frame.runId === runId)) invalidateLive(client, runKey(runId));
+    },
   });
 
-  return { run, loading, error };
+  const error = query.error && !isLeavingForAuth() ? query.error.message || 'Failed to load run' : null;
+  return { run: query.data ?? null, loading: query.data === undefined && error === null, error };
 }

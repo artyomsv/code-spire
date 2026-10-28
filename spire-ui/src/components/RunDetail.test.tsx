@@ -1,9 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../api';
 import * as auth from '../auth';
 import { RunSocket, runView } from '../test/liveRuns';
+import { queryWrapper } from '../test/queryWrapper';
 import RunDetail from './RunDetail';
 import Runs from './Runs';
 
@@ -23,7 +24,7 @@ function show(run = runView()) {
   vi.mocked(api.getRun).mockResolvedValue(run);
   return render(<MemoryRouter initialEntries={[`/runs/${encodeURIComponent(run.runId)}`]}>
     <Routes><Route path="/runs/*" element={<RunDetail />} /></Routes>
-  </MemoryRouter>);
+  </MemoryRouter>, { wrapper: queryWrapper() });
 }
 
 async function loaded() {
@@ -38,7 +39,7 @@ function pushRun(value: unknown) {
 it('opens the encoded list link for an id containing slashes and colons', async () => {
   render(<MemoryRouter initialEntries={['/runs']}><Routes>
     <Route path="/runs" element={<Runs />} /><Route path="/runs/*" element={<RunDetail />} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter>, { wrapper: queryWrapper() });
   const link = await screen.findByRole('link', { name: 'task:1' });
   expect(link).toHaveAttribute('href', `/runs/${encodeURIComponent(runView().runId)}`);
   fireEvent.click(link);
@@ -129,12 +130,15 @@ it('renders a real zero as free and exposes every recorded token type', async ()
 
 it('warns on an unknown status and does not start an elapsed clock', async () => {
   vi.useFakeTimers();
+  // The clock is RunDefinitionCard's setInterval. React Query keeps a timer of its own (it drops an unused cache
+  // entry after five minutes), so counting every timer no longer isolates the clock.
+  const intervals = vi.spyOn(globalThis, 'setInterval');
   show(runView({ status: 'unexpected' as api.RunStatus }));
   await act(async () => {});
   expect(screen.getByText('Unknown (unexpected)')).toHaveClass('refused');
   const definition = screen.getByRole('region', { name: 'Run definition' });
   expect(within(definition).getByText('Elapsed').nextElementSibling).toHaveTextContent(/^—$/);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(intervals).not.toHaveBeenCalled();
 });
 
 it('lists every blocked path and shows failure details only for a failed run', async () => {
@@ -187,6 +191,36 @@ it('refreshes a historic run on a reconnect snapshot even when absent from the n
   await loaded();
   pushRun([]);
   await waitFor(() => expect(api.getRun).toHaveBeenCalledTimes(2));
+});
+
+// Each run is read under its own key: neither a late REST answer nor a push for the run the operator left may reach
+// the one on screen.
+it('keeps the run on screen when the run left behind answers late or is pushed', async () => {
+  const first = runView({ runId: 'TEST-run-a', status: 'running' });
+  const second = runView({ runId: 'TEST-run-b', status: 'succeeded' });
+  let answerFirst: (run: api.RunView) => void = () => {};
+  vi.mocked(api.getRun).mockImplementation((id) => id === first.runId
+    ? new Promise((resolve) => { answerFirst = resolve; })
+    : Promise.resolve(second));
+  render(<MemoryRouter initialEntries={[`/runs/${encodeURIComponent(first.runId)}`]}>
+    <Link to={`/runs/${encodeURIComponent(second.runId)}`}>TEST-next run</Link>
+    <Routes><Route path="/runs/*" element={<RunDetail />} /></Routes>
+  </MemoryRouter>, { wrapper: queryWrapper() });
+  await waitFor(() => expect(api.getRun).toHaveBeenCalledWith(first.runId));
+  fireEvent.click(screen.getByRole('link', { name: 'TEST-next run' }));
+  expect(await screen.findByRole('heading', { name: second.runId })).toBeInTheDocument();
+
+  await act(async () => answerFirst(first));
+  const reads = vi.mocked(api.getRun).mock.calls.length;
+  pushRun({ ...first, status: 'failed' });
+  await act(async () => {});
+
+  expect(api.getRun).toHaveBeenCalledTimes(reads);
+  expect(screen.getByRole('heading', { name: second.runId })).toBeInTheDocument();
+  expect(screen.getByText('Succeeded')).toBeInTheDocument();
+  expect(screen.queryByText('Running')).toBeNull();
+  expect(document.querySelector('.run-heading .pill')).toHaveTextContent(/^Succeeded$/);
+  expect(screen.queryByRole('heading', { name: first.runId })).toBeNull();
 });
 
 it('ignores an older detail response arriving after a newer push response', async () => {

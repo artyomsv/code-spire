@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router';
 import App from './App';
+import { queryWrapper } from './test/queryWrapper';
 import { RETURN_ROUTE_KEY } from './auth';
 import { runView } from './test/liveRuns';
 import type { WorkItemDetail } from './api';
@@ -147,6 +148,7 @@ const renderAt = (path: string) =>
     <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
+    { wrapper: queryWrapper() },
   );
 
 /** Where the router ended up — for the redirect tests, which must see the query survive. */
@@ -161,6 +163,7 @@ const renderAtWithProbe = (path: string) =>
       <App />
       <LocationProbe />
     </MemoryRouter>,
+    { wrapper: queryWrapper() },
   );
 
 /**
@@ -336,6 +339,7 @@ describe('App — rail highlighting', () => {
       <MemoryRouter initialEntries={[path]}>
         <App />
       </MemoryRouter>,
+      { wrapper: queryWrapper() },
     );
 
     await waitFor(() => expect(document.querySelector('nav.nav')).toBeTruthy());
@@ -352,6 +356,7 @@ describe('App — rail highlighting', () => {
       <MemoryRouter initialEntries={['/work-items']}>
         <App />
       </MemoryRouter>,
+      { wrapper: queryWrapper() },
     );
 
     await waitFor(() => expect(document.querySelector('nav.nav a[href="#/work-items?filter=needs-you"]')).toBeTruthy());
@@ -367,6 +372,7 @@ describe('App — rail highlighting', () => {
       <MemoryRouter initialEntries={['/work-items']}>
         <App />
       </MemoryRouter>,
+      { wrapper: queryWrapper() },
     );
 
     await waitFor(() => expect(document.querySelector('nav.nav a[href="#/work-items?filter=needs-you"]')).toBeTruthy());
