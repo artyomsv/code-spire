@@ -1,4 +1,3 @@
-import { StrictMode, type ReactNode } from 'react';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from './api';
@@ -26,11 +25,6 @@ beforeEach(() => {
   vi.spyOn(auth, 'goToFullLogin').mockReturnValue(true);
   vi.spyOn(auth, 'ensureServiceSessions').mockResolvedValue(false);
 });
-
-function strictWithQuery() {
-  const Query = queryWrapper();
-  return ({ children }: { children: ReactNode }) => <StrictMode><Query>{children}</Query></StrictMode>;
-}
 
 afterEach(() => {
   cleanup();
@@ -190,7 +184,7 @@ describe('live runs', () => {
   });
 
   it('ignores a disposed StrictMode socket', async () => {
-    const { result } = renderHook(() => useLiveRuns(), { wrapper: strictWithQuery() });
+    const { result } = renderHook(() => useLiveRuns(), { wrapper: queryWrapper(), reactStrictMode: true });
     expect(RunSocket.sockets).toHaveLength(2);
     expect(RunSocket.sockets[0].closed).toBe(true);
     RunSocket.push([newer]);

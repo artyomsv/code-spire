@@ -72,6 +72,18 @@ it('re-reads an invalidated key that a screen shows', async () => {
   await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
 });
 
+// A notice can arrive while the first read is out, and that read may have started before the change it announces.
+it('starts a fresh read when invalidated while the first read is out', async () => {
+  const first = pending<string[]>();
+  const queryFn = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(['TEST-after change']);
+  const { client, result } = read(queryFn);
+  await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+  act(() => invalidateLive(client, KEY));
+  await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+  await act(async () => first.resolve(['TEST-before change']));
+  await waitFor(() => expect(result.current.data).toEqual(['TEST-after change']));
+});
+
 it('replaces a matching row in place, appends an unseen one and leaves the input alone', () => {
   const rows = [{ id: 'a', v: 1 }, { id: 'b', v: 1 }];
   expect(upsertBy(rows, { id: 'a', v: 2 }, row => row.id)).toEqual([{ id: 'a', v: 2 }, { id: 'b', v: 1 }]);
