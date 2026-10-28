@@ -280,8 +280,8 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   session check, gateway sign-in, reconnect after 1.5 s), and frames reach the cache only through `liveCache.ts`,
   which cancels a REST read of the same key first so an older answer never replaces a newer frame. Tests render
   inside `test/queryWrapper.tsx`, and `vitest.setup.ts` delivers React Query notices synchronously. Moved so far
-  (step 1): the runs list and run detail. Reviews, attention, transcript and timeline sockets still use their own
-  hooks; the work-item screens still poll until their change feed (steps 4–5) lands.
+  (steps 1–2): the runs list, run detail and the reviews list (archived reviews are a separate REST-only query).
+  Attention, transcript and timeline sockets still use their own hooks; the work-item screens still poll until their change feed (steps 4–5) lands.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
