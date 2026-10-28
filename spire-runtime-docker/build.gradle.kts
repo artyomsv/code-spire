@@ -25,7 +25,7 @@ dependencies {
     // than inherited through docker-java, which uses Jackson internally at implementation scope:
     // a transitive runtime dependency is not a compile classpath, and relying on one is how a
     // library upgrade becomes an unrelated compile break.
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 
     // Newest published 3.5.x as of 2026-09-01, verified resolvable on Maven Central. The plan
     // pinned 3.4.1, which also resolves; this arm talks to the daemon that runs untrusted agent

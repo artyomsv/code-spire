@@ -11,7 +11,7 @@ import { account, buildSetup, landSetup, policy, profile, repository, source } f
 const field = { selector: 'input,select,textarea' };
 const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
   webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} />);
-const step = (number: number) => screen.findByRole('listitem', { name: new RegExp(`^Step ${number}:`) });
+const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {
   vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
   vi.spyOn(sources, 'saveWorkActor').mockResolvedValue(source());

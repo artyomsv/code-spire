@@ -17,10 +17,14 @@ allprojects {
  * of them and hoping the combination was tested. Upstream already did that work and published it as
  * a platform release.
  *
- * Two have no such release yet:
+ * Three have no such release yet. As of 2026-10-28 no Quarkus platform up to 3.40.1 carries any of
+ * these fixes (3.40.1 selects jackson 2.21.7, lz4-java 1.11.1, snappy-java 1.1.10.8):
  *
- *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.1 (CVE-2026-54515, CVE-2026-59889)
- *  - `at.yawk.lz4:lz4-java` 1.10.1 -> 1.11.1 (CVE-2026-59949)
+ *  - `com.fasterxml.jackson.core` 2.22.0 -> 2.22.4 (CVE-2026-54515, CVE-2026-59889, CVE-2026-19032,
+ *    CVE-2026-68497, CVE-2026-83557, CVE-2026-89407, CVE-2026-89425, CVE-2026-91776, CVE-2026-91777)
+ *  - `at.yawk.lz4:lz4-java` 1.10.1 -> 1.11.4 (CVE-2026-59949, CVE-2026-106449..106453)
+ *  - `org.xerial.snappy:snappy-java` 1.1.10.8 -> 1.1.10.12 (CVE-2026-93451, CVE-2026-108106,
+ *    CVE-2026-116590), pulled in by kafka-clients
  *
  * jackson-core moves with jackson-databind because a Jackson patch publishes them as a pair.
  * jackson-annotations does not: it versions only on a minor, and 2.22 is current.
@@ -30,9 +34,10 @@ allprojects {
  * --configuration runtimeClasspath --dependency <name>` shows what actually resolved.
  */
 val advisoryOverrides = mapOf(
-    "com.fasterxml.jackson.core:jackson-core" to "2.22.1",
-    "com.fasterxml.jackson.core:jackson-databind" to "2.22.1",
-    "at.yawk.lz4:lz4-java" to "1.11.1",
+    "com.fasterxml.jackson.core:jackson-core" to "2.22.4",
+    "com.fasterxml.jackson.core:jackson-databind" to "2.22.4",
+    "at.yawk.lz4:lz4-java" to "1.11.4",
+    "org.xerial.snappy:snappy-java" to "1.1.10.12",
 )
 
 subprojects {
