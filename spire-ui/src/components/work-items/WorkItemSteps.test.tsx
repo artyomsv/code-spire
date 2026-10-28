@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Gate } from './approvalsApi';
 import WorkItemSteps from './WorkItemSteps';
+import { queryWrapper } from '../../test/queryWrapper';
 import * as draftApi from './workDraftApi';
 import type { WrittenPlan } from './workDraftApi';
 import * as preparationApi from './workPreparationApi';
@@ -18,7 +19,7 @@ function item(overrides: Partial<Item> = {}): Item {
     profile: { id: 'TEST-profile', name: 'TEST-assisted', version: 1 }, appliedLabels: [], ignoredLabels: [], people: [], builds: [], gate, events: [], ...overrides };
 }
 function show(value: Item, current = <button type="button">TEST-current action</button>) {
-  return render(<MemoryRouter><WorkItemSteps item={value} current={current} /></MemoryRouter>);
+  return render(<MemoryRouter><WorkItemSteps item={value} current={current} /></MemoryRouter>, { wrapper: queryWrapper() });
 }
 const step = (name: string) => within(screen.getByRole('listitem', { name: (accessible) => /^Step \d: (.*)$/.exec(accessible)?.[1] === name }));
 

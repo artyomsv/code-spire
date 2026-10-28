@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import App from './App';
+import { queryWrapper } from './test/queryWrapper';
 
 /**
  * Show archived, wired end to end through the real shell.
@@ -100,6 +101,7 @@ describe('App — Show archived', () => {
       <MemoryRouter initialEntries={['/']}>
         <App />
       </MemoryRouter>,
+      { wrapper: queryWrapper() },
     );
 
   it('asks for live rows only until the box is checked', async () => {

@@ -10,6 +10,7 @@ import * as preparationApi from './workPreparationApi';
 import * as sourcesApi from './workSourcesApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
+import { queryWrapper } from '../../test/queryWrapper';
 
 afterEach(cleanup);
 beforeEach(() => { vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-no tracker in list tests')); });
@@ -32,7 +33,7 @@ function prepared(): NonNullable<Detail['preparation']> {
 function showDetail() {
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
     <Route path="/work-items/:id" element={<WorkItemDetail />} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter>, { wrapper: queryWrapper() });
 }
 
 it('resets pagination when choosing a filter', async () => {
@@ -680,7 +681,7 @@ it('keeps the item and an open panel on screen while the page re-reads', async (
   vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
-  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
   const reads = vi.mocked(api.getWorkItem).mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
@@ -704,7 +705,7 @@ it('opens one panel at a time', async () => {
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
-  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1&decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1&decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
 });
@@ -754,7 +755,7 @@ it('never commits one item under another item address', async () => {
   vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
-    <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>);
+    <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
   // The probe's selector must find the first item, or a renamed class would let the check pass on nothing.
   expect(document.querySelector('.work-head .prov-sub')?.textContent).toBe('TEST-0 · TEST-owner/TEST-repo');
@@ -977,25 +978,101 @@ it('drops a poll answer that a later refresh overtook', async () => {
   }
 });
 
-// A first load slower than the first poll must not leave the page loading for ever (review of PR #179).
-it('shows the item from a poll that overtook a slow first load', async () => {
+// One read of the item at a time, like the list: a poll waits for a slow read rather than racing it.
+it('starts no second read of the item while the first is still out', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.spyOn(api, 'getWorkItem').mockReturnValue(new Promise(() => {}));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A first load that fails must not leave the page without the item: the next poll reads it (review of PR #179).
+it('shows the item from the poll after a failed first load', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
-  let failLoad: (reason: Error) => void = () => {};
   vi.spyOn(api, 'getWorkItem')
-    .mockImplementationOnce(() => new Promise((_, reject) => { failLoad = reject; }))
+    .mockRejectedValueOnce(new Error('TEST-first load failed'))
     .mockResolvedValue(withEvent('TEST-polled read'));
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     showDetail();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('TEST-first load failed');
+    await act(async () => { vi.advanceTimersByTime(3_000); });
 
     expect(await screen.findByText(/TEST-polled read/)).toBeInTheDocument();
-    await act(async () => { failLoad(new Error('TEST-superseded load failed')); });
-    expect(screen.queryByText(/TEST-superseded load failed/)).toBeNull();
-    expect(screen.getByText(/TEST-polled read/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A failed poll is said beside the item it could not refresh, so stale data is never shown as current.
+it('shows a failed poll beside the item until a later poll succeeds', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+  vi.spyOn(api, 'getWorkItem')
+    .mockResolvedValueOnce(withEvent('TEST-first read'))
+    .mockRejectedValueOnce(new Error('TEST-poll failed'))
+    .mockResolvedValue(withEvent('TEST-later read'));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('TEST-poll failed');
+    expect(screen.getByText(/TEST-first read/)).toBeInTheDocument();
+
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    expect(await screen.findByText(/TEST-later read/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('reads nothing on its own while the tab is hidden', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    showDetail();
+    await screen.findByRole('heading', { name: 'TEST-title' });
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// A re-read under a decision the operator is reading would move what they approve.
+it('reads nothing on its own while a panel is open', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), reason: 'specification_required' });
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
+    expect(await screen.findByRole('dialog', { name: 'Prepare the task' })).toBeInTheDocument();
+    await act(async () => {});
+    const reads = vi.mocked(api.getWorkItem).mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(api.getWorkItem).toHaveBeenCalledTimes(reads);
   } finally {
     vi.useRealTimers();
   }
