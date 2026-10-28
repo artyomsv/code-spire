@@ -2,7 +2,7 @@ import { QueryClientProvider, useQuery, type QueryClient } from '@tanstack/react
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { expect, it, vi } from 'vitest';
-import { invalidateLive, updateLive, upsertBy, writeLive } from './liveCache';
+import { invalidateLive, mergeLive, updateLive, upsertBy, writeLive } from './liveCache';
 import { createQueryClient } from './queryClient';
 
 const KEY = ['TEST-key'] as const;
@@ -82,6 +82,19 @@ it('starts a fresh read when invalidated while the first read is out', async () 
   await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
   await act(async () => first.resolve(['TEST-before change']));
   await waitFor(() => expect(result.current.data).toEqual(['TEST-after change']));
+});
+
+// An append-only stream: the REST page holds older events than the live tail, so neither may drop the other.
+it('merges into an entry whose REST read is still out, and the read keeps it', async () => {
+  const rest = pending<string[]>();
+  const client = createQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const merged = (more: string[]) => [...new Set([...(client.getQueryData<string[]>(KEY) ?? []), ...more])].sort();
+  const { result } = renderHook(() => useQuery({ queryKey: KEY, queryFn: async () => merged(await rest.promise) }), { wrapper });
+  act(() => mergeLive<string[]>(client, KEY, (previous) => [...(previous ?? []), 'TEST-2']));
+  expect(result.current.data).toEqual(['TEST-2']);
+  await act(async () => rest.resolve(['TEST-1']));
+  expect(result.current.data).toEqual(['TEST-1', 'TEST-2']);
 });
 
 it('replaces a matching row in place, appends an unseen one and leaves the input alone', () => {

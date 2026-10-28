@@ -1,9 +1,9 @@
-import { StrictMode } from 'react';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../api';
 import * as auth from '../auth';
 import { RunSocket, runEvent, runRow } from '../test/liveRuns';
+import { queryWrapper } from '../test/queryWrapper';
 import { useRunTranscript } from './useRunTranscript';
 
 beforeEach(() => {
@@ -13,13 +13,14 @@ beforeEach(() => {
   vi.spyOn(auth, 'isLeavingForAuth').mockReturnValue(false);
   vi.spyOn(auth, 'fetchMe').mockResolvedValue(null);
   vi.spyOn(auth, 'goToFullLogin').mockReturnValue(true);
+  vi.spyOn(auth, 'ensureServiceSessions').mockResolvedValue(false);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it.each([['http:', 'ws:'], ['https:', 'wss:']])('uses the encoded query id and matching socket for %s', async (protocol, expectedProtocol) => {
   vi.stubGlobal('location', { protocol, host: 'TEST.example:8443' });
   vi.mocked(api.getRunTranscript).mockResolvedValue([runEvent(1)]);
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   const socketUrl = new URL(RunSocket.latest.url);
   expect(socketUrl.protocol).toBe(expectedProtocol);
   expect(socketUrl.host).toBe('test.example:8443');
@@ -30,7 +31,7 @@ it.each([['http:', 'ws:'], ['https:', 'wss:']])('uses the encoded query id and m
 });
 
 it('accepts snapshots and one-event arrays, ordering and deduplicating by sequence alone', () => {
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   RunSocket.push([runEvent(3, { at: '2026-09-01T00:00:00Z' }), runEvent(1)]);
   RunSocket.push([runEvent(2)]);
   RunSocket.push([runEvent(2, { text: 'TEST-duplicate' })]);
@@ -42,14 +43,14 @@ it('accepts snapshots and one-event arrays, ordering and deduplicating by sequen
 it('merges a late REST page without replacing events already streamed', async () => {
   let resolve!: (events: api.RunEvent[]) => void;
   vi.mocked(api.getRunTranscript).mockReturnValue(new Promise((done) => { resolve = done; }));
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   RunSocket.push([runEvent(2), runEvent(3)]);
   await act(async () => resolve([runEvent(1), runEvent(2)]));
   expect(result.current.events.map((e) => e.sequence)).toEqual([1, 2, 3]);
 });
 
 it('ignores malformed and other-run events without dropping free-string kinds', () => {
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   RunSocket.raw('{');
   RunSocket.push(runEvent(1));
   RunSocket.push([null, {}, runEvent(1, { sequence: 1.5 }), runEvent(2, { runId: 'other' }),
@@ -58,7 +59,7 @@ it('ignores malformed and other-run events without dropping free-string kinds', 
 });
 
 it('keeps only the newest 2000 sequences, even with out-of-order pages and reconnect duplicates', () => {
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   RunSocket.push(Array.from({ length: 2000 }, (_, i) => runEvent(i + 1)));
   expect(result.current.dropped).toBe(false);
   RunSocket.push([runEvent(2001)]);
@@ -73,7 +74,7 @@ it.each(['no such run', 'a transcript tail must name its run'])('treats policy c
   vi.useFakeTimers();
   let resolve!: (events: api.RunEvent[]) => void;
   vi.mocked(api.getRunTranscript).mockReturnValue(new Promise((done) => { resolve = done; }));
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   act(() => RunSocket.latest.onclose?.({ code: 1008, reason }));
   await act(async () => resolve([runEvent(1)]));
   await act(async () => { vi.advanceTimersByTime(5000); });
@@ -85,7 +86,7 @@ it.each(['no such run', 'a transcript tail must name its run'])('treats policy c
 
 it('checks the session and reconnects after 1500ms, retaining accumulated events', async () => {
   vi.useFakeTimers();
-  const { result } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   RunSocket.push([runEvent(1), runEvent(2)]);
   await act(async () => RunSocket.latest.onclose?.({ code: 1006, reason: '' }));
   expect(auth.fetchMe).toHaveBeenCalledTimes(1);
@@ -97,10 +98,31 @@ it('checks the session and reconnects after 1500ms, retaining accumulated events
   expect(result.current.events.map((e) => e.sequence)).toEqual([1, 2, 3]);
 });
 
+// Signed in to /api does not mean signed in to /gw; every socket asks before it reconnects (useLiveSocket).
+it('asks about a lapsed service session before reconnecting the transcript', async () => {
+  vi.useFakeTimers();
+  renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
+  await act(async () => RunSocket.latest.onclose?.({ code: 1006, reason: '' }));
+  expect(auth.ensureServiceSessions).toHaveBeenCalledTimes(1);
+  await act(async () => { vi.advanceTimersByTime(1500); });
+  expect(RunSocket.sockets).toHaveLength(2);
+});
+
+// A live tail on screen must not be captioned with the failure of an older REST page.
+it('keeps a live tail when the REST page fails after it', async () => {
+  let fail!: (error: Error) => void;
+  vi.mocked(api.getRunTranscript).mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+  const { result } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
+  RunSocket.push([runEvent(1)]);
+  await act(async () => fail(new Error('TEST-late failure')));
+  expect(result.current.error).toBeNull();
+  expect(result.current.events).toEqual([runEvent(1)]);
+});
+
 it('redirects on an expired session without reconnecting', async () => {
   vi.useFakeTimers();
   vi.mocked(auth.fetchMe).mockResolvedValue({ authEnabled: true, authenticated: false, roles: [], user: '' });
-  renderHook(() => useRunTranscript(runRow().runId));
+  renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   await act(async () => RunSocket.latest.onclose?.({ code: 1006, reason: '' }));
   expect(auth.goToFullLogin).toHaveBeenCalledTimes(1);
   await act(async () => { vi.advanceTimersByTime(5000); });
@@ -109,7 +131,7 @@ it('redirects on an expired session without reconnecting', async () => {
 
 it('cancels retries on unmount and ignores a disposed StrictMode socket', async () => {
   vi.useFakeTimers();
-  const { result, unmount } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: StrictMode });
+  const { result, unmount } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper(), reactStrictMode: true });
   const disposed = RunSocket.sockets[0];
   expect(disposed.closed).toBe(true);
   RunSocket.push([runEvent(2)]);
@@ -124,13 +146,13 @@ it('cancels retries on unmount and ignores a disposed StrictMode socket', async 
 
 it('reports REST errors, clears them on live data, and suppresses errors during logout', async () => {
   vi.mocked(api.getRunTranscript).mockRejectedValue(new Error('TEST-unavailable'));
-  const { result, unmount } = renderHook(() => useRunTranscript(runRow().runId));
+  const { result, unmount } = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   await waitFor(() => expect(result.current.error).toBe('TEST-unavailable'));
   RunSocket.push([runEvent(1)]);
   expect(result.current.error).toBeNull();
   unmount();
   vi.mocked(auth.isLeavingForAuth).mockReturnValue(true);
-  const other = renderHook(() => useRunTranscript(runRow().runId));
+  const other = renderHook(() => useRunTranscript(runRow().runId), { wrapper: queryWrapper() });
   await act(async () => {});
   expect(other.result.current.error).toBeNull();
 });

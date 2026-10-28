@@ -22,6 +22,14 @@ export function updateLive<T>(client: QueryClient, key: QueryKey, update: (previ
 }
 
 /**
+ * Adds to `key` without cancelling a REST read: for an append-only stream (the run transcript), whose REST page can
+ * hold older events than the socket's snapshot. The read must merge with what is cached when it lands, not replace it.
+ */
+export function mergeLive<T>(client: QueryClient, key: QueryKey, update: (previous: T | undefined) => T): void {
+  client.setQueryData<T>(key, update);
+}
+
+/**
  * Marks `key` stale and re-reads it if a screen shows it. A read already out is cancelled first: it may have started
  * before the change this notice announces, and React Query would otherwise join it while the key has no data yet.
  */

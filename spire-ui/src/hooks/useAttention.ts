@@ -1,12 +1,8 @@
-import { useEffect, useState } from 'react';
-import { ensureServiceSessions, fetchMe, goToFullLogin, isLeavingForAuth, needsLogin } from '../auth';
+import { useState } from 'react';
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AttentionItem } from '../api';
-
-/**
- * How long to wait before reopening a socket that dropped. Long enough not to hammer a service that
- * is restarting, short enough that a deploy does not leave the panel blind for long.
- */
-const RECONNECT_MS = 1500;
+import { writeLive } from '../liveCache';
+import { useLiveSocket } from './useLiveSocket';
 
 const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { BLOCKING: 0, WARNING: 1 };
 
@@ -90,76 +86,7 @@ function isAttentionItem(value: unknown): value is AttentionItem {
  * evaluated.
  */
 export function useAttention(): { items: AttentionItem[] } {
-  const [feeds, setFeeds] = useState<Record<FeedKey, FeedState>>({
-    orchestrator: { status: 'connecting' },
-    gateway: { status: 'connecting' },
-  });
-
-  useEffect(() => {
-    let closed = false;
-    const sockets: WebSocket[] = [];
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    const connect = ({ key, path }: { key: FeedKey; path: string }) => {
-      if (closed) return;
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${location.host}${path}`);
-      sockets.push(ws);
-
-      ws.onmessage = (ev) => {
-        let data: unknown;
-        try {
-          data = JSON.parse(ev.data);
-        } catch {
-          return; // a malformed frame must not blank a feed that was working
-        }
-        if (!Array.isArray(data)) return;
-        setFeeds((prev) => ({ ...prev, [key]: { status: 'live', rows: data.filter(isAttentionItem) } }));
-      };
-
-      // Drop this feed's rows rather than leaving stale ones on screen: while the socket is down we
-      // do not know what it would say, and the synthesized row states exactly that. Reaching 'down'
-      // requires an actual close or error — never merely a socket that has yet to open.
-      const onGone = () => {
-        if (closed) return;
-        // A logout closes every socket. Without this the panel raised BLOCKING rows claiming the
-        // services were unreachable, over the top of a page that was already navigating away.
-        if (isLeavingForAuth()) return;
-        // Ask WHY it closed before reacting. An unauthenticated or expired handshake fails with no
-        // usable close code, and the session's default lifetime is five minutes — so without this
-        // check every expiry both reconnected forever and reported itself as an outage, telling the
-        // operator "the webhook gateway is not responding" when the gateway was fine and the
-        // session had simply lapsed. Diagnosing an auth problem as an outage is worse than silence.
-        void fetchMe().then(async (me) => {
-          if (closed) return;
-          if (needsLogin(me)) {
-            goToFullLogin();
-            return;
-          }
-          // Signed in here does not mean signed in THERE: each service is a separate session behind
-          // its own prefix, and a handshake cannot follow the redirect that says so. Without this
-          // check a lapsed — or never-established — gateway session read as "the webhook gateway is
-          // not responding", which is the same false-outage report this whole branch exists to avoid,
-          // arrived at from the other direction.
-          if (await ensureServiceSessions()) return;
-          if (closed) return;
-          setFeeds((prev) => ({ ...prev, [key]: { status: 'down' } }));
-          timers.push(setTimeout(() => connect({ key, path }), RECONNECT_MS));
-        });
-      };
-      ws.onclose = onGone;
-      ws.onerror = () => ws.close();
-    };
-
-    FEEDS.forEach((feed) => connect(feed));
-
-    return () => {
-      closed = true;
-      timers.forEach(clearTimeout);
-      sockets.forEach((ws) => ws.close());
-    };
-  }, []);
-
+  const feeds: Record<FeedKey, FeedState> = { orchestrator: useFeed(FEEDS[0]), gateway: useFeed(FEEDS[1]) };
   const items = FEEDS.flatMap(({ key }) => {
     const feed = feeds[key];
     switch (feed.status) {
@@ -175,4 +102,30 @@ export function useAttention(): { items: AttentionItem[] } {
   }).sort(bySeverityThenCode);
 
   return { items };
+}
+
+/** One service's conditions. The socket is the only source: a feed has no REST read. */
+const feedKey = (key: FeedKey) => ['attention', key] as const;
+
+/**
+ * One feed's state. A frame replaces the feed's list. A drop changes nothing until useLiveSocket has asked why it
+ * happened (an expired login is not an outage), so the last list stands meanwhile. Once the drop is an outage, the
+ * synthesized "unavailable" row stands until a fresh list arrives: a socket that merely reopened has said nothing yet.
+ */
+function useFeed({ key, path }: (typeof FEEDS)[number]): FeedState {
+  const client = useQueryClient();
+  const rows = useQuery<AttentionItem[]>({ queryKey: feedKey(key), queryFn: skipToken }).data;
+  const [outage, setOutage] = useState(false);
+  const socket = useLiveSocket({
+    path,
+    onFrame: (frame) => {
+      if (!Array.isArray(frame)) return;
+      writeLive(client, feedKey(key), frame.filter(isAttentionItem));
+      setOutage(false);
+    },
+  });
+  // Derived during render rather than in an effect, so the outage row never lags a frame behind the socket's state.
+  if (socket.status === 'down' && !outage) setOutage(true);
+  if (outage || socket.status === 'down') return { status: 'down' };
+  return rows ? { status: 'live', rows } : { status: 'connecting' };
 }
