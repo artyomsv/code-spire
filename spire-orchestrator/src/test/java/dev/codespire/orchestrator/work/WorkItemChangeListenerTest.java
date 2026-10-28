@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -103,7 +104,7 @@ class WorkItemChangeListenerTest extends WorkFixture {
     private void touchTheItem() {
         try {
             executeWith("UPDATE work_item SET reason=? WHERE id=?", "TEST-refresh-" + UUID.randomUUID(), itemId);
-        } catch (Exception failure) {
+        } catch (SQLException failure) {
             throw new IllegalStateException(failure);
         }
     }

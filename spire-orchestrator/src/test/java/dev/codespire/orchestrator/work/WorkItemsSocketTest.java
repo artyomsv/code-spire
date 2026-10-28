@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
@@ -35,6 +36,7 @@ class WorkItemsSocketTest extends WorkFixture {
     @TestSecurity(user = "TEST-viewer", roles = "spire-viewer")
     void aViewerReceivesNoticesAndNothingOnOpen() throws Exception {
         intake.accept(signed("900123"));
+        settleSetupNotices();
         try (Feed feed = open()) {
             assertNull(feed.frames.poll(300, TimeUnit.MILLISECONDS), "the socket must send nothing on open");
             executeWith("UPDATE work_item SET reason=? WHERE id=?", "TEST-socket-" + UUID.randomUUID(), itemId);
@@ -46,6 +48,8 @@ class WorkItemsSocketTest extends WorkFixture {
     @Test
     @TestSecurity(user = "TEST-admin", roles = "spire-admin")
     void anAdminReceivesNotices() throws Exception {
+        intake.accept(signed("900123"));
+        settleSetupNotices();
         try (Feed feed = open()) {
             broadcaster.refreshAll();
             assertEquals(mapper.createObjectNode().put("changed", "*"), feed.next());
@@ -61,6 +65,26 @@ class WorkItemsSocketTest extends WorkFixture {
         assertInstanceOf(java.net.http.WebSocketHandshakeException.class, refused.getCause());
         broadcaster.refreshAll();
         assertNull(feed.frames.poll(300, TimeUnit.MILLISECONDS), "a refused identity received a frame");
+    }
+
+    /**
+     * The fixture's seeding and the intake commit notices the listener may still hold in its 250 ms window. A marker
+     * write commits after them, so once a control socket sees the marker, none of them can reach a socket opened next.
+     */
+    private void settleSetupNotices() throws Exception {
+        try (Feed control = open()) {
+            String marker = copyItem(itemId);
+            Instant deadline = Instant.now().plusSeconds(10);
+            while (Instant.now().isBefore(deadline)) {
+                String frame = control.frames.poll(100, TimeUnit.MILLISECONDS);
+                if (frame == null) continue;
+                JsonNode changed = mapper.readTree(frame).path("changed");
+                if (changed.isArray() && changed.toString().contains(marker)) return;
+                // A batch holding '*' is sent as '*' alone, so the marker may have been folded into it: write another.
+                if ("*".equals(changed.asText())) marker = copyItem(itemId);
+            }
+            fail("the marker write never reached the control socket");
+        }
     }
 
     private URI socketUri() {

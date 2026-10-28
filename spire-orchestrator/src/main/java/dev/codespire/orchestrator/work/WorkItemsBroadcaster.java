@@ -9,7 +9,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.util.List;
+import java.util.Collection;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -35,7 +35,7 @@ public class WorkItemsBroadcaster implements WorkItemChangeSink {
     @Override
     public void changed(Set<String> ids) {
         if (ids.isEmpty()) return;
-        List<WebSocketConnection> subscribers = connections.findByEndpointId(ENDPOINT_ID);
+        Collection<WebSocketConnection> subscribers = connections.findByEndpointId(ENDPOINT_ID);
         if (subscribers.isEmpty()) return;
         ObjectNode frame = mapper.createObjectNode();
         if (ids.contains(EVERY_ITEM)) frame.put("changed", EVERY_ITEM);

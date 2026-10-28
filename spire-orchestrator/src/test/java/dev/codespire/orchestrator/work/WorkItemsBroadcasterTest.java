@@ -7,9 +7,11 @@ import io.smallrye.mutiny.Uni;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,15 +53,21 @@ class WorkItemsBroadcasterTest {
     @Test
     void aFailedSendDoesNotStopTheOtherSubscribers() {
         List<String> received = new ArrayList<>();
+        AtomicBoolean asyncFailureSubscribed = new AtomicBoolean();
         var syncFailure = connection(WorkItemsBroadcaster.ENDPOINT_ID, payload -> { throw new IllegalStateException("TEST-send-failed"); });
-        var asyncFailure = connection(WorkItemsBroadcaster.ENDPOINT_ID,
-                payload -> Uni.createFrom().failure(new IllegalStateException("TEST-async-failed")));
+        var asyncFailure = connection(WorkItemsBroadcaster.ENDPOINT_ID, payload -> Uni.createFrom().failure(() -> {
+            asyncFailureSubscribed.set(true);
+            return new IllegalStateException("TEST-async-failed");
+        }));
+        // A browser that never acknowledges: delivery to the next subscriber must not wait for it.
+        var stalled = connection(WorkItemsBroadcaster.ENDPOINT_ID, payload -> Uni.createFrom().nothing());
         var otherEndpoint = connection("runs", payload -> { throw new AssertionError("wrong endpoint"); });
         var healthy = receiver(received::add);
-        WorkItemsBroadcaster subject = subject(List.of(syncFailure, asyncFailure, otherEndpoint, healthy));
+        WorkItemsBroadcaster subject = subject(List.of(syncFailure, asyncFailure, stalled, otherEndpoint, healthy));
 
-        assertDoesNotThrow(() -> subject.changed(Set.of("TEST-item")));
+        assertTimeoutPreemptively(Duration.ofSeconds(1), () -> subject.changed(Set.of("TEST-item")));
 
+        assertTrue(asyncFailureSubscribed.get(), "the failing send was never subscribed, so its failure was never observed");
         assertEquals(List.of("{\"changed\":[\"TEST-item\"]}"), received);
     }
 
@@ -80,11 +88,12 @@ class WorkItemsBroadcasterTest {
         return subject;
     }
 
+    /** Records a frame only when its send is subscribed, as the real connection sends only then. */
     private static WebSocketConnection receiver(java.util.function.Consumer<String> receive) {
-        return connection(WorkItemsBroadcaster.ENDPOINT_ID, payload -> {
+        return connection(WorkItemsBroadcaster.ENDPOINT_ID, payload -> Uni.createFrom().item(() -> {
             receive.accept(payload);
-            return Uni.createFrom().voidItem();
-        });
+            return null;
+        }));
     }
 
     private static WebSocketConnection connection(String endpoint, Function<String, Uni<Void>> send) {

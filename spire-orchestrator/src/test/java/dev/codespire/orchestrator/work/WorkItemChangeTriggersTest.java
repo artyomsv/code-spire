@@ -32,6 +32,7 @@ class WorkItemChangeTriggersTest extends WorkFixture {
     private static final String HEAD = "0".repeat(40);
     private static final String SHA = "a".repeat(64);
     private static final long GENERATION = 999;
+    private static final Timestamp SINCE = Timestamp.from(Instant.parse("2026-01-01T00:00:00Z"));
 
     @Inject LandSettings landSettings;
 
@@ -144,40 +145,44 @@ class WorkItemChangeTriggersTest extends WorkFixture {
         }
     }
 
-    @Test
-    void bookkeepingAloneNotifiesNothing() throws Exception {
-        UUID tracker = trackerRow();
-        Timestamp since = Timestamp.from(Instant.parse("2026-01-01T00:00:00Z"));
-        UUID land = landRow("TEST-failing", since);
+    @ParameterizedTest
+    @ValueSource(strings = {"activity poll", "slot reservation", "scanner cursor", "source health", "tracker retry",
+            "land re-check", "provider health", "unchanged row"})
+    void bookkeepingAloneNotifiesNothing(String write) throws Exception {
+        Write bookkeeping = bookkeeping(write);
         try (NoticeTap tap = NoticeTap.listen()) {
             tap.drain(QUIET);
-            // WorkActivityPoller, every 2 minutes per item.
-            executeWith("UPDATE work_item SET activity_polled_at=now() WHERE id=?", itemId);
-            assertEquals(List.of(), tap.drain(QUIET), "activity poll stamp");
-            // WorkItemStore.reserve.
-            executeWith("UPDATE work_item SET slot_reserved=NOT slot_reserved WHERE id=?", itemId);
-            assertEquals(List.of(), tap.drain(QUIET), "slot reservation");
-            // WorkSourceScanner, every 30 seconds per source.
-            executeWith("UPDATE work_source SET scan_cursor=?,scan_requested=?,scan_batch=NULL,scan_next_cursor=NULL,health='healthy',checked_at=now() WHERE id=?",
-                    "TEST-cursor-" + UUID.randomUUID(), false, source);
-            assertEquals(List.of(), tap.drain(QUIET), "scanner cursor");
-            // WorkSourceRegistry health.
-            executeWith("UPDATE work_source SET health=?,checked_at=now() WHERE id=?", "TEST-unhealthy", source);
-            assertEquals(List.of(), tap.drain(QUIET), "source health");
-            // WorkSourceEffects.touch: a failed tracker row deferred.
-            executeWith("UPDATE work_tracker_outbox SET checked_at=now() WHERE effect_id=?", tracker);
-            assertEquals(List.of(), tap.drain(QUIET), "tracker retry stamp");
-            // WorkLandEffects.backOff with the reason and failing-since it already has.
-            executeWith("UPDATE work_land_effect SET reason=?,failing_since=?,next_check_at=?,updated_at=now() WHERE effect_id=? AND state=?",
-                    "TEST-failing", since, Timestamp.from(Instant.now().plusSeconds(120)), land, "pending");
-            assertEquals(List.of(), tap.drain(QUIET), "land re-check deferred");
-            // ProviderRegistry health check.
-            executeWith("UPDATE scm_provider SET last_check_at = now(), last_check_ok = ?, last_check_error = ? WHERE id = ?", true, null, account);
-            assertEquals(List.of(), tap.drain(QUIET), "provider health check");
-            // A rewrite that changes no value.
-            executeWith("UPDATE work_item SET reason=reason WHERE id=?", itemId);
-            assertEquals(List.of(), tap.drain(QUIET), "an unchanged row");
+            executeWith(bookkeeping.sql(), bookkeeping.values());
+            assertEquals(List.of(), tap.drain(QUIET), write);
         }
+    }
+
+    /** One statement and its values. */
+    private record Write(String sql, Object... values) {}
+
+    /** The writer's own SQL for each bookkeeping write; rows it needs are inserted before the tap opens. */
+    private Write bookkeeping(String write) throws SQLException {
+        return switch (write) {
+            // WorkActivityPoller, every 2 minutes per item.
+            case "activity poll" -> new Write("UPDATE work_item SET activity_polled_at=now() WHERE id=?", itemId);
+            // WorkItemStore.reserve.
+            case "slot reservation" -> new Write("UPDATE work_item SET slot_reserved=NOT slot_reserved WHERE id=?", itemId);
+            // WorkSourceScanner, every 30 seconds per source.
+            case "scanner cursor" -> new Write("UPDATE work_source SET scan_cursor=?,scan_requested=?,scan_batch=NULL,scan_next_cursor=NULL,"
+                    + "health='healthy',checked_at=now() WHERE id=?", "TEST-cursor-" + UUID.randomUUID(), false, source);
+            // WorkSourceRegistry health.
+            case "source health" -> new Write("UPDATE work_source SET health=?,checked_at=now() WHERE id=?", "TEST-unhealthy", source);
+            // WorkSourceEffects.touch: a failed tracker row deferred.
+            case "tracker retry" -> new Write("UPDATE work_tracker_outbox SET checked_at=now() WHERE effect_id=?", trackerRow());
+            // WorkLandEffects.backOff with the reason and failing-since the row already has.
+            case "land re-check" -> new Write("UPDATE work_land_effect SET reason=?,failing_since=?,next_check_at=?,updated_at=now() WHERE effect_id=? AND state=?",
+                    "TEST-failing", SINCE, Timestamp.from(Instant.now().plusSeconds(120)), landRow("TEST-failing", SINCE), "pending");
+            // ProviderRegistry health check.
+            case "provider health" -> new Write("UPDATE scm_provider SET last_check_at = now(), last_check_ok = ?, last_check_error = ? WHERE id = ?",
+                    true, null, account);
+            case "unchanged row" -> new Write("UPDATE work_item SET reason=reason WHERE id=?", itemId);
+            default -> throw new IllegalArgumentException("no bookkeeping write named " + write);
+        };
     }
 
     /** The three writes of one item-table row, and the id its notices must carry. */
@@ -186,46 +191,57 @@ class WorkItemChangeTriggersTest extends WorkFixture {
     private ItemRow itemRow(String table) throws SQLException {
         UUID id = UUID.randomUUID();
         return switch (table) {
-            case "work_item" -> {
-                // The row exists only to be deleted; its insert is the one under test, so it is replayed below.
-                String extra = copyItem(itemId);
-                executeWith("DELETE FROM work_item WHERE id=?", extra);
-                yield new ItemRow(extra, """
-                        INSERT INTO work_item(id,source_id,repository_id,issue_id,issue_key,tracker_url,generation,policy_revision,phase,workflow_status,reason,revision,updated_at)
-                        SELECT ?,source_id,repository_id,?,'TEST-1',tracker_url,1,policy_revision,phase,workflow_status,reason,1,now() FROM work_item WHERE id=?""",
-                        new Object[]{extra, "TEST-issue-" + extra, itemId}, "UPDATE work_item SET reason='TEST-changed' WHERE id=?",
-                        "DELETE FROM work_item WHERE id=?", extra);
-            }
+            case "work_item" -> workItemRow();
             case "work_item_gate" -> new ItemRow(itemId, "INSERT INTO work_item_gate(id,work_item_id,generation,phase,state) VALUES (?,?,?,'TEST-phase','OPEN')",
                     new Object[]{id, itemId, GENERATION}, "UPDATE work_item_gate SET artifact='TEST-artifact' WHERE id=?", "DELETE FROM work_item_gate WHERE id=?", id);
-            case "work_run_effect" -> {
-                executeWith("INSERT INTO work_phase_attempt(id,work_item_id,generation,phase,state,started_at) VALUES (?,?,?,'TEST-phase','started',now())",
-                        id, itemId, GENERATION);
-                yield new ItemRow(itemId, "INSERT INTO work_run_effect(attempt_id,work_item_id,generation,state) VALUES (?,?,?,'pending')",
-                        new Object[]{id, itemId, GENERATION}, "UPDATE work_run_effect SET reason='TEST-reason' WHERE attempt_id=?",
-                        "DELETE FROM work_run_effect WHERE attempt_id=?", id);
-            }
+            case "work_run_effect" -> runEffectRow(id);
             case "work_land_effect" -> new ItemRow(itemId, """
                     INSERT INTO work_land_effect(effect_id,work_item_id,generation,item_revision,pr_number,approved_head,state) VALUES (?,?,?,1,1,?,'pending')""",
                     new Object[]{id, itemId, GENERATION, HEAD}, "UPDATE work_land_effect SET reason='TEST-reason' WHERE effect_id=?",
                     "DELETE FROM work_land_effect WHERE effect_id=?", id);
-            case "work_item_preparation_attempt" -> new ItemRow(itemId, """
-                    INSERT INTO work_item_preparation_attempt(work_item_id,generation,reason,retry_after) VALUES (?,?,'TEST-reason',now())""",
-                    new Object[]{itemId, GENERATION}, "UPDATE work_item_preparation_attempt SET reason='TEST-changed' WHERE work_item_id=? AND generation=" + GENERATION,
-                    "DELETE FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=" + GENERATION, itemId);
+            case "work_item_preparation_attempt" -> preparationAttemptRow();
             case "work_tracker_outbox" -> new ItemRow(itemId, """
                     INSERT INTO work_tracker_outbox(effect_id,work_item_id,generation,item_revision,phase,payload) VALUES (?,?,?,1,'TEST-phase',?)""",
                     new Object[]{id, itemId, GENERATION, new byte[]{1}}, "UPDATE work_tracker_outbox SET reason='TEST-reason' WHERE effect_id=?",
                     "DELETE FROM work_tracker_outbox WHERE effect_id=?", id);
-            case "work_step_summary" -> new ItemRow(itemId, """
-                    INSERT INTO work_step_summary(work_item_id,generation,step_index,run_id,summary,state) VALUES (?,?,0,'TEST-run',NULL,'summary_missing')""",
-                    new Object[]{itemId, GENERATION}, "UPDATE work_step_summary SET created_at=created_at - interval '1 second' WHERE work_item_id=? AND run_id='TEST-run'",
-                    "DELETE FROM work_step_summary WHERE work_item_id=? AND run_id='TEST-run'", itemId);
+            case "work_step_summary" -> stepSummaryRow();
             case "work_item_artifact" -> new ItemRow(itemId, "INSERT INTO work_item_artifact(id,work_item_id,kind,body,sha256) VALUES (?,?,'SPEC',?,?)",
                     new Object[]{id, itemId, new byte[]{1}, SHA}, "UPDATE work_item_artifact SET kind='PLAN' WHERE id=?",
                     "DELETE FROM work_item_artifact WHERE id=?", id);
             default -> throw new IllegalArgumentException("no row for " + table);
         };
+    }
+
+    /** A second item whose own insert is the write under test: the copy is made, removed, and its insert replayed. */
+    private ItemRow workItemRow() throws SQLException {
+        String extra = copyItem(itemId);
+        executeWith("DELETE FROM work_item WHERE id=?", extra);
+        return new ItemRow(extra, """
+                INSERT INTO work_item(id,source_id,repository_id,issue_id,issue_key,tracker_url,generation,policy_revision,phase,workflow_status,reason,revision,updated_at)
+                SELECT ?,source_id,repository_id,?,'TEST-1',tracker_url,1,policy_revision,phase,workflow_status,reason,1,now() FROM work_item WHERE id=?""",
+                new Object[]{extra, "TEST-issue-" + extra, itemId}, "UPDATE work_item SET reason='TEST-changed' WHERE id=?",
+                "DELETE FROM work_item WHERE id=?", extra);
+    }
+
+    /** A run effect needs its phase attempt first; the attempt table has no trigger of its own. */
+    private ItemRow runEffectRow(UUID id) throws SQLException {
+        executeWith("INSERT INTO work_phase_attempt(id,work_item_id,generation,phase,state,started_at) VALUES (?,?,?,'TEST-phase','started',now())",
+                id, itemId, GENERATION);
+        return new ItemRow(itemId, "INSERT INTO work_run_effect(attempt_id,work_item_id,generation,state) VALUES (?,?,?,'pending')",
+                new Object[]{id, itemId, GENERATION}, "UPDATE work_run_effect SET reason='TEST-reason' WHERE attempt_id=?",
+                "DELETE FROM work_run_effect WHERE attempt_id=?", id);
+    }
+
+    private ItemRow preparationAttemptRow() {
+        return new ItemRow(itemId, "INSERT INTO work_item_preparation_attempt(work_item_id,generation,reason,retry_after) VALUES (?,?,'TEST-reason',now())",
+                new Object[]{itemId, GENERATION}, "UPDATE work_item_preparation_attempt SET reason='TEST-changed' WHERE work_item_id=? AND generation=" + GENERATION,
+                "DELETE FROM work_item_preparation_attempt WHERE work_item_id=? AND generation=" + GENERATION, itemId);
+    }
+
+    private ItemRow stepSummaryRow() {
+        return new ItemRow(itemId, "INSERT INTO work_step_summary(work_item_id,generation,step_index,run_id,summary,state) VALUES (?,?,0,'TEST-run',NULL,'summary_missing')",
+                new Object[]{itemId, GENERATION}, "UPDATE work_step_summary SET created_at=created_at - interval '1 second' WHERE work_item_id=? AND run_id='TEST-run'",
+                "DELETE FROM work_step_summary WHERE work_item_id=? AND run_id='TEST-run'", itemId);
     }
 
     private UUID trackerRow() throws SQLException {
