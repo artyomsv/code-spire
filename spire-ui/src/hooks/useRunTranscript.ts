@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRunTranscript, type RunEvent } from '../api';
-import { fetchMe, goToFullLogin, isLeavingForAuth, needsLogin } from '../auth';
+import { isLeavingForAuth } from '../auth';
+import { mergeLive } from '../liveCache';
+import { useLiveSocket } from './useLiveSocket';
 
 const MAX_EVENTS = 2000;
 type Transcript = { events: RunEvent[]; dropped: boolean };
+const EMPTY: Transcript = { events: [], dropped: false };
+
+/** One run's transcript: the REST page and the live tail merge into the same entry. */
+export const transcriptKey = (runId: string) => ['run-transcript', runId] as const;
 
 function isEvent(value: unknown): value is RunEvent {
   if (typeof value !== 'object' || value === null) return false;
@@ -22,73 +28,37 @@ function merge(current: Transcript, incoming: RunEvent[]): Transcript {
   return { events: ordered.slice(-MAX_EVENTS), dropped: current.dropped || ordered.length > MAX_EVENTS };
 }
 
+/**
+ * One run's transcript. Events are immutable, so the REST page and the live tail are merged, never replaced: the
+ * REST read merges with what the socket already delivered when it lands, and each frame merges into the entry.
+ * A policy close (1008, e.g. "no such run") is final: it shows the reason, never reopens, and drops the REST read.
+ */
 export function useRunTranscript(runId: string) {
-  const [transcript, setTranscript] = useState<Transcript>({ events: [], dropped: false });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  const key = transcriptKey(runId);
+  const own = (values: unknown[]) => values.filter(isEvent).filter((event) => event.runId === runId);
+  const query = useQuery({
+    queryKey: key,
+    queryFn: async () => merge(client.getQueryData<Transcript>(key) ?? EMPTY, own(await getRunTranscript(runId))),
+  });
+  const socket = useLiveSocket({
+    path: `/api/ws/runs/transcript?runId=${encodeURIComponent(runId)}`,
+    onFrame: (frame) => {
+      if (Array.isArray(frame)) mergeLive<Transcript>(client, key, (current) => merge(current ?? EMPTY, own(frame)));
+    },
+    onClose: ({ code }) => {
+      if (code !== 1008) return 'reconnect';
+      void client.cancelQueries({ queryKey: key, exact: true });
+      return 'stop';
+    },
+  });
 
-  useEffect(() => {
-    let closed = false;
-    let terminal = false;
-    let live = false;
-    let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    setTranscript({ events: [], dropped: false });
-    setLoading(true);
-    setError(null);
-    const accept = (events: RunEvent[]) => {
-      setTranscript((current) => merge(current, events.filter((event) => event.runId === runId)));
-      setLoading(false);
-      setError(null);
-    };
-    void getRunTranscript(runId).then((events) => {
-      // Events are immutable: merge a late REST page without overwriting a live tail.
-      if (!closed && !terminal) accept(events.filter(isEvent));
-    }).catch((failure: unknown) => {
-      if (closed || terminal || live || isLeavingForAuth()) return;
-      setError(failure instanceof Error ? failure.message : 'Failed to load transcript');
-      setLoading(false);
-    });
-
-    const connect = () => {
-      if (closed || terminal || isLeavingForAuth()) return;
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(`${proto}//${location.host}/api/ws/runs/transcript?runId=${encodeURIComponent(runId)}`);
-      ws = socket;
-      socket.onmessage = (event) => {
-        if (closed || terminal || socket !== ws) return;
-        let data: unknown;
-        try { data = JSON.parse(event.data); } catch { return; }
-        if (!Array.isArray(data)) return;
-        live = true;
-        accept(data.filter(isEvent));
-      };
-      socket.onclose = (event) => {
-        if (closed || socket !== ws || isLeavingForAuth()) return;
-        if (event.code === 1008) {
-          terminal = true;
-          setLoading(false);
-          setError(event.reason || 'Transcript access refused');
-          return;
-        }
-        void fetchMe().then((me) => {
-          if (closed || terminal || isLeavingForAuth()) return;
-          if (needsLogin(me)) {
-            goToFullLogin();
-            return;
-          }
-          reconnectTimer = setTimeout(connect, 1500);
-        });
-      };
-      socket.onerror = () => socket.close();
-    };
-    connect();
-    return () => {
-      closed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      ws?.close();
-    };
-  }, [runId]);
-
-  return { ...transcript, loading, error };
+  const transcript = query.data ?? EMPTY;
+  if (socket.status === 'refused') {
+    return { ...transcript, loading: false, error: socket.closeReason ?? 'Transcript access refused' };
+  }
+  // A live tail on screen is not captioned with an older REST page's failure, nor with one caused by leaving.
+  const error = query.error && query.data === undefined && !isLeavingForAuth()
+    ? query.error.message || 'Failed to load transcript' : null;
+  return { ...transcript, loading: query.data === undefined && error === null, error };
 }

@@ -279,9 +279,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   that it changed; no screen polls. Sockets open only through `hooks/useLiveSocket.ts` (close order: `onClose`,
   session check, gateway sign-in, reconnect after 1.5 s), and frames reach the cache only through `liveCache.ts`,
   which cancels a REST read of the same key first so an older answer never replaces a newer frame. Tests render
-  inside `test/queryWrapper.tsx`, and `vitest.setup.ts` delivers React Query notices synchronously. Moved so far
-  (steps 1–2): the runs list, run detail and the reviews list (archived reviews are a separate REST-only query).
-  Attention, transcript and timeline sockets still use their own hooks; the work-item screens still poll until their change feed (steps 4–5) lands.
+  inside `test/queryWrapper.tsx`, and `vitest.setup.ts` delivers React Query notices synchronously. Every socket
+  now opens through `useLiveSocket` (steps 1–3): runs list, run detail, reviews list (archived reviews are a separate
+  REST-only query), the attention bell (one socket-only cache entry per feed) and the run transcript, an append-only
+  stream whose REST page and frames merge (`mergeLive`, no cancel). The server's `/api/ws/timeline` has no dashboard
+  client. The work-item screens still poll until their change feed (steps 4–5) lands.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
