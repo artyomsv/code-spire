@@ -21,8 +21,12 @@ export function updateLive<T>(client: QueryClient, key: QueryKey, update: (previ
   client.setQueryData<T>(key, update);
 }
 
-/** Marks `key` stale and re-reads it if a screen shows it. */
+/**
+ * Marks `key` stale and re-reads it if a screen shows it. A read already out is cancelled first: it may have started
+ * before the change this notice announces, and React Query would otherwise join it while the key has no data yet.
+ */
 export function invalidateLive(client: QueryClient, key: QueryKey): void {
+  void client.cancelQueries({ queryKey: key, exact: true });
   void client.invalidateQueries({ queryKey: key, exact: true });
 }
 

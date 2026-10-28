@@ -130,12 +130,15 @@ it('renders a real zero as free and exposes every recorded token type', async ()
 
 it('warns on an unknown status and does not start an elapsed clock', async () => {
   vi.useFakeTimers();
+  // The clock is RunDefinitionCard's setInterval. React Query keeps a timer of its own (it drops an unused cache
+  // entry after five minutes), so counting every timer no longer isolates the clock.
+  const intervals = vi.spyOn(globalThis, 'setInterval');
   show(runView({ status: 'unexpected' as api.RunStatus }));
   await act(async () => {});
   expect(screen.getByText('Unknown (unexpected)')).toHaveClass('refused');
   const definition = screen.getByRole('region', { name: 'Run definition' });
   expect(within(definition).getByText('Elapsed').nextElementSibling).toHaveTextContent(/^—$/);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(intervals).not.toHaveBeenCalled();
 });
 
 it('lists every blocked path and shows failure details only for a failed run', async () => {
