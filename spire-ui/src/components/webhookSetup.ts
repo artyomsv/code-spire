@@ -1,7 +1,11 @@
 // Per-provider "what to do on the portal" steps, shown in the one-time reveal after a webhook is
-// created (Settings → Repositories). The reveal already shows the Payload URL + Secret to copy, so
-// these steps reference "above" for those two values and cover the rest: where to go, and which
-// events to enable. Kept framework-free so it unit-tests without rendering.
+// created (Settings → Webhooks, and the repository screens). The reveal already shows the Payload
+// URL + Secret to copy, so these steps reference "above" for those two values and cover the rest:
+// where to go, and which events to enable. The events depend on the webhook kind: the REVIEWER
+// hook feeds the reviewer, the FACTORY hook watches the factory's own pull requests and branches,
+// and the ISSUE hook feeds work-item intake. Kept framework-free so it unit-tests without rendering.
+
+import type { WebhookEventKind } from '../api';
 
 export interface WebhookSetupStep {
   /** Short imperative — the action for this step. */
@@ -18,51 +22,96 @@ export interface WebhookSetupGuide {
   steps: WebhookSetupStep[];
 }
 
-const GUIDES: Record<string, WebhookSetupGuide> = {
+/** The event steps of one kind: one per portal section, with the forge's own labels. */
+type EventSteps = Partial<Record<WebhookEventKind, WebhookSetupStep[]>>;
+
+interface ProviderGuide {
+  providerLabel: string;
+  /** What each kind of hook must subscribe to on this forge; a kind the forge cannot feed is absent. */
+  events: EventSteps;
+  /** The portal steps around the chosen kind's event steps, ending with a check that fits the kind. */
+  steps: (eventSteps: WebhookSetupStep[], kind: WebhookEventKind) => WebhookSetupStep[];
+}
+
+// Each list mirrors what the forge adapter accepts for that kind: GitHubIngress.translate (REVIEWER),
+// GitHubIngress.activity (FACTORY) and GitHubWorkIngress (ISSUE), and their GitLab and Bitbucket twins.
+const GITHUB_EVENTS = 'Choose “Let me select individual events” and enable:';
+const GITLAB_EVENTS = 'Under Trigger, enable:';
+// GitLab renamed the trigger; issues still arrive as an Issue Hook, so the guide names both labels.
+const GITLAB_ISSUES = 'Work item events (Issues events on older GitLab)';
+const BITBUCKET_PULL_REQUEST = 'Under Triggers → Pull request, enable:';
+
+const GUIDES: Record<string, ProviderGuide> = {
   github: {
     providerLabel: 'GitHub',
-    steps: [
+    events: {
+      REVIEWER: [{ title: GITHUB_EVENTS, events: ['Pull requests', 'Issue comments', 'Pull request review comments'] }],
+      FACTORY: [{ title: GITHUB_EVENTS, events: ['Pushes', 'Pull requests', 'Pull request reviews', 'Pull request review comments', 'Issue comments'] }],
+      ISSUE: [{ title: GITHUB_EVENTS, events: ['Issues', 'Issue comments'] }],
+    },
+    steps: (eventSteps) => [
       { title: 'Open your repo → Settings → Webhooks → Add webhook' },
       { title: 'Paste the Payload URL above', detail: 'Content type: application/json. Keep SSL verification on.' },
       { title: 'Paste the secret above into Secret', detail: 'GitHub signs each delivery (X-Hub-Signature-256).' },
-      {
-        title: 'Choose “Let me select individual events” and enable:',
-        events: ['Pull requests', 'Issue comments', 'Pull request review comments'],
-      },
+      ...eventSteps,
       { title: 'Add webhook', detail: 'GitHub sends a test ping — expect a 204.' },
     ],
   },
   gitlab: {
     providerLabel: 'GitLab',
-    steps: [
+    events: {
+      REVIEWER: [{ title: GITLAB_EVENTS, events: ['Merge request events', 'Comments'] }],
+      FACTORY: [{ title: GITLAB_EVENTS, events: ['Push events', 'Merge request events', 'Comments'] }],
+      ISSUE: [{ title: GITLAB_EVENTS, events: [GITLAB_ISSUES, 'Comments'] }],
+    },
+    steps: (eventSteps, kind) => [
       { title: 'Open your project → Settings → Webhooks → Add new webhook' },
       { title: 'Paste the Payload URL above into URL' },
       {
         title: 'Paste the secret above into Secret token',
         detail: 'GitLab returns it in X-Gitlab-Token — it does not sign the body.',
       },
-      { title: 'Under Trigger, enable:', events: ['Merge request events', 'Comments'] },
-      { title: 'Add webhook', detail: 'Then use Test → Merge request events to confirm a 2xx.' },
+      ...eventSteps,
+      {
+        title: 'Add webhook',
+        detail: `Then use Test → ${kind === 'ISSUE' ? GITLAB_ISSUES : 'Merge request events'} to confirm a 2xx.`,
+      },
     ],
   },
   'bitbucket-cloud': {
     providerLabel: 'Bitbucket',
-    steps: [
+    events: {
+      REVIEWER: [{ title: BITBUCKET_PULL_REQUEST, events: ['Created', 'Updated', 'Comment created', 'Merged', 'Declined'] }],
+      FACTORY: [
+        { title: 'Under Triggers → Repository, enable:', events: ['Push'] },
+        { title: BITBUCKET_PULL_REQUEST, events: ['Updated', 'Merged', 'Declined', 'Comment created', 'Approved', 'Approval removed'] },
+      ],
+    },
+    steps: (eventSteps, kind) => [
       { title: 'Open your repo → Repository settings → Webhooks → Add webhook' },
       { title: 'Paste the Payload URL above into URL', detail: 'Set Status to Active.' },
       { title: 'Paste the secret above into Secret', detail: 'Bitbucket signs each delivery (X-Hub-Signature).' },
+      ...eventSteps,
       {
-        title: 'Under Triggers → Pull request, enable:',
-        events: ['Created', 'Updated', 'Comment created', 'Merged', 'Declined'],
+        title: 'Save',
+        detail: kind === 'FACTORY'
+          ? 'A push to an item branch, or a change on an item’s pull request, now reaches the factory.'
+          : 'Open a non-draft PR by an allowed author to fire the first review.',
       },
-      { title: 'Save', detail: 'Open a non-draft PR by an allowed author to fire the first review.' },
     ],
   },
 };
 
-/** The setup guide for a provider type, or null when no portal guide exists for it. */
-export function webhookSetupGuide(providerType: string): WebhookSetupGuide | null {
-  return GUIDES[providerType] ?? null;
+/**
+ * The setup guide for a provider type and webhook kind, or null when no portal guide exists for the
+ * provider or the provider cannot feed that kind. The kind defaults to REVIEWER, the hook every
+ * registration starts with.
+ */
+export function webhookSetupGuide(providerType: string, eventKind: WebhookEventKind = 'REVIEWER'): WebhookSetupGuide | null {
+  const guide = GUIDES[providerType];
+  const eventSteps = guide?.events[eventKind];
+  if (!guide || !eventSteps) return null;
+  return { providerLabel: guide.providerLabel, steps: guide.steps(eventSteps, eventKind) };
 }
 
 // What to type in the target field differs per provider — GitHub owner/repo, a Bitbucket

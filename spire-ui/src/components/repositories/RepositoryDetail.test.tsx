@@ -97,3 +97,17 @@ describe('RepositoryDetail', () => {
     expect(screen.getByRole('button', { name: 'Create FACTORY webhook' })).toBeEnabled();
   });
 });
+
+describe('RepositoryDetail secret rotation', () => {
+  it('tells the operator to replace the secret on the existing forge webhook, not to add a second one', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(api, 'rotateWebhookSecret').mockResolvedValue({ repo: hooks[1], secret: 'TEST-rotated-secret' });
+    render(<RepositoryDetail repository={repository} hooks={hooks} onHooksChanged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rotate FACTORY secret' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Webhook secret' });
+    expect(within(dialog).getByText('TEST-rotated-secret')).toBeInTheDocument();
+    expect(within(dialog).getByText(/webhook already exists on GitLab/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Add new webhook/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Push events')).toBeInTheDocument();
+  });
+});

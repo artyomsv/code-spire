@@ -134,7 +134,10 @@ it('turns on instant updates with an issue webhook bound to the source and revea
   await waitFor(() => expect(gateway.createWebhookRepo).toHaveBeenCalledWith({ providerType: 'github', forgeOrigin: repository.forgeOrigin,
     repositoryId: repository.id, eventKind: 'ISSUE', sourceId: 'TEST-source', scope: 'repo', target: 'TEST-owner/TEST-repo', enabled: true }));
   const reveal = await screen.findByRole('dialog', { name: 'Webhook secret' });
-  expect(within(reveal).getByText(/subscribe to Issues and Issue comments/)).toBeInTheDocument();
+  expect(within(reveal).getByText('Next — set up on GitHub')).toBeInTheDocument();
+  expect(within(reveal).getByText('Issues')).toBeInTheDocument();
+  expect(within(reveal).getByText('Issue comments')).toBeInTheDocument();
+  expect(within(reveal).queryByText('Pull requests')).toBeNull();
   expect(changedHooks).toHaveBeenCalledWith([issueHook]);
 });
 it('does not create a second issue webhook when the first response was lost', async () => {
