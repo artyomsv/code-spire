@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { QueryClient, QueryFilters, QueryKey } from '@tanstack/react-query';
 
 /*
  * How a socket frame reaches React Query (docs/superpowers/specs/2026-10-28-live-data-design.md §3.3).
@@ -36,6 +36,9 @@ export function mergeLive<T>(client: QueryClient, key: QueryKey, update: (previo
 export function invalidateLive(client: QueryClient, key: QueryKey): void {
   void client.cancelQueries({ queryKey: key, exact: true });
   void client.invalidateQueries({ queryKey: key, exact: true });
+}
+
+export function noticeLive(_client: QueryClient, _filters: QueryFilters): void {
 }
 
 /** Replaces the row with the same id, or appends it. Never changes `rows`. */
