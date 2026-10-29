@@ -14,6 +14,7 @@ import { buildDefaults, buildDefaultsKey, type BuildDefaults } from './buildDefa
 import LandStep from './LandStep';
 import { landSettings, landSettingsKey, type LandSettings } from './landSettingsApi';
 import { policyKeys } from '../../work-items/workQueries';
+import { invalidateLive } from '../../../liveCache';
 
 interface Props {
   repository: Repository;
@@ -49,7 +50,7 @@ export default function RepositoryFactory({ repository, accounts, webhooks }: Pr
     ? { sources: sourcesRead.data.filter(source => source.repositoryId === repository.id), profiles: profilesRead.data,
       policy: policyRead.data, build: buildRead.data, land: landRead.data } : null;
 
-  const reload = () => { for (const queryKey of keys) void client.invalidateQueries({ queryKey, exact: true }); };
+  const reload = () => { for (const queryKey of keys) invalidateLive(client, queryKey); };
   const changed = (message?: string) => { setOpen(null); setNotice(message ?? ''); reload(); };
   const openStep = (next: string | null) => { setNotice(''); setOpen(next); };
   if (!data) return error ? <p className="prov-error" role="alert">{error}</p> : <p className="factory-note">Loading factory setup…</p>;

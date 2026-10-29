@@ -17,7 +17,7 @@ import { policyKeys } from '../work-items/workQueries';
 import RepositoryFactory from './factory/RepositoryFactory';
 import FactoryProgress from './factory/FactoryProgress';
 import { readiness } from './factory/factoryModel';
-import { updateLive, writeLive } from '../../liveCache';
+import { invalidateLive, updateLive, writeLive } from '../../liveCache';
 
 /** Repository configuration remains usable when the separate webhook service is unavailable. */
 export default function RepositoryRegistryPage() {
@@ -63,8 +63,9 @@ export default function RepositoryRegistryPage() {
   function replace(repository: Repository) {
     updateLive<Repository[]>(client, repositoriesKey, current => [...(current ?? []).filter(row => row.id !== repository.id), repository]);
     // The server reports a source enabled only while its repository is, so the setup column reads them again
-    // (review of PR 358, M-1).
-    void client.invalidateQueries({ queryKey: workSourcesKey, exact: true });
+    // (review of PR 358, M-1). invalidateLive cancels a first read still out: invalidating alone would join it, and
+    // its answer predates the save.
+    invalidateLive(client, workSourcesKey);
   }
   function registered(repository: Repository) {
     replace(repository);
