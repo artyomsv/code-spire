@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deleteWebhookRepo,
   fetchWebhookRepos,
+  webhookReposKey,
   rotateWebhookSecret,
   updateWebhookRepo,
   type WebhookRepoSecret,
@@ -16,6 +18,7 @@ import Tooltip from './Tooltip';
 import WebhookSetupChecklist from './WebhookSetupChecklist';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 import { useServingAccounts } from '../hooks/useServingAccounts';
+import { invalidateLive } from '../liveCache';
 
 const SCOPES: { value: WebhookScope; label: string }[] = [
   { value: 'repo', label: 'Repository' },
@@ -33,10 +36,16 @@ export function webhookPath(w: Pick<WebhookRepoView, 'providerType' | 'webhookKe
   return `/webhooks/${w.providerType}/${w.webhookKey}`;
 }
 
+/** One array while nothing is read, so the deep link's effect does not re-run on every render. */
+const NO_HOOKS: WebhookRepoView[] = [];
+
 export default function SettingsWebhookRepos() {
-  const [repos, setRepos] = useState<WebhookRepoView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  // Shared with the repositories page: a webhook created there is shown here at once, then read again.
+  const read = useQuery({ queryKey: webhookReposKey, queryFn: () => fetchWebhookRepos() });
+  const repos = read.data ?? NO_HOOKS;
+  const loading = read.data === undefined && !read.error;
+  const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
 
   // null = form closed; a WebhookRepoView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | WebhookRepoView | null>(null);
@@ -45,21 +54,7 @@ export default function SettingsWebhookRepos() {
   const [confirmDelete, setConfirmDelete] = useState<WebhookRepoView | null>(null);
   const serving = useServingAccounts(repos);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      setRepos(await fetchWebhookRepos());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
+  const load = () => void invalidateLive(client, webhookReposKey);
 
   return (
     <section className="content">
@@ -86,9 +81,10 @@ export default function SettingsWebhookRepos() {
           </p>
         )}
 
-        {error ? (
+        {error && read.data !== undefined && <p className="prov-note prov-error" role="alert">{error}</p>}
+        {error && read.data === undefined ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
-        ) : loading && repos.length === 0 ? (
+        ) : loading ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : repos.length === 0 ? (
           <div className="wh-empty">

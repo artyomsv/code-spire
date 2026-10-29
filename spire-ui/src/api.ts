@@ -985,6 +985,8 @@ export async function previewContextProvider(id: string, text: string): Promise<
   return res.json();
 }
 
+export const contextProvidersKey = ['context-providers'] as const;
+
 export async function fetchContextProviders(): Promise<ContextProviderView[]> {
   const res = await apiFetch('/api/context-providers');
   if (!res.ok) return throwResponse(res, 'Failed to load context providers');
