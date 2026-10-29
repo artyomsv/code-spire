@@ -14,7 +14,7 @@ let changedHooks = vi.fn();
 function renderFactory(options: { accounts?: gateway.ProviderView[]; hooks?: gateway.WebhookRepoView[]; unavailable?: boolean; repo?: typeof repository } = {}) {
   changedHooks = vi.fn();
   return render(<RepositoryFactory repository={options.repo ?? repository} accounts={options.accounts ?? [account(), account('gitlab'), account('atlassian')]}
-    webhooks={{ hooks: options.hooks ?? [], unavailable: options.unavailable ?? false, changed: changedHooks }} onChanged={vi.fn()} />, { wrapper: queryWrapper() });
+    webhooks={{ hooks: options.hooks ?? [], unavailable: options.unavailable ?? false, changed: changedHooks }} />, { wrapper: queryWrapper() });
 }
 const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {

@@ -13,7 +13,7 @@ import { queryWrapper } from '../../../test/queryWrapper';
 
 const field = { selector: 'input,select,textarea' };
 const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
-  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} />, { wrapper: queryWrapper() });
+  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />, { wrapper: queryWrapper() });
 const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {
   vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
@@ -59,7 +59,7 @@ describe('outcome', () => {
       .mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
     const view = renderFactory();
     view.rerender(<RepositoryFactory repository={{ ...repository, id: 'TEST-other', slug: 'TEST-other' }} accounts={[account()]}
-      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} />);
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />);
     expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
     await act(async () => answer(buildSetup({ revision: 9, baseBranch: 'main', harness: 'codex', model: 'TEST-stale-model' })));
     expect(screen.queryByText(/TEST-stale-model/)).toBeNull();
@@ -560,7 +560,7 @@ describe('query cache (step 6)', () => {
     client.setQueryData(build.buildDefaultsKey(repository.id), buildSetup({ revision: 1, baseBranch: 'TEST-old' }));
     vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'TEST-new', harness: 'codex', model: 'TEST-model' }));
     render(<QueryClientProvider client={client}><RepositoryFactory repository={repository} accounts={[account()]}
-      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} /></QueryClientProvider>);
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} /></QueryClientProvider>);
     await screen.findByText('codex · TEST-model');
     expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.baseBranch).toBe('TEST-new');
   });

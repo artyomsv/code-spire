@@ -34,6 +34,9 @@ async function read<T>(path: string, init?: RequestInit): Promise<T> {
 
 const base = (repository: string) => `/api/repositories/${encodeURIComponent(repository)}/factory/land`;
 
+export const landSettingsKey = (repositoryId: string) => ['land-settings', repositoryId] as const;
+/** The merge methods GitHub allows: a forge read, made only while the land form is open. */
+export const landOptionsKey = (repositoryId: string) => ['land-options', repositoryId] as const;
 export const landSettings = (repository: string) => read<LandSettings>(base(repository));
 export const landOptions = (repository: string) => read<LandOptions>(`${base(repository)}/options`);
 export const saveLandSettings = (repository: string, input: LandSettingsInput) =>

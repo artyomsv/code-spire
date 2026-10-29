@@ -79,6 +79,7 @@ async function read<T>(path: string, init?: RequestInit): Promise<T> {
 const base = (repository: string) => `/api/repositories/${encodeURIComponent(repository)}/factory`;
 
 export const buildDefaults = (repository: string) => read<BuildDefaults>(`${base(repository)}/build`);
+export const buildOptionsKey = (repositoryId: string) => ['build-options', repositoryId] as const;
 export const buildOptions = (repository: string) => read<BuildOptions>(`${base(repository)}/build/options`);
 export const saveBuildDefaults = (repository: string, input: { expectedRevision: number; baseBranch: string; harness: string; model: string; effort: string | null; payWith: PayWith;
   verifyCommands: string[]; verifyTimeoutSeconds: number; preparation?: Preparation }) =>
