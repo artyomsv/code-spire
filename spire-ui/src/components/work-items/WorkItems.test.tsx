@@ -1053,3 +1053,32 @@ it('never reads the item on a timer', async () => {
     expect(api.getWorkItem).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
 });
+
+// Review of PR 356, M-1: closing the feed stops new notices, but a read already out still lands. It must not remount
+// the form the operator is filling in.
+it('keeps what the operator typed when a read lands under the preparation panel', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue(SIGNED_IN);
+  const ready: Detail = { ...detail(), reason: 'specification_required' };
+  const slow = deferred<Detail>();
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(ready).mockReturnValueOnce(slow.promise).mockResolvedValue({ ...ready, revision: 3 });
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare the task' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Specification ticket' }), { target: { value: 'TEST-81' } });
+  await act(async () => slow.resolve({ ...ready, revision: 2 }));
+  expect(screen.getByRole('textbox', { name: 'Specification ticket' })).toHaveValue('TEST-81');
+});
+
+// Review of PR 356, M-2: with the feed down, Refresh workflow is how the plan steps catch up with the item.
+it('reads the plan steps again on Refresh workflow', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), phase: 'build', workflowStatus: 'active', reason: 'phase_started',
+    preparation: { ...prepared(), bindingVersion: 6 } });
+  trackerAnswers();
+  const steps = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows: [] });
+  await showTitledDetail();
+  await waitFor(() => expect(steps).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+  await waitFor(() => expect(steps).toHaveBeenCalledTimes(2));
+});
