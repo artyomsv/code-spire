@@ -39,7 +39,7 @@ export default function WorkItemDetail() {
   // The page follows the item through the feed, so a gate opening or a build ending shows without a click. Not while
   // a panel is open: a re-read under a decision the operator is reading would move what they approve. Closing the
   // panel reopens the feed, and its open reads again whatever changed meanwhile.
-  const feed = useWorkItemChanges({ enabled: !panel });
+  const feed = useWorkItemChanges({ enabled: true });
 
   /** Reads the item and its ticket again, leaving the notice as it is. */
   function invalidate() {
