@@ -68,7 +68,7 @@ it('re-reads an invalidated key that a screen shows', async () => {
   const queryFn = vi.fn().mockResolvedValue(['TEST-rest']);
   const { client, result } = read(queryFn);
   await waitFor(() => expect(result.current.data).toEqual(['TEST-rest']));
-  act(() => invalidateLive(client, KEY));
+  act(() => { void invalidateLive(client, KEY); });
   await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
 });
 
@@ -78,7 +78,7 @@ it('starts a fresh read when invalidated while the first read is out', async () 
   const queryFn = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(['TEST-after change']);
   const { client, result } = read(queryFn);
   await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
-  act(() => invalidateLive(client, KEY));
+  act(() => { void invalidateLive(client, KEY); });
   await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
   await act(async () => first.resolve(['TEST-before change']));
   await waitFor(() => expect(result.current.data).toEqual(['TEST-after change']));
