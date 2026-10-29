@@ -34,13 +34,12 @@ export default function RepositoryFactory({ repository, accounts, webhooks }: Pr
   const [open, setOpen] = useState<string | null>(null);
   // Keys shared with the repositories list, the profiles screen and the preparation form: a save here reaches them all.
   // Each is per repository except the sources, one list for every repository, filtered below.
-  const buildKey = ['factory-build', repository.id, buildDefaultsKey(repository.id)[0]];
-  const keys = [sourcesApi.workSourcesKey, policyKeys.profiles(), policyKeys.policy(repository.id), buildKey,
+  const keys = [sourcesApi.workSourcesKey, policyKeys.profiles(), policyKeys.policy(repository.id), buildDefaultsKey(repository.id),
     landSettingsKey(repository.id)];
   const sourcesRead = useQuery({ queryKey: sourcesApi.workSourcesKey, queryFn: () => sourcesApi.fetchWorkSources() });
   const profilesRead = useQuery({ queryKey: policyKeys.profiles(), queryFn: () => policyApi.profiles() });
   const policyRead = useQuery({ queryKey: policyKeys.policy(repository.id), queryFn: () => policyApi.policy(repository.id) });
-  const buildRead = useQuery({ queryKey: buildKey, queryFn: () => buildDefaults(repository.id) });
+  const buildRead = useQuery({ queryKey: buildDefaultsKey(repository.id), queryFn: () => buildDefaults(repository.id) });
   const landRead = useQuery({ queryKey: landSettingsKey(repository.id), queryFn: () => landSettings(repository.id) });
   const failure = sourcesRead.error ?? profilesRead.error ?? policyRead.error ?? buildRead.error ?? landRead.error;
   const error = failure ? String(failure) : '';
@@ -53,8 +52,7 @@ export default function RepositoryFactory({ repository, accounts, webhooks }: Pr
   const reload = () => { for (const queryKey of keys) void client.invalidateQueries({ queryKey, exact: true }); };
   const changed = (message?: string) => { setOpen(null); setNotice(message ?? ''); reload(); };
   const openStep = (next: string | null) => { setNotice(''); setOpen(next); };
-  if (error) return <p className="prov-error" role="alert">{error}</p>;
-  if (!data) return <p className="factory-note">Loading factory setup…</p>;
+  if (!data) return error ? <p className="prov-error" role="alert">{error}</p> : <p className="factory-note">Loading factory setup…</p>;
 
   const shared = { open, setOpen: openStep, changed };
   // Keyed by revision: a form opened after a save must start from what was saved, not what was typed before.
