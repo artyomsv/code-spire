@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getWorkItem, type WorkItemDetail } from '../../api';
 import VerifyResult, { isVerifyResultGate } from './VerifyResult';
 import { canAdminister } from '../../auth';
@@ -96,8 +96,25 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
   const approval = useQuery({ queryKey: workKeys.approvals(false), queryFn: () => approvalsApi.approvals(false),
     select: open => open.find(row => row.workItemId === itemId) ?? null });
   const itemRead = useQuery({ queryKey: workKeys.item(itemId), queryFn: () => getWorkItem(itemId) });
+  // The two are read at different moments, and the item may come from the cache: they can name different gates. The
+  // words, the evidence and the binding checks follow the item while the answer goes to the decision's gate, so an old
+  // verify item beside a new land gate would offer Retry build and approve the land (review of PR 357, H-1). Only a
+  // pair that names one gate is loaded; a pair that does not is read again, once, and offers no answer meanwhile.
+  const bothRead = approval.data !== undefined && itemRead.data !== undefined;
+  const itemGate = itemRead.data?.gate ?? null;
+  const sameGate = !approval.data || !!itemGate && itemGate.id === approval.data.gate.id && itemGate.version === approval.data.gate.version;
   // Loaded once both answered: "no open decision" answers null, and a failed re-read keeps the last answer.
-  const loaded: Loaded | null = approval.data !== undefined && itemRead.data !== undefined ? { approval: approval.data, item: itemRead.data } : null;
+  const loaded: Loaded | null = bothRead && sameGate ? { approval: approval.data ?? null, item: itemRead.data! } : null;
+  const apart = bothRead && !sameGate
+    ? `${approval.data?.gate.id}:${approval.data?.gate.version}/${itemGate?.id}:${itemGate?.version}` : null;
+  const reading = approval.isFetching || itemRead.isFetching;
+  const client = useQueryClient(), rereadFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!apart || reading || rereadFor.current === apart) return;
+    rereadFor.current = apart;
+    void client.invalidateQueries({ queryKey: workKeys.approvals(false), exact: true });
+    void client.invalidateQueries({ queryKey: workKeys.item(itemId), exact: true });
+  }, [apart, reading, client, itemId]);
   const readFailure = approval.error ?? itemRead.error;
   const error = answerError || (readFailure ? String(readFailure) : '');
 
@@ -183,7 +200,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
       {admin && gate && <button className="btn-ghost danger" type="button" disabled={answeringNow} onClick={() => void decide(false)}>{answering === false ? words.noBusy : words.no}</button>}
       <button className="btn-ghost" type="button" disabled={answeringNow} onClick={onClose}>{gate ? 'Cancel' : 'Close'}</button>
     </>}>
-    {!loaded && !error && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
+    {!loaded && !error && !apart && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
+    {apart && <p className="prov-note" role="status" aria-busy={reading}>The decision and the item were read at different moments and name
+      different gates, so no answer is offered. {reading ? 'Reading both again…' : 'Close the panel and open it again.'}</p>}
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
       {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">

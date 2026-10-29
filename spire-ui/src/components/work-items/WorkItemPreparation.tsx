@@ -45,9 +45,10 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
   // with a preparation it is not even asked for. A failed read prepares by hand, as before.
   const defaults = useQuery({ queryKey: buildDefaultsKey(item.repositoryId), queryFn: () => buildDefaults(item.repositoryId),
     enabled: !item.preparation });
-  // Only an answer read since this form opened: the setup is saved outside the query cache, and a cached one may be
-  // older than the setup, while the fill rule below would keep it over the fresh one.
-  const setup = defaults.isFetchedAfterMount ? defaults.data : undefined;
+  // Only an answer read successfully since this form opened: the setup is saved outside the query cache, and a cached
+  // one may be older than the setup, while the fill rule below would keep it over the fresh one. A failed read counts as
+  // fetched and keeps the cached answer, so success is required too (review of PR 357, M-1).
+  const setup = defaults.isFetchedAfterMount && defaults.isSuccess ? defaults.data : undefined;
   useEffect(() => {
     if (item.preparation || !setup) return; // a disabled query still returns a cached answer
     // A coordinate the operator has touched is theirs, including one they deliberately cleared.
