@@ -19,7 +19,7 @@ const row: api.Approval = { workItemId: 'TEST-item', issueKey: 'TEST-42', tracke
   itemRevision: 11, policyRevision: 3, artifact: 'TEST-sha256', openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-09-14T12:00:00Z', resolver: null, channel: null, note: null } };
 const item = { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-repository', repository: 'TEST-owner/TEST-repo', issueKey: 'TEST-42',
   trackerUrl: 'https://TEST.example/issues/42', generation: 2, phase: 'plan', workflowStatus: 'waiting_approval', reason: 'approval_required', profile: null,
-  revision: 11, updatedAt: '2026-09-13T12:00:00Z', effectiveModes: {}, admittedModes: {}, policyReason: 'policy_selected', ceiling: null, appliedLabels: [], ignoredLabels: [], events: [],
+  revision: 11, updatedAt: '2026-09-13T12:00:00Z', effectiveModes: {}, admittedModes: {}, policyReason: 'policy_selected', ceiling: null, appliedLabels: [], ignoredLabels: [], events: [], gate: row.gate,
   effectiveLimits: { gateTtlSeconds: 86400, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] },
   preparation: { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'a0f8a41'.padEnd(40, '0'), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' },
 } satisfies gateway.WorkItemDetail;
@@ -371,4 +371,23 @@ it('shares the item read with the screen behind it', async () => {
   render(<QueryClientProvider client={client}><MemoryRouter>
     <DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter></QueryClientProvider>);
   expect(await screen.findByRole('dialog', { name: 'Approve the plan' })).toBeInTheDocument();
+});
+
+// Review of PR 357, H-1: the cache can hold an item from an earlier gate while the decisions already name a later one.
+// Its words and evidence would describe the old gate while the answer goes to the new one: Retry build would approve a land.
+it('offers no answer until the item names the same gate as the decision', async () => {
+  const landGate = { ...row.gate, id: 'TEST-land-gate', version: 1, phase: 'land', artifact: 'b'.repeat(40) };
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: landGate }]);
+  let answer!: (value: gateway.WorkItemDetail) => void;
+  vi.mocked(gateway.getWorkItem).mockReturnValue(new Promise(done => { answer = done; }));
+  const client = createQueryClient();
+  client.setQueryData(workKeys.item('TEST-item'), failedItem);
+  render(<QueryClientProvider client={client}><MemoryRouter>
+    <DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter></QueryClientProvider>);
+  expect(await screen.findByText(/read at different moments/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry build' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  await act(async () => answer({ ...item, phase: 'land', gate: landGate }));
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry build' })).toBeNull();
 });

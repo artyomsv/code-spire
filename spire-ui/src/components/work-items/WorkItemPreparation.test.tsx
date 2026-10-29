@@ -255,3 +255,20 @@ it('fills from a fresh build setup, not a cached one', async () => {
   await act(async () => fresh.resolve(setup('TEST-new')));
   expect(screen.getByLabelText('Base branch')).toHaveValue('TEST-new');
 });
+
+// Review of PR 357, M-1: a failed read counts as fetched and keeps the cached answer; only a successful one may fill.
+it('fills nothing when the fresh build setup read fails', async () => {
+  const wrapper = queryWrapper(), value = { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail;
+  vi.spyOn(defaultsApi, 'buildDefaults').mockResolvedValueOnce({ revision: 1, baseBranch: 'TEST-old', harness: 'TEST-harness', model: 'TEST-model',
+    updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' });
+  const first = show(vi.fn(), ['spire-admin'], value, wrapper);
+  await waitFor(() => expect(screen.getByLabelText('Base branch')).toHaveValue('TEST-old'));
+  first.unmount();
+  vi.mocked(defaultsApi.buildDefaults).mockRejectedValueOnce(new Error('TEST-setup outage'));
+  show(vi.fn(), ['spire-admin'], value, wrapper);
+  await screen.findByLabelText('Base branch');
+  await waitFor(() => expect(defaultsApi.buildDefaults).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(screen.getByLabelText('Base branch')).toHaveValue('');
+  expect(screen.getByLabelText('Harness')).toHaveValue('');
+});

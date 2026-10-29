@@ -472,7 +472,7 @@ it('keeps the tracker read limit across page turns', async () => {
 it('starts a fresh decision when the address names another item', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item(0), item(1)], total: 2, offset: 0, limit: 50 });
-  vi.spyOn(api, 'getWorkItem').mockImplementation(async id => ({ ...detail(), id, issueKey: id }));
+  vi.spyOn(api, 'getWorkItem').mockImplementation(async id => ({ ...detail(), id, issueKey: id, gate: open(id).gate }));
   const open = (id: string) => ({ workItemId: id, issueKey: id, gate: { id: `${id}-gate`, version: 1, state: 'OPEN' as const, phase: 'plan', generation: 1,
     itemRevision: 1, policyRevision: 1, artifact: null, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([open('TEST-item-0'), open('TEST-item-1')]);
@@ -1085,7 +1085,7 @@ it('reads the plan steps again on Refresh workflow', async () => {
 
 // Step 6: a decision opened beside the list follows the item's change notices.
 const BINDING = 'TEST-binding';
-const waitingItem = (): Detail => ({ ...detail(), phase: 'plan', workflowStatus: 'waiting_approval', preparation: prepared() });
+const waitingItem = (): Detail => ({ ...detail(), phase: 'plan', workflowStatus: 'waiting_approval', preparation: prepared(), gate: openGate().gate });
 const openGate = (): approvalsApi.Approval => ({ workItemId: 'TEST-item-0', issueKey: 'TEST-0', gate: { id: 'TEST-gate', version: 1, state: 'OPEN', phase: 'plan',
   generation: 1, itemRevision: 1, policyRevision: 1, artifact: BINDING, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } });
 const answeredCalls = (answered: boolean) => vi.mocked(approvalsApi.approvals).mock.calls.filter(([history]) => history === answered).length;
