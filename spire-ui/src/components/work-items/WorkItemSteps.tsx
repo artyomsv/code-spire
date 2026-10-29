@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import type { WorkItemDetail } from '../../api';
 import { formatEventTime } from '../../format';
@@ -8,7 +9,8 @@ import { workReason } from './workReasons';
 import VerifyResult from './VerifyResult';
 import DraftArtifact from './DraftArtifact';
 import StepRows from './StepRows';
-import { STEPS_BINDING, workSteps, type StepRow } from './workPreparationApi';
+import { STEPS_BINDING, workSteps } from './workPreparationApi';
+import { workKeys } from './workQueries';
 
 type Item = Pick<WorkItemDetail, 'id' | 'generation' | 'phase' | 'workflowStatus' | 'reason' | 'effectiveModes' | 'profile' | 'appliedLabels' | 'ignoredLabels'
   | 'people' | 'operators' | 'preparation' | 'builds' | 'gate' | 'events' | 'progress' | 'land'>;
@@ -101,18 +103,12 @@ function Decisions({ item, phase }: { item: Item; phase: string }) {
 
 /**
  * The plan's steps, one row each (M4 slice 3, §6.10), read only for a plan built step by step, so a one-step item asks
- * the server nothing. Read again whenever the item moves, since each step changes its rows.
+ * the server nothing. Read again on the item's change notice: a step's summary is written without an item event.
  */
 function PlanSteps({ item }: { item: Item }) {
   const stepped = item.preparation?.bindingVersion === STEPS_BINDING;
-  const [rows, setRows] = useState<StepRow[]>([]);
-  useEffect(() => {
-    if (!stepped) return;
-    let live = true;
-    workSteps(item.id).then(view => { if (live) setRows(view.rows); }).catch(() => { if (live) setRows([]); });
-    return () => { live = false; };
-  }, [item.id, stepped, item.phase, item.workflowStatus, item.reason]);
-  return stepped ? <StepRows rows={rows} /> : null;
+  const steps = useQuery({ queryKey: workKeys.steps(item.id), queryFn: () => workSteps(item.id), enabled: stepped });
+  return stepped ? <StepRows rows={steps.data?.rows ?? []} /> : null;
 }
 
 function Build({ item }: { item: Item }) {
