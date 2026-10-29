@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
-import { fetchRepositories, type Repository } from '../repositories/repositoriesApi';
+import { useState } from 'react';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchRepositories, repositoriesKey, type Repository } from '../repositories/repositoriesApi';
 import * as api from './workPolicyApi';
 import { SlidersHorizontal } from 'lucide-react';
 import PhaseStrip, { PhaseLegend } from './PhaseStrip';
 import { ProfileEditor } from './WorkPolicyEditors';
 import { key } from './policyInput';
+import { policyKeys } from './workQueries';
 
 /** A saved version never changes, so the newest version of a profile is the one new work selects. */
 function isCurrent(profile: api.Profile, all: api.Profile[]) {
@@ -29,31 +31,38 @@ function usesOf(profile: api.Profile, repositories: Repository[], policies: Reco
 }
 
 export default function WorkPolicies() {
-  const [data, setData] = useState<{ profiles: api.Profile[]; repositories: Repository[] } | null>(null);
-  const [policies, setPolicies] = useState<Record<string, api.Policy>>({});
-  const [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
+  const client = useQueryClient();
+  const profilesRead = useQuery({ queryKey: policyKeys.profiles(), queryFn: () => api.profiles() });
+  const repositoriesRead = useQuery({ queryKey: repositoriesKey, queryFn: () => fetchRepositories() });
+  // One read per repository under its own key; a repository whose policy did not load is simply not counted.
+  const policyReads = useQueries({ queries: (repositoriesRead.data ?? []).map(repository =>
+    ({ queryKey: policyKeys.policy(repository.id), queryFn: () => api.policy(repository.id) })) });
+  const policies: Record<string, api.Policy> = Object.fromEntries((repositoriesRead.data ?? []).flatMap((repository, index) => {
+    const policy = policyReads[index]?.data;
+    return policy ? [[repository.id, policy]] : [];
+  }));
+  const data = profilesRead.data && repositoriesRead.data ? { profiles: profilesRead.data, repositories: repositoriesRead.data } : null;
+  const readFailure = profilesRead.error ?? repositoriesRead.error;
+  const error = readFailure ? String(readFailure) : '';
   const [editing, setEditing] = useState<string | null>(null), [notice, setNotice] = useState('');
   const [history, setHistory] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    setPolicies({});
-    Promise.all([api.profiles(), fetchRepositories()]).then(([profiles, repositories]) => {
-      if (!active) return;
-      setData({ profiles, repositories }); setError('');
-      for (const repository of repositories) {
-        api.policy(repository.id).then(policy => { if (active) setPolicies(current => ({ ...current, [repository.id]: policy })); }).catch(() => undefined);
-      }
-    }).catch(failure => { if (active) setError(String(failure)); });
-    return () => { active = false; };
-  }, [refresh]);
+  /** Reads profiles, repositories and policies again, keeping what is on screen until each answers. */
+  function refresh() {
+    void client.invalidateQueries({ queryKey: policyKeys.all });
+    void client.invalidateQueries({ queryKey: repositoriesKey, exact: true });
+  }
+  function saved(created: api.Profile) {
+    client.setQueryData<api.Profile[]>(policyKeys.profiles(), current => current && [...current.filter(value => key(value) !== key(created)), created]);
+    setNotice(`Profile ${created.name} v${created.version} created.`); setEditing(null);
+  }
 
   const shown = data ? data.profiles.filter(profile => history || isCurrent(profile, data.profiles)) : [];
   const superseded = data ? data.profiles.length - data.profiles.filter(profile => isCurrent(profile, data.profiles)).length : 0;
   return <section className="content">
     <div className="card">
       <div className="prov-head"><h2 className="prov-title">Profiles</h2><div className="prov-actions">
-        <button className="btn-ghost" type="button" onClick={() => setRefresh(value => value + 1)}>Refresh profiles</button>
+        <button className="btn-ghost" type="button" onClick={refresh}>Refresh profiles</button>
         <button className="btn" type="button" disabled={!data || editing !== null} onClick={() => { setEditing(''); setNotice(''); }}>Add profile</button></div></div>
       <p className="prov-note">A profile says which phases run on their own and which wait for you. Repositories pick profiles as their ceiling
         and for their labels in the Factory tab on the Repositories screen. A saved version never changes: saving changes creates the next version.</p>
@@ -86,9 +95,6 @@ export default function WorkPolicies() {
             {history ? 'Hide superseded versions' : `Show ${superseded} superseded version${superseded === 1 ? '' : 's'}`}</button></p>}</>}
     </div>
 
-    {data && editing !== null && <ProfileEditor key={editing} initial={editing} profiles={data.profiles} cancelled={() => setEditing(null)} saved={created => {
-      setData(current => current && ({ ...current, profiles: [...current.profiles.filter(value => key(value) !== key(created)), created] }));
-      setNotice(`Profile ${created.name} v${created.version} created.`); setEditing(null);
-    }} />}
+    {data && editing !== null && <ProfileEditor key={editing} initial={editing} profiles={data.profiles} cancelled={() => setEditing(null)} saved={saved} />}
   </section>;
 }

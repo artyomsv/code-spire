@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { fetchLlmModels, type LlmModelView, type WorkItemDetail } from '../../api';
 import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import { branchHead, preparationOptions, resolveArtifact, registerPreparation, type ArtifactReference } from './workPreparationApi';
-import { buildDefaults } from '../repositories/factory/buildDefaultsApi';
+import { buildDefaults, buildDefaultsKey } from '../repositories/factory/buildDefaultsApi';
+import { preparationKeys } from './workQueries';
 import { TOKEN_TYPE_LABEL, unpricedTypesFor } from '../../llmPricing';
 
 /**
@@ -30,31 +32,30 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
   const [busy, setBusy] = useState<'checking' | 'saving' | 'head' | null>(null), [error, setError] = useState('');
   // What this deployment can actually run. A harness with no agent image, and a model with no price,
   // are both refused at dispatch — after the operator has typed them and waited.
-  const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]> }>(
-    { harnesses: [], models: [], reportedTypes: {} });
-  useEffect(() => {
-    let live = true;
-    Promise.all([preparationOptions(item.id), fetchLlmModels()])
-      // A wire answer of the wrong shape degrades to "nothing offered" rather than blanking the page.
-      .then(([options, models]) => { if (live) setChoices({ harnesses: options.harnesses ?? [],
-        models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {} }); })
-      .catch(() => { /* the selects fall back to what is already registered; registration still refuses an unrunnable pair */ });
-    return () => { live = false; };
-  }, [item.id]);
+  // Both or neither, as one request did: a failed read leaves the selects with what is already registered, and
+  // registration still refuses an unrunnable pair.
+  const options = useQuery({ queryKey: preparationKeys.options(item.id), queryFn: () => preparationOptions(item.id) });
+  const models = useQuery({ queryKey: preparationKeys.llmModels(), queryFn: () => fetchLlmModels() });
+  // A wire answer of the wrong shape degrades to "nothing offered" rather than blanking the page.
+  const choices: { harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]> } = options.data && models.data
+    ? { harnesses: options.data.harnesses ?? [], models: (models.data ?? []).filter(model => model.enabled), reportedTypes: options.data.reportedTypes ?? {} }
+    : { harnesses: [], models: [], reportedTypes: {} };
   // The repository's saved build setup, on its OWN request: it is optional, and a slow answer for it
-  // must not hold back the harness and model this deployment can run.
+  // must not hold back the harness and model this deployment can run. What is registered is what a gate binds, so
+  // with a preparation it is not even asked for. A failed read prepares by hand, as before.
+  const defaults = useQuery({ queryKey: buildDefaultsKey(item.repositoryId), queryFn: () => buildDefaults(item.repositoryId),
+    enabled: !item.preparation });
+  // Only an answer read since this form opened: the setup is saved outside the query cache, and a cached one may be
+  // older than the setup, while the fill rule below would keep it over the fresh one.
+  const setup = defaults.isFetchedAfterMount ? defaults.data : undefined;
   useEffect(() => {
-    if (item.preparation) return; // what is registered is what a gate binds; never overwrite it
-    let live = true;
-    buildDefaults(item.repositoryId)
-      // A coordinate the operator has touched is theirs, including one they deliberately cleared.
-      .then(defaults => { if (live) setForm(previous => ({ ...previous,
-        baseBranch: touched.current.has('baseBranch') ? previous.baseBranch : previous.baseBranch || defaults.baseBranch || '',
-        harness: touched.current.has('harness') ? previous.harness : previous.harness || defaults.harness || '',
-        model: touched.current.has('model') ? previous.model : previous.model || defaults.model || '' })); })
-      .catch(() => { /* a repository without a saved setup prepares by hand, as before */ });
-    return () => { live = false; };
-  }, [item.repositoryId, item.preparation]);
+    if (item.preparation || !setup) return; // a disabled query still returns a cached answer
+    // A coordinate the operator has touched is theirs, including one they deliberately cleared.
+    setForm(previous => ({ ...previous,
+      baseBranch: touched.current.has('baseBranch') ? previous.baseBranch : previous.baseBranch || setup.baseBranch || '',
+      harness: touched.current.has('harness') ? previous.harness : previous.harness || setup.harness || '',
+      model: touched.current.has('model') ? previous.model : previous.model || setup.model || '' }));
+  }, [setup, item.preparation]);
   async function readHead() {
     sequence.current++; setBusy('head'); setError('');
     try { const head = await branchHead(item.id, form.baseBranch); if (active.current) setForm(previous => ({ ...previous, baseBranch: head.branch, baseCommit: head.commit })); }

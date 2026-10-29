@@ -1,6 +1,9 @@
 import { apiFetch } from '../../../auth';
 import { workRefusal } from '../../work-items/workReasons';
 
+/** A repository's saved build setup. Saved outside the query cache (the Factory tab), so a cached answer may be old. */
+export const buildDefaultsKey = (repositoryId: string) => ['build-defaults', repositoryId] as const;
+
 /** What a prepared task copies when nobody types it. `revision` 0 means this repository has none yet. */
 export interface BuildDefaults {
   revision: number;
