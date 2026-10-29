@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { AlertTriangle, ListTodo } from 'lucide-react';
 import { getWorkItems, type WorkItemPage, type WorkWorkflowStatus } from '../../api';
@@ -9,7 +10,8 @@ import { fetchWorkSources, rescanWorkSource } from './workSourcesApi';
 import { workReason } from './workReasons';
 import { FILTERS, filterById, nextAction } from './workJourney';
 import { useTicketTitles } from './useTicketTitles';
-import { FINISHED_POLL_MILLISECONDS, isFinished, LIST_POLL_MILLISECONDS } from './workPolling';
+import { useWorkItemChanges } from './useWorkItemChanges';
+import { workKeys } from './workQueries';
 import WorkItemTable from './WorkItemTable';
 import DecisionPanel from './DecisionPanel';
 import PastDecisions from './PastDecisions';
@@ -46,48 +48,21 @@ function countOf(page: WorkItemPage | null, statuses: string[]): number | null {
 export default function WorkItems() {
   const [params, setParams] = useSearchParams();
   const filter = filterById(params.get('filter'));
-  const [offset, setOffset] = useState(0), [refresh, setRefresh] = useState(0);
-  // A page remembers which filter and offset it answers, so a new filter never shows the old rows.
-  const [loaded, setLoaded] = useState<{ key: string; page: WorkItemPage } | null>(null), [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true), [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState(''), [scanning, setScanning] = useState(false);
   const admin = canAdminister(useMe().me);
-  const sequence = useRef(0);
-  const inFlight = useRef(false);
-  const viewKey = `${filter.id}:${offset}`;
-  const page = loaded?.key === viewKey ? loaded.page : null;
-
-  // A read that answers after a newer one started is dropped, so a slow page never replaces a fresh one.
-  const load = useCallback(async (clear: boolean) => {
-    const request = ++sequence.current;
-    if (clear) setLoaded(null);
-    setLoading(true); inFlight.current = true;
-    try {
-      const next = await getWorkItems(offset, PAGE_SIZE, filter.statuses);
-      if (request !== sequence.current) return;
-      setLoaded({ key: `${filter.id}:${offset}`, page: next }); setError(null); setUpdatedAt(new Date().toISOString());
-    } catch (failure) { if (request === sequence.current) setError(String(failure)); }
-    finally { if (request === sequence.current) { setLoading(false); inFlight.current = false; } }
-  }, [offset, filter]);
-  const latest = useRef(load);
-  latest.current = load;
-
-  useEffect(() => { void load(true); }, [load]);
-  useEffect(() => { if (refresh > 0) void latest.current(false); }, [refresh]);
-  // A read still out when the page goes is dropped; only unmounting does this, never a change of cadence,
-  // which would leave the read marked in flight for ever.
-  useEffect(() => () => { sequence.current++; }, []);
+  const client = useQueryClient();
+  // A page is keyed on the filter and offset it answers, so a new filter never shows the old rows, and a read for
+  // another filter can never land here.
+  const query = useQuery({ queryKey: workKeys.list(filter.id, offset), queryFn: () => getWorkItems(offset, PAGE_SIZE, filter.statuses) });
+  const feed = useWorkItemChanges();
+  const page = query.data ?? null;
+  const error = query.error ? String(query.error) : null;
+  const loading = query.isFetching;
+  const updatedAt = query.dataUpdatedAt ? new Date(query.dataUpdatedAt).toISOString() : null;
+  const reread = () => void client.invalidateQueries({ queryKey: workKeys.lists() });
 
   const rows = page?.items ?? [];
-  // The list re-reads every 5 s while it holds unfinished work, or nothing yet, and every 15 s once all of it has finished.
-  const settled = rows.length > 0 && rows.every(row => isFinished(row.workflowStatus));
-  useEffect(() => {
-    // A poll never overlaps a read still out: each would supersede the last, and on a server slower
-    // than the interval no answer would ever be shown.
-    const timer = setInterval(() => { if (document.visibilityState === 'visible' && !inFlight.current) void latest.current(false); },
-      settled ? FINISHED_POLL_MILLISECONDS : LIST_POLL_MILLISECONDS);
-    return () => { clearInterval(timer); };
-  }, [settled]);
   const titles = useTicketTitles(rows.map(row => row.id));
   const needsFilter = filterById('needs-you');
   const needs = countOf(page, needsFilter.statuses);
@@ -96,7 +71,7 @@ export default function WorkItems() {
   function without(key: string) { const next = new URLSearchParams(params); next.delete(key); setParams(next); }
   // A source is re-read every 5 minutes unless a scan is requested, so Refresh asks for one first.
   // The request only sets a flag; the scanner reads the tracker on its next sweep, about 30 seconds
-  // later, and the poll shows what it admitted. A failed request never stops the list re-reading.
+  // later, and the feed shows what it admitted. A failed request never stops the list re-reading.
   // Only an admin may request a scan, so for a viewer Refresh re-reads the list alone.
   async function refreshNow() {
     if (admin) {
@@ -110,13 +85,14 @@ export default function WorkItems() {
       } catch (failure) { setNotice(`Could not request a tracker scan: ${String(failure)}. The list was re-read anyway.`); }
       finally { setScanning(false); }
     }
-    setRefresh(value => value + 1);
+    reread();
   }
 
   return <section className="content"><div className="card">
     <div className="prov-head">
       <h2 className="prov-title">Work items</h2>
       {updatedAt && <span className={error ? 'chip warn' : 'prov-sub'}>{error ? `Not updated since ${formatEventTime(updatedAt)}` : `Updated ${formatEventTime(updatedAt)}`}</span>}
+      {feed.status === 'down' && <span className="chip warn">Live updates paused</span>}
       <div className="prov-actions">
         <button className="btn-ghost" type="button" onClick={() => setParams({ ...Object.fromEntries(params), history: '1' })}>Past decisions</button>
         <button className="btn" type="button" disabled={loading || scanning} onClick={() => void refreshNow()}>{loading || scanning ? 'Refreshing…' : 'Refresh work items'}</button>
@@ -151,7 +127,7 @@ export default function WorkItems() {
       </div>
     </>}
     {deciding && <DecisionPanel key={deciding} itemId={deciding} title={titles.get(deciding) ?? null} onClose={() => without('decide')}
-      onDecided={message => { setNotice(message); without('decide'); setRefresh(value => value + 1); }} />}
+      onDecided={message => { setNotice(message); without('decide'); reread(); }} />}
     {params.get('history') && <PastDecisions onClose={() => without('history')} />}
   </div></section>;
 }
