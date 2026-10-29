@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { getWorkItem, getWorkItemTracker, type WorkItemDetail as Detail, type WorkItemTracker } from '../../api';
+import { getWorkItem, getWorkItemTracker } from '../../api';
 import { formatEventTime } from '../../format';
 import SidePanel from '../SidePanel';
 import DecisionPanel from './DecisionPanel';
@@ -9,7 +10,8 @@ import WorkItemActions from './WorkItemActions';
 import WorkItemPolicy from './WorkItemPolicy';
 import WorkItemPreparation from './WorkItemPreparation';
 import WorkItemSteps from './WorkItemSteps';
-import { FINISHED_POLL_MILLISECONDS, isFinished, ITEM_POLL_MILLISECONDS } from './workPolling';
+import { useWorkItemChanges } from './useWorkItemChanges';
+import { workKeys } from './workQueries';
 import { nextAction } from './workJourney';
 import { workReason } from './workReasons';
 import { WorkflowStatus } from './WorkItems';
@@ -21,70 +23,38 @@ import { WorkflowStatus } from './WorkItems';
 export default function WorkItemDetail() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
-  const [refresh, setRefresh] = useState(0);
   // What the last action reported. It survives the re-read that action triggers, and a new action
   // clears it, so a rule from an earlier recheck never sits beside a later, different outcome.
   const [notice, setNotice] = useState('');
-  const [state, setState] = useState<{ item: Detail | null; error: string | null }>({ item: null, error: null });
-  const [tracker, setTracker] = useState<{ value: WorkItemTracker | null; error: string | null }>({ value: null, error: null });
+  const client = useQueryClient();
+  // Each read is keyed on the item, so an older item's answer lands under its own key and never on this page.
+  const itemQuery = useQuery({ queryKey: workKeys.item(id), queryFn: () => getWorkItem(id) });
+  const trackerQuery = useQuery({ queryKey: workKeys.tracker(id), queryFn: () => getWorkItemTracker(id) });
   // Every action takes a number. A recheck that answers after a newer action started must not bring
   // its notice back, nor re-read the page under a panel the operator has since opened.
   const action = useRef(0);
-  // The item the page last showed, so a re-read of it keeps its tracker text while a new item starts blank.
-  const shown = useRef('');
-  // Every read of the item takes a number, and only the newest one's answer is shown: a slow poll must not
-  // replace what a later refresh already put on screen (review of PR #179).
-  const reads = useRef(0);
   const panel = params.get('decide') ? 'decide' : params.get('prepare') ? 'prepare' : null;
-  // A finished item is read every 15 s; anything else every 3 s, since an agent moves it in seconds.
-  const finished = state.item?.id === id && isFinished(state.item.workflowStatus);
   useEffect(() => { setNotice(''); }, [id]);
   useEffect(() => { if (panel) { action.current++; setNotice(''); } }, [panel]);
-  useEffect(() => {
-    let active = true;
-    // A re-read of the same item keeps it on screen: blanking it would unmount an open panel and
-    // hide the notice the re-read was started for.
-    setState(previous => previous.item?.id === id ? previous : { item: null, error: null });
-    setTracker(previous => shown.current === id ? previous : { value: null, error: null });
-    const read = ++reads.current;
-    getWorkItem(id).then(item => { if (active && read === reads.current) { shown.current = id; setState({ item, error: null }); } })
-      .catch(error => { if (active && read === reads.current) setState(previous => ({ item: previous.item?.id === id ? previous.item : null, error: String(error) })); });
-    getWorkItemTracker(id).then(value => { if (active) setTracker({ value, error: null }); })
-      .catch(error => { if (active) setTracker({ value: null, error: String(error) }); });
-    return () => { active = false; };
-  }, [id, refresh]);
+  // The page follows the item through the feed, so a gate opening or a build ending shows without a click. Not while
+  // a panel is open: a re-read under a decision the operator is reading would move what they approve. Closing the
+  // panel reopens the feed, and its open reads again whatever changed meanwhile.
+  const feed = useWorkItemChanges({ enabled: !panel });
 
-  // Follows the item like Runs does, so a gate opening or a build ending shows without a click. Not while
-  // a panel is open: a re-read under a decision the operator is reading would move what they approve.
-  useEffect(() => {
-    if (panel) return;
-    // One poll at a time, and none answered after the panel opens or the page moves on.
-    let live = true, polling = false;
-    const timer = setInterval(() => {
-      if (document.visibilityState !== 'visible' || polling) return;
-      polling = true;
-      const read = ++reads.current;
-      getWorkItem(id).then(item => {
-        // Also fills an empty page: a poll that overtook a slow first load is now the newest read, and the
-        // load's own answer will be dropped (review of PR #179).
-        if (!live || read !== reads.current) return;
-        shown.current = id;
-        setState(previous => previous.item && previous.item.id !== id ? previous : { item, error: null });
-      }).catch(() => { /* the last good read stays on screen; the next tick tries again */ })
-        .finally(() => { polling = false; });
-    }, finished ? FINISHED_POLL_MILLISECONDS : ITEM_POLL_MILLISECONDS);
-    return () => { live = false; clearInterval(timer); };
-  }, [id, panel, finished]);
-
-  function reread(message = '') { setNotice(message); setRefresh(value => value + 1); }
+  /** Reads the item and its ticket again, leaving the notice as it is. */
+  function invalidate() {
+    void client.invalidateQueries({ queryKey: workKeys.item(id), exact: true });
+    void client.invalidateQueries({ queryKey: workKeys.tracker(id), exact: true });
+  }
+  function reread(message = '') { setNotice(message); invalidate(); }
   function start() { setNotice(''); return ++action.current; }
   function open(name: 'decide' | 'prepare') { setParams({ [name]: '1' }); }
   function close() { setParams({}); }
-  // The item on screen must be the one the address names; until its own read lands, show none. The
-  // gap is the one render before the read effect clears the old item, which a test inside act() never
-  // sees because act() flushes that effect first, so this guard is reasoned rather than tested.
-  const item = state.item?.id === id ? state.item : null;
-  const { error } = state;
+  // The item on screen must be the one the address names; until its own read lands, show none. Each
+  // read is keyed on the id, so this guard only matters if the server ever answered for another item.
+  const item = itemQuery.data?.id === id ? itemQuery.data : null;
+  const error = itemQuery.error ? String(itemQuery.error) : null;
+  const tracker = { value: trackerQuery.data ?? null, error: trackerQuery.error ? String(trackerQuery.error) : null };
   const next = item ? nextAction(item) : null;
 
   return <section className="content"><div className="card work-detail">
@@ -101,6 +71,7 @@ export default function WorkItemDetail() {
         <div className="prov-actions">
           <a className="btn-ghost sm" href={item.trackerUrl} target="_blank" rel="noreferrer">Open ticket in tracker</a>
           <button className="btn-ghost sm" type="button" onClick={() => { start(); reread(); }}>Refresh workflow</button>
+          {!panel && feed.status === 'down' && <span className="chip warn">Live updates paused</span>}
         </div>
       </div>
       {item.preparationHealth && <p className="prov-error" role="status">
@@ -130,7 +101,7 @@ export default function WorkItemDetail() {
         {next?.label === 'Prepare the task' && <button className="btn sm" type="button" onClick={() => open('prepare')}>Prepare the task</button>}
         {item.gate?.state === 'OPEN' && <button className="btn sm" type="button" onClick={() => open('decide')}>Review the {item.gate.phase} decision</button>}
         <WorkItemActions key={`${item.id}:${item.revision}`} item={item} started={start}
-          changed={(message, started) => started === action.current ? reread(message) : setRefresh(value => value + 1)} />
+          changed={(message, started) => started === action.current ? reread(message) : invalidate()} />
       </>} />
       <details className="work-more"><summary>Policy and limits</summary><WorkItemPolicy item={item} /></details>
       <details className="work-more" open={tracker.error !== null}><summary>Ticket</summary>
