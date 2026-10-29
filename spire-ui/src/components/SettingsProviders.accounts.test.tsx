@@ -306,8 +306,9 @@ describe('SettingsProviders — the query cache (step 6)', () => {
   // A check writes the scopes it saw into the list; that write must not start another round of checks.
   it('checks each enabled account once per read, not again when a check writes its scopes', async () => {
     vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ id: 'TEST-a', name: 'TEST account a' }), forge({ id: 'TEST-b', name: 'TEST account b' })]);
-    vi.mocked(api.checkProvider).mockResolvedValue({ ok: true, account: 'test-checked', detail: null,
-      reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    // Two answers, then none: a loop driven by the scope write stops after one extra round and fails the count cleanly.
+    const scoped = { ok: true, account: 'test-checked', detail: null, reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' };
+    vi.mocked(api.checkProvider).mockResolvedValueOnce(scoped).mockResolvedValueOnce(scoped).mockReturnValue(new Promise(() => {}));
     renderPage();
     await rowNamed('TEST account a');
     await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(2));
