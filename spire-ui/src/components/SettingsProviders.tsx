@@ -24,7 +24,7 @@ export default function SettingsProviders() {
   // Shared with the repositories page and the context form. A re-read that fails after a success keeps the list.
   const read = useQuery({ queryKey: providersKey, queryFn: () => fetchProviders() });
   const providers = read.data ?? NO_PROVIDERS;
-  const loading = (read.data === undefined || read.isFetching) && !read.error;
+  const loading = read.data === undefined && !read.error;
   const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
   const [conns, setConns] = useState<Record<string, Conn>>({});
   // null = form closed; a ProviderView = editing; 'new' = adding.

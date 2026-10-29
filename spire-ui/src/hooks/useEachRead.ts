@@ -19,6 +19,7 @@ export function useEachRead<T>(key: QueryKey, effect: (data: T) => void): void {
     if (event.type !== 'updated' || event.query.queryHash !== hash) return;
     const { action } = event;
     const data = event.query.state.data as T | undefined;
-    if (action.type !== 'fetch' && data !== undefined) latest.current(data);
+    if (action.type === 'success' && !action.manual) latest.current(data as T);
+    else if (action.type === 'error' && data !== undefined) latest.current(data);
   }), [client, hash]);
 }
