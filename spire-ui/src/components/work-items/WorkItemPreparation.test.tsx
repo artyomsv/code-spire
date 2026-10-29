@@ -6,6 +6,7 @@ import * as auth from '../../auth';
 import * as api from './workPreparationApi';
 import * as defaultsApi from '../repositories/factory/buildDefaultsApi';
 import WorkItemPreparation from './WorkItemPreparation';
+import { queryWrapper } from '../../test/queryWrapper';
 
 afterEach(cleanup);
 const item = { id: 'TEST-prepared-item', revision: 7, workflowStatus: 'awaiting_input' } as WorkItemDetail;
@@ -13,12 +14,12 @@ const reference = (key: string): api.ArtifactReference => ({ title: `TEST-artifa
   location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: `TEST-${key}` }, issueKey: key, link: `https://TEST.example/issues/${key}` } } });
 const model = (name: string, rates: LlmModelView['rates'] = { INPUT: 100, OUTPUT: 200 }): LlmModelView => ({ id: `TEST-model-${name}`, type: 'openai', name, label: name,
   pricingMode: 'METERED', rates, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-15T00:00:00Z', notBilled: [] });
-function show(changed = vi.fn(), roles = ['spire-admin'], value = item) {
+function show(changed = vi.fn(), roles = ['spire-admin'], value = item, wrapper = queryWrapper()) {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-operator', roles });
   // A test that cares about the offered choices mocks them first; this is only the default pair.
   if (!vi.isMockFunction(api.preparationOptions)) vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness'], reportedTypes: { 'TEST-harness': ['INPUT','OUTPUT'] } });
   if (!vi.isMockFunction(gateway.fetchLlmModels)) vi.spyOn(gateway, 'fetchLlmModels').mockResolvedValue([model('TEST-model')]);
-  return { changed, ...render(<WorkItemPreparation item={value} changed={changed} />) };
+  return { changed, ...render(<WorkItemPreparation item={value} changed={changed} />, { wrapper }) };
 }
 async function fill() {
   await screen.findByLabelText('Specification ticket');
@@ -224,4 +225,33 @@ it('does not refill a coordinate the operator deliberately cleared', async () =>
   expect(screen.getByLabelText('Base branch')).toHaveValue('');
   // The untouched ones still take the saved setup.
   expect(screen.getByLabelText('Harness')).toHaveValue('TEST-harness');
+});
+
+// Step 6: the choices are kept in the query cache, so a form opened again does not wait for them.
+it('shows the choices at once when the form opens again', async () => {
+  const wrapper = queryWrapper();
+  const first = show(vi.fn(), ['spire-admin'], item, wrapper);
+  await screen.findByRole('option', { name: 'TEST-harness' });
+  first.unmount();
+  vi.mocked(api.preparationOptions).mockReturnValue(new Promise(() => {}));
+  show(vi.fn(), ['spire-admin'], item, wrapper);
+  const harness = await screen.findByLabelText('Harness');
+  expect(within(harness).getByRole('option', { name: 'TEST-harness' })).toBeInTheDocument();
+});
+
+// The build setup is saved outside the query cache, so a cached answer may be old; only a fresh one fills the form.
+it('fills from a fresh build setup, not a cached one', async () => {
+  const wrapper = queryWrapper(), value = { ...item, repositoryId: 'TEST-repository' } as WorkItemDetail;
+  const setup = (baseBranch: string): defaultsApi.BuildDefaults => ({ revision: 1, baseBranch, harness: 'TEST-harness', model: 'TEST-model',
+    updatedBy: 'TEST-operator', updatedAt: '2026-09-16T00:00:00Z' });
+  vi.spyOn(defaultsApi, 'buildDefaults').mockResolvedValueOnce(setup('TEST-old'));
+  const first = show(vi.fn(), ['spire-admin'], value, wrapper);
+  await waitFor(() => expect(screen.getByLabelText('Base branch')).toHaveValue('TEST-old'));
+  first.unmount();
+  const fresh = deferred<defaultsApi.BuildDefaults>();
+  vi.mocked(defaultsApi.buildDefaults).mockReturnValueOnce(fresh.promise);
+  show(vi.fn(), ['spire-admin'], value, wrapper);
+  expect(await screen.findByLabelText('Base branch')).toHaveValue('');
+  await act(async () => fresh.resolve(setup('TEST-new')));
+  expect(screen.getByLabelText('Base branch')).toHaveValue('TEST-new');
 });

@@ -12,4 +12,12 @@ export const workKeys = {
   drafts: (id: string) => ['work-items', 'draft', id] as const,
   draft: (id: string, version: string) => ['work-items', 'draft', id, version] as const,
   steps: (id: string) => ['work-items', 'steps', id] as const,
+  /** The open (`false`) or the answered (`true`) decisions. */
+  approvals: (answered: boolean) => ['work-items', 'approvals', answered] as const,
+  allApprovals: () => ['work-items', 'approvals'] as const,
+  /**
+   * The ticket texts a decision binds, read from the tracker: no database trigger covers them, so no notice re-reads
+   * them. `binding` names the gate and the preparation they were read for, so a new one is a new read.
+   */
+  evidence: (id: string, binding: string) => ['work-items', 'evidence', id, binding] as const,
 };

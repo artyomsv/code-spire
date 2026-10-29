@@ -1082,3 +1082,69 @@ it('reads the plan steps again on Refresh workflow', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
   await waitFor(() => expect(steps).toHaveBeenCalledTimes(2));
 });
+
+// Step 6: a decision opened beside the list follows the item's change notices.
+const BINDING = 'TEST-binding';
+const waitingItem = (): Detail => ({ ...detail(), phase: 'plan', workflowStatus: 'waiting_approval', preparation: prepared() });
+const openGate = (): approvalsApi.Approval => ({ workItemId: 'TEST-item-0', issueKey: 'TEST-0', gate: { id: 'TEST-gate', version: 1, state: 'OPEN', phase: 'plan',
+  generation: 1, itemRevision: 1, policyRevision: 1, artifact: BINDING, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } });
+const answeredCalls = (answered: boolean) => vi.mocked(approvalsApi.approvals).mock.calls.filter(([history]) => history === answered).length;
+async function showListWith(address: string, approvals: () => approvalsApi.Approval[]) {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue(SIGNED_IN);
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue(listOf(item()));
+  vi.spyOn(approvalsApi, 'approvals').mockImplementation(async () => approvals());
+  vi.spyOn(preparationApi, 'preparationEvidence').mockResolvedValue({ reason: null, detail: null, specification: 'TEST-specification',
+    instruction: 'TEST-step', binding: BINDING });
+  render(<MemoryRouter initialEntries={[address]}><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
+  await screen.findByText('TEST-0');
+}
+/** Opens the feed and waits until the open's re-reads are done, so a later count is the notice's alone. */
+async function openFeed() {
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+}
+
+it('reads an open decision again when its item changes', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(waitingItem());
+  await showListWith('/work-items?decide=TEST-item-0', () => [openGate()]);
+  await screen.findByRole('dialog', { name: 'Approve the plan' });
+  await openFeed();
+  const decisions = answeredCalls(false), items = vi.mocked(api.getWorkItem).mock.calls.length;
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  await waitFor(() => expect(answeredCalls(false)).toBe(decisions + 1));
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(items + 1));
+});
+
+// The gate was answered on the tracker: the panel must stop offering an answer the server would refuse.
+it('hides Approve when a notice closes the decision elsewhere', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(waitingItem());
+  let open = true;
+  await showListWith('/work-items?decide=TEST-item-0', () => (open ? [openGate()] : []));
+  const approve = await screen.findByRole('button', { name: 'Approve' });
+  await waitFor(() => expect(approve).toBeEnabled());
+  await openFeed();
+  open = false;
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  expect(await screen.findByText(/This item has no open decision/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+});
+
+it('reads past decisions again when an item changes', async () => {
+  await showListWith('/work-items?history=1', () => []);
+  await screen.findByText('No decision has been answered, expired or replaced yet.');
+  await openFeed();
+  const past = answeredCalls(true);
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  await waitFor(() => expect(answeredCalls(true)).toBe(past + 1));
+});
+
+it('keeps the decision on screen when a re-read fails', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(waitingItem()).mockRejectedValue(new Error('TEST-item outage'));
+  await showListWith('/work-items?decide=TEST-item-0', () => [openGate()]);
+  await screen.findByRole('dialog', { name: 'Approve the plan' });
+  FakeSocket.open();
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  expect(await screen.findByText(/TEST-item outage/)).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Approve the plan' })).toBeInTheDocument();
+});
