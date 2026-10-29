@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 import * as repositories from './repositories/repositoriesApi';
 
 const renderPage = () =>
@@ -10,6 +11,7 @@ const renderPage = () =>
     <MemoryRouter>
       <SettingsProviders />
     </MemoryRouter>,
+    { wrapper: queryWrapper() },
   );
 
 const existing: api.ProviderView = {

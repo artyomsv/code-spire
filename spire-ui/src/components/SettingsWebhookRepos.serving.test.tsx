@@ -3,8 +3,9 @@ import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
-const renderPage = () => render(<MemoryRouter><SettingsWebhookRepos /></MemoryRouter>);
+const renderPage = () => render(<MemoryRouter><SettingsWebhookRepos /></MemoryRouter>, { wrapper: queryWrapper() });
 
 const repo = (over: Partial<api.WebhookRepoView>): api.WebhookRepoView => ({
   id: 'TEST-w1',

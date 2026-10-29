@@ -3,12 +3,14 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { MemoryRouter } from 'react-router';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
-const renderPage = () =>
+const renderPage = (wrapper = queryWrapper()) =>
   render(
     <MemoryRouter>
       <SettingsProviders />
     </MemoryRouter>,
+    { wrapper },
   );
 
 const forge = (over: Partial<api.ProviderView>): api.ProviderView => ({
@@ -283,4 +285,34 @@ describe('SettingsProviders — the Machine accounts list', () => {
    * neither — so a deployment holding only tracker accounts flashed the empty state for one render.
    * The tracker fetch is left unresolved here, which IS that gap, held open.
    */
+});
+
+describe('SettingsProviders — the query cache (step 6)', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null });
+  });
+
+  it('shows the accounts at once when the page opens again', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ name: 'TEST cached account' })]);
+    const wrapper = queryWrapper();
+    const first = renderPage(wrapper);
+    await rowNamed('TEST cached account');
+    first.unmount();
+    vi.mocked(api.fetchProviders).mockReturnValue(new Promise(() => {}));
+    renderPage(wrapper);
+    expect(await screen.findByText('TEST cached account')).toBeInTheDocument();
+  });
+
+  // A check writes the scopes it saw into the list; that write must not start another round of checks.
+  it('checks each enabled account once per read, not again when a check writes its scopes', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ id: 'TEST-a', name: 'TEST account a' }), forge({ id: 'TEST-b', name: 'TEST account b' })]);
+    vi.mocked(api.checkProvider).mockResolvedValue({ ok: true, account: 'test-checked', detail: null,
+      reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    renderPage();
+    await rowNamed('TEST account a');
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    await act(async () => {});
+    expect(api.checkProvider).toHaveBeenCalledTimes(2);
+  });
 });

@@ -3,10 +3,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
 import { MemoryRouter } from 'react-router';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 const legacy: api.WebhookRepoView = { id: 'TEST-legacy', providerType: 'github', scope: 'org', target: 'TEST-org',
   webhookKey: 'TEST-preserved-key', hasSecret: true, enabled: true, createdAt: '', forgeOrigin: null, eventKind: 'REVIEWER' };
-const renderPage = (route = '/settings/webhooks') => render(<MemoryRouter initialEntries={[route]}><SettingsWebhookRepos /></MemoryRouter>);
+const renderPage = (route = '/settings/webhooks', wrapper = queryWrapper()) =>
+  render(<MemoryRouter initialEntries={[route]}><SettingsWebhookRepos /></MemoryRouter>, { wrapper });
 
 describe('Legacy webhook repair', () => {
   beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(api, 'fetchWebhookRepos').mockResolvedValue([legacy]); });
@@ -35,5 +37,19 @@ describe('Legacy webhook repair', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('TEST-gateway unavailable');
     expect(screen.getByRole('textbox', { name: 'Forge origin' })).toHaveValue('https://api.github.com');
+  });
+});
+
+describe('Webhooks — the query cache (step 6)', () => {
+  beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(api, 'fetchWebhookRepos').mockResolvedValue([legacy]); });
+
+  it('shows the webhooks at once when the page opens again', async () => {
+    const wrapper = queryWrapper();
+    const first = renderPage('/settings/webhooks', wrapper);
+    expect(await screen.findAllByText('TEST-org')).not.toHaveLength(0);
+    first.unmount();
+    vi.mocked(api.fetchWebhookRepos).mockReturnValue(new Promise(() => {}));
+    renderPage('/settings/webhooks', wrapper);
+    expect(await screen.findAllByText('TEST-org')).not.toHaveLength(0);
   });
 });
