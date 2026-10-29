@@ -32,7 +32,7 @@ $$;
 -- Item tables: the row names its work item.
 CREATE TRIGGER work_item_changed_work_item AFTER INSERT OR DELETE ON work_item
     FOR EACH ROW EXECUTE FUNCTION notify_work_item_changed('id');
--- activity_polled_at: WorkActivityPoller, 20 items per pass every 30 s. slot_reserved: WorkItemStore.
+-- activity_polled_at: WorkActivityPoller, every 2 minutes per item. slot_reserved: WorkItemStore.
 CREATE TRIGGER work_item_changed_work_item_update AFTER UPDATE ON work_item FOR EACH ROW
     WHEN (to_jsonb(OLD) - '{activity_polled_at,slot_reserved}'::text[] IS DISTINCT FROM to_jsonb(NEW) - '{activity_polled_at,slot_reserved}'::text[])
     EXECUTE FUNCTION notify_work_item_changed('id');
