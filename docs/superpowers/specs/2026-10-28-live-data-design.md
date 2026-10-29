@@ -1,6 +1,7 @@
 # Live data: one way for the dashboard to get server data
 
-Status: **steps 1–5 delivered** (PRs #352–#356, 2026-10-29); step 6 moves read-once screens as they are touched.
+Status: **steps 1–5 delivered** (PRs #352–#356, 2026-10-29); step 6 moves read-once screens as they are touched,
+and its work-item batch is PR #357.
 The tables in §1 describe master `a88e83fd`, before this work.
 
 ## 1. Problem

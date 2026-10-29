@@ -195,9 +195,10 @@ its mutations, and its callers already re-read through `changed`. It is left as 
 ### Task 5: Mutation check and docs
 
 - [ ] **Step 1: Mutation commit** (reverted next): drop `'evidence'` from `FORGE_READS`, drop the `allApprovals`
-  notice, and drop the `isFetchedAfterMount` guard. Expected CI: exactly six fail — three feed tests (`'*'`, open,
-  id notice), two list tests (`'reads an open decision again …'`, `'reads past decisions again …'`) and
-  `'fills from a fresh build setup, not a cached one'`.
+  notice, and drop the `isFetchedAfterMount` guard. Expected CI: exactly seven fail — three feed tests (`'*'`, open,
+  id notice), three list tests (`'reads an open decision again …'`, `'hides Approve when a notice closes the decision
+  elsewhere'`, `'reads past decisions again …'`) and `'fills from a fresh build setup, not a cached one'`. (The
+  "hides Approve" test was rewritten after the plan check to close the gate, so it depends on the decisions re-read.)
 - [ ] **Step 2: Revert commit.**
 - [ ] **Step 3: Docs.** CLAUDE.md live-data bullet: one sentence that the decision panel, past decisions, the
   preparation form and the profiles screen read through `useQuery`, and that `FORGE_READS` is what `'*'` skips. Spec
