@@ -12,7 +12,7 @@ function changedIds(frame: unknown): readonly string[] | '*' | null {
 }
 
 /** Reads that ask the forge, not the database: no notice covers them, and re-reading them spends its rate limit. */
-const FORGE_READS = new Set<unknown>(['tracker', 'evidence']);
+const FORGE_READS = new Set<unknown>(['tracker']);
 
 /** Every work-item read but the forge reads. */
 function rereadAll(client: QueryClient) {
@@ -36,7 +36,6 @@ export function useWorkItemChanges({ enabled = true }: { enabled?: boolean } = {
       if (changed === '*') return rereadAll(client);
       if (changed === null) return;
       noticeLive(client, { queryKey: workKeys.lists() });
-      noticeLive(client, { queryKey: workKeys.allApprovals() });
       for (const id of changed) {
         noticeLive(client, { queryKey: workKeys.item(id) });
         noticeLive(client, { queryKey: workKeys.drafts(id) });
