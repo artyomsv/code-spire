@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { getWorkItem, getWorkItemTracker } from '../../api';
+import { getWorkItem, getWorkItemTracker, type WorkItemDetail as Detail } from '../../api';
 import { formatEventTime } from '../../format';
 import SidePanel from '../SidePanel';
 import DecisionPanel from './DecisionPanel';
@@ -41,10 +41,15 @@ export default function WorkItemDetail() {
   // panel reopens the feed, and its open reads again whatever changed meanwhile.
   const feed = useWorkItemChanges({ enabled: !panel });
 
-  /** Reads the item and its ticket again, leaving the notice as it is. */
+  /**
+   * Reads the item, its ticket, its draft and its plan steps again, leaving the notice as it is. The draft and the steps
+   * are keyed apart from the item, so without them a Refresh with the feed down would leave a step building for ever.
+   */
   function invalidate() {
     void client.invalidateQueries({ queryKey: workKeys.item(id), exact: true });
     void client.invalidateQueries({ queryKey: workKeys.tracker(id), exact: true });
+    void client.invalidateQueries({ queryKey: workKeys.drafts(id) });
+    void client.invalidateQueries({ queryKey: workKeys.steps(id), exact: true });
   }
   function reread(message = '') { setNotice(message); invalidate(); }
   function start() { setNotice(''); return ++action.current; }
@@ -56,6 +61,13 @@ export default function WorkItemDetail() {
   const error = itemQuery.error ? String(itemQuery.error) : null;
   const tracker = { value: trackerQuery.data ?? null, error: trackerQuery.error ? String(trackerQuery.error) : null };
   const next = item ? nextAction(item) : null;
+  // The item a panel opened with. Closing the feed stops new notices, but a read already out still lands, and the
+  // preparation form is keyed on the revision: a newer item would remount it under the operator's edits (review of
+  // PR 356). Set during render, so the panel never shows the newer item even for one frame.
+  const [opened, setOpened] = useState<{ panel: string; item: Detail } | null>(null);
+  const reopened = panel && item ? !opened || opened.panel !== panel || opened.item.id !== item.id : opened !== null;
+  if (reopened) setOpened(panel && item ? { panel, item } : null);
+  const panelItem = opened?.item ?? item;
 
   return <section className="content"><div className="card work-detail">
     <Link to="/work-items">← Work items</Link>
@@ -121,9 +133,9 @@ export default function WorkItemDetail() {
       </details>
       {panel === 'decide' && <DecisionPanel key={item.id} itemId={item.id} title={tracker.value?.title ?? null} onClose={close}
         onDecided={message => { close(); reread(message); }} />}
-      {panel === 'prepare' && <SidePanel title="Prepare the task" subtitle={`${item.issueKey} · ${item.repository}`} busy={false} onClose={close}
+      {panel === 'prepare' && panelItem && <SidePanel title="Prepare the task" subtitle={`${item.issueKey} · ${item.repository}`} busy={false} onClose={close}
         actions={<button className="btn-ghost" type="button" onClick={close}>Close</button>}>
-        <WorkItemPreparation key={`preparation:${item.id}:${item.revision}`} item={item} changed={() => { close(); reread('The prepared task was registered.'); }} />
+        <WorkItemPreparation key={`preparation:${panelItem.id}:${panelItem.revision}`} item={panelItem} changed={() => { close(); reread('The prepared task was registered.'); }} />
       </SidePanel>}
     </>}
   </div></section>;
