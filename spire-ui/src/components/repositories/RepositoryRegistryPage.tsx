@@ -23,11 +23,11 @@ export default function RepositoryRegistryPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const client = useQueryClient();
-  const repositoriesRead = useQuery({ queryKey: repositoriesKey, queryFn: () => fetchRepositories(), gcTime: 0 });
+  const repositoriesRead = useQuery({ queryKey: repositoriesKey, queryFn: () => fetchRepositories() });
   const providersRead = useQuery({ queryKey: providersKey, queryFn: () => fetchProviders() });
   const kindsRead = useQuery({ queryKey: repositoryKindsKey, queryFn: () => fetchRepositoryKinds() });
   // The page needs all three; a re-read that fails after they answered keeps what is on screen.
-  const loaded = repositoriesRead.data !== undefined && providersRead.data !== undefined && kindsRead.data !== undefined;
+  const loaded = repositoriesRead.data !== undefined && !repositoriesRead.isFetching && providersRead.data !== undefined && kindsRead.data !== undefined;
   const loadFailure = repositoriesRead.error ?? providersRead.error ?? kindsRead.error;
   const loading = !loaded && !loadFailure;
   const error = !loaded && loadFailure ? String(loadFailure) : null;
