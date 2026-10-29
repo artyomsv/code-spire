@@ -5,6 +5,7 @@ import * as accounts from '../../api';
 import * as api from './repositoriesApi';
 import RepositoryRegistryPage from './RepositoryRegistryPage';
 import { MemoryRouter, Link } from 'react-router';
+import { queryWrapper } from '../../test/queryWrapper';
 
 const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://forge.example.test/api/v4'): accounts.ProviderView => ({
   id, name: id, role, baseUrl, type: 'gitlab', enabled: true,
@@ -22,7 +23,7 @@ describe('Repository registry', () => {
   it('uses a text link and shared account column and keeps repair labels concise', async () => {
     vi.mocked(api.fetchPendingMappings).mockResolvedValue([{ registrationId: 'TEST-registration', revision: 8, scmType: 'gitlab',
       forgeOrigin: null, target: `${repo.workspace}/${repo.slug}`, problem: 'registration_origin_unknown' }]);
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     const name = await screen.findByRole('link', { name: repo.slug });
     expect(name).toHaveClass('mono', 'nowrap');
     expect(name).not.toHaveClass('btn');
@@ -38,7 +39,7 @@ describe('Repository registry', () => {
       workspace: repo.workspace, slug: 'TEST-new', registration: 'TEST-registration' });
     render(<MemoryRouter initialEntries={['/settings/repositories']}>
       <Link to={`/settings/repositories?${query}`}>TEST Attention Register</Link><RepositoryRegistryPage />
-    </MemoryRouter>);
+    </MemoryRouter>, { wrapper: queryWrapper() });
     expect(await screen.findByRole('link', { name: 'TEST-repo' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Workspace' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'TEST Attention Register' }));
@@ -51,7 +52,7 @@ describe('Repository registry', () => {
   });
   it('keeps repository registration available through a gateway outage and retries hooks', async () => {
     vi.mocked(accounts.fetchWebhookRepos).mockRejectedValueOnce(new Error('TEST-gateway down')).mockResolvedValue([]);
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     expect(await screen.findByRole('alert')).toHaveTextContent('TEST-gateway down');
     fireEvent.click(await screen.findByRole('button', { name: 'Register repository' }));
     expect(screen.getByRole('textbox', { name: 'Workspace' })).toBeInTheDocument();
@@ -70,7 +71,7 @@ describe('Repository registry', () => {
   });
 
   it('shows workspace and the selected reviewer and disabled factory', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     expect(await screen.findByText('TEST-group/nested')).toBeInTheDocument();
     expect(screen.getByText('Reviewer: TEST-reviewer (@TEST-review-bot) · configured')).toBeInTheDocument();
     expect(screen.getByText('Factory: TEST-factory · disabled')).toBeInTheDocument();
@@ -82,7 +83,7 @@ describe('Repository registry', () => {
   });
 
   it('offers only same-origin accounts of the chosen role and saves explicit ids', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const reviewer = screen.getByRole('combobox', { name: 'REVIEWER account' });
@@ -97,7 +98,7 @@ describe('Repository registry', () => {
   });
 
   it('saves the reviewer-may-approve setting, on by default', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const setting = screen.getByLabelText('Reviewer may approve');
@@ -109,7 +110,7 @@ describe('Repository registry', () => {
 
   it('keeps a stale-save error visible without pretending it saved', async () => {
     vi.mocked(api.saveRepository).mockRejectedValue(new Error('Repository changed; reload before saving'));
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     fireEvent.click(screen.getByLabelText('Enabled'));
@@ -121,7 +122,7 @@ describe('Repository registry', () => {
 
   /** The operator's finding (2026-10-16): edit opened a second side panel over the first. */
   it('edits a repository in a Settings tab of the same panel, never a second panel', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     expect(screen.queryByRole('button', { name: 'Edit repository and accounts' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
@@ -133,7 +134,7 @@ describe('Repository registry', () => {
   });
 
   it('offers Save only after a change, and Discard puts the saved values back', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
@@ -148,7 +149,7 @@ describe('Repository registry', () => {
   });
 
   it('keeps an unsaved change while the operator looks at another tab', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     fireEvent.click(screen.getByLabelText('Reviewer may approve'));
@@ -161,7 +162,7 @@ describe('Repository registry', () => {
   it('locks every control and the close actions until a save settles', async () => {
     let settle: (saved: api.Repository) => void = () => {};
     vi.mocked(api.saveRepository).mockReturnValue(new Promise(resolve => { settle = resolve; }));
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     fireEvent.click(screen.getByLabelText('Enabled'));
@@ -178,7 +179,7 @@ describe('Repository registry', () => {
 
   /** Review L-1 (2026-10-20): the unsaved-changes dot was the only sign, and a screen reader skipped it. */
   it('tells assistive technology which tab holds unsaved changes', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     fireEvent.click(screen.getByLabelText('Reviewer may approve'));
@@ -191,7 +192,7 @@ describe('Repository registry', () => {
 
   /** The operator's finding (2026-10-20): each tab switch left the previous tab's content behind. */
   it('shows only the chosen tab after the operator switches back and forth', async () => {
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     for (const name of ['Settings', 'Details', 'Settings', 'Details']) fireEvent.click(screen.getByRole('tab', { name }));
     expect(screen.getAllByText('Selected accounts')).toHaveLength(1);
@@ -201,7 +202,7 @@ describe('Repository registry', () => {
 
   it('shows the saved values after a save, with nothing left to save', async () => {
     vi.mocked(api.saveRepository).mockResolvedValue({ ...repo, reviewerMayApprove: false, revision: 4 });
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     fireEvent.click(screen.getByLabelText('Reviewer may approve'));
@@ -215,7 +216,7 @@ describe('Repository registry', () => {
 
   it('can register an unbound repository before accounts exist', async () => {
     vi.mocked(api.fetchRepositories).mockResolvedValue([]); vi.mocked(accounts.fetchProviders).mockResolvedValue([]);
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('button', { name: 'Register repository' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Forge kind' }), { target: { value: 'gitlab' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Forge origin' }), { target: { value: repo.forgeOrigin } });
@@ -232,7 +233,7 @@ describe('Repository registry', () => {
       target: 'TEST-group/nested/TEST-repo', problem: 'conflicting_forge_origins' };
     vi.mocked(api.fetchPendingMappings).mockResolvedValue([pending]);
     vi.spyOn(api, 'linkMapping').mockResolvedValue(undefined);
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('button', { name: 'Link repository' }));
     await waitFor(() => expect(api.linkMapping).toHaveBeenCalledWith(pending, repo.id));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Link repository' })).not.toBeInTheDocument());
@@ -248,7 +249,7 @@ describe('Repository registry', () => {
     vi.mocked(accounts.fetchWebhookRepos).mockResolvedValue([hook]);
     const historyLink = vi.spyOn(api, 'linkMapping');
     const update = vi.spyOn(accounts, 'updateWebhookRepo').mockResolvedValue({ ...hook, repositoryId: repo.id, forgeOrigin: repo.forgeOrigin });
-    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
     fireEvent.click(await screen.findByRole('button', { name: 'Link repository' }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(hook.id, expect.objectContaining({
       repositoryId: repo.id, forgeOrigin: repo.forgeOrigin, eventKind: 'REVIEWER', target: pending.target,
@@ -258,6 +259,17 @@ describe('Repository registry', () => {
     fireEvent.click(screen.getByRole('link', { name: repo.slug }));
     expect(await screen.findByText('/webhooks/gitlab/TEST-retained-key')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create REVIEWER webhook' })).not.toBeInTheDocument();
+  });
+
+  // Step 6: the repositories are kept in the query cache, so the page opened again shows them while it reads.
+  it('shows the repositories at once when the page opens again', async () => {
+    const wrapper = queryWrapper();
+    const first = render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper });
+    await screen.findByRole('link', { name: repo.slug });
+    first.unmount();
+    vi.mocked(api.fetchRepositories).mockReturnValue(new Promise(() => {}));
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper });
+    expect(await screen.findByRole('link', { name: repo.slug })).toBeInTheDocument();
   });
 
   it('refuses to repair a registration whose current forge or coordinates changed', async () => {
@@ -272,7 +284,7 @@ describe('Repository registry', () => {
     for (const changed of [{ providerType: 'github' }, { scope: 'org' as const },
       { target: 'TEST-other/TEST-repo' }, { forgeOrigin: 'https://other.example.test' }]) {
       vi.mocked(accounts.fetchWebhookRepos).mockResolvedValue([{ ...hook, ...changed }]);
-      const page = render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>);
+      const page = render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
       fireEvent.click(await screen.findByRole('button', { name: 'Link repository' }));
       expect(await screen.findByRole('alert')).toHaveTextContent('Registration changed');
       expect(update).not.toHaveBeenCalled();

@@ -4,9 +4,10 @@ import * as auth from '../../../auth';
 import * as land from './landSettingsApi';
 import LandStep from './LandStep';
 import { landSetup } from './factoryFixtures';
+import { queryWrapper } from '../../../test/queryWrapper';
 
 const showStep = (settings = landSetup(), open: string | null = 'land') => render(<LandStep repositoryId="TEST-repository" settings={settings}
-  open={open} setOpen={vi.fn()} changed={vi.fn()} reload={vi.fn()} />);
+  open={open} setOpen={vi.fn()} changed={vi.fn()} reload={vi.fn()} />, { wrapper: queryWrapper() });
 const methodValues = (select: HTMLElement) => within(select).getAllByRole('option')
   .map(option => (option as HTMLOptionElement).value).filter(value => value !== '');
 
