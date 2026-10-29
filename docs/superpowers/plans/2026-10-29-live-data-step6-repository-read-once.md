@@ -125,9 +125,9 @@ panel; it reads nothing), `factory/PeopleStep` (the person lookup is an action o
 
 ### Task 3: Mutation check and docs
 
-- [ ] **Step 1: Mutation commit** (reverted next): `RepositoryFactory` reads `buildDefaults` under a private key
-  (`['factory-build', id]`), shows only the error after a failed re-read, and the registry reads the repositories under
-  a private key (`['registry-repositories']`). Expected CI: exactly the three new tests from Task 1 fail.
+- [ ] **Step 1: Mutation commit** (reverted next): `RepositoryFactory` reads and reloads `buildDefaults` under a private
+  key (`['factory-build', id]`), shows only the error after a failed re-read, and the registry drops its repositories
+  from the cache on unmount (`gcTime: 0`; a private key would also break `replace`). Expected CI: exactly the three new tests from Task 1 fail.
 - [ ] **Step 2: Revert commit.**
 - [ ] **Step 3: Docs.** CLAUDE.md live-data bullet: the repository batch and that a Factory-tab save refreshes the
   list column and the preparation form through shared keys. Spec status: "… and its repository batch is PR #…".
