@@ -50,7 +50,7 @@ const waiting = new WeakSet<Query>();
 export function noticeLive(client: QueryClient, filters: QueryFilters): void {
   const cache = client.getQueryCache();
   for (const query of cache.findAll(filters)) {
-    if (true) {
+    if (query.state.fetchStatus !== 'fetching') {
       void client.invalidateQueries({ queryKey: query.queryKey, exact: true });
     } else if (!waiting.has(query)) {
       waiting.add(query);
