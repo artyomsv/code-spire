@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchLlmModels, type LlmModelView } from '../../../api';
 import { preparationKeys } from '../../work-items/workQueries';
+import { writeLive } from '../../../liveCache';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
@@ -87,7 +88,8 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
         verifyCommands: verifyLines(form.verifyCommands), verifyTimeoutSeconds: Number(form.verifyTimeoutSeconds),
         ...(offersGenerated ? { preparation } : {}) });
       // The saved row goes into its key first, so the list and the preparation form are right even if the re-read fails.
-      client.setQueryData(buildDefaultsKey(repositoryId), saved);
+      // Written whether or not this form is still open, and after cancelling an older read that would overwrite it.
+      writeLive(client, buildDefaultsKey(repositoryId), saved);
       if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }

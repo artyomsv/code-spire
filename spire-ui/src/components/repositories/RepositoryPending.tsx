@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchPendingMappings, linkMapping, pendingMappingsKey, type PendingMapping, type Repository } from './repositoriesApi';
 import { fetchWebhookRepos, updateWebhookRepo, type WebhookRepoView } from '../../api';
 import { AlertTriangle } from 'lucide-react';
+import { updateLive } from '../../liveCache';
 
 export default function RepositoryPending({ repositories, onHooksChanged }: {
   repositories: Repository[]; onHooksChanged: (hooks: WebhookRepoView[]) => void;
@@ -32,8 +33,7 @@ export default function RepositoryPending({ repositories, onHooksChanged }: {
         await linkMapping(row, repository.id);
       }
       // Removed here rather than read again: whether the server drops a repaired registration at once is not established.
-      void client.cancelQueries({ queryKey: pendingMappingsKey, exact: true });
-      client.setQueryData<PendingMapping[]>(pendingMappingsKey, rows => (rows ?? []).filter(p => p.registrationId !== row.registrationId));
+      updateLive<PendingMapping[]>(client, pendingMappingsKey, rows => (rows ?? []).filter(p => p.registrationId !== row.registrationId));
     }
     catch (failure) { setLinkError(String(failure)); }
   }

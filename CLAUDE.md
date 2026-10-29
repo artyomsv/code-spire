@@ -299,7 +299,9 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   (`tracker`, `evidence`). The repository batch is done too: the repositories page, its pending mappings and its
   Factory tab read keys shared with those screens (`repositoriesKey`, `workSourcesKey`, `policyKeys`,
   `buildDefaultsKey`, `landSettingsKey`), so a Factory-tab save (the saved row, then an invalidate) reaches the list's
-  setup column and the preparation form with no callback. A write into a key cancels a read of it first.
+  setup column and the preparation form with no callback. A save writes through `liveCache.ts` (`writeLive`,
+  `updateLive`: cancel a read of the key, then write), mounted or not; a repository save also re-reads the work sources,
+  whose enabled state the server derives from the repository's.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

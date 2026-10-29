@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import SettingField from '../../SettingField';
 import { workReason } from '../../work-items/workReasons';
 import FactoryStep from './FactoryStep';
+import { writeLive } from '../../../liveCache';
 import { landOptions, landOptionsKey, landSettingsKey, saveLandSettings, type LandOptions, type LandSettings, type MergeMethod, type TicketRule } from './landSettingsApi';
 
 interface Props {
@@ -44,14 +45,15 @@ export default function LandStep({ repositoryId, settings, open, setOpen, change
   const client = useQueryClient();
   const optionsRead = useQuery({ queryKey: landOptionsKey(repositoryId), queryFn: () => landOptions(repositoryId), enabled: editing });
   // The server already answers "unchecked" for a forge that did not reply; this covers the server itself.
-  const options: LandOptions | null = optionsRead.data ?? (optionsRead.isError ? UNCHECKED : null);
+  // A failed read wins over an older cached answer: the forge may allow more methods now (review of PR 358, M-4).
+  const options: LandOptions | null = optionsRead.isError ? UNCHECKED : optionsRead.data ?? null;
 
   async function submit() {
     setSaving(true); setError('');
     try {
       const saved = await saveLandSettings(repositoryId, { expectedRevision: settings.revision, mergeMethod: form.mergeMethod, ticketRule: form.ticketRule,
         fixAttempts: Number(form.fixAttempts) });
-      client.setQueryData(landSettingsKey(repositoryId), saved);
+      writeLive(client, landSettingsKey(repositoryId), saved);
       if (live.current) changed(`Land setup saved: ${form.mergeMethod}, ${TICKET_RULE_SHORT[form.ticketRule]}, up to ${form.fixAttempts} agent fixes.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setSaving(false); }

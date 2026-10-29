@@ -17,6 +17,7 @@ import { policyKeys } from '../work-items/workQueries';
 import RepositoryFactory from './factory/RepositoryFactory';
 import FactoryProgress from './factory/FactoryProgress';
 import { readiness } from './factory/factoryModel';
+import { updateLive, writeLive } from '../../liveCache';
 
 /** Repository configuration remains usable when the separate webhook service is unavailable. */
 export default function RepositoryRegistryPage() {
@@ -57,14 +58,13 @@ export default function RepositoryRegistryPage() {
     if (legacy) navigate(`/settings/webhooks?edit=${encodeURIComponent(legacy)}`, { replace: true });
   }, [location.search, navigate]);
 
-  // A write cancels a read of the same key first: a read started before it would land after it and undo it.
-  function setHooks(rows: WebhookRepoView[]) {
-    void client.cancelQueries({ queryKey: webhookReposKey, exact: true });
-    client.setQueryData(webhookReposKey, rows);
-  }
+  // A write cancels a read of the same key first (liveCache): a read started before it would land after it and undo it.
+  function setHooks(rows: WebhookRepoView[]) { writeLive(client, webhookReposKey, rows); }
   function replace(repository: Repository) {
-    void client.cancelQueries({ queryKey: repositoriesKey, exact: true });
-    client.setQueryData<Repository[]>(repositoriesKey, current => [...(current ?? []).filter(row => row.id !== repository.id), repository]);
+    updateLive<Repository[]>(client, repositoriesKey, current => [...(current ?? []).filter(row => row.id !== repository.id), repository]);
+    // The server reports a source enabled only while its repository is, so the setup column reads them again
+    // (review of PR 358, M-1).
+    void client.invalidateQueries({ queryKey: workSourcesKey, exact: true });
   }
   function registered(repository: Repository) {
     replace(repository);

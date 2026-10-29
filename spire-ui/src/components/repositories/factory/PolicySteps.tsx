@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { writeLive } from '../../../liveCache';
+import { policyKeys } from '../../work-items/workQueries';
 import * as policyApi from '../../work-items/workPolicyApi';
 import { key, pin, policyInput, rowsOf, type MappingRow } from '../../work-items/policyInput';
 import PhaseStrip from '../../work-items/PhaseStrip';
@@ -19,15 +22,20 @@ interface Props {
 const versionOptions = (profiles: policyApi.Profile[]) => profiles.map(profile =>
   <option key={key(profile)} value={key(profile)}>{profile.name} v{profile.version}</option>);
 
-/** Save one form's policy, surfacing the server's words rather than a stack-shaped string. */
-async function save(repositoryId: string, input: Parameters<typeof policyApi.savePolicy>[1], setBusy: (busy: boolean) => void, setError: (error: string) => void) {
+/**
+ * Save one form's policy, surfacing the server's words rather than a stack-shaped string. The saved policy goes into its
+ * key at once, so a re-read that fails afterwards cannot put the old one back on screen (review of PR 358, M-3).
+ */
+async function save(client: QueryClient, repositoryId: string, input: Parameters<typeof policyApi.savePolicy>[1],
+  setBusy: (busy: boolean) => void, setError: (error: string) => void) {
   setBusy(true); setError('');
-  try { await policyApi.savePolicy(repositoryId, input); return true; }
+  try { writeLive(client, policyKeys.policy(repositoryId), await policyApi.savePolicy(repositoryId, input)); return true; }
   catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); return false; }
   finally { setBusy(false); }
 }
 
 export function CeilingStep({ repositoryId, policy, profiles, open, setOpen, changed }: Props) {
+  const client = useQueryClient();
   const [ceiling, setCeiling] = useState(policy.ceiling ? key(policy.ceiling) : '');
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const editing = open === 'ceiling';
@@ -35,7 +43,7 @@ export function CeilingStep({ repositoryId, policy, profiles, open, setOpen, cha
     const chosen = profiles.find(profile => key(profile) === ceiling);
     if (!chosen) return;
     const mappings = Object.fromEntries(Object.entries(policy.mappings).map(([label, profile]) => [label, pin(profile)]));
-    if (await save(repositoryId, { revision: policy.revision, ceiling: pin(chosen), mappings }, setBusy, setError)) changed(`Ceiling set to ${chosen.name} v${chosen.version}.`);
+    if (await save(client, repositoryId, { revision: policy.revision, ceiling: pin(chosen), mappings }, setBusy, setError)) changed(`Ceiling set to ${chosen.name} v${chosen.version}.`);
   }
   return <FactoryStep number={3} question="The most it may ever do" term="ceiling" state={editing ? 'editing' : policy.ceiling ? 'done' : 'missing'}
     actions={!editing && <button className={policy.ceiling ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null || profiles.length === 0}
@@ -69,6 +77,7 @@ function LabelRows({ rows, setRows, profiles }: { rows: MappingRow[]; setRows: (
 }
 
 export function LabelsStep({ repositoryId, policy, profiles, open, setOpen, changed, reload }: Props) {
+  const client = useQueryClient();
   const [rows, setRows] = useState<MappingRow[]>(() => rowsOf(policy));
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const mappings = Object.entries(policy.mappings);
@@ -76,7 +85,7 @@ export function LabelsStep({ repositoryId, policy, profiles, open, setOpen, chan
     let input;
     try { input = policyInput(policy.revision, policy.ceiling ? key(policy.ceiling) : '', rows, profiles); }
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); return; }
-    if (await save(repositoryId, input, setBusy, setError)) changed('Label mappings saved.');
+    if (await save(client, repositoryId, input, setBusy, setError)) changed('Label mappings saved.');
   }
   const editing = open === 'labels';
   return <FactoryStep number={4} question="What each label asks for" term="ticket labels"
