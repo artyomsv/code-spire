@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from '@tanstack/react-query';
+import type { Query, QueryClient, QueryFilters, QueryKey } from '@tanstack/react-query';
 
 /*
  * How a socket frame reaches React Query (docs/superpowers/specs/2026-10-28-live-data-design.md §3.3).
@@ -36,6 +36,34 @@ export function mergeLive<T>(client: QueryClient, key: QueryKey, update: (previo
 export function invalidateLive(client: QueryClient, key: QueryKey): void {
   void client.cancelQueries({ queryKey: key, exact: true });
   void client.invalidateQueries({ queryKey: key, exact: true });
+}
+
+/** Queries waiting for their read to finish before the notice that found them out re-reads them. */
+const waiting = new WeakSet<Query>();
+
+/**
+ * For a change notice: re-reads every query matching `filters` that a screen shows. A read already out is left to
+ * finish and then read once more. `invalidateQueries` would cancel it and start another, so notices faster than the
+ * read would never let an answer through; and the read may have started before the change, so one more must follow.
+ * However many notices arrive meanwhile, that is one extra read.
+ */
+export function noticeLive(client: QueryClient, filters: QueryFilters): void {
+  const cache = client.getQueryCache();
+  for (const query of cache.findAll(filters)) {
+    if (query.state.fetchStatus !== 'fetching') {
+      void client.invalidateQueries({ queryKey: query.queryKey, exact: true });
+    } else if (!waiting.has(query)) {
+      waiting.add(query);
+      const unsubscribe = cache.subscribe(event => {
+        if (event.query !== query) return;
+        const removed = event.type === 'removed';
+        if (!removed && query.state.fetchStatus !== 'idle') return;
+        unsubscribe();
+        waiting.delete(query);
+        if (!removed) void client.invalidateQueries({ queryKey: query.queryKey, exact: true });
+      });
+    }
+  }
 }
 
 /** Replaces the row with the same id, or appends it. Never changes `rows`. */

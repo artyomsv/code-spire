@@ -1,40 +1,6 @@
-import { act } from '@testing-library/react';
 import type { RunEvent, RunListEntry, RunView } from '../api';
 
-/** Controllable browser transport shared by the run hook and its consuming screens. */
-export class RunSocket {
-  static sockets: RunSocket[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onclose: ((event: { code: number; reason: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  closed = false;
-
-  constructor(public url: string) {
-    RunSocket.sockets.push(this);
-  }
-
-  close() { this.closed = true; }
-
-  static get latest(): RunSocket {
-    const socket = RunSocket.sockets[RunSocket.sockets.length - 1];
-    if (!socket) throw new Error('no run socket opened');
-    return socket;
-  }
-
-  /** The newest socket finishes its handshake. */
-  static open() {
-    act(() => RunSocket.latest.onopen?.());
-  }
-
-  static push(value: unknown) {
-    RunSocket.raw(JSON.stringify(value));
-  }
-
-  static raw(data: string) {
-    act(() => RunSocket.latest.onmessage?.({ data }));
-  }
-}
+export { FakeSocket as RunSocket } from './fakeSocket';
 
 export function runRow(overrides: Partial<RunListEntry> = {}): RunListEntry {
   return {

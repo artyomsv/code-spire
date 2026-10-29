@@ -286,8 +286,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   client. The work-item change feed exists on the server (step 4): `V104` triggers send `pg_notify('work_item_changed',
   id | '*')` on commit, `WorkItemChangeListener` (its own session, `LISTEN` committed before the `'*'` refresh) batches
   them for 250 ms, and `/api/ws/work-items` sends `{"changed":[ids]}` or `{"changed":"*"}` to viewers and admins. A
-  table a work-item read starts to use needs a decision in `WorkItemChangeCoverageTest`. The work-item screens still
-  poll until step 5 moves them onto it.
+  table a work-item read starts to use needs a decision in `WorkItemChangeCoverageTest`. The work-item list, detail,
+  draft and plan steps follow it (step 5): every read is keyed under `workKeys` (`work-items/workQueries.ts`),
+  `useWorkItemChanges` turns each notice and every open into `noticeLive` re-reads (a read already out finishes, then
+  one more follows; the forge-backed tracker read is never re-read by a notice), an open panel on the detail page
+  closes the feed, and a dropped feed shows "Live updates paused". No work-item screen polls.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

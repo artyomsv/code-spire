@@ -56,6 +56,13 @@ reconnect and `'*'`, and 5 m 45 s of background jobs gave no frame.
 **What would settle it.** A run behind a load balancer with a short idle timeout, watching for the WARN reconnect line
 and the `'*'` frame after the timeout.
 
+**The screens on the feed (step 5).** The work-item list, detail, draft and plan steps no longer poll; they read again only
+on a notice or when the feed opens. Proven by `useWorkItemChanges.test.tsx`, the `noticeLive` tests in `liveCache.test.tsx`
+and the work-item screen tests, and live on the dev stack on 2026-10-29 with `pg_notify` (one notice, one read of the
+item, its draft and its steps; none for another item; "Live updates paused" while the orchestrator was stopped; one
+re-read 2 s after it started). Not proven: a build moving an item from plan gate to land while its page is open, so a
+notice the triggers miss would leave the screen stale until the next notice, the next open or Refresh.
+
 ## Specification, plan and steps (M4 slice 3, ADR-049, accepted 2026-10-27)
 
 **The claim.** A generated repository writes a specification and a plan with read-only harness runs, posts both to

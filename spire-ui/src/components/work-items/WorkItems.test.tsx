@@ -10,9 +10,15 @@ import * as preparationApi from './workPreparationApi';
 import * as sourcesApi from './workSourcesApi';
 import WorkItems from './WorkItems';
 import WorkItemDetail from './WorkItemDetail';
+import { queryWrapper } from '../../test/queryWrapper';
+import { FakeSocket } from '../../test/fakeSocket';
 
 afterEach(cleanup);
-beforeEach(() => { vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-no tracker in list tests')); });
+beforeEach(() => {
+  vi.spyOn(api, 'getWorkItemTracker').mockRejectedValue(new Error('TEST-no tracker in list tests'));
+  FakeSocket.sockets = [];
+  vi.stubGlobal('WebSocket', FakeSocket);
+});
 
 function item(index = 0): WorkItemSummary {
   return { id: `TEST-item-${index}`, sourceId: 'TEST-source', repositoryId: 'TEST-repository',
@@ -32,12 +38,12 @@ function prepared(): NonNullable<Detail['preparation']> {
 function showDetail() {
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
     <Route path="/work-items/:id" element={<WorkItemDetail />} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter>, { wrapper: queryWrapper() });
 }
 
 it('resets pagination when choosing a filter', async () => {
   vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0, limit = 50) => ({ items: [item(offset)], total: 100, offset, limit }));
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Next page' }));
   await waitFor(() => expect(api.getWorkItems).toHaveBeenLastCalledWith(50, 50, []));
   fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
@@ -107,7 +113,7 @@ it('ignores an older list response after refresh', async () => {
   const old = deferred<api.WorkItemPage>();
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(screen.getByRole('button', { name: /^Running/ }));
   await screen.findByText('TEST-1');
   await act(async () => old.resolve({ items: [item(0)], total: 1, offset: 0, limit: 50 }));
@@ -119,7 +125,7 @@ it('ignores an older list error after refresh', async () => {
   const old = deferred<api.WorkItemPage>();
   vi.spyOn(api, 'getWorkItems').mockReturnValueOnce(old.promise)
     .mockResolvedValue({ items: [item(1)], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(screen.getByRole('button', { name: /^Running/ }));
   await screen.findByText('TEST-1');
   await act(async () => old.reject(new Error('TEST-old failure')));
@@ -177,7 +183,7 @@ it('loads the second persisted page rather than filtering a fixed window', async
   vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0) => ({
     items: offset === 0 ? first : [item(50)], total: 51, offset, limit: 50,
   }));
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText('TEST-0');
   expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -192,7 +198,7 @@ it('loads the second persisted page rather than filtering a fixed window', async
 
 it('renders an unknown workflow status as unknown and refused', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'TEST-future' }], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByText('Unknown (TEST-future)')).toHaveClass('refused');
   // The filter may offer Completed; an unknown result must never render a successful status pill.
   expect(screen.queryByText('Completed', { selector: '.pill' })).toBeNull();
@@ -234,7 +240,7 @@ it('keeps tracker status distinct from workflow status', async () => {
 it('shows a list failure and recovers when refreshed', async () => {
   vi.spyOn(api, 'getWorkItems').mockRejectedValueOnce(new Error('TEST-list failure'))
     .mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-list failure');
   fireEvent.click(screen.getByRole('button', { name: 'Refresh work items' }));
   await screen.findByText('TEST-0');
@@ -248,7 +254,7 @@ function source(id: string, enabled = true): sourcesApi.WorkSource {
 }
 async function showAsAdmin() {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText(/when you press Refresh/);
   await screen.findByText('TEST-0');
 }
@@ -284,7 +290,7 @@ it('only re-reads the list for a viewer', async () => {
   vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-viewer', roles: ['spire-viewer'] });
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
   vi.spyOn(sourcesApi, 'fetchWorkSources').mockResolvedValue([source('TEST-source-a')]);
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
   await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
   expect(sourcesApi.fetchWorkSources).not.toHaveBeenCalled();
@@ -295,7 +301,7 @@ it('says it is refreshing while the list reloads', async () => {
   let release!: (page: { items: WorkItemSummary[]; total: number; offset: number; limit: number }) => void;
   vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 })
     .mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
   expect(await screen.findByRole('button', { name: 'Refreshing…' })).toBeDisabled();
   // The rows stay while the list re-reads; blanking them would lose the place of the reader.
@@ -367,7 +373,7 @@ it('adds no notice when a recheck names no rule', async () => {
 // The band says how many items wait on a person across every page, and takes the reader to them.
 it('counts the items that need a person and shows them on request', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 4, offset: 0, limit: 50, counts: { waiting_approval: 1, awaiting_input: 2, active: 1 } });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('region', { name: 'Needs you' })).toHaveTextContent('3 items need you');
   expect(screen.getByRole('button', { name: /^Needs you/ })).toHaveTextContent('3');
   expect(screen.getByRole('button', { name: /^All/ })).toHaveTextContent('4');
@@ -376,7 +382,7 @@ it('counts the items that need a person and shows them on request', async () => 
 });
 it('shows no band when nobody is needed', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50, counts: { active: 1 } });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText('TEST-0');
   expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
 });
@@ -385,7 +391,7 @@ it('opens an open decision from its row in a side panel', async () => {
   const waiting = { ...item(), workflowStatus: 'waiting_approval', phase: 'plan', gate: { id: 'TEST-gate', version: 1, state: 'OPEN' as const, phase: 'plan', generation: 1,
     itemRevision: 1, policyRevision: 1, artifact: null, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } };
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [waiting], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('link', { name: 'Review the plan decision' })).toHaveAttribute('href', '/work-items?filter=needs-you&decide=TEST-item-0');
 });
 it('renders the decision panel named by the address', async () => {
@@ -393,41 +399,12 @@ it('renders the decision panel named by the address', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
-  render(<MemoryRouter initialEntries={['/work-items?filter=needs-you&decide=TEST-item-0']}><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items?filter=needs-you&decide=TEST-item-0']}><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('dialog', { name: 'Decision' })).toHaveTextContent('This item has no open decision.');
-});
-// Work moves in minutes. The list re-reads by itself, keeps its rows while it does, and says when.
-it('re-reads the list on a timer without blanking the rows', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
-    render(<MemoryRouter><WorkItems /></MemoryRouter>);
-    await screen.findByText('TEST-0');
-    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
-    // An unfinished item moves in seconds while an agent works on it (live land acceptance): the list follows every 5 s.
-    await act(async () => { vi.advanceTimersByTime(5_000); });
-    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('TEST-0')).toBeInTheDocument();
-    expect(screen.getByText(/^Updated /)).toBeInTheDocument();
-  } finally { vi.useRealTimers(); }
-});
-it('re-reads a list of finished items only every 15 seconds', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), workflowStatus: 'completed' }, { ...item(1), workflowStatus: 'stopped' }], total: 2, offset: 0, limit: 50 });
-    render(<MemoryRouter><WorkItems /></MemoryRouter>);
-    await screen.findByText('TEST-0');
-    // The cadence follows the rows on screen, so the effect that set it must have run before time moves.
-    await act(async () => {});
-    await act(async () => { vi.advanceTimersByTime(5_000); });
-    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
-  } finally { vi.useRealTimers(); }
 });
 it('says the list is stale when a re-read fails, and keeps the rows', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 }).mockRejectedValueOnce(new Error('TEST-list outage'));
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Refresh work items' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('TEST-list outage');
   expect(screen.getByText('TEST-0')).toBeInTheDocument();
@@ -436,13 +413,13 @@ it('says the list is stale when a re-read fails, and keeps the rows', async () =
 it('heads a row with its ticket title once the tracker answers', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [item()], total: 1, offset: 0, limit: 50 });
   vi.mocked(api.getWorkItemTracker).mockResolvedValue({ title: 'TEST-row title', body: 'TEST-body', trackerStatus: 'open' });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('link', { name: 'TEST-row title' })).toHaveAttribute('href', '/work-items/TEST-item-0');
   expect(screen.getByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
 });
 it('says a cost is unknown rather than showing the priced part as the total', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), progress: { costMillicents: 9521, usageUnknown: true } }], total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByText('unknown')).toBeInTheDocument();
   expect(screen.queryByText('$0.095')).toBeNull();
 });
@@ -478,25 +455,12 @@ it('clears the rule notice on a manual refresh', async () => {
   expect(screen.queryByText(notice)).toBeNull();
 });
 
-// Review finding: polls overlapped, so on a server slower than the interval no answer was ever shown.
-it('never starts a poll while a read is still out', async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    vi.spyOn(api, 'getWorkItems').mockResolvedValueOnce({ items: [item()], total: 1, offset: 0, limit: 50 }).mockReturnValue(new Promise(() => {}));
-    render(<MemoryRouter><WorkItems /></MemoryRouter>);
-    await screen.findByText('TEST-0');
-    await act(async () => { vi.advanceTimersByTime(15_000); });
-    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
-    await act(async () => { vi.advanceTimersByTime(45_000); });
-    expect(api.getWorkItems).toHaveBeenCalledTimes(2);
-  } finally { vi.useRealTimers(); }
-});
 // Review finding: each page turn started three more title reads while the old page's kept going.
 it('keeps the tracker read limit across page turns', async () => {
   vi.mocked(api.getWorkItemTracker).mockReturnValue(new Promise(() => {}));
   vi.spyOn(api, 'getWorkItems').mockImplementation(async (offset = 0) => ({
     items: Array.from({ length: 5 }, (_, index) => item(offset + index)), total: 100, offset, limit: 50 }));
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText('TEST-0');
   await waitFor(() => expect(api.getWorkItemTracker).toHaveBeenCalledTimes(3));
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -513,7 +477,7 @@ it('starts a fresh decision when the address names another item', async () => {
     itemRevision: 1, policyRevision: 1, artifact: null, openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-01-01T00:00:00Z', resolver: null, channel: null, note: null } });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([open('TEST-item-0'), open('TEST-item-1')]);
   render(<MemoryRouter initialEntries={['/work-items?decide=TEST-item-0']}><Link to="/work-items?decide=TEST-item-1">TEST-next decision</Link><Routes>
-    <Route path="/work-items" element={<WorkItems />} /></Routes></MemoryRouter>);
+    <Route path="/work-items" element={<WorkItems />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   fireEvent.change(await screen.findByLabelText('Decision note', { selector: 'textarea' }), { target: { value: 'TEST-note for the first item' } });
   fireEvent.click(screen.getByRole('link', { name: 'TEST-next decision' }));
   await waitFor(() => expect(api.getWorkItem).toHaveBeenLastCalledWith('TEST-item-1'));
@@ -680,7 +644,7 @@ it('keeps the item and an open panel on screen while the page re-reads', async (
   vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
-  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
   const reads = vi.mocked(api.getWorkItem).mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
@@ -704,7 +668,7 @@ it('opens one panel at a time', async () => {
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   vi.spyOn(approvalsApi, 'approvals').mockResolvedValue([]);
-  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1&decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1&decide=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('dialog', { name: 'Decision' })).toBeInTheDocument();
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
 });
@@ -754,7 +718,7 @@ it('never commits one item under another item address', async () => {
   vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(detail()).mockReturnValue(new Promise(() => {}));
   vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
   render(<MemoryRouter initialEntries={['/work-items/TEST-item-0']}><Link to="/work-items/TEST-item-1">TEST-next item</Link><Routes>
-    <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>);
+    <Route path="/work-items/:id" element={<><WorkItemDetail /><Probe /></>} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByText('TEST-0 · TEST-owner/TEST-repo')).toBeInTheDocument();
   // The probe's selector must find the first item, or a renamed class would let the check pass on nothing.
   expect(document.querySelector('.work-head .prov-sub')?.textContent).toBe('TEST-0 · TEST-owner/TEST-repo');
@@ -800,7 +764,7 @@ it('says in the list why the factory could not prepare, not the phase sentence',
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [{ ...item(), reason: 'A specification is required.',
     preparationHealth: { reason: 'build_defaults_missing', attempts: 2, lastAt: '2026-09-16T10:00:00Z', retryAfter: '2026-09-16T10:05:00Z' } }],
     total: 1, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
 
   expect(await screen.findByText(/This repository has no build setup yet/)).toBeInTheDocument();
   expect(screen.queryByText('A specification is required.')).not.toBeInTheDocument();
@@ -908,95 +872,213 @@ it('offers composing again while a plan decision is open', async () => {
   await waitFor(() => expect(compose).toHaveBeenCalledWith(detail().id, detail().revision));
 });
 
-// The page follows the item like Runs does, so a build ending shows without a click (feedback, 2026-09-27).
-it('reads the open work item again on its own', async () => {
-  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
+// Live-data step 5: the screens follow the work-item change feed instead of a timer.
+const SIGNED_IN: auth.Me = { authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] };
+const itemWith = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
+const listOf = (...rows: WorkItemSummary[]) => ({ items: rows, total: rows.length, offset: 0, limit: 50 });
+function trackerAnswers() {
+  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+}
+/** The feed drops while the session is fine, so the hook reports it down and reconnects after 1.5 s. */
+async function dropFeed() {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue(SIGNED_IN);
+  vi.spyOn(auth, 'ensureServiceSessions').mockResolvedValue(false);
+  await act(async () => FakeSocket.latest.onclose?.({ code: 1006, reason: '' }));
+}
+async function showTitledDetail() {
+  showDetail();
+  await screen.findByRole('heading', { level: 2, name: 'TEST-title' });
+}
+
+it('re-reads the list when the feed names a change, without blanking the rows', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue(listOf(item()));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
+  await screen.findByText('TEST-0');
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(3));
+  expect(screen.getByText('TEST-0')).toBeInTheDocument();
+  expect(screen.getByText(/^Updated /)).toBeInTheDocument();
+});
+
+// A socket that was down missed its notices, so every open reads the list again.
+it('re-reads the list when the feed reconnects', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue(listOf(item()));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
+    await screen.findByText('TEST-0');
+    FakeSocket.open();
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(2));
+    await dropFeed();
+    await act(async () => { vi.advanceTimersByTime(1500); });
+    expect(FakeSocket.sockets).toHaveLength(2);
+    FakeSocket.open();
+    await waitFor(() => expect(api.getWorkItems).toHaveBeenCalledTimes(3));
+  } finally { vi.useRealTimers(); }
+});
+
+it('never reads the list on a timer', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue(listOf(item()));
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
+    await screen.findByText('TEST-0');
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect(api.getWorkItems).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+// With no poll behind it, a dropped feed would leave old rows looking current.
+it('says the list is not live while the feed is down', async () => {
+  vi.spyOn(api, 'getWorkItems').mockResolvedValue(listOf(item()));
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
+  await screen.findByText('TEST-0');
+  FakeSocket.open();
+  await dropFeed();
+  expect(await screen.findByText('Live updates paused')).toBeInTheDocument();
+});
+
+it('reads the item again when the feed names it', async () => {
   vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
-  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    showDetail();
-    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(1));
-
-    // An unfinished item is followed every 3 s (live land acceptance: 10 s felt stale).
-    await act(async () => { vi.advanceTimersByTime(3_000); });
-
-    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
-  } finally {
-    vi.useRealTimers();
-  }
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(3));
 });
-it('reads a finished work item again only every 15 seconds', async () => {
-  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
-  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), workflowStatus: 'completed', reason: 'landed' });
-  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
+
+it('ignores a notice for another item', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  FakeSocket.push({ changed: ['TEST-item-9'] });
+  await act(async () => {});
+  expect(api.getWorkItem).toHaveBeenCalledTimes(2);
+});
+
+// The ticket text comes from the forge, which no database notice covers; reading it on every notice spends rate limit.
+it('does not ask the tracker again on a notice', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  FakeSocket.push({ changed: '*' });
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(3));
+  expect(api.getWorkItemTracker).toHaveBeenCalledTimes(1);
+});
+
+// A build writes several tables in a row; a slow read must still answer, and the change it may predate is read after.
+it('reads the item once more after a burst, never two at once', async () => {
+  const slow = deferred<Detail>();
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(itemWith('TEST-first read')).mockReturnValueOnce(slow.promise)
+    .mockResolvedValue(itemWith('TEST-newest read'));
+  trackerAnswers();
+  showDetail();
+  expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  expect(api.getWorkItem).toHaveBeenCalledTimes(2);
+  await act(async () => slow.resolve(itemWith('TEST-slow read')));
+  expect(await screen.findByText(/TEST-newest read/)).toBeInTheDocument();
+  expect(api.getWorkItem).toHaveBeenCalledTimes(3);
+});
+
+// A failed read is said beside the item it could not refresh, so stale data is never shown as current (PR 349).
+it('shows a failed read beside the item until a later read succeeds', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(itemWith('TEST-first read'))
+    .mockRejectedValueOnce(new Error('TEST-read failed')).mockResolvedValue(itemWith('TEST-later read'));
+  trackerAnswers();
+  showDetail();
+  expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
+  FakeSocket.open();
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-read failed');
+  expect(screen.getByText(/TEST-first read/)).toBeInTheDocument();
+  FakeSocket.push({ changed: ['TEST-item-0'] });
+  expect(await screen.findByText(/TEST-later read/)).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+// A first load that fails must not leave the page without the item for good (review of PR #179).
+it('shows the item after a failed first load once the feed opens', async () => {
+  vi.spyOn(api, 'getWorkItem').mockRejectedValueOnce(new Error('TEST-first load failed')).mockResolvedValue(itemWith('TEST-later read'));
+  trackerAnswers();
+  showDetail();
+  expect(await screen.findByRole('alert')).toHaveTextContent('TEST-first load failed');
+  FakeSocket.open();
+  expect(await screen.findByText(/TEST-later read/)).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+// A re-read under a decision the operator is reading would move what they approve; what changed meanwhile is read
+// when the panel closes, because the socket that reopens reads again.
+it('reads nothing while a panel is open, and reads again when it closes', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue(SIGNED_IN);
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), reason: 'specification_required' });
+  trackerAnswers();
+  render(<MemoryRouter initialEntries={['/work-items/TEST-item-0?prepare=1']}><Routes><Route path="/work-items/:id" element={<WorkItemDetail />} /></Routes></MemoryRouter>, { wrapper: queryWrapper() });
+  const panel = await screen.findByRole('dialog', { name: 'Prepare the task' });
+  expect(FakeSocket.sockets).toHaveLength(0);
+  const reads = vi.mocked(api.getWorkItem).mock.calls.length;
+  fireEvent.click(within(panel).getAllByRole('button', { name: 'Close' })[0]);
+  await waitFor(() => expect(FakeSocket.sockets).toHaveLength(1));
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(reads + 1));
+});
+
+it('says the item is not live while the feed is down', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  await dropFeed();
+  expect(await screen.findByText('Live updates paused')).toBeInTheDocument();
+});
+
+it('never reads the item on a timer', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue(detail());
+  trackerAnswers();
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    showDetail();
-    // The cadence follows the item on screen, so the item must have loaded first.
-    await screen.findByRole('heading', { name: 'TEST-title' });
-    await act(async () => {});
+    await showTitledDetail();
+    await act(async () => { vi.advanceTimersByTime(60_000); });
     expect(api.getWorkItem).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(3_000); });
-    expect(api.getWorkItem).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(12_000); });
-    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
-  } finally {
-    vi.useRealTimers();
-  }
+  } finally { vi.useRealTimers(); }
 });
 
-// A slow poll must not put back an older item than a refresh already showed (review of PR #179).
-it('drops a poll answer that a later refresh overtook', async () => {
-  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
-  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
-  let answerPoll: (value: Detail) => void = () => {};
-  vi.spyOn(api, 'getWorkItem')
-    .mockResolvedValueOnce(withEvent('TEST-first read'))
-    .mockImplementationOnce(() => new Promise(resolve => { answerPoll = resolve; }))
-    .mockResolvedValue(withEvent('TEST-refreshed read'));
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    showDetail();
-    expect(await screen.findByText(/TEST-first read/)).toBeInTheDocument();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-    await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
-    expect(await screen.findByText(/TEST-refreshed read/)).toBeInTheDocument();
-    await act(async () => { answerPoll(withEvent('TEST-stale poll')); });
-
-    expect(screen.getByText(/TEST-refreshed read/)).toBeInTheDocument();
-    expect(screen.queryByText(/TEST-stale poll/)).toBeNull();
-  } finally {
-    vi.useRealTimers();
-  }
+// Review of PR 356, M-1: closing the feed stops new notices, but a read already out still lands. It must not remount
+// the form the operator is filling in.
+it('keeps what the operator typed when a read lands under the preparation panel', async () => {
+  vi.spyOn(auth, 'fetchMe').mockResolvedValue(SIGNED_IN);
+  const ready: Detail = { ...detail(), reason: 'specification_required' };
+  const slow = deferred<Detail>();
+  vi.spyOn(api, 'getWorkItem').mockResolvedValueOnce(ready).mockReturnValueOnce(slow.promise).mockResolvedValue({ ...ready, revision: 3 });
+  trackerAnswers();
+  await showTitledDetail();
+  FakeSocket.open();
+  await waitFor(() => expect(api.getWorkItem).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole('button', { name: 'Prepare the task' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Specification ticket' }), { target: { value: 'TEST-81' } });
+  await act(async () => slow.resolve({ ...ready, revision: 2 }));
+  expect(screen.getByRole('textbox', { name: 'Specification ticket' })).toHaveValue('TEST-81');
 });
 
-// A first load slower than the first poll must not leave the page loading for ever (review of PR #179).
-it('shows the item from a poll that overtook a slow first load', async () => {
-  vi.spyOn(auth, 'fetchMe').mockResolvedValue({ authEnabled: true, authenticated: true, user: 'TEST-admin', roles: ['spire-admin'] });
-  vi.spyOn(api, 'getWorkItemTracker').mockResolvedValue({ title: 'TEST-title', body: 'TEST-body', trackerStatus: 'open' });
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  const withEvent = (reason: string): Detail => ({ ...detail(), events: [{ sequence: 1, type: 'Admitted', reason, occurredAt: item().updatedAt }] });
-  let failLoad: (reason: Error) => void = () => {};
-  vi.spyOn(api, 'getWorkItem')
-    .mockImplementationOnce(() => new Promise((_, reject) => { failLoad = reject; }))
-    .mockResolvedValue(withEvent('TEST-polled read'));
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    showDetail();
-    await act(async () => { vi.advanceTimersByTime(10_000); });
-
-    expect(await screen.findByText(/TEST-polled read/)).toBeInTheDocument();
-    await act(async () => { failLoad(new Error('TEST-superseded load failed')); });
-    expect(screen.queryByText(/TEST-superseded load failed/)).toBeNull();
-    expect(screen.getByText(/TEST-polled read/)).toBeInTheDocument();
-  } finally {
-    vi.useRealTimers();
-  }
+// Review of PR 356, M-2: with the feed down, Refresh workflow is how the plan steps catch up with the item.
+it('reads the plan steps again on Refresh workflow', async () => {
+  vi.spyOn(api, 'getWorkItem').mockResolvedValue({ ...detail(), phase: 'build', workflowStatus: 'active', reason: 'phase_started',
+    preparation: { ...prepared(), bindingVersion: 6 } });
+  trackerAnswers();
+  const steps = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows: [] });
+  await showTitledDetail();
+  await waitFor(() => expect(steps).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh workflow' }));
+  await waitFor(() => expect(steps).toHaveBeenCalledTimes(2));
 });

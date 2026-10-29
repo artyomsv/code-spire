@@ -1,14 +1,21 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Gate } from './approvalsApi';
 import WorkItemSteps from './WorkItemSteps';
 import * as draftApi from './workDraftApi';
 import type { WrittenPlan } from './workDraftApi';
 import * as preparationApi from './workPreparationApi';
 import type { StepRow, WorkExecution } from './workPreparationApi';
+import { FakeSocket } from '../../test/fakeSocket';
+import { queryWrapper } from '../../test/queryWrapper';
+import { useWorkItemChanges } from './useWorkItemChanges';
 
 afterEach(cleanup);
+beforeEach(() => {
+  FakeSocket.sockets = [];
+  vi.stubGlobal('WebSocket', FakeSocket);
+});
 const ASSISTED = { INTAKE: 'auto', SPEC: 'auto', PLAN: 'approve', BUILD: 'auto', VERIFY: 'auto', DELIVER: 'draft_pr', REVIEW: 'auto', LAND: 'approve' };
 const gate: Gate = { id: 'TEST-plan-gate', version: 1, state: 'OPEN', phase: 'plan', generation: 1, itemRevision: 4, policyRevision: 1,
   artifact: 'TEST-digest', openedAt: '2026-09-14T00:00:00Z', expiresAt: '2026-09-14T01:00:00Z', resolver: null, channel: null, note: null };
@@ -18,7 +25,7 @@ function item(overrides: Partial<Item> = {}): Item {
     profile: { id: 'TEST-profile', name: 'TEST-assisted', version: 1 }, appliedLabels: [], ignoredLabels: [], people: [], builds: [], gate, events: [], ...overrides };
 }
 function show(value: Item, current = <button type="button">TEST-current action</button>) {
-  return render(<MemoryRouter><WorkItemSteps item={value} current={current} /></MemoryRouter>);
+  return render(<MemoryRouter><WorkItemSteps item={value} current={current} /></MemoryRouter>, { wrapper: queryWrapper() });
 }
 const step = (name: string) => within(screen.getByRole('listitem', { name: (accessible) => /^Step \d: (.*)$/.exec(accessible)?.[1] === name }));
 
@@ -198,6 +205,16 @@ it('shows the note of a land retry on the Land step', () => {
   expect(step('Land').getByText(/^Land retry requested by TEST-operator-subject/)).toHaveTextContent('TEST-the code owners approved');
 });
 
+const stored = (key: string) => ({ sha256: 'c'.repeat(64), origin: 'STORED' as const, storedId: 'TEST-stored-' + key,
+  location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
+/** An item whose approved plan builds step by step, in its build. */
+const stepped = (overrides: Partial<Item> = {}) => item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null,
+  preparation: { specification: stored('81'), plan: stored('81'), baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness',
+    model: 'TEST-model', registeredBy: 'system:draft@1', bindingVersion: 6 }, ...overrides });
+function Feed() {
+  useWorkItemChanges();
+  return null;
+}
 // A plan the factory wrote builds step by step (M4 slice 3, §6.10): the Build step shows one row per plan step.
 it('the build step lists plan steps', async () => {
   const rows: StepRow[] = [
@@ -205,13 +222,26 @@ it('the build step lists plan steps', async () => {
     { index: 1, title: 'TEST-step-2', state: 'building', head: null, summaryState: null, summary: null },
   ];
   const read = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows });
-  const stored = (key: string) => ({ sha256: 'c'.repeat(64), origin: 'STORED' as const, storedId: 'TEST-stored-' + key,
-    location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: key }, issueKey: key, link: `https://TEST.example/${key}` } });
-  show(item({ phase: 'build', workflowStatus: 'active', reason: 'phase_started', gate: null, preparation: { specification: stored('81'), plan: stored('81'),
-    baseBranch: 'main', baseCommit: 'd'.repeat(40), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'system:draft@1', bindingVersion: 6 } }));
+  show(stepped());
   expect(await step('Build').findByText(/TEST-step-1/)).toBeInTheDocument();
   expect(step('Build').getByText(/TEST-step-2/)).toBeInTheDocument();
   expect(read).toHaveBeenCalledWith('TEST-item');
+});
+// The steps are re-read on the item's notice (work_step_summary has an item trigger), no longer whenever it moves.
+it('reads the plan steps once per item', async () => {
+  const read = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows: [] });
+  const { rerender } = show(stepped());
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  rerender(<MemoryRouter><WorkItemSteps item={stepped({ workflowStatus: 'waiting_approval', reason: 'TEST-moved' })} current={null} /></MemoryRouter>);
+  await act(async () => {});
+  expect(read).toHaveBeenCalledTimes(1);
+});
+it('reads the plan steps again when the feed names the item', async () => {
+  const read = vi.spyOn(preparationApi, 'workSteps').mockResolvedValue({ rows: [] });
+  render(<MemoryRouter><Feed /><WorkItemSteps item={stepped()} current={null} /></MemoryRouter>, { wrapper: queryWrapper() });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  FakeSocket.push({ changed: ['TEST-item'] });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
 });
 it('asks for no plan steps for a one-step preparation', () => {
   const read = vi.spyOn(preparationApi, 'workSteps');

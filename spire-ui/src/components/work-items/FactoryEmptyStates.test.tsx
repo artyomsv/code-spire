@@ -1,8 +1,15 @@
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import * as api from '../../api';
 import WorkItems from './WorkItems';
+import { queryWrapper } from '../../test/queryWrapper';
+import { FakeSocket } from '../../test/fakeSocket';
+
+beforeEach(() => {
+  FakeSocket.sockets = [];
+  vi.stubGlobal('WebSocket', FakeSocket);
+});
 
 function empty(title: string) {
   const heading = screen.getByText(title);
@@ -16,7 +23,7 @@ function empty(title: string) {
 }
 it('welcomes the operator to an empty Work items screen', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [], total: 0, offset: 0, limit: 50 });
-  render(<MemoryRouter><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText('No work items yet.');
   empty('No work items yet.');
   expect(screen.getByText('Registered sources admit tickets after a scan or label event.')).toBeInTheDocument();
@@ -24,7 +31,7 @@ it('welcomes the operator to an empty Work items screen', async () => {
 // Approvals are the "needs you" view of Work items; an empty view says so and how to widen it.
 it('explains an empty filtered Work items view', async () => {
   vi.spyOn(api, 'getWorkItems').mockResolvedValue({ items: [], total: 0, offset: 0, limit: 50 });
-  render(<MemoryRouter initialEntries={['/work-items?filter=needs-you']}><WorkItems /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/work-items?filter=needs-you']}><WorkItems /></MemoryRouter>, { wrapper: queryWrapper() });
   await screen.findByText('No work items match this filter.');
   empty('No work items match this filter.');
   expect(screen.getByText('Choose another filter to see more items.')).toBeInTheDocument();
