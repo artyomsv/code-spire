@@ -46,6 +46,15 @@ a query key under `['work-items', …]` from one module, so a notice can name ex
   its decision panel is open, as it keeps polling today: `DecisionPanel` reads its own copy.
 - **"Live updates paused".** With no poll, a dropped socket would leave the screen silently stale. Both screens show a
   `chip warn` "Live updates paused" while the socket status is `down`.
+- **Two reads per page load, by design.** The mount read is usually still out when the socket opens, so `onOpen`
+  waits for it and reads once more: a change committed between the REST snapshot and the `LISTEN` is not lost. The
+  same after a decision: `close()` reopens the socket (open re-read) while `reread(message)` invalidates; `noticeLive`
+  folds them into at most one extra read.
+- **A hidden tab still re-reads on a notice.** The polls skipped hidden tabs to save a read every 3 s; a notice-driven
+  read happens only when something changed, so the PR 349 test `reads nothing on its own while the tab is hidden` is
+  dropped on purpose.
+- **No `placeholderData` / `keepPreviousData`.** A new key renders with no data, which keeps `never commits one item
+  under another item address` true. Returning to an item shows its cached detail at once and reads it again.
 - **Out of scope:** `DecisionPanel` keeps its own reads (it is a snapshot by design); `useTicketTitles` keeps its
   bounded title reads; the per-row tracker titles are not re-read on notices.
 
@@ -86,8 +95,8 @@ a query key under `['work-items', …]` from one module, so a notice can name ex
 
 - [ ] **Step 1: Write the failing tests**
 
-`liveCache.test.tsx` (add; a real `QueryClient` from `createQueryClient()`, queries observed with `client.fetchQuery`
-or a mounted `useQuery`):
+`liveCache.test.tsx` (add; a real `QueryClient` from `createQueryClient()`, queries observed by a mounted `useQuery`
+only — the existing `read()` helper is the model; a `fetchQuery` query has no observer and is never re-read):
 - `noticeLive re-reads an idle query a screen shows` — read count goes 1 → 2.
 - `noticeLive lets a read already out finish, then reads once more` — first read is a deferred promise; call
   `noticeLive` three times; assert the read function was called once while deferred; resolve it; await; assert exactly
@@ -118,7 +127,10 @@ for each query in client.getQueryCache().findAll(filters):
   else if query is not already waiting (module WeakSet):
     mark it waiting; subscribe to the query cache;
     on the first event for this query with fetchStatus 'idle': unsubscribe, unmark, invalidate it (exact)
+    on a 'removed' event for this query: unsubscribe, unmark (nothing left to read)
 ```
+Add a test: `noticeLive stops waiting for a query that is removed` — deferred read, `noticeLive`, `client.removeQueries`,
+resolve; no further read and no error.
 Comment why: `invalidateQueries` cancels a read that is out and starts another, so a stream of notices faster than the
 read would never show an answer; a read that started before the change may miss it, so one more read must follow.
 
@@ -138,6 +150,8 @@ A frame whose `changed` is a string array calls `noticeLive` for `workKeys.lists
 **Files:**
 - Modify: `spire-ui/src/components/work-items/WorkItems.tsx`
 - Test: `spire-ui/src/components/work-items/WorkItems.test.tsx`
+- Test: `spire-ui/src/components/work-items/FactoryEmptyStates.test.tsx` (renders `<WorkItems />`: add the wrapper to
+  both renders and the `FakeSocket` stub in a `beforeEach`)
 
 **Interfaces:**
 - Consumes: `workKeys.list`, `workKeys.lists`, `useWorkItemChanges`, `FakeSocket` (Task 1)
@@ -151,7 +165,9 @@ A frame whose `changed` is a string array calls `noticeLive` for `workKeys.lists
 - Add:
   - `re-reads the list when the feed names a change, without blanking the rows` — first answer `TEST-0`; open; push
     `{changed:['TEST-item-0']}`; `getWorkItems` called again; `TEST-0` stays; `Updated …` shown.
-  - `re-reads the list when the feed reconnects` — open, then a second socket's open after `onclose` → one more read.
+  - `re-reads the list when the feed reconnects` — fake timers; open; `onclose({code:1006})` with the two auth mocks of
+    the paused test; `act(() => vi.advanceTimersByTime(1500))` (`RECONNECT_MS`, as `useLiveSocket.test.tsx` does);
+    open the new socket → one more read.
   - `never reads the list on a timer` — fake timers, advance 60 s, `getWorkItems` called once.
   - `says live updates are paused while the feed is down` — `FakeSocket.latest.onclose({code:1006, reason:''})` with
     `fetchMe` resolving a session and `ensureServiceSessions` resolving `false` (no sign-in started) → text
@@ -189,9 +205,10 @@ status is `down`. Remove the `workPolling` import.
 
 - Delete `reads the open work item again on its own`, `reads a finished work item again only every 15 seconds`,
   `drops a poll answer that a later refresh overtook`, `shows the item from a poll that overtook a slow first load`.
-- Add (each opens the socket with `FakeSocket.open()` after the first read lands):
-  - `reads the item again when the feed names it` — push `{changed:['TEST-item-0']}` → 2 reads.
-  - `ignores a notice for another item` — push `{changed:['TEST-item-9']}` → still 1 read.
+- Add (each opens the socket with `FakeSocket.open()` after the first read lands; the open itself re-reads once, so
+  counts are load + open + notices):
+  - `reads the item again when the feed names it` — push `{changed:['TEST-item-0']}` → 3 reads.
+  - `ignores a notice for another item` — push `{changed:['TEST-item-9']}` → still 2 reads.
   - `does not ask the tracker again on a notice` — `getWorkItemTracker` stays at 1 after `{changed:'*'}`.
   - `reads the item once more after a burst, never two at once` — second read deferred; push three notices; 2 calls
     while deferred; resolve; exactly 3 calls; the newest answer on screen.
@@ -216,7 +233,10 @@ Two queries: `workKeys.item(id)` → `getWorkItem(id)` and `workKeys.tracker(id)
 replace `state`, `tracker`, `reads`, `shown`, `refresh`, the read effect and the poll effect. The page shows the
 item only when `data.id === id` (keep the guard and its comment). An error shows beside a kept item.
 `reread(message)` sets the notice and invalidates both keys of this id. The action-number logic (`action`, `start`,
-`changed`) stays. `useWorkItemChanges({ enabled: !panel })`, paused chip when `down`. Delete `workPolling.ts`; nothing
+`changed`) stays; `changed`'s stale branch (today `setRefresh(...)`) becomes `invalidate()` — both keys, notice
+untouched — so `ignores a recheck that answers after a panel was opened` stays green. No `placeholderData`.
+`useWorkItemChanges({ enabled: !panel })`; paused chip only when `!panel && status === 'down'` (disabling does not
+reset the hook's status). Delete `workPolling.ts`; nothing
 else imports it (`isFinished` has no other caller — grep to confirm before deleting).
 
 - [ ] **Step 4: Push GREEN and read CI** — Expected: `dashboard` green.
@@ -245,7 +265,8 @@ read answers`, `asks the server nothing before the generation writes a draft`), 
 `WorkItemSteps.test.tsx` — every render gets `{ wrapper: queryWrapper() }` and the `FakeSocket` stub; add:
 - `reads the plan steps once per item` — a stepped item rendered, rerendered with a new `phase`: `workSteps` called once
   (the item moving no longer re-reads; the notice does).
-- `reads the plan steps again when the feed names the item` — open; push `{changed:[id]}` → 2 calls.
+- `reads the plan steps again when the feed names the item` — a host component calls `useWorkItemChanges()` beside
+  `WorkItemSteps`; open; push `{changed:[id]}` → 3 calls (load, open, notice).
 
 - [ ] **Step 2: Push RED and read CI** — Expected: `reads one draft version once for both parts`, both feed tests and
   `reads the plan steps once per item` fail.
@@ -277,6 +298,7 @@ rows = `data?.rows ?? []`.
   `reads the item once more after a burst…` tests fail. A second commit removes `enabled: !panel`. Expected: exactly
   `reads nothing while a panel is open…` fails. Revert both in the next commit.
 - [ ] **Step 3: Live check on the dev stack** (rebuild `spire-ui` from the branch): open a work item on `spire-test`
-  and the list; in the network panel, `/api/work-items/{id}` is requested only after a socket frame (plus once on open);
+  and the list; in the network panel, `/api/work-items/{id}` is requested only after a socket frame (plus the mount
+  read and one open re-read);
   a database change to the item gives one frame and one read; stopping the orchestrator shows "Live updates paused",
   starting it re-reads. No synthetic rows (a real item, or `TEST-` rows removed in the same session).
