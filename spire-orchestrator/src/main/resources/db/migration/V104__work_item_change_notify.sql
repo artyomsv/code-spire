@@ -70,11 +70,6 @@ CREATE TRIGGER work_item_changed_work_tracker_outbox_update AFTER UPDATE ON work
     WHEN (to_jsonb(OLD) - 'checked_at' IS DISTINCT FROM to_jsonb(NEW) - 'checked_at')
     EXECUTE FUNCTION notify_work_item_changed('work_item_id');
 
-CREATE TRIGGER work_item_changed_work_step_summary AFTER INSERT OR DELETE ON work_step_summary
-    FOR EACH ROW EXECUTE FUNCTION notify_work_item_changed('work_item_id');
-CREATE TRIGGER work_item_changed_work_step_summary_update AFTER UPDATE ON work_step_summary FOR EACH ROW
-    WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
-    EXECUTE FUNCTION notify_work_item_changed('work_item_id');
 
 CREATE TRIGGER work_item_changed_work_item_artifact AFTER INSERT OR DELETE ON work_item_artifact
     FOR EACH ROW EXECUTE FUNCTION notify_work_item_changed('work_item_id');
