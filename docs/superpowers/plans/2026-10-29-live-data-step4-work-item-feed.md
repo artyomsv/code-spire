@@ -32,7 +32,7 @@
 
    | Table | Ignored on UPDATE | Writer |
    |---|---|---|
-   | `work_item` | `activity_polled_at`, `slot_reserved` | `WorkActivityPoller` every 2 min, `WorkItemStore` |
+   | `work_item` | `activity_polled_at`, `slot_reserved` | `WorkActivityPoller` (20 items every 30 s), `WorkItemStore` |
    | `work_source` | `health`, `checked_at`, `scan_cursor`, `scan_requested`, `scan_batch`, `scan_next_cursor` | `WorkSourceScanner` every 30 s, `WorkSourceRegistry` |
    | `work_land_effect` | `next_check_at`, `updated_at` | `WorkLandEffects.backOff` (line 107) when reason and failing-since repeat |
    | `work_tracker_outbox` | `checked_at` | `WorkSourceEffects.touch` defers a failed row |

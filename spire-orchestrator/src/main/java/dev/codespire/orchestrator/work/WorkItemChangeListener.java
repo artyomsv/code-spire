@@ -38,6 +38,7 @@ public class WorkItemChangeListener {
     int probeAfterIdleReads = 30;
     private static final Duration FIRST_BACK_OFF = Duration.ofSeconds(1);
     private static final Duration MAX_BACK_OFF = Duration.ofSeconds(30);
+    private static final Duration STOP_WAIT = Duration.ofSeconds(2);
     private static final Logger LOG = Logger.getLogger(WorkItemChangeListener.class);
 
     /** Opens the listening session; a new one after every drop. */
@@ -75,8 +76,14 @@ public class WorkItemChangeListener {
         running = false;
         Thread current = worker;
         worker = null;
+        if (current == null) return;
         // The worker closes its own session: closing it from here could wait on the driver lock the blocked read holds.
-        if (current != null) current.interrupt();
+        current.interrupt();
+        try {
+            current.join(STOP_WAIT);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void run(WorkItemChangeSink sink, Connector connector) {
@@ -89,14 +96,25 @@ public class WorkItemChangeListener {
                 first = false;
                 backOff = FIRST_BACK_OFF;
                 deliver(sink, Set.of("*"));
-                receive(connection.unwrap(PGConnection.class), sink);
+                receive(connection, sink);
             } catch (SQLException failure) {
                 if (!running) return;
                 LOG.warnf("work-item change feed lost its database session (%s); reconnecting in %s", failure.getMessage(), backOff);
-                if (!pause(backOff)) return;
-                backOff = backOff.multipliedBy(2).compareTo(MAX_BACK_OFF) > 0 ? MAX_BACK_OFF : backOff.multipliedBy(2);
+                backOff = waitBeforeRetry(backOff);
+            } catch (RuntimeException failure) {
+                // Not a lost session but a fault: still reconnect, because a dead thread would leave every screen deaf.
+                if (!running) return;
+                LOG.errorf(failure, "work-item change feed failed; reconnecting in %s", backOff);
+                backOff = waitBeforeRetry(backOff);
             }
         }
+    }
+
+    /** Sleeps the back-off and returns the next one; a stop during the sleep ends the loop. */
+    private Duration waitBeforeRetry(Duration backOff) {
+        if (!pause(backOff)) return backOff;
+        Duration doubled = backOff.multipliedBy(2);
+        return doubled.compareTo(MAX_BACK_OFF) > 0 ? MAX_BACK_OFF : doubled;
     }
 
     private static void listen(Connection connection) throws SQLException {
@@ -106,17 +124,36 @@ public class WorkItemChangeListener {
         }
     }
 
-    /** Reads notices until the session fails; the first notice of a batch opens a 250 ms window for the rest. */
-    private void receive(PGConnection connection, WorkItemChangeSink sink) throws SQLException {
+    /**
+     * Reads notices until the session fails; the first notice of a batch opens a 250 ms window for the rest. A quiet
+     * session is probed: a network device that drops an idle connection sends no error, so without a question the read
+     * would only time out, for ever.
+     */
+    private void receive(Connection connection, WorkItemChangeSink sink) throws SQLException {
+        PGConnection notices = connection.unwrap(PGConnection.class);
+        int quietReads = 0;
         while (running) {
             Set<String> batch = new HashSet<>();
-            collect(connection.getNotifications(IDLE_READ_MS), batch);
-            if (batch.isEmpty()) continue;
+            collect(notices.getNotifications(IDLE_READ_MS), batch);
+            if (batch.isEmpty()) {
+                if (++quietReads >= probeAfterIdleReads) {
+                    probe(connection);
+                    quietReads = 0;
+                }
+                continue;
+            }
+            quietReads = 0;
             long closes = System.nanoTime() + Duration.ofMillis(BATCH_MS).toNanos();
             for (long left = closes - System.nanoTime(); left > 0; left = closes - System.nanoTime()) {
-                collect(connection.getNotifications((int) Math.max(1, Duration.ofNanos(left).toMillis())), batch);
+                collect(notices.getNotifications((int) Math.max(1, Duration.ofNanos(left).toMillis())), batch);
             }
             deliver(sink, batch);
+        }
+    }
+
+    private static void probe(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("SELECT 1");
         }
     }
 
@@ -151,6 +188,9 @@ public class WorkItemChangeListener {
         properties.setProperty("user", username);
         properties.setProperty("password", password);
         properties.setProperty("ApplicationName", "spire-work-item-listener");
+        // Pool-level settings (quarkus.datasource.jdbc.additional-jdbc-properties) do not reach this session: TLS options
+        // belong in the JDBC URL. Keep-alive alone is slow to notice a dead peer; receive() also probes a quiet session.
+        properties.setProperty("tcpKeepAlive", "true");
         return DriverManager.getConnection(url, properties);
     }
 }

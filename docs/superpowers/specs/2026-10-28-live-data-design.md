@@ -160,15 +160,23 @@ item and on each action, never on a notice (each read is a call to an external A
 | Treatment | Tables | Notice |
 |---|---|---|
 | **Item trigger**: the row carries `work_item_id` | `work_item`, `work_item_gate`, `work_run_effect`, `work_land_effect`, `work_item_preparation_attempt`, `work_tracker_outbox`, `work_step_summary`, `work_item_artifact` | that item's id |
-| **Shared trigger**: one row affects many items | `repository_land_settings` (merge method, ticket rule and fix allowance shown on every item of the repository), `repository` (name), `work_source` and `work_source_actor` (repository link, allowed people), `scm_provider` | `'*'`: every open work-item screen reads again. These change only when an operator edits settings |
+| **Shared trigger**: one row affects many items | `repository_land_settings` (merge method, ticket rule and fix allowance shown on every item of the repository), `repository` (name), `work_source` and `work_source_actor` (repository link, allowed people), `scm_provider`, `repository_account` (whether `GET /api/approvals` offers a PR review as an answer; added in step 4) | `'*'`: every open work-item screen reads again. These change only when an operator edits settings |
 | **Covered by another trigger** | `event_log`: `WorkItemStore.append` upserts the `work_item` row in the same transaction as every work-item event (`project(...)`). `factory_run.step_index`: set once when a run is dispatched, never updated | none of its own |
 
-Writes that change nothing on screen do not notify, because each trigger is declared `UPDATE OF` the columns the
-screens show:
+Writes that change nothing on screen do not notify. Each UPDATE trigger has a `WHEN` clause that compares the row
+without its bookkeeping columns (`to_jsonb(OLD) - <ignored> IS DISTINCT FROM to_jsonb(NEW) - <ignored>`), so a column
+added later notifies by default and an UPDATE that changes no value notifies nothing. (The first draft said `UPDATE OF`
+the shown columns; step 4 chose the deny-list for those two reasons.) The ignored columns:
 
-- `work_item.activity_polled_at`, stamped by `WorkActivityPoller` every 2 minutes per item, and
+- `work_item.activity_polled_at`, stamped by `WorkActivityPoller` (20 items every 30 s), and
   `work_item.slot_reserved`;
-- `work_source.health`, `checked_at` and the scan cursor columns, written by `WorkSourceScanner` every 30 s.
+- `work_source.health`, `checked_at` and the scan cursor columns, written by `WorkSourceScanner` every 30 s;
+- `work_land_effect.next_check_at` and `updated_at` (a re-check deferred with the same reason), and
+  `work_tracker_outbox.checked_at` (a failed tracker write deferred);
+- `scm_provider`'s health and scope check columns.
+
+One periodic write still notifies: a land that waits for checks re-encrypts its detail every 2 minutes, so its item
+gets one notice per pass.
 
 **Accepted staleness, one case.** `operator_seen` is upserted on operator activity and holds only the display name
 shown beside a past decision. It gets no trigger: a `'*'` on every sign-in would wake every open page for a name
@@ -191,7 +199,9 @@ So:
   ([LISTEN](https://www.postgresql.org/docs/current/sql-listen.html)), so a refresh sent before it would leave a
   gap in which a change is neither notified nor re-read.
 - If the listening connection drops, the listener reconnects with back-off and repeats the step above, so changes
-  made while it was deaf are re-read by every open page.
+  made while it was deaf are re-read by every open page. A LISTEN session is idle, and a network device that drops an
+  idle connection sends no error, so the session uses TCP keep-alive and runs `SELECT 1` after 30 quiet seconds; a
+  dead peer fails the probe and the reconnect follows. Any other fault in the loop also reconnects, logged at ERROR.
 - The feed is a **refresh signal, not an event history.** A notice never carries data, a missed notice costs one
   re-read, and the REST read is always the truth.
 

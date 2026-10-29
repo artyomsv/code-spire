@@ -33,6 +33,29 @@ evidence would settle it**.
 
 ---
 
+## Work-item change feed (live-data step 4, 2026-10-29)
+
+**The claim.** Every committed change a work-item screen can show reaches every open `/api/ws/work-items` socket
+within about 250 ms, and a listener whose database session dies reconnects and sends `{"changed":"*"}`.
+
+**What is proven.** `WorkItemChangeTriggersTest` (every item and shared table, rollback, folding, bookkeeping),
+`WorkItemChangeListenerTest` (listen before refresh, burst, a session killed with `pg_terminate_backend`, a non-SQL
+fault, the quiet-session probe, stop) and `WorkItemsSocketTest` (viewer, admin, no-role refusal) on Dev Services
+Postgres. Live on the dev stack on 2026-10-29: a committed write gave one `{"changed":[id]}`, a killed session gave a
+reconnect and `'*'`, and 5 m 45 s of background jobs gave no frame.
+
+**Why nothing catches the rest.**
+- **A half-open session** (an idle connection dropped by a NAT, a load balancer or a network fault, with no reset)
+  cannot be made in a test. The listener sets `tcpKeepAlive` and runs `SELECT 1` after 30 quiet seconds, so a dead
+  peer should fail the probe; how long the probe takes to fail depends on the host's TCP retransmission settings.
+- **Pool-level JDBC settings** (`quarkus.datasource.jdbc.additional-jdbc-properties`) do not reach the listener's own
+  session. TLS options must be in the JDBC URL.
+- **Coverage of the reads** is checked by walking the `@Inject` graph of the four work-item resources. A GET that
+  starts reading a table already listed as exempt (reached only by an action) is not caught.
+
+**What would settle it.** A run behind a load balancer with a short idle timeout, watching for the WARN reconnect line
+and the `'*'` frame after the timeout.
+
 ## Specification, plan and steps (M4 slice 3, ADR-049, accepted 2026-10-27)
 
 **The claim.** A generated repository writes a specification and a plan with read-only harness runs, posts both to

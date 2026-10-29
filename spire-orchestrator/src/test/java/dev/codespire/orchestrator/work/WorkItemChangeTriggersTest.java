@@ -163,7 +163,7 @@ class WorkItemChangeTriggersTest extends WorkFixture {
     /** The writer's own SQL for each bookkeeping write; rows it needs are inserted before the tap opens. */
     private Write bookkeeping(String write) throws SQLException {
         return switch (write) {
-            // WorkActivityPoller, every 2 minutes per item.
+            // WorkActivityPoller, 20 items per pass every 30 s.
             case "activity poll" -> new Write("UPDATE work_item SET activity_polled_at=now() WHERE id=?", itemId);
             // WorkItemStore.reserve.
             case "slot reservation" -> new Write("UPDATE work_item SET slot_reserved=NOT slot_reserved WHERE id=?", itemId);
