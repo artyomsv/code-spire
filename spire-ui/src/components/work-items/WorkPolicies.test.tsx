@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import * as api from './workPolicyApi';
 import * as repositories from '../repositories/repositoriesApi';
 import WorkPolicies from './WorkPolicies';
+import { queryWrapper } from '../../test/queryWrapper';
 
 const repository: repositories.Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.test', workspace: 'TEST-owner', slug: 'TEST-repo', enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true };
 const profile: api.Profile = { id: 'TEST-profile', name: 'TEST-assisted', version: 3, precedence: 10,
@@ -31,7 +32,7 @@ function hintOf(label: string, scope: string) {
   return screen.getByRole('tooltip');
 }
 it('opens on visible profile versions with an Add action and no creation form', async () => {
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   const table = await screen.findByRole('table', { name: 'Profile versions' });
   expect(within(table).getByRole('cell', { name: 'TEST-assisted' })).toBeInTheDocument();
   expect(within(table).getByRole('cell', { name: 'v3' })).toBeInTheDocument();
@@ -42,7 +43,7 @@ it('opens on visible profile versions with an Add action and no creation form', 
 it('shows a created profile immediately in the list and confirms its version', async () => {
   vi.mocked(api.profiles).mockResolvedValue([]);
   vi.mocked(api.saveProfile).mockResolvedValue({ ...profile, name: 'TEST-visible profile', version: 1 });
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   expect(await screen.findByText('No profiles yet')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Add profile' }));
   fireEvent.change(screen.getByLabelText('Profile name', { selector: 'input,select,textarea' }), { target: { value: 'TEST-visible profile' } });
@@ -56,7 +57,7 @@ it('shows a created profile immediately in the list and confirms its version', a
 it('opens an existing version from its row and locks every control during save', async () => {
   let finish!: (value: api.Profile) => void;
   vi.mocked(api.saveProfile).mockReturnValue(new Promise(resolve => { finish = resolve; }));
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'New version of TEST-assisted v3' }));
   expect(screen.getByLabelText('Base profile', { selector: 'input,select,textarea' })).toHaveValue('TEST-profile:3');
   const group = screen.getByRole('group', { name: 'New version of TEST-assisted v3' });
@@ -67,7 +68,7 @@ it('opens an existing version from its row and locks every control during save',
   expect(within(screen.getByRole('table', { name: 'Profile versions' })).getByRole('cell', { name: 'v4' })).toBeInTheDocument();
 });
 it('marks required and optional profile fields and provides their help', async () => {
-  render(<WorkPolicies />); await addProfile();
+  render(<WorkPolicies />, { wrapper: queryWrapper() }); await addProfile();
   // The editor renders in the shared side panel, not inline beside the list it changes.
   expect(screen.getByRole('group', { name: 'Add profile' })).toHaveClass('panel-form');
   expect(hintOf('Profile name', 'profile')).toHaveTextContent('Required.');
@@ -76,7 +77,7 @@ it('marks required and optional profile fields and provides their help', async (
   expect(hintOf('land mode', 'phase modes')).toHaveTextContent('Production landing is unavailable until M4.');
 });
 it('creates a new immutable version with the full vector and limits', async () => {
-  render(<WorkPolicies />);await addProfile();fireEvent.change(await screen.findByLabelText('Base profile', { selector: 'input,select,textarea' }), { target: { value: 'TEST-profile:3' } });
+  render(<WorkPolicies />, { wrapper: queryWrapper() });await addProfile();fireEvent.change(await screen.findByLabelText('Base profile', { selector: 'input,select,textarea' }), { target: { value: 'TEST-profile:3' } });
   expect(screen.getByLabelText('Profile name', { selector: 'input,select,textarea' })).toHaveAttribute('readonly');expect(screen.getByLabelText('Precedence', { selector: 'input,select,textarea' })).toHaveAttribute('readonly');
   fireEvent.change(screen.getByLabelText('plan mode', { selector: 'input,select,textarea' }), { target: { value: 'off' } });
   fireEvent.change(screen.getByLabelText('Maximum calls per item', { selector: 'input,select,textarea' }), { target: { value: '21' } });
@@ -88,7 +89,7 @@ it('names the repositories that pin each version, as ceiling and by label', asyn
   vi.mocked(api.policy).mockImplementation(async (id): Promise<api.Policy> => id === repository.id
     ? { revision: 7, ceiling: profile, mappings: { 'TEST-work': profile } }
     : { revision: 2, ceiling: null, mappings: {} });
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   const row = within(await screen.findByRole('table', { name: 'Profile versions' })).getAllByRole('row')[1];
   expect(await within(row).findByText('TEST-owner/TEST-repo')).toBeInTheDocument();
   expect(within(row).getByText('ceiling · label TEST-work')).toBeInTheDocument();
@@ -97,7 +98,7 @@ it('names the repositories that pin each version, as ceiling and by label', asyn
 });
 it('does not count a version the repository does not pin', async () => {
   vi.mocked(api.profiles).mockResolvedValue([profile, { ...profile, version: 4 }]);
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   const table = await screen.findByRole('table', { name: 'Profile versions' });
   const current = within(table).getAllByRole('row')[1];
   await waitFor(() => expect(api.policy).toHaveBeenCalled());
@@ -108,7 +109,7 @@ it('files a slow repository policy under the repository it was asked about', asy
   vi.mocked(repositories.fetchRepositories).mockResolvedValue([repository, { ...repository, id: 'TEST-other', slug: 'TEST-other' }]);
   let resolve!: (policy: api.Policy) => void;
   vi.mocked(api.policy).mockReturnValueOnce(new Promise(done => { resolve = done; })).mockResolvedValue({ revision: 4, ceiling: profile, mappings: {} });
-  render(<WorkPolicies />);
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
   const row = within(await screen.findByRole('table', { name: 'Profile versions' })).getAllByRole('row')[1];
   // The second repository answered first; the first is still outstanding.
   expect(await within(row).findByText('TEST-owner/TEST-other')).toBeInTheDocument();
@@ -118,4 +119,18 @@ it('files a slow repository policy under the repository it was asked about', asy
   expect(uses('TEST-owner/TEST-repo')).toHaveTextContent('label TEST-late');
   // The late answer must not have reached the repository that never asked for it.
   expect(uses('TEST-owner/TEST-other')).toHaveTextContent(/^ceiling$/);
+});
+
+// Step 6: Refresh used to empty every repository's policy first, so "Used by" showed nothing until each answered.
+it('keeps who uses a profile on screen while Refresh reads again', async () => {
+  render(<WorkPolicies />, { wrapper: queryWrapper() });
+  const table = await screen.findByRole('table', { name: 'Profile versions' });
+  expect(await within(table).findByText('TEST-owner/TEST-repo')).toBeInTheDocument();
+  let resolve!: (policy: api.Policy) => void;
+  vi.mocked(api.policy).mockReturnValueOnce(new Promise(done => { resolve = done; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh profiles' }));
+  await waitFor(() => expect(api.policy).toHaveBeenCalledTimes(2));
+  expect(within(screen.getByRole('table', { name: 'Profile versions' })).getByText('TEST-owner/TEST-repo')).toBeInTheDocument();
+  await act(async () => { resolve({ revision: 7, ceiling: profile, mappings: {} }); });
+  expect(api.profiles).toHaveBeenCalledTimes(2);
 });

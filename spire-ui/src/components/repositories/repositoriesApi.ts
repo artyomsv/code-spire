@@ -1,5 +1,8 @@
 import { apiFetch } from '../../auth';
 
+/** Every registered repository. Other keys start with `build-defaults`, so invalidate this one `exact`. */
+export const repositoriesKey = ['repositories'] as const;
+
 export interface RepositoryAccount {
   id: string;
   name: string;

@@ -44,12 +44,15 @@ export default function WorkItemDetail() {
   /**
    * Reads the item, its ticket, its draft and its plan steps again, leaving the notice as it is. The draft and the steps
    * are keyed apart from the item, so without them a Refresh with the feed down would leave a step building for ever.
+   * The decisions too: the decision panel reads this item under the same key, so a Refresh under it re-reads the item
+   * and its gate as a pair, never a newer item beside an older gate.
    */
   function invalidate() {
     void client.invalidateQueries({ queryKey: workKeys.item(id), exact: true });
     void client.invalidateQueries({ queryKey: workKeys.tracker(id), exact: true });
     void client.invalidateQueries({ queryKey: workKeys.drafts(id) });
     void client.invalidateQueries({ queryKey: workKeys.steps(id), exact: true });
+    void client.invalidateQueries({ queryKey: workKeys.allApprovals() });
   }
   function reread(message = '') { setNotice(message); invalidate(); }
   function start() { setNotice(''); return ++action.current; }

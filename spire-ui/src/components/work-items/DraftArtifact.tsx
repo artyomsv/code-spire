@@ -3,15 +3,9 @@ import type { WorkItemDetail } from '../../api';
 import PlanView from './PlanView';
 import SpecificationView from './SpecificationView';
 import { workDraft, type WorkDraftView } from './workDraftApi';
-import { workKeys } from './workQueries';
+import { draftVersion, workKeys } from './workQueries';
 
 interface DraftItem { id: string; generation: number; events: WorkItemDetail['events'] }
-
-/** The generation and sequence of this generation's newest written artifact; null before the first. */
-function draftVersion(item: DraftItem) {
-  const writes = item.events.filter(event => event.type === 'DRAFT_ARTIFACT_WRITTEN' && event.generation === item.generation);
-  return writes.length === 0 ? null : `${item.generation}:${Math.max(...writes.map(event => event.sequence))}`;
-}
 
 function DraftView({ view, part }: { view: WorkDraftView; part: 'spec' | 'plan' }) {
   if (part === 'plan') return view.plan ? <PlanView plan={view.plan} /> : null;

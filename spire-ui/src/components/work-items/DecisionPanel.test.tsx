@@ -1,3 +1,4 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -8,6 +9,9 @@ import * as preparation from './workPreparationApi';
 import * as draft from './workDraftApi';
 import DecisionPanel from './DecisionPanel';
 import PastDecisions from './PastDecisions';
+import { workKeys } from './workQueries';
+import { createQueryClient } from '../../queryClient';
+import { queryWrapper } from '../../test/queryWrapper';
 
 const artifact = (key: string): preparation.Artifact => ({ sha256: key.repeat(64).slice(0, 64),
   location: { ref: { type: 'GITHUB', origin: 'https://TEST.example', projectId: 'TEST-project', issueId: `TEST-${key}` }, issueKey: key, link: `https://TEST.example/issues/${key}` } });
@@ -15,7 +19,7 @@ const row: api.Approval = { workItemId: 'TEST-item', issueKey: 'TEST-42', tracke
   itemRevision: 11, policyRevision: 3, artifact: 'TEST-sha256', openedAt: '2026-09-13T12:00:00Z', expiresAt: '2999-09-14T12:00:00Z', resolver: null, channel: null, note: null } };
 const item = { id: 'TEST-item', sourceId: 'TEST-source', repositoryId: 'TEST-repository', repository: 'TEST-owner/TEST-repo', issueKey: 'TEST-42',
   trackerUrl: 'https://TEST.example/issues/42', generation: 2, phase: 'plan', workflowStatus: 'waiting_approval', reason: 'approval_required', profile: null,
-  revision: 11, updatedAt: '2026-09-13T12:00:00Z', effectiveModes: {}, admittedModes: {}, policyReason: 'policy_selected', ceiling: null, appliedLabels: [], ignoredLabels: [], events: [],
+  revision: 11, updatedAt: '2026-09-13T12:00:00Z', effectiveModes: {}, admittedModes: {}, policyReason: 'policy_selected', ceiling: null, appliedLabels: [], ignoredLabels: [], events: [], gate: row.gate,
   effectiveLimits: { gateTtlSeconds: 86400, maxRunsPerItem: 5, maxStepsPerPlan: 20, maxWallClockSeconds: 7200, maxCostMillicents: 2_000_000, maxCallsPerItem: 40, protectedPaths: [] },
   preparation: { specification: artifact('71'), plan: artifact('72'), baseBranch: 'main', baseCommit: 'a0f8a41'.padEnd(40, '0'), harness: 'TEST-harness', model: 'TEST-model', registeredBy: 'TEST-operator' },
 } satisfies gateway.WorkItemDetail;
@@ -37,7 +41,7 @@ async function approvable() {
   await waitFor(() => expect(button).toBeEnabled());
   return button;
 }
-function show() { return render(<MemoryRouter><DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter>); }
+function show() { return render(<MemoryRouter><DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter>, { wrapper: queryWrapper() }); }
 
 // How it pays is part of what the gate binds, and which text is which was not said (feedback, 2026-09-27).
 it('shows how the build pays and labels the specification and the plan', async () => {
@@ -152,14 +156,14 @@ it('names the ticket that moved when a decision is superseded', async () => {
 
 it('lists past decisions with who answered them', async () => {
   vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: { ...row.gate, state: 'APPROVED', resolver: 'TEST-admin', channel: 'dashboard' } }]);
-  render(<MemoryRouter><PastDecisions onClose={vi.fn()} /></MemoryRouter>);
+  render(<MemoryRouter><PastDecisions onClose={vi.fn()} /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByRole('link', { name: 'TEST-42' })).toHaveAttribute('href', '/work-items/TEST-item');
   expect(screen.getByText(/by TEST-admin via dashboard/)).toBeInTheDocument();
   expect(api.approvals).toHaveBeenCalledWith(true);
 });
 it('says when no decision is closed yet', async () => {
   vi.mocked(api.approvals).mockResolvedValue([]);
-  render(<MemoryRouter><PastDecisions onClose={vi.fn()} /></MemoryRouter>);
+  render(<MemoryRouter><PastDecisions onClose={vi.fn()} /></MemoryRouter>, { wrapper: queryWrapper() });
   expect(await screen.findByText(/No decision has been answered/)).toBeInTheDocument();
 });
 
@@ -357,4 +361,33 @@ it('offers no Revise on a permission decision', async () => {
   show();
   await approvable();
   expect(screen.queryByRole('button', { name: 'Revise with a note' })).toBeNull();
+});
+
+// Step 6: the panel reads the item under the key the detail page keeps it under, so it opens on what is on screen.
+it('shares the item read with the screen behind it', async () => {
+  vi.mocked(gateway.getWorkItem).mockReturnValue(new Promise(() => {}));
+  const client = createQueryClient();
+  client.setQueryData(workKeys.item('TEST-item'), item);
+  render(<QueryClientProvider client={client}><MemoryRouter>
+    <DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter></QueryClientProvider>);
+  expect(await screen.findByRole('dialog', { name: 'Approve the plan' })).toBeInTheDocument();
+});
+
+// Review of PR 357, H-1: the cache can hold an item from an earlier gate while the decisions already name a later one.
+// Its words and evidence would describe the old gate while the answer goes to the new one: Retry build would approve a land.
+it('offers no answer until the item names the same gate as the decision', async () => {
+  const landGate = { ...row.gate, id: 'TEST-land-gate', version: 1, phase: 'land', artifact: 'b'.repeat(40) };
+  vi.mocked(api.approvals).mockResolvedValue([{ ...row, gate: landGate }]);
+  let answer!: (value: gateway.WorkItemDetail) => void;
+  vi.mocked(gateway.getWorkItem).mockReturnValue(new Promise(done => { answer = done; }));
+  const client = createQueryClient();
+  client.setQueryData(workKeys.item('TEST-item'), failedItem);
+  render(<QueryClientProvider client={client}><MemoryRouter>
+    <DecisionPanel itemId="TEST-item" title="TEST-ticket title" onClose={vi.fn()} onDecided={decided} /></MemoryRouter></QueryClientProvider>);
+  expect(await screen.findByText(/read at different moments/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry build' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  await act(async () => answer({ ...item, phase: 'land', gate: landGate }));
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry build' })).toBeNull();
 });

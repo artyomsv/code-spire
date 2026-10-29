@@ -290,7 +290,13 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   draft and plan steps follow it (step 5): every read is keyed under `workKeys` (`work-items/workQueries.ts`),
   `useWorkItemChanges` turns each notice and every open into `noticeLive` re-reads (a read already out finishes, then
   one more follows; the forge-backed tracker read is never re-read by a notice), an open panel on the detail page
-  closes the feed, and a dropped feed shows "Live updates paused". No work-item screen polls.
+  closes the feed, and a dropped feed shows "Live updates paused". No work-item screen polls. Step 6 moves read-once
+  screens to plain `useQuery` as they are touched; the work-item batch is done: the decision panel (sharing
+  `workKeys.item` with the detail page, so on the list it follows the feed and Approve keeps its binding checks; it
+  offers an answer only while the item and the decision name the same gate), past decisions (`workKeys.approvals`,
+  re-read by every item notice), the preparation form (`preparationKeys`; only a build setup read successfully since
+  the form opened fills it) and the profiles screen (`policyKeys`). `'*'` and every open skip `FORGE_READS`
+  (`tracker`, `evidence`).
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

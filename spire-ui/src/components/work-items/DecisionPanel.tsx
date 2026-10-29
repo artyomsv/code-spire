@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getWorkItem, type WorkItemDetail } from '../../api';
 import VerifyResult, { isVerifyResultGate } from './VerifyResult';
 import { canAdminister } from '../../auth';
@@ -10,7 +11,8 @@ import * as approvalsApi from './approvalsApi';
 import { preparationEvidence, type PreparationEvidence } from './workPreparationApi';
 import SpecificationView from './SpecificationView';
 import PlanView from './PlanView';
-import { workDraft, type WorkDraftView } from './workDraftApi';
+import { workDraft } from './workDraftApi';
+import { draftVersion, workKeys } from './workQueries';
 
 /** Revisions a person may ask for per phase (§6.5); then only Approve or Reject remain. */
 const MAX_REVISIONS = 3;
@@ -81,49 +83,60 @@ function headingFor(resultGate: boolean, phase: string | undefined): string {
 export default function DecisionPanel({ itemId, title, onClose, onDecided }: Props) {
   const { me } = useMe();
   const admin = canAdminister(me);
-  const [loaded, setLoaded] = useState<Loaded | null>(null), [error, setError] = useState('');
+  const [answerError, setAnswerError] = useState('');
   const [note, setNote] = useState(''), [answering, setAnswering] = useState<boolean | 'revise' | null>(null);
-  const [evidence, setEvidence] = useState<{ value: PreparationEvidence | null; error: string }>({ value: null, error: '' });
-  const [draft, setDraft] = useState<{ loaded: boolean; value: WorkDraftView | null }>({ loaded: false, value: null });
   // Reuse an answer identity after a transport failure, but never attach it to a different gate, answer or note.
   const attempt = useRef<{ key: string; gate: string; approve: boolean; note: string } | null>(null);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
+  // The open decisions and the item are read apart, and the item under the key the detail page keeps it under. On the
+  // list the change feed re-reads both while the panel is open; Approve follows the binding checks below, so a newer
+  // read can only take Approve away, never offer it for something the operator did not see.
+  const approval = useQuery({ queryKey: workKeys.approvals(false), queryFn: () => approvalsApi.approvals(false),
+    select: open => open.find(row => row.workItemId === itemId) ?? null });
+  const itemRead = useQuery({ queryKey: workKeys.item(itemId), queryFn: () => getWorkItem(itemId) });
+  // The two are read at different moments, and the item may come from the cache: they can name different gates. The
+  // words, the evidence and the binding checks follow the item while the answer goes to the decision's gate, so an old
+  // verify item beside a new land gate would offer Retry build and approve the land (review of PR 357, H-1). Only a
+  // pair that names one gate is loaded; a pair that does not is read again, once, and offers no answer meanwhile.
+  const bothRead = approval.data !== undefined && itemRead.data !== undefined;
+  const itemGate = itemRead.data?.gate ?? null;
+  const sameGate = !approval.data || !!itemGate && itemGate.id === approval.data.gate.id && itemGate.version === approval.data.gate.version;
+  // Loaded once both answered: "no open decision" answers null, and a failed re-read keeps the last answer.
+  const loaded: Loaded | null = bothRead && sameGate ? { approval: approval.data ?? null, item: itemRead.data! } : null;
+  const apart = bothRead && !sameGate
+    ? `${approval.data?.gate.id}:${approval.data?.gate.version}/${itemGate?.id}:${itemGate?.version}` : null;
+  const reading = approval.isFetching || itemRead.isFetching;
+  const client = useQueryClient(), rereadFor = useRef<string | null>(null);
   useEffect(() => {
-    let current = true;
-    setLoaded(null); setError('');
-    Promise.all([approvalsApi.approvals(false), getWorkItem(itemId)]).then(([open, item]) => {
-      if (current) setLoaded({ approval: open.find(row => row.workItemId === itemId) ?? null, item });
-    }).catch(failure => { if (current) setError(String(failure)); });
-    return () => { current = false; };
-  }, [itemId]);
+    if (!apart || reading || rereadFor.current === apart) return;
+    rereadFor.current = apart;
+    void client.invalidateQueries({ queryKey: workKeys.approvals(false), exact: true });
+    void client.invalidateQueries({ queryKey: workKeys.item(itemId), exact: true });
+  }, [apart, reading, client, itemId]);
+  const readFailure = approval.error ?? itemRead.error;
+  const error = answerError || (readFailure ? String(readFailure) : '');
 
   // The ticket texts are an admin read, loaded beside the decision rather than before it: the session
   // answers after the panel opens, and waiting for it must not blank a decision already on screen.
   const gateKey = loaded?.approval ? `${loaded.approval.gate.id}:${loaded.approval.gate.version}` : null;
   const preparation = loaded?.item.preparation ?? null;
   const prepared = preparation ? `${preparation.specification.sha256}:${preparation.plan.sha256}` : null;
-  useEffect(() => {
-    let current = true;
-    setEvidence({ value: null, error: '' });
-    if (!admin || !gateKey || !prepared) return;
-    preparationEvidence(itemId).then(value => { if (current) setEvidence({ value, error: '' }); })
-      .catch(failure => { if (current) setEvidence({ value: null, error: String(failure) }); });
-    return () => { current = false; };
-  }, [itemId, admin, gateKey, prepared]);
+  const evidenceWanted = admin && !!gateKey && !!prepared;
+  const evidenceRead = useQuery({ queryKey: workKeys.evidence(itemId, `${gateKey}:${prepared}`), queryFn: () => preparationEvidence(itemId),
+    enabled: evidenceWanted });
+  const evidence: { value: PreparationEvidence | null; error: string } = evidenceWanted
+    ? { value: evidenceRead.data ?? null, error: evidenceRead.error ? String(evidenceRead.error) : '' } : { value: null, error: '' };
 
   // A generated item's spec or plan gate binds what the factory wrote, not a prepared task (M4 slice 3, A6).
   const gatePhase = loaded?.approval?.gate.phase;
   const draftPhase = !preparation && (gatePhase === 'spec' || gatePhase === 'plan') && !!loaded?.approval?.gate.artifact;
-  useEffect(() => {
-    let current = true;
-    setDraft({ loaded: false, value: null });
-    if (!admin || !gateKey || !draftPhase) return;
-    workDraft(itemId).then(value => { if (current) setDraft({ loaded: true, value }); })
-      .catch(() => { if (current) setDraft({ loaded: true, value: null }); });
-    return () => { current = false; };
-  }, [itemId, admin, gateKey, draftPhase]);
+  const draftWanted = admin && !!gateKey && draftPhase;
+  // Keyed as the detail page keys its draft, so both share one read; 'current' when the events show no write yet.
+  const draftRead = useQuery({ queryKey: workKeys.draft(itemId, (loaded ? draftVersion(loaded.item) : null) ?? 'current'),
+    queryFn: () => workDraft(itemId), enabled: draftWanted });
+  const draft = { loaded: draftWanted && (draftRead.isSuccess || draftRead.isError), value: draftWanted ? draftRead.data ?? null : null };
 
   async function decide(approve: boolean) {
     const gate = loaded?.approval?.gate;
@@ -131,11 +144,11 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     const previous = attempt.current, bound = `${gate.id}:${gate.version}`;
     const decision = previous && previous.gate === bound && previous.approve === approve && previous.note === note
       ? previous : { key: crypto.randomUUID(), gate: bound, approve, note };
-    attempt.current = decision; setAnswering(approve); setError('');
+    attempt.current = decision; setAnswering(approve); setAnswerError('');
     try {
       await approvalsApi.answer(gate, decision.key, approve, note);
       if (live.current) onDecided(words.done(approve, gate.phase));
-    } catch (failure) { if (live.current) setError(String(failure)); }
+    } catch (failure) { if (live.current) setAnswerError(String(failure)); }
     finally { if (live.current) setAnswering(null); }
   }
 
@@ -145,11 +158,11 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
     if (!gate) return;
     const previous = attempt.current, bound = `${gate.id}:${gate.version}:revise`;
     const decision = previous && previous.gate === bound && previous.note === note ? previous : { key: crypto.randomUUID(), gate: bound, approve: false, note };
-    attempt.current = decision; setAnswering('revise'); setError('');
+    attempt.current = decision; setAnswering('revise'); setAnswerError('');
     try {
       await approvalsApi.revise(gate, decision.key, note);
       if (live.current) onDecided(`Asked for a new ${DRAFT_NAMES[gate.phase] ?? gate.phase}. The factory writes it with your note.`);
-    } catch (failure) { if (live.current) setError(String(failure)); }
+    } catch (failure) { if (live.current) setAnswerError(String(failure)); }
     finally { if (live.current) setAnswering(null); }
   }
 
@@ -187,7 +200,9 @@ export default function DecisionPanel({ itemId, title, onClose, onDecided }: Pro
       {admin && gate && <button className="btn-ghost danger" type="button" disabled={answeringNow} onClick={() => void decide(false)}>{answering === false ? words.noBusy : words.no}</button>}
       <button className="btn-ghost" type="button" disabled={answeringNow} onClick={onClose}>{gate ? 'Cancel' : 'Close'}</button>
     </>}>
-    {!loaded && !error && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
+    {!loaded && !error && !apart && <p className="prov-note" role="status" aria-busy="true">Loading the decision…</p>}
+    {apart && <p className="prov-note" role="status" aria-busy={reading}>The decision and the item were read at different moments and name
+      different gates, so no answer is offered. {reading ? 'Reading both again…' : 'Close the panel and open it again.'}</p>}
     {loaded && !gate && <p className="prov-note">This item has no open decision. It may have been answered, expired or replaced.</p>}
     {loaded && gate && <>
       {resultGate && verification && <section className="decision-sec" aria-label="What the checks found">

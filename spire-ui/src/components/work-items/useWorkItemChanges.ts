@@ -11,15 +11,18 @@ function changedIds(frame: unknown): readonly string[] | '*' | null {
   return Array.isArray(changed) && changed.every(id => typeof id === 'string') ? changed : null;
 }
 
-/** Every work-item read but the tracker, which reads the forge: no database notice covers it. */
+/** Reads that ask the forge, not the database: no notice covers them, and re-reading them spends its rate limit. */
+const FORGE_READS = new Set<unknown>(['tracker', 'evidence']);
+
+/** Every work-item read but the forge reads. */
 function rereadAll(client: QueryClient) {
-  noticeLive(client, { queryKey: workKeys.all, predicate: query => query.queryKey[1] !== 'tracker' });
+  noticeLive(client, { queryKey: workKeys.all, predicate: query => !FORGE_READS.has(query.queryKey[1]) });
 }
 
 /**
  * Follows `/api/ws/work-items` (docs/superpowers/specs/2026-10-28-live-data-design.md §3.3, §4.3): a notice re-reads
- * the named items, their drafts and their plan steps, and every list page, since a change can move an item between
- * filters. The server sends nothing on open and a socket that was down missed its notices, so every open re-reads
+ * the named items, their drafts and their plan steps, every list page, since a change can move an item between
+ * filters, and the open and past decisions, since a gate is part of its item. The server sends nothing on open and a socket that was down missed its notices, so every open re-reads
  * everything.
  */
 export function useWorkItemChanges({ enabled = true }: { enabled?: boolean } = {}): LiveSocketState {
@@ -33,6 +36,7 @@ export function useWorkItemChanges({ enabled = true }: { enabled?: boolean } = {
       if (changed === '*') return rereadAll(client);
       if (changed === null) return;
       noticeLive(client, { queryKey: workKeys.lists() });
+      noticeLive(client, { queryKey: workKeys.allApprovals() });
       for (const id of changed) {
         noticeLive(client, { queryKey: workKeys.item(id) });
         noticeLive(client, { queryKey: workKeys.drafts(id) });
