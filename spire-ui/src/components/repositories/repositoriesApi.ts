@@ -37,6 +37,8 @@ export interface PendingMapping {
   registrationId: string; revision: number; scmType: string;
   forgeOrigin: string | null; target: string; problem: string;
 }
+export const pendingMappingsKey = ['pending-mappings'] as const;
+
 export async function fetchPendingMappings(): Promise<PendingMapping[]> {
   const response = await apiFetch('/api/repositories/pending');
   if (!response.ok) throw new Error('Could not load pending mappings');
@@ -54,6 +56,8 @@ export async function fetchRepositories(): Promise<Repository[]> {
   if (!response.ok) throw new Error('Could not load registered repositories');
   return response.json();
 }
+export const repositoryKindsKey = ['repository-kinds'] as const;
+
 export async function fetchRepositoryKinds(): Promise<string[]> {
   const response = await apiFetch('/api/repositories/kinds');
   if (!response.ok) throw new Error('Could not load supported forge kinds');

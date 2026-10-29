@@ -21,6 +21,8 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   if (response.status === 202 || response.status === 204) return undefined as T;
   return response.json();
 }
+/** Every work source, for every repository: a screen filters it by repository when it renders. */
+export const workSourcesKey = ['work-sources'] as const;
 export const fetchWorkSources = () => request<WorkSource[]>('');
 export const createWorkSource = (input: WorkSourceInput) => request<WorkSource>('', 'POST', input);
 export const editWorkSource = (source: WorkSource, input: { name: string; accountId: string; enabled: boolean }) =>

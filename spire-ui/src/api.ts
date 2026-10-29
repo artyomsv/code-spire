@@ -567,6 +567,9 @@ async function throwResponse(res: Response, fallback: string): Promise<never> {
   throw new Error(await errorMessage(res, fallback));
 }
 
+/** The configured provider accounts. */
+export const providersKey = ['providers'] as const;
+
 export async function fetchProviders(): Promise<ProviderView[]> {
   const res = await apiFetch('/api/providers');
   if (!res.ok) return throwResponse(res, 'Failed to load providers');
@@ -700,6 +703,9 @@ export interface WebhookRepoSecret {
   repo: WebhookRepoView;
   secret: string;
 }
+
+/** The gateway's webhook registrations. */
+export const webhookReposKey = ['webhook-repos'] as const;
 
 export async function fetchWebhookRepos(): Promise<WebhookRepoView[]> {
   const res = await apiFetch('/gw/webhook-repos');

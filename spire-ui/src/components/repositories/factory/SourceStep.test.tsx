@@ -7,13 +7,14 @@ import RepositoryFactory from './RepositoryFactory';
 import * as build from './buildDefaultsApi';
 import * as land from './landSettingsApi';
 import { account, buildSetup, landSetup, issueHook, policy, profile, repository, source } from './factoryFixtures';
+import { queryWrapper } from '../../../test/queryWrapper';
 
 const field = { selector: 'input,select,textarea' };
 let changedHooks = vi.fn();
 function renderFactory(options: { accounts?: gateway.ProviderView[]; hooks?: gateway.WebhookRepoView[]; unavailable?: boolean; repo?: typeof repository } = {}) {
   changedHooks = vi.fn();
   return render(<RepositoryFactory repository={options.repo ?? repository} accounts={options.accounts ?? [account(), account('gitlab'), account('atlassian')]}
-    webhooks={{ hooks: options.hooks ?? [], unavailable: options.unavailable ?? false, changed: changedHooks }} onChanged={vi.fn()} />);
+    webhooks={{ hooks: options.hooks ?? [], unavailable: options.unavailable ?? false, changed: changedHooks }} />, { wrapper: queryWrapper() });
 }
 const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {

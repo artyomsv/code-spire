@@ -1,3 +1,4 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sources from '../../work-items/workSourcesApi';
@@ -7,10 +8,12 @@ import * as build from './buildDefaultsApi';
 import * as land from './landSettingsApi';
 import RepositoryFactory from './RepositoryFactory';
 import { account, buildSetup, landSetup, policy, profile, repository, source } from './factoryFixtures';
+import { createQueryClient } from '../../../queryClient';
+import { queryWrapper } from '../../../test/queryWrapper';
 
 const field = { selector: 'input,select,textarea' };
 const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
-  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} />);
+  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />, { wrapper: queryWrapper() });
 const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
 beforeEach(() => {
   vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
@@ -51,14 +54,16 @@ describe('outcome', () => {
     expect(within(await step(2)).getByText('nobody yet')).toBeInTheDocument();
   });
   it('ignores a load that answers after the panel moved to another repository', async () => {
-    let answer!: (value: sources.WorkSource[]) => void;
-    vi.mocked(sources.fetchWorkSources).mockReturnValueOnce(new Promise(done => { answer = done; })).mockResolvedValue([]);
+    let answer!: (value: build.BuildDefaults) => void;
+    vi.mocked(build.buildDefaults).mockReturnValueOnce(new Promise(done => { answer = done; }))
+      .mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
     const view = renderFactory();
     view.rerender(<RepositoryFactory repository={{ ...repository, id: 'TEST-other', slug: 'TEST-other' }} accounts={[account()]}
-      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} onChanged={vi.fn()} />);
-    expect(await screen.findByText(/Nothing reads tickets for this repository yet/)).toBeInTheDocument();
-    await act(async () => answer([source({ repositoryId: 'TEST-other', name: 'TEST-stale source' })]));
-    expect(screen.queryByText('TEST-stale source')).toBeNull();
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />);
+    expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
+    await act(async () => answer(buildSetup({ revision: 9, baseBranch: 'main', harness: 'codex', model: 'TEST-stale-model' })));
+    expect(screen.queryByText(/TEST-stale-model/)).toBeNull();
+    expect(screen.getByText('codex · TEST-model')).toBeInTheDocument();
   });
 });
 
@@ -531,4 +536,69 @@ describe('build setup', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Check this branch' }));
   expect(await screen.findByText(/read with the reviewer account/)).toBeInTheDocument();
 });
+});
+
+describe('query cache (step 6)', () => {
+  // Before, a failed re-read replaced the whole tab with its error.
+  it('keeps the setup on screen when a reload fails', async () => {
+    vi.mocked(build.saveBuildDefaults).mockRejectedValueOnce(new Error('Someone else saved the build setup while this form was open. Reload it and try again.'));
+    vi.mocked(build.buildDefaults).mockResolvedValueOnce(buildSetup()).mockRejectedValue(new Error('TEST-setup outage'));
+    renderFactory();
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up the build' }));
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reload the saved setup' }));
+    expect(await screen.findByText(/TEST-setup outage/)).toBeInTheDocument();
+    expect(document.querySelector('.factory-outcome')).not.toBeNull();
+  });
+
+  // The preparation form reads the build setup under this key; the tab's read must refresh it.
+  it('reads the build setup under the key the preparation form reads', async () => {
+    const client = createQueryClient();
+    client.setQueryData(build.buildDefaultsKey(repository.id), buildSetup({ revision: 1, baseBranch: 'TEST-old' }));
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'TEST-new', harness: 'codex', model: 'TEST-model' }));
+    render(<QueryClientProvider client={client}><RepositoryFactory repository={repository} accounts={[account()]}
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} /></QueryClientProvider>);
+    await screen.findByText('codex · TEST-model');
+    expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.baseBranch).toBe('TEST-new');
+  });
+});
+
+describe('saved rows in the cache (review of PR 358)', () => {
+  // M-2: a read started before the save must not overwrite it, even when the panel closed before the save answered.
+  it('keeps a saved build setup when an older read lands after the panel closed', async () => {
+    const client = createQueryClient();
+    const view = render(<QueryClientProvider client={client}><RepositoryFactory repository={repository} accounts={[account()]}
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up the build' }));
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    let older!: (value: build.BuildDefaults) => void;
+    vi.mocked(build.buildDefaults).mockReturnValueOnce(new Promise(done => { older = done; }));
+    await act(async () => { void client.invalidateQueries({ queryKey: build.buildDefaultsKey(repository.id) }); });
+    let saved!: (value: build.BuildDefaults) => void;
+    vi.mocked(build.saveBuildDefaults).mockReturnValueOnce(new Promise(done => { saved = done; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    view.unmount();
+    await act(async () => saved(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' })));
+    await act(async () => older(buildSetup()));
+    expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.revision).toBe(1);
+  });
+
+  // M-3: the saved policy is known; a failed re-read after it must not put the old one back on screen.
+  it('shows a saved ceiling when the re-read after it fails', async () => {
+    const newer = { ...profile, version: 4 };
+    vi.mocked(policies.profiles).mockResolvedValue([profile, newer]);
+    vi.mocked(policies.policy).mockResolvedValueOnce(policy()).mockRejectedValue(new Error('TEST-policy outage'));
+    vi.mocked(policies.savePolicy).mockResolvedValue(policy({ revision: 8, ceiling: newer }));
+    renderFactory();
+    fireEvent.click(within(await step(3)).getByRole('button', { name: 'Change' }));
+    fireEvent.change(screen.getByLabelText('Repository ceiling', field), { target: { value: 'TEST-profile:4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save ceiling' }));
+    expect(await screen.findByText(/TEST-policy outage/)).toBeInTheDocument();
+    expect(within(await step(3)).getByText(`${profile.name} v4`)).toBeInTheDocument();
+  });
 });

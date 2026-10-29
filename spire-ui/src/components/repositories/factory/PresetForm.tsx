@@ -1,4 +1,7 @@
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { writeLive } from '../../../liveCache';
+import { policyKeys } from '../../work-items/workQueries';
 import * as policyApi from '../../work-items/workPolicyApi';
 import PhaseStrip from '../../work-items/PhaseStrip';
 import SettingField from '../../SettingField';
@@ -24,9 +27,11 @@ export default function PresetForm({ repositoryId, policy, profiles, cancelled, 
   const presetCeiling = PRESETS.find(preset => preset.name === policy.ceiling?.name)?.name;
   const [ceiling, setCeiling] = useState(presetCeiling ?? PRESETS[0].name);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const client = useQueryClient();
   async function apply() {
     setBusy(true); setError('');
-    try { await applyPresets(repositoryId, policy, plan, ceiling); changed(`Presets applied. Ceiling: ${ceiling}.`); }
+    // The policy it returns goes into its key at once, as a ceiling or label save does (review of PR 358, M-3).
+    try { writeLive(client, policyKeys.policy(repositoryId), await applyPresets(repositoryId, policy, plan, ceiling)); changed(`Presets applied. Ceiling: ${ceiling}.`); }
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); setBusy(false); reload(); }
   }
   return <fieldset className="form-lock factory-form" aria-label="Use presets" disabled={busy}>

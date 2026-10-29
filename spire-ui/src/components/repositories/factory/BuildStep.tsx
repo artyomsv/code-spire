@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchLlmModels, type LlmModelView } from '../../../api';
+import { preparationKeys } from '../../work-items/workQueries';
+import { writeLive } from '../../../liveCache';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
-import { buildOptions, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
+import { buildDefaultsKey, buildOptions, buildOptionsKey, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -23,6 +26,13 @@ interface Props {
  * here once, they are offered as what this deployment can actually run, and the same refusals arrive
  * where they can be fixed.
  */
+/** What the form offers: the harnesses and models this deployment can run. */
+interface Choices {
+  harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
+  harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number; preparations: Preparation[];
+}
+const NO_CHOICES: Choices = { harnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] };
+
 /** How a build pays, in the words the setup shows. */
 const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
 /** How the specification and plan are made (M4 slice 3, §6.1). */
@@ -40,25 +50,22 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     // One command per line on screen; a list on the wire (M4).
     verifyCommands: (defaults.verifyCommands ?? []).join('\n'), verifyTimeoutSeconds: String(defaults.verifyTimeoutSeconds ?? DEFAULT_VERIFY_SECONDS),
   });
-  const [choices, setChoices] = useState<{ harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
-    harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number; preparations: Preparation[] }>({ harnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] });
   const [busy, setBusy] = useState<'saving' | 'head' | null>(null);
   const [error, setError] = useState(''), [head, setHead] = useState<{ commit: string; account: string } | null>(null);
   const editing = open === 'build';
+  const client = useQueryClient();
+  // Read only while the form is open, and both or neither: the selects fall back to what is already saved, and the save
+  // still refuses an unrunnable pair.
+  const optionsRead = useQuery({ queryKey: buildOptionsKey(repositoryId), queryFn: () => buildOptions(repositoryId), enabled: editing });
+  const modelsRead = useQuery({ queryKey: preparationKeys.llmModels(), queryFn: () => fetchLlmModels(), enabled: editing });
+  const options = optionsRead.data, models = modelsRead.data;
+  // A wire answer of the wrong shape offers nothing rather than blanking the step.
+  const choices: Choices = options && models
+    ? { harnesses: options.harnesses ?? [], models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
+      harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds, preparations: options.preparations ?? [] }
+    : NO_CHOICES;
   // The server offers generated only while it can honour it (M4 slice 3); otherwise the choice is not shown.
   const offersGenerated = choices.preparations.includes('generated');
-
-  useEffect(() => {
-    if (!editing) return;
-    let active = true;
-    Promise.all([buildOptions(repositoryId), fetchLlmModels()])
-      // A wire answer of the wrong shape offers nothing rather than blanking the step.
-      .then(([options, models]) => { if (active) setChoices({ harnesses: options.harnesses ?? [],
-        models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
-        harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds, preparations: options.preparations ?? [] }); })
-      .catch(() => { /* the selects fall back to what is already saved; the save still refuses an unrunnable pair */ });
-    return () => { active = false; };
-  }, [repositoryId, editing]);
 
   async function readHead() {
     setBusy('head'); setError(''); setHead(null);
@@ -77,9 +84,12 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       // The preparation is sent only when the choice is on screen: none keeps what is stored, so a server that
       // stopped offering generated is never switched back by a form that could not show it.
       const { preparation, ...coordinates } = form;
-      await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...coordinates, effort: form.effort || null,
+      const saved = await saveBuildDefaults(repositoryId, { expectedRevision: defaults.revision, ...coordinates, effort: form.effort || null,
         verifyCommands: verifyLines(form.verifyCommands), verifyTimeoutSeconds: Number(form.verifyTimeoutSeconds),
         ...(offersGenerated ? { preparation } : {}) });
+      // The saved row goes into its key first, so the list and the preparation form are right even if the re-read fails.
+      // Written whether or not this form is still open, and after cancelling an older read that would overwrite it.
+      writeLive(client, buildDefaultsKey(repositoryId), saved);
       if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }

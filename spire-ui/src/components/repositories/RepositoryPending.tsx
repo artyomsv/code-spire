@@ -1,19 +1,18 @@
-import { useEffect, useState } from 'react';
-import { fetchPendingMappings, linkMapping, type PendingMapping, type Repository } from './repositoriesApi';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchPendingMappings, linkMapping, pendingMappingsKey, type PendingMapping, type Repository } from './repositoriesApi';
 import { fetchWebhookRepos, updateWebhookRepo, type WebhookRepoView } from '../../api';
 import { AlertTriangle } from 'lucide-react';
+import { updateLive } from '../../liveCache';
 
 export default function RepositoryPending({ repositories, onHooksChanged }: {
   repositories: Repository[]; onHooksChanged: (hooks: WebhookRepoView[]) => void;
 }) {
-  const [pending, setPending] = useState<PendingMapping[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    fetchPendingMappings().then(rows => { if (active) setPending(rows); })
-      .catch(failure => { if (active) setError(String(failure)); });
-    return () => { active = false; };
-  }, []);
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: pendingMappingsKey, queryFn: () => fetchPendingMappings() });
+  const pending = read.data ?? [];
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const error = linkError ?? (read.error ? String(read.error) : null);
   async function link(row: PendingMapping, repository: Repository) {
     try {
       // Repair the owning registration so future verified deliveries carry the selected origin.
@@ -33,9 +32,10 @@ export default function RepositoryPending({ repositories, onHooksChanged }: {
       } else {
         await linkMapping(row, repository.id);
       }
-      setPending(previous => previous.filter(p => p.registrationId !== row.registrationId));
+      // Removed here rather than read again: whether the server drops a repaired registration at once is not established.
+      updateLive<PendingMapping[]>(client, pendingMappingsKey, rows => (rows ?? []).filter(p => p.registrationId !== row.registrationId));
     }
-    catch (failure) { setError(String(failure)); }
+    catch (failure) { setLinkError(String(failure)); }
   }
   return <section aria-label="Mappings needing attention">
     {error && <p className="prov-note prov-error" role="alert">{error}</p>}
