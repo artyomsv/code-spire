@@ -85,3 +85,17 @@ describe('land step (M4 land, spec §7.1)', () => {
     expect(screen.getByRole('button', { name: 'Reload the saved land setup' })).toBeInTheDocument();
   });
 });
+
+describe('land options in the cache (review of PR 358, M-4)', () => {
+  it('offers all three again when a later options read fails', async () => {
+    vi.mocked(land.landOptions).mockResolvedValueOnce({ checked: true, allowed: ['merge'] }).mockRejectedValue(new Error('TEST-forge down'));
+    const step = (open: string | null) => <LandStep repositoryId="TEST-repository" settings={landSetup()}
+      open={open} setOpen={vi.fn()} changed={vi.fn()} reload={vi.fn()} />;
+    const view = showStep();
+    await waitFor(() => expect(methodValues(screen.getByRole('combobox', { name: 'Merge method' }))).toEqual(['merge']));
+    view.rerender(step(null));
+    view.rerender(step('land'));
+    expect(await screen.findByText(/GitHub did not say which methods this repository allows/)).toBeInTheDocument();
+    expect(methodValues(screen.getByRole('combobox', { name: 'Merge method' }))).toEqual(['merge', 'squash', 'rebase']);
+  });
+});

@@ -565,3 +565,40 @@ describe('query cache (step 6)', () => {
     expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.baseBranch).toBe('TEST-new');
   });
 });
+
+describe('saved rows in the cache (review of PR 358)', () => {
+  // M-2: a read started before the save must not overwrite it, even when the panel closed before the save answered.
+  it('keeps a saved build setup when an older read lands after the panel closed', async () => {
+    const client = createQueryClient();
+    const view = render(<QueryClientProvider client={client}><RepositoryFactory repository={repository} accounts={[account()]}
+      webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up the build' }));
+    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
+    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
+    let older!: (value: build.BuildDefaults) => void;
+    vi.mocked(build.buildDefaults).mockReturnValueOnce(new Promise(done => { older = done; }));
+    await act(async () => { void client.invalidateQueries({ queryKey: build.buildDefaultsKey(repository.id) }); });
+    let saved!: (value: build.BuildDefaults) => void;
+    vi.mocked(build.saveBuildDefaults).mockReturnValueOnce(new Promise(done => { saved = done; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    view.unmount();
+    await act(async () => saved(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' })));
+    await act(async () => older(buildSetup()));
+    expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.revision).toBe(1);
+  });
+
+  // M-3: the saved policy is known; a failed re-read after it must not put the old one back on screen.
+  it('shows a saved ceiling when the re-read after it fails', async () => {
+    const newer = { ...profile, version: 4 };
+    vi.mocked(policies.profiles).mockResolvedValue([profile, newer]);
+    vi.mocked(policies.policy).mockResolvedValueOnce(policy()).mockRejectedValue(new Error('TEST-policy outage'));
+    vi.mocked(policies.savePolicy).mockResolvedValue(policy({ revision: 8, ceiling: newer }));
+    renderFactory();
+    fireEvent.click(within(await step(3)).getByRole('button', { name: 'Change' }));
+    fireEvent.change(screen.getByLabelText('Repository ceiling', field), { target: { value: 'TEST-profile:4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save ceiling' }));
+    expect(await screen.findByText(/TEST-policy outage/)).toBeInTheDocument();
+    expect(within(await step(3)).getByText(`${profile.name} v4`)).toBeInTheDocument();
+  });
+});

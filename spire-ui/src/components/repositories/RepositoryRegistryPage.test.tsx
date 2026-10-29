@@ -6,6 +6,7 @@ import * as api from './repositoriesApi';
 import RepositoryRegistryPage from './RepositoryRegistryPage';
 import { MemoryRouter, Link } from 'react-router';
 import { queryWrapper } from '../../test/queryWrapper';
+import * as sources from '../work-items/workSourcesApi';
 
 const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://forge.example.test/api/v4'): accounts.ProviderView => ({
   id, name: id, role, baseUrl, type: 'gitlab', enabled: true,
@@ -270,6 +271,20 @@ describe('Repository registry', () => {
     vi.mocked(api.fetchRepositories).mockReturnValue(new Promise(() => {}));
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper });
     expect(await screen.findByRole('link', { name: repo.slug })).toBeInTheDocument();
+  });
+
+  // Review of PR 358, M-1: the server derives a source's enabled state from its repository's, so the column must re-read.
+  it('reads the work sources again after a repository save', async () => {
+    vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([]);
+    vi.mocked(api.saveRepository).mockResolvedValue({ ...repo, enabled: false, revision: 4 });
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    await waitFor(() => expect(sources.fetchWorkSources).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    await waitFor(() => expect(sources.fetchWorkSources).toHaveBeenCalledTimes(2));
   });
 
   it('refuses to repair a registration whose current forge or coordinates changed', async () => {
