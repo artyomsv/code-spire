@@ -1,6 +1,6 @@
 vi.mock('../actorsApi', async importOriginal => ({ ...await importOriginal<typeof import('../actorsApi')>(), fetchActors: vi.fn().mockResolvedValue({ revision: 0, actors: [] }) }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as accounts from '../../api';
 import * as api from './repositoriesApi';
 import RepositoryRegistryPage from './RepositoryRegistryPage';
@@ -285,6 +285,21 @@ describe('Repository registry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Saved')).toBeInTheDocument();
     await waitFor(() => expect(sources.fetchWorkSources).toHaveBeenCalledTimes(2));
+  });
+
+  // A read of a key with no data yet is joined, not restarted, by invalidateQueries: its answer predates the save.
+  it('reads the work sources again after a save made before they first answered', async () => {
+    let first!: (value: sources.WorkSource[]) => void;
+    vi.spyOn(sources, 'fetchWorkSources').mockReturnValueOnce(new Promise(done => { first = done; })).mockResolvedValue([]);
+    vi.mocked(api.saveRepository).mockResolvedValue({ ...repo, enabled: false, revision: 4 });
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    await waitFor(() => expect(sources.fetchWorkSources).toHaveBeenCalledTimes(2));
+    await act(async () => first([]));
   });
 
   it('refuses to repair a registration whose current forge or coordinates changed', async () => {
