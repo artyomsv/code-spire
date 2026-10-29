@@ -34,7 +34,7 @@ export default function RepositoryFactory({ repository, accounts, webhooks }: Pr
   const [open, setOpen] = useState<string | null>(null);
   // Keys shared with the repositories list, the profiles screen and the preparation form: a save here reaches them all.
   // Each is per repository except the sources, one list for every repository, filtered below.
-  const buildKey = ['factory-build', repository.id];
+  const buildKey = ['factory-build', repository.id, buildDefaultsKey(repository.id)[0]];
   const keys = [sourcesApi.workSourcesKey, policyKeys.profiles(), policyKeys.policy(repository.id), buildKey,
     landSettingsKey(repository.id)];
   const sourcesRead = useQuery({ queryKey: sourcesApi.workSourcesKey, queryFn: () => sourcesApi.fetchWorkSources() });
