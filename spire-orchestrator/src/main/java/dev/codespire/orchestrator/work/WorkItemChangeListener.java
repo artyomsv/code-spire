@@ -34,6 +34,8 @@ public class WorkItemChangeListener {
     static final String CHANNEL = "work_item_changed";
     /** How long one read waits for a first notice before it checks whether the listener was stopped. */
     private static final int IDLE_READ_MS = 1000;
+    /** Empty idle reads before the session is probed; package-private so a test need not wait half a minute. */
+    int probeAfterIdleReads = 30;
     private static final Duration FIRST_BACK_OFF = Duration.ofSeconds(1);
     private static final Duration MAX_BACK_OFF = Duration.ofSeconds(30);
     private static final Logger LOG = Logger.getLogger(WorkItemChangeListener.class);

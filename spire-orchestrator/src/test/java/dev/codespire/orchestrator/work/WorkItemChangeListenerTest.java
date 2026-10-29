@@ -93,6 +93,37 @@ class WorkItemChangeListenerTest extends WorkFixture {
         assertEquals(0, sessions(), "the listening session outlived stop()");
     }
 
+    /**
+     * A LISTEN session is idle by construction, and a network device that drops an idle connection sends no error: the
+     * read only times out, for ever. So a quiet session is asked a question; a dead peer then fails it and the listener
+     * reconnects. No test can make a half-open socket, so this pins that the question is asked.
+     */
+    @Test
+    void probesAQuietSession() throws Exception {
+        listener.probeAfterIdleReads = 1;
+        start();
+        assertTrue(sink.awaitRefreshes(1, Duration.ofSeconds(5)));
+
+        Instant deadline = Instant.now().plusSeconds(5);
+        while (!probed() && Instant.now().isBefore(deadline)) TimeUnit.MILLISECONDS.sleep(100);
+        assertTrue(probed(), "a quiet listening session was never probed");
+    }
+
+    /** Anything the driver throws that is not an SQLException must not end the feed for the life of the process. */
+    @Test
+    void survivesAnUnexpectedError() {
+        AtomicInteger opens = new AtomicInteger();
+        listener.start(sink, () -> {
+            if (opens.getAndIncrement() == 0) throw new IllegalStateException("TEST-driver-fault");
+            return NoticeTap.connect(SESSION);
+        });
+        assertDoesNotThrow(() -> assertTrue(sink.awaitRefreshes(1, Duration.ofSeconds(10)), "the listener died on a non-SQL error"));
+    }
+
+    private boolean probed() throws Exception {
+        return count("SELECT count(*) FROM pg_stat_activity WHERE application_name=? AND query='SELECT 1'", SESSION) == 1;
+    }
+
     private void start() {
         listener.start(sink, () -> NoticeTap.connect(SESSION));
     }
