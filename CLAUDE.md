@@ -283,7 +283,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   now opens through `useLiveSocket` (steps 1–3): runs list, run detail, reviews list (archived reviews are a separate
   REST-only query), the attention bell (one socket-only cache entry per feed) and the run transcript, an append-only
   stream whose REST page and frames merge (`mergeLive`, no cancel). The server's `/api/ws/timeline` has no dashboard
-  client. The work-item screens still poll until their change feed (steps 4–5) lands.
+  client. The work-item change feed exists on the server (step 4): `V104` triggers send `pg_notify('work_item_changed',
+  id | '*')` on commit, `WorkItemChangeListener` (its own session, `LISTEN` committed before the `'*'` refresh) batches
+  them for 250 ms, and `/api/ws/work-items` sends `{"changed":[ids]}` or `{"changed":"*"}` to viewers and admins. A
+  table a work-item read starts to use needs a decision in `WorkItemChangeCoverageTest`. The work-item screens still
+  poll until step 5 moves them onto it.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
