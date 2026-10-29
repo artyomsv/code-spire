@@ -47,7 +47,7 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
     enabled: !item.preparation });
   // Only an answer read since this form opened: the setup is saved outside the query cache, and a cached one may be
   // older than the setup, while the fill rule below would keep it over the fresh one.
-  const setup = defaults.data;
+  const setup = defaults.isFetchedAfterMount ? defaults.data : undefined;
   useEffect(() => {
     if (item.preparation || !setup) return; // a disabled query still returns a cached answer
     // A coordinate the operator has touched is theirs, including one they deliberately cleared.
