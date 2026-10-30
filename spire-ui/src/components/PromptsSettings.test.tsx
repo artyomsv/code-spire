@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import PromptsSettings from './PromptsSettings';
 import PromptDetail from './PromptDetail';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const reviewView: api.PromptView = {
   kind: 'review',
@@ -39,7 +41,7 @@ describe('PromptsSettings (list)', () => {
   });
 
   it('lists each prompt kind as a link, tagged Default/Custom', async () => {
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <PromptsSettings />
       </MemoryRouter>,
@@ -61,7 +63,7 @@ describe('PromptsSettings (list)', () => {
       { ...reconcileView, defaultDrifted: true },
       followupView,
     ]);
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <PromptsSettings />
       </MemoryRouter>,
@@ -83,7 +85,7 @@ describe('PromptsSettings (list)', () => {
       { ...reconcileView, scope: 'acme/widgets', inheritedFrom: 'repo', defaultDrifted: true },
       followupView,
     ]);
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
         <PromptsSettings />
       </MemoryRouter>,
@@ -103,7 +105,7 @@ describe('PromptsSettings (list)', () => {
       { ...reconcileView, scope: 'acme/widgets', inheritedFrom: 'global', customized: true },
       { ...followupView, scope: 'acme/widgets', inheritedFrom: 'default', customized: false },
     ]);
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
         <PromptsSettings />
       </MemoryRouter>,
@@ -117,7 +119,7 @@ describe('PromptsSettings (list)', () => {
 
   it('carries the URL scope into a kind link so a reload lands back on the same repository', async () => {
     vi.spyOn(api, 'fetchPrompt').mockResolvedValue(reviewView);
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts?scope=acme/widgets']}>
         <Routes>
           <Route path="/settings/prompts" element={<PromptsSettings />} />
@@ -134,7 +136,7 @@ describe('PromptsSettings (list)', () => {
 
   it('re-fetches at the new scope when the picker changes', async () => {
     vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue(['acme/widgets']);
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts']}>
         <PromptsSettings />
       </MemoryRouter>,
@@ -147,13 +149,111 @@ describe('PromptsSettings (list)', () => {
   });
 });
 
+describe('Prompt screens on the query cache', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchPrompts').mockResolvedValue([reviewView, followupView]);
+    vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchPrompt').mockResolvedValue(reviewView);
+    vi.spyOn(api, 'fetchReviews').mockResolvedValue([]);
+  });
+  const screens = (path: string) => (
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/settings/prompts" element={<PromptsSettings />} />
+        <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
+      </Routes>
+    </MemoryRouter>
+  );
+
+  it('shows the prompt list at once when it opens again', async () => {
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(screens('/settings/prompts'), { wrapper });
+    expect(await screen.findByRole('button', { name: /^Review/ })).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchPrompts).mockReturnValue(new Promise(() => {}));
+    renderWithQuery(screens('/settings/prompts'), { wrapper });
+    expect(screen.getByRole('button', { name: /^Review/ })).toBeInTheDocument();
+  });
+
+  // The editor holds its own copy of the text; a cached copy may be out of date.
+  it('opens the editor only from a read made on this visit', async () => {
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(screens('/settings/prompts/review'), { wrapper });
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchPrompt).mockReturnValue(new Promise(() => {}));
+    renderWithQuery(screens('/settings/prompts/review'), { wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  const linked = (path: string) => (
+    <MemoryRouter initialEntries={[path]}>
+      <Link to="/settings/prompts/review">TEST to review</Link>
+      <Link to="/settings/prompts/followup">TEST to followup</Link>
+      <Link to="/settings/prompts/review?scope=acme/widgets">TEST to repo review</Link>
+      <Routes>
+        <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
+      </Routes>
+    </MemoryRouter>
+  );
+
+  // Review of PR 361, M-1: coming back to a prompt is a new visit; its cached copy may be out of date.
+  it('opens the editor again only from the read made on the return visit', async () => {
+    renderWithQuery(linked('/settings/prompts/review'));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    vi.mocked(api.fetchPrompt).mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByText('TEST to followup'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    fireEvent.click(screen.getByText('TEST to review'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  // Review of PR 361, M-2: a repository's first read that started before a global save must not open the editor
+  // with the old inherited text; a read after the save does.
+  it('re-reads an inheriting scope whose first read began before a save', async () => {
+    let answerOld: (view: api.PromptView) => void = () => {};
+    let repoReads = 0;
+    vi.mocked(api.fetchPrompt).mockImplementation((_kind, scope) => {
+      if (scope !== 'acme/widgets') return Promise.resolve(reviewView);
+      repoReads += 1;
+      if (repoReads === 1) return new Promise((resolve) => { answerOld = resolve; });
+      return Promise.resolve({ ...reviewView, scope: 'acme/widgets', inheritedFrom: 'global', system: 'TEST-new' });
+    });
+    let saved: (view: api.PromptView) => void = () => {};
+    vi.spyOn(api, 'savePrompt').mockReturnValue(new Promise((resolve) => { saved = resolve; }));
+    renderWithQuery(linked('/settings/prompts/review'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByText('TEST to repo review'));
+    await waitFor(() => expect(repoReads).toBe(1));
+    await act(async () => { saved({ ...reviewView, customized: true, system: 'TEST-new' }); });
+    await act(async () => { answerOld({ ...reviewView, scope: 'acme/widgets', inheritedFrom: 'global', system: 'TEST-old' }); });
+    expect(await screen.findByDisplayValue('TEST-new')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('TEST-old')).toBeNull();
+  });
+
+  it('shows a save on the list before the list is read again', async () => {
+    vi.spyOn(api, 'savePrompt').mockResolvedValue({ ...reviewView, customized: true, inheritedFrom: 'global' });
+    renderWithQuery(screens('/settings/prompts'));
+    fireEvent.click(await screen.findByRole('button', { name: /^Review/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.savePrompt).toHaveBeenCalled());
+    vi.mocked(api.fetchPrompts).mockReturnValue(new Promise(() => {}));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /All prompts/ }));
+    expect(await screen.findByText('Custom')).toBeInTheDocument();
+  });
+});
+
 describe('PromptDetail (edit)', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchPrompt').mockResolvedValue(reviewView);
   });
 
   it('loads the kind from the route and renders its variable palette', async () => {
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts/review']}>
         <Routes>
           <Route path="/settings/prompts/:kind" element={<PromptDetail />} />

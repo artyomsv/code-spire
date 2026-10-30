@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { screen } from '@testing-library/react';
+import { fireEvent, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
+import { queryWrapper } from '../test/queryWrapper';
 import ReviewDetail from './ReviewDetail';
 import * as api from '../api';
 import type { ReviewDetail as ReviewDetailData } from '../api';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const review: ReviewDetailData = {
   id: 'review::acme/web#42',
@@ -41,13 +44,76 @@ const review: ReviewDetailData = {
 };
 
 const renderPage = () =>
-  render(
+  renderWithQuery(
     <MemoryRouter initialEntries={['/r/acme/web/42']}>
       <Routes>
         <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={[]} />} />
       </Routes>
     </MemoryRouter>,
   );
+
+/** The live list carries summaries; a detail fixture becomes one with the list-only fields zeroed. */
+const asSummary = (detail: ReviewDetailData): api.ReviewSummary => ({
+  ...detail, carriedOverFindings: 0, costMillicents: 0, model: '', llmType: '',
+});
+
+const page = (details: ReviewDetailData[] = []) => (
+  <MemoryRouter initialEntries={['/r/acme/web/42']}>
+    <Link to="/r/acme/web/43">TEST next review</Link>
+    <Routes>
+      <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={details.map(asSummary)} />} />
+    </Routes>
+  </MemoryRouter>
+);
+
+describe('ReviewDetail reads', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({ items: [], contributingSources: [], missingSources: [] });
+    vi.spyOn(api, 'fetchPrDescription').mockResolvedValue(null);
+    vi.spyOn(api, 'fetchReviewDetail').mockResolvedValue(review);
+  });
+
+  it('shows the review at once when it opens again', async () => {
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(page(), { wrapper });
+    expect(await screen.findByText('Add feature')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchReviewDetail).mockReturnValue(new Promise(() => {}));
+    renderWithQuery(page(), { wrapper });
+    expect(screen.getByText('Add feature')).toBeInTheDocument();
+  });
+
+  it('re-reads the detail once when its summary changes, never for the first summary seen', async () => {
+    const view = renderWithQuery(page([review]));
+    expect(await screen.findByText('Add feature')).toBeInTheDocument();
+    expect(api.fetchReviewDetail).toHaveBeenCalledTimes(1);
+    view.rerender(page([{ ...review }]));
+    expect(api.fetchReviewDetail).toHaveBeenCalledTimes(1);
+    view.rerender(page([{ ...review, updatedAt: '2026-08-02T00:00:00Z' }]));
+    await waitFor(() => expect(api.fetchReviewDetail).toHaveBeenCalledTimes(2));
+  });
+
+  // Opening another review must not re-read it because the previous review's summary differed.
+  it('reads another review once when the page moves to it', async () => {
+    const other = { ...review, id: 'review::acme/web#43', pr: 43, title: 'TEST other', updatedAt: '2026-08-05T00:00:00Z' };
+    vi.mocked(api.fetchReviewDetail).mockImplementation(async (_w, _s, pr) => (String(pr) === '43' ? other : review));
+    renderWithQuery(page([review, other]));
+    expect(await screen.findByText('Add feature')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('TEST next review'));
+    expect(await screen.findByText('TEST other')).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(api.fetchReviewDetail).mock.calls.filter(([, , pr]) => String(pr) === '43')).toHaveLength(1);
+  });
+
+  it('keeps the detail beside a failed re-read', async () => {
+    const view = renderWithQuery(page([review]));
+    expect(await screen.findByText('Add feature')).toBeInTheDocument();
+    vi.mocked(api.fetchReviewDetail).mockRejectedValue(new Error('TEST-BOOM'));
+    view.rerender(page([{ ...review, updatedAt: '2026-08-02T00:00:00Z' }]));
+    expect(await screen.findByRole('alert')).toHaveTextContent('TEST-BOOM');
+    expect(screen.getByText('Add feature')).toBeInTheDocument();
+  });
+});
 
 /** ADR-047: the dashboard says how the forge holds the review, with a link to it. */
 describe('ReviewDetail posted verdict', () => {

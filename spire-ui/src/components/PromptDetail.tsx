@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { hashKey, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
-import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, resetPrompt, savePrompt, type PromptView } from '../api';
+import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, promptKey, promptsKey, resetPrompt, savePrompt, type PromptView } from '../api';
+import { updateLive, writeLive } from '../liveCache';
 import AutoTextarea from './AutoTextarea';
 import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
 import ProvenanceLine from './PromptProvenance';
@@ -35,25 +37,26 @@ function referencedVariables(text: string): Set<string> {
  *  the "All prompts" link so leaving and returning keeps the same repository selected. */
 export default function PromptDetail() {
   const { kind = '' } = useParams();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const scope = searchParams.get('scope') ?? GLOBAL_SCOPE;
-  const [view, setView] = useState<PromptView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Each kind and scope is its own visit: moving away and back starts over, so the editor never opens from a copy
+  // read before (review of PR 361, M-1).
+  return <PromptPage key={`${kind}:${scope}`} kind={kind} scope={scope} />;
+}
 
+function PromptPage({ kind, scope }: { kind: string; scope: string }) {
+  const navigate = useNavigate();
+  const read = useQuery({ queryKey: promptKey(kind, scope), queryFn: () => fetchPrompt(kind, scope) });
+  const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
+  // The editor keeps its own copy of the text, so it opens only from a read made on this visit (a cached copy may be
+  // out of date), and stays open after a failed re-read rather than lose what the operator typed.
+  const [opened, setOpened] = useState(false);
+  const fresh = read.isFetchedAfterMount && read.isSuccess;
   useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    fetchPrompt(kind, scope)
-      .then((v) => alive && setView(v))
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
-  }, [kind, scope]);
+    if (fresh) setOpened(true);
+  }, [fresh]);
+  const view = opened ? read.data ?? null : null;
+  const loading = !view;
 
   const backHref = scope === GLOBAL_SCOPE ? '/settings/prompts' : `/settings/prompts?scope=${encodeURIComponent(scope)}`;
 
@@ -80,6 +83,23 @@ export default function PromptDetail() {
 type Busy = 'save' | 'reset' | 'accept' | null;
 
 function PromptEditor({ initial }: { initial: PromptView }) {
+  const client = useQueryClient();
+  /**
+   * What the server now holds for this kind and scope: this page's entry and the list's row at once (the list is
+   * not read again before an operator can go back to it), and every other scope re-read, since a scope below this
+   * one may inherit what changed.
+   */
+  function publish(view: PromptView) {
+    const own = promptKey(initial.kind, initial.scope);
+    const list = promptsKey(initial.scope);
+    writeLive(client, own, view);
+    updateLive<PromptView[] | undefined>(client, list, (rows) => rows?.map((row) => (row.kind === view.kind ? view : row)));
+    // Cancel first: a first read still out may have started before the save, and an invalidate would only join it
+    // (review of PR 361, M-2). The cancelled reads that are on screen are read again.
+    const others = { queryKey: ['prompt'], predicate: (q: { queryKey: readonly unknown[] }) => hashKey(q.queryKey) !== hashKey(own) };
+    void client.cancelQueries(others).then(() => client.invalidateQueries(others));
+    void client.cancelQueries({ queryKey: ['prompts'] }).then(() => client.invalidateQueries({ queryKey: ['prompts'] }));
+  }
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);
   const [customized, setCustomized] = useState(initial.customized);
@@ -127,6 +147,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     setError(null);
     try {
       const saved = await savePrompt(initial.kind, system, body, initial.scope);
+      publish(saved);
       setCustomized(saved.customized);
       setInheritedFrom(saved.inheritedFrom);
       setDrift(driftOf(saved));
@@ -146,6 +167,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
       // Re-fetch the now-effective (default-or-inherited) template rather than reusing `initial`,
       // which still holds the custom text when this scope was customized on load.
       const fresh = await fetchPrompt(initial.kind, initial.scope);
+      publish(fresh);
       setSystem(fresh.system);
       setBody(fresh.body);
       setCustomized(fresh.customized);
@@ -166,6 +188,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     try {
       await acceptPromptDefault(initial.kind, initial.scope);
       const fresh = await fetchPrompt(initial.kind, initial.scope);
+      publish(fresh);
       setInheritedFrom(fresh.inheritedFrom);
       setDrift(driftOf(fresh));
     } catch (err) {

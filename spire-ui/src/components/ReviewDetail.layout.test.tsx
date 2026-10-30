@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ReviewDetail from './ReviewDetail';
 import * as api from '../api';
 import type { ReviewDetail as ReviewDetailData } from '../api';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const review: ReviewDetailData = {
   id: 'review::acme/web#42',
@@ -65,7 +66,7 @@ const review: ReviewDetailData = {
 };
 
 const renderPage = () =>
-  render(
+  renderWithQuery(
     <MemoryRouter initialEntries={['/r/acme/web/42']}>
       <Routes>
         <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={[]} />} />

@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router';
 import { AlertTriangle, ChevronRight, FileText } from 'lucide-react';
-import { fetchPrompts, GLOBAL_SCOPE, type PromptView } from '../api';
+import { fetchPrompts, GLOBAL_SCOPE, promptsKey, type PromptView } from '../api';
+
+const NO_PROMPTS: PromptView[] = [];
 import PromptScopePicker from './PromptScopePicker';
 import { KIND_LABELS, provenanceTag } from './promptKinds';
 
@@ -22,22 +24,11 @@ export default function PromptsSettings() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const scope = scopeFrom(searchParams);
-  const [prompts, setPrompts] = useState<PromptView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    fetchPrompts(scope)
-      .then((list) => alive && setPrompts(list))
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
-  }, [scope]);
+  // A scope change keeps the last list on screen until the new scope's list answers, as before.
+  const read = useQuery({ queryKey: promptsKey(scope), queryFn: () => fetchPrompts(scope), placeholderData: keepPreviousData });
+  const prompts = read.data ?? NO_PROMPTS;
+  const loading = read.data === undefined && !read.error;
+  const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
 
   function onScopeChange(next: string) {
     setSearchParams(next === GLOBAL_SCOPE ? {} : { scope: next });
@@ -63,7 +54,7 @@ export default function PromptsSettings() {
           The prompts Code Spire sends to the LLM. Edit the instructions and place variables — the
           security fence and output format are always enforced. Select a prompt to edit.
         </p>
-        {loading && prompts.length === 0 ? (
+        {loading ? (
           <div style={{ padding: '18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : (
           <div className="prompt-list">

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import ContextCard, { splitComments } from './ContextCard';
 import * as api from '../api';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const item = {
   kind: 'ISSUE',
@@ -57,7 +58,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText(/Cap discounts at 50%/)).toBeInTheDocument();
     expect(screen.queryByText(/Must reject above 50/)).not.toBeInTheDocument();
@@ -71,7 +72,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
     expect(await screen.findByText(/Must reject above 50/)).toBeInTheDocument();
@@ -88,7 +89,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
     expect(screen.queryByRole('button', { name: /comment/i })).not.toBeInTheDocument();
@@ -112,7 +113,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     fireEvent.click(await screen.findByRole('button', { name: /Cap discounts at 50%/ }));
     expect(await screen.findByRole('button', { name: /2 comments/i })).toBeInTheDocument();
@@ -126,7 +127,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText(/No context was resolved/i)).toBeInTheDocument();
   });
@@ -140,7 +141,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText('Implements #7')).toBeInTheDocument();
     expect(api.fetchPrDescription).toHaveBeenCalledWith('acme', 'widgets', 7);
@@ -155,7 +156,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText(/pull request description/i)).toBeInTheDocument();
   });
@@ -169,7 +170,7 @@ describe('ContextCard', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(api, 'fetchReviewContext').mockRejectedValue(new Error('network error'));
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText(/Could not load the context/i)).toBeInTheDocument();
     expect(screen.queryByText(/No context was resolved/i)).not.toBeInTheDocument();
@@ -189,7 +190,7 @@ describe('ContextCard', () => {
     });
     vi.spyOn(api, 'fetchPrDescription').mockRejectedValue(new Error('The stored credential was rejected.'));
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     expect(await screen.findByText(/description could not be loaded/i)).toBeInTheDocument();
     expect(screen.queryByText('—')).not.toBeInTheDocument();
@@ -202,7 +203,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     await screen.findByText(/Cap discounts at 50%/);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
@@ -215,7 +216,7 @@ describe('ContextCard', () => {
       missingSources: [],
     });
 
-    render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
+    renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc123" contextReady />);
 
     const link = await screen.findByRole('link');
     expect(link).toHaveAttribute('href', item.uri);
@@ -237,12 +238,28 @@ describe('ContextCard', () => {
     // count going in reflects earlier tests, not this one — start from a clean count.
     fetchSpy.mockClear();
 
-    const { rerender } = render(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" contextReady />);
+    const { rerender } = renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" contextReady />);
     await screen.findByText(/Cap discounts at 50%/);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     rerender(<ContextCard workspace="acme" slug="widgets" pr={7} sha="def222" contextReady />);
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+  });
+
+  // Review of PR 361, M-3: a new head whose read fails keeps the last items on screen, beside the failure.
+  it('keeps the last context beside a failed read for a new commit', async () => {
+    vi.spyOn(api, 'fetchPrDescription').mockResolvedValue(null);
+    const fetchSpy = vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+    const { rerender } = renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" contextReady />);
+    await screen.findByText(/Cap discounts at 50%/);
+    fetchSpy.mockRejectedValue(new Error('TEST-BOOM'));
+    rerender(<ContextCard workspace="acme" slug="widgets" pr={7} sha="def222" contextReady />);
+    expect(await screen.findByText('Could not load the context for this review.')).toBeInTheDocument();
+    expect(screen.getByText(/Cap discounts at 50%/)).toBeInTheDocument();
   });
 
   /**
@@ -260,7 +277,7 @@ describe('ContextCard', () => {
     fetchSpy.mockClear();
 
     // Mounted mid-review: the diff is fetched, context has not been assembled yet.
-    const { rerender } = render(
+    const { rerender } = renderWithQuery(
       <ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" contextReady={false} />,
     );
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));

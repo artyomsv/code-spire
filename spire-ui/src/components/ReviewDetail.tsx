@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
-import { fetchReviewDetail, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { invalidateLive } from '../liveCache';
+import { fetchReviewDetail, reviewDetailKey, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, prStateBadge, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
@@ -25,58 +27,41 @@ function postedAs(r: ReviewDetailData) {
 
 export default function ReviewDetail({ reviews }: Props) {
   const { workspace, slug, pr } = useParams();
-  const [detail, setDetail] = useState<ReviewDetailData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const client = useQueryClient();
+  // One cache entry per review, so a slower answer for review A can never land under review B's address.
+  const read = useQuery({
+    queryKey: reviewDetailKey(workspace ?? '', slug ?? '', pr ?? ''),
+    queryFn: () => fetchReviewDetail(workspace ?? '', slug ?? '', pr ?? ''),
+    enabled: !!workspace && !!slug && !!pr,
+  });
+  const detail: ReviewDetailData | null = read.data ?? null;
+  const error = read.error ? (read.error instanceof Error ? read.error.message : 'Failed to load review') : null;
 
-  // Monotonic request id: a response only applies while it is still the latest
-  // load for the current params — otherwise navigating A→B can let A's slower
-  // response clobber B (mirrors the `active` pattern in useLiveReviews).
-  const requestSeq = useRef(0);
-
-  const load = useCallback(() => {
-    if (!workspace || !slug || !pr) return;
-    const seq = ++requestSeq.current;
-    fetchReviewDetail(workspace, slug, pr)
-      .then((d) => {
-        if (seq !== requestSeq.current) return;
-        setDetail(d);
-        setError(null);
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        if (seq !== requestSeq.current) return;
-        setError(e instanceof Error ? e.message : 'Failed to load review');
-        setLoading(false);
-      });
-  }, [workspace, slug, pr]);
+  const load = useCallback(
+    () => void invalidateLive(client, reviewDetailKey(workspace ?? '', slug ?? '', pr ?? '')),
+    [client, workspace, slug, pr],
+  );
 
   useEffect(() => {
-    setLoading(true);
-    setDetail(null);
-    load();
     window.scrollTo(0, 0);
-    return () => {
-      // Invalidate in-flight responses on param change / unmount.
-      requestSeq.current++;
-    };
-  }, [load]);
+  }, [workspace, slug, pr]);
 
-  // When a live summary update arrives for this review, refresh the detail.
+  // When a live summary update arrives for this review, refresh the detail. The first summary seen for a review is
+  // where it starts, not a change: opening review B must not re-read B because A's summary differed.
   const summary = reviews.find(
     (r) => r.workspace === workspace && r.slug === slug && String(r.pr) === pr,
   );
   const summaryUpdatedAt = summary?.updatedAt;
-  const prevUpdated = useRef<string | undefined>(undefined);
+  const reviewId = `${workspace}/${slug}/${pr}`;
+  const seen = useRef<{ review: string; updatedAt: string } | null>(null);
   useEffect(() => {
     if (summaryUpdatedAt === undefined) return;
-    if (prevUpdated.current !== undefined && prevUpdated.current !== summaryUpdatedAt) {
-      load();
-    }
-    prevUpdated.current = summaryUpdatedAt;
-  }, [summaryUpdatedAt, load]);
+    const previous = seen.current;
+    seen.current = { review: reviewId, updatedAt: summaryUpdatedAt };
+    if (previous && previous.review === reviewId && previous.updatedAt !== summaryUpdatedAt) load();
+  }, [reviewId, summaryUpdatedAt, load]);
 
-  if (error) {
+  if (error && !detail) {
     return (
       <section className="content" id="view-detail">
         <Link className="back" to="/">
@@ -87,7 +72,7 @@ export default function ReviewDetail({ reviews }: Props) {
     );
   }
 
-  if (loading || !detail) {
+  if (!detail) {
     return (
       <section className="content" id="view-detail">
         <Link className="back" to="/">
@@ -105,6 +90,12 @@ export default function ReviewDetail({ reviews }: Props) {
       <Link className="back" to="/">
         ← All reviews
       </Link>
+      {/* A failed re-read keeps the last detail on screen and says why it may be out of date. */}
+      {error && (
+        <div role="alert" style={{ color: 'var(--crit)', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
       <div className="dhead">
         <div className="maintitle">
           <h2>{r.title}</h2>

@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { getReviewMode, setReviewMode, type ReviewMode } from '../api';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getReviewMode, reviewModeKey, setReviewMode, type ReviewMode } from '../api';
+import { writeLive } from '../liveCache';
 
 /** Coerce any value to a valid mode; anything but 'observe' is 'active' (matches the backend). */
 export function normalizeMode(value: unknown): ReviewMode {
@@ -20,19 +22,13 @@ const MODE_INFO =
  * with revert-on-error.
  */
 export default function ReviewModeToggle() {
-  const [mode, setMode] = useState<ReviewMode | null>(null);
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: reviewModeKey, queryFn: async () => normalizeMode((await getReviewMode()).mode) });
+  const mode: ReviewMode | null = read.data ?? null;
+  const setMode = (next: ReviewMode | null) => { if (next) writeLive(client, reviewModeKey, next); };
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getReviewMode()
-      .then((r) => alive && setMode(normalizeMode(r.mode)))
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)));
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
 
   async function toggle(next: ReviewMode) {
     if (busy || next === mode) return;

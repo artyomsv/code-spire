@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { render, screen, within } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from './api';
@@ -9,6 +9,7 @@ import ReviewDetail from './components/ReviewDetail';
 import { matchesChip, needsAttention } from './components/ReviewsFilters';
 import type { ChipFilter } from './components/ReviewsFilters';
 import { findCell, findingsCard, miniPipeline, outcomeBadge, STATUS_LABEL } from './render';
+import { renderWithQuery } from './test/queryWrapper';
 
 /**
  * The `refused` review status (ADR-025): a spend or diff-size cap declined to run the review.
@@ -55,7 +56,7 @@ const summary = (over: Partial<ReviewSummary> = {}): ReviewSummary => ({
 });
 
 function renderList(reviews: ReviewSummary[]) {
-  render(
+  renderWithQuery(
     <MemoryRouter>
       <ReviewsList
         reviews={reviews}
@@ -197,7 +198,7 @@ const refusedDetail = (over: Partial<ReviewDetailData> = {}): ReviewDetailData =
 });
 
 const renderDetailPage = () =>
-  render(
+  renderWithQuery(
     <MemoryRouter initialEntries={['/r/TEST-WS/TEST-REPO/1']}>
       <Routes>
         <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={[]} />} />

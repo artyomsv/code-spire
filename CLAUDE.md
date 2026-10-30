@@ -313,6 +313,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   exports still applies). LLM models share `preparationKeys.llmModels()`. A form filled from a row (General, the
   sign-in application form) starts from a read made on this visit; the sign-in form mounts only while open. The Codex
   subscription sign-in still asks every 2 s while a sign-in is open: it watches a vendor device flow with no push channel.
+  The review and prompt screens are done too: the review page reads one entry per review (`reviewDetailKey`) and
+  re-reads it when the live list changes that review's summary (never for the first summary seen for a review); the
+  prompt editor opens from a read made on this visit and stays open after a failed re-read, and a save writes the
+  prompt and its list row before re-reading the other scopes. `FindingConversation` keeps its own fetch: `render.tsx`
+  draws it in static render tests that have no query provider. Tests render through `renderWithQuery`.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
