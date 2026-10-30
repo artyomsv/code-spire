@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsGeneral from './SettingsGeneral';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 /**
  * The Limits section (Task 9 of the spend-caps plan). The one thing this file exists to pin: a blank
@@ -29,7 +30,7 @@ describe('SettingsGeneral — Limits', () => {
     vi.spyOn(api, 'getCapSettings').mockResolvedValue({
       maxChangedFiles: null, maxDiffBytes: null, spendCapMillicents: null, callCap: null, windowMinutes: 1440,
     });
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Limits');
     expect(screen.getByText('Code review')).toBeTruthy();
     expect(screen.getByText('Conversation')).toBeTruthy();
@@ -39,7 +40,7 @@ describe('SettingsGeneral — Limits', () => {
     vi.spyOn(api, 'getCapSettings').mockResolvedValue({
       maxChangedFiles: 500, maxDiffBytes: 900_000, spendCapMillicents: 500_000, callCap: 100, windowMinutes: 60,
     });
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Limits');
 
     expect(fieldInput('Max changed files').value).toBe('500');
@@ -56,7 +57,7 @@ describe('SettingsGeneral — Limits', () => {
     const putCaps = vi.spyOn(api, 'setCapSettings').mockResolvedValue({
       maxChangedFiles: null, maxDiffBytes: null, spendCapMillicents: null, callCap: null, windowMinutes: 1440,
     });
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Limits');
 
     fireEvent.change(fieldInput('Max changed files'), { target: { value: '' } });
@@ -78,7 +79,7 @@ describe('SettingsGeneral — Limits', () => {
       maxChangedFiles: null, maxDiffBytes: null, spendCapMillicents: null, callCap: null, windowMinutes: 1440,
     });
     const putCaps = vi.spyOn(api, 'setCapSettings');
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Limits');
 
     fireEvent.change(fieldInput('Call cap'), { target: { value: '0' } });
@@ -93,7 +94,7 @@ describe('SettingsGeneral — Limits', () => {
       maxChangedFiles: null, maxDiffBytes: null, spendCapMillicents: null, callCap: null, windowMinutes: 1440,
     });
     const putReview = vi.spyOn(api, 'setReviewSettings');
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Limits');
 
     // Touch a field in the Code review group too, so this test would fail if the caps validation

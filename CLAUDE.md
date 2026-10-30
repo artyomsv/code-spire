@@ -308,6 +308,11 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   would clear a failed read's error). A cached list is shown at once, but Edit, Delete and `?edit=` deep links wait for a read made on this visit
   (`isFetchedAfterMount && isSuccess`), so a save never sends back a stale field. `invalidateLive` returns the re-read,
   so an action can await it; inside a synchronous `act()` discard it (`act(() => { void invalidateLive(...); })`).
+  Settings batch B is done: General, LLM, Memory, People, sign-in applications, Dead-letter and Harness credentials read
+  keys declared in `api.ts` (a `Promise.all` query function stays in the component, so tests' `vi.spyOn` on the `api`
+  exports still applies). LLM models share `preparationKeys.llmModels()`. A form filled from a row (General, the
+  sign-in application form) starts from a read made on this visit; the sign-in form mounts only while open. The Codex
+  subscription sign-in still asks every 2 s while a sign-in is open: it watches a vendor device flow with no push channel.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

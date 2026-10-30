@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsGeneral from './SettingsGeneral';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 /**
  * One Save for both groups: the page holds two endpoints, which an operator should not have to notice
@@ -19,8 +20,21 @@ describe('SettingsGeneral', () => {
     });
   });
 
+  // A cached copy may be out of date; the form must not let the operator edit and save it back.
+  it('fills the form only from a read made on this visit', async () => {
+    const wrapper = queryWrapper();
+    const first = render(<SettingsGeneral />, { wrapper });
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.getReviewSettings).mockReturnValue(new Promise(() => {}));
+    render(<SettingsGeneral />, { wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
   it('shows a single Save for both groups', async () => {
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
     expect(screen.getByText('Conversation')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
@@ -29,7 +43,7 @@ describe('SettingsGeneral', () => {
   it('writes only the group that changed', async () => {
     const putReview = vi.spyOn(api, 'setReviewSettings').mockResolvedValue({ maxAttempts: 6, backoffBaseMs: 5000, backoffFactor: 2 });
     const putConversation = vi.spyOn(api, 'setConversationSettings');
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
 
     // The review group's only number input is its retry budget.
@@ -43,7 +57,7 @@ describe('SettingsGeneral', () => {
 
   it('surfaces a save failure without claiming success', async () => {
     vi.spyOn(api, 'setReviewSettings').mockRejectedValue(new Error('boom'));
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
 
     const reviewAttempts = screen.getAllByRole('spinbutton')[0];
@@ -55,7 +69,7 @@ describe('SettingsGeneral', () => {
   });
 
   it('explains each field through an info control rather than prose', async () => {
-    render(<SettingsGeneral />);
+    render(<SettingsGeneral />, { wrapper: queryWrapper() });
     await screen.findByText('Code review');
     // Keyboard-reachable, not hover-only.
     expect(screen.getByRole('button', { name: 'About retry attempts — code review' })).toBeTruthy();

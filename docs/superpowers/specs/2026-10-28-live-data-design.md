@@ -2,7 +2,8 @@
 
 Status: **steps 1–5 delivered** (PRs #352–#356, 2026-10-29); step 6 moves read-once screens as they are touched,
 its work-item batch is PR #357, its repository batch PR #358 and settings batch A
-(accounts, webhooks, context) PR #359.
+(accounts, webhooks, context) PR #359, and settings batch B (general, LLM, memory, people, dead-letter, harness
+credentials) PR #360. The subscription sign-in keeps its poll: a vendor device flow has no push channel.
 The tables in §1 describe master `a88e83fd`, before this work.
 
 ## 1. Problem

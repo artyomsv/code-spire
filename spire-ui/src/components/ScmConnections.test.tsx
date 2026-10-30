@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { ScmConnections } from './ScmConnections';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 /**
  * Setting up the applications operators sign into (P4 / FR-11).
@@ -39,8 +40,37 @@ describe('ScmConnections', () => {
     vi.spyOn(api, 'fetchScmOAuthApps').mockResolvedValue(APPS);
   });
 
+  // A cached row may be out of date; its form must not open until this visit's read answers.
+  it('shows the applications at once when the page opens again, with Edit off until this visit\'s read answers', async () => {
+    const wrapper = queryWrapper();
+    const first = render(<ScmConnections />, { wrapper });
+    expect(await screen.findByText('GitHub')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchScmOAuthApps).mockReturnValue(new Promise(() => {}));
+    render(<ScmConnections />, { wrapper });
+    expect(screen.getByText('GitHub')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+  });
+
+  // Review of PR 360, M-1: until the read after a save answers, the cached row still holds the old fields.
+  it('keeps Edit locked after a save until the re-read answers', async () => {
+    vi.spyOn(api, 'saveScmOAuthApp').mockResolvedValue(undefined);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    let answer: (apps: api.ScmOAuthApp[]) => void = () => {};
+    vi.mocked(api.fetchScmOAuthApps).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    fireEvent.change(await screen.findByLabelText(/Client id/), { target: { value: 'TEST-CLIENT-NEW' } });
+    fireEvent.submit(document.querySelector('form.oauth-app-form') as HTMLFormElement);
+    await waitFor(() => expect(document.querySelector('form.oauth-app-form')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    answer([{ ...APPS[0], clientId: 'TEST-CLIENT-NEW' }, APPS[1]]);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByDisplayValue('TEST-CLIENT-NEW')).toBeInTheDocument();
+  });
+
   it('separates a platform that is set up from one that is not', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
 
     // Named the way the platform names itself, not by the internal provider type: this row is read
     // beside that platform’s own portal, and "bitbucket-cloud" appears nowhere in it.
@@ -56,7 +86,7 @@ describe('ScmConnections', () => {
    * names nothing in this product.
    */
   it('shows the redirect address to register, ready to copy', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
 
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
 
@@ -75,7 +105,7 @@ describe('ScmConnections', () => {
    * the bot credential they already set up.
    */
   it('answers whose account registers it, before showing the form', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
 
     expect(await screen.findByText(/once per platform/)).toBeTruthy();
     expect(screen.getByText(/not the bot/i)).toBeTruthy();
@@ -99,7 +129,7 @@ describe('ScmConnections', () => {
    * calls it a Key -- and two platforms refuse to issue a secret at all unless a box is ticked.
    */
   it('walks through the platform’s own portal, step by step', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
 
     expect(await screen.findByText(/On GitHub . one-off setup/)).toBeTruthy();
@@ -109,7 +139,7 @@ describe('ScmConnections', () => {
 
   /** Blank means the hosted service everywhere, so the hint has to say what self-managed needs. */
   it('says what a self-managed install needs in each base field', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
 
     expect(await screen.findByText(/api\/v3/)).toBeTruthy();
@@ -123,7 +153,7 @@ describe('ScmConnections', () => {
   it('keeps the stored secret when the field is left blank', async () => {
     const save = vi.spyOn(api, 'saveScmOAuthApp').mockResolvedValue(undefined);
 
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
 
     fireEvent.change(await screen.findByLabelText(/Sign-in base URL/), {
@@ -144,7 +174,7 @@ describe('ScmConnections', () => {
 
   /** A first setup has nothing to keep, so the secret is required rather than optional. */
   it('requires a secret the first time a platform is set up', async () => {
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
     fireEvent.click((await screen.findByText('Set up')));
 
     const secret = (await screen.findByLabelText(/Client secret/)) as HTMLInputElement;
@@ -155,7 +185,7 @@ describe('ScmConnections', () => {
   it('surfaces a rejected save instead of appearing to have stored it', async () => {
     vi.spyOn(api, 'saveScmOAuthApp').mockRejectedValue(new Error('TEST-REJECTED'));
 
-    render(<ScmConnections />);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
     fireEvent.click((await screen.findAllByText('Edit'))[0]);
     fireEvent.submit(document.querySelector('form.oauth-app-form') as HTMLFormElement);
 

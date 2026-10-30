@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, UsersRound } from 'lucide-react';
 import {
   ObservedAuthor,
@@ -7,9 +8,11 @@ import {
   fetchOperatorCandidates,
   fetchOperatorIdentities,
   fetchSeenOperators,
+  operatorsKey,
   linkOperatorIdentity,
   unlinkOperatorIdentity,
 } from '../api';
+import { invalidateLive } from '../liveCache';
 import AccountsTabs from './AccountsTabs';
 import { ScmConnections } from './ScmConnections';
 
@@ -29,27 +32,31 @@ import { ScmConnections } from './ScmConnections';
  * <p>Admin-only including the listing, because this is a map from named people to their measured
  * activity — ADR-022's "a listing is an inventory" rule at its sharpest.
  */
+const NO_AUTHORS: ObservedAuthor[] = [];
+const NO_OPERATORS: SeenOperator[] = [];
+
 export function SettingsOperators() {
-  const [links, setLinks] = useState<OperatorIdentityLink[] | null>(null);
-  const [candidates, setCandidates] = useState<ObservedAuthor[]>([]);
-  const [operators, setOperators] = useState<SeenOperator[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  // The three are read together: the table names both ends of a link from the other two.
+  const read = useQuery({
+    queryKey: operatorsKey,
+    queryFn: async () => {
+      const [links, candidates, operators] = await Promise.all([
+        fetchOperatorIdentities(), fetchOperatorCandidates(), fetchSeenOperators(),
+      ]);
+      return { links, candidates, operators };
+    },
+  });
+  const links: OperatorIdentityLink[] | null = read.data?.links ?? null;
+  const candidates: ObservedAuthor[] = read.data?.candidates ?? NO_AUTHORS;
+  const operators: SeenOperator[] = read.data?.operators ?? NO_OPERATORS;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
   const [subject, setSubject] = useState('');
   const [picked, setPicked] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const reload = () =>
-    Promise.all([fetchOperatorIdentities(), fetchOperatorCandidates(), fetchSeenOperators()])
-      .then(([linked, seen, people]) => {
-        setLinks(linked);
-        setCandidates(seen);
-        setOperators(people);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-
-  useEffect(() => {
-    void reload();
-  }, []);
+  const reload = () => invalidateLive(client, operatorsKey);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

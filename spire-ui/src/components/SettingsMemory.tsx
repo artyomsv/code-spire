@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Brain, Check, RotateCcw, X } from 'lucide-react';
 import {
   LearnedPreference,
   MemoryThresholds,
   decidePreference,
   fetchMemory,
+  memoryKey,
   rescanMemory,
 } from '../api';
+import { invalidateLive } from '../liveCache';
+
+const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * What the reviewer has learned to stop saying, and whether an operator agrees (P4 / FR-10).
@@ -76,21 +81,14 @@ function Card({
 }
 
 export function SettingsMemory() {
-  const [view, setView] = useState<{
-    preferences: LearnedPreference[];
-    thresholds: MemoryThresholds;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: memoryKey, queryFn: () => fetchMemory() });
+  const view: { preferences: LearnedPreference[]; thresholds: MemoryThresholds } | null = read.data ?? null;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? (read.error ? messageOf(read.error) : null);
   const [busy, setBusy] = useState(false);
 
-  const reload = () =>
-    fetchMemory()
-      .then(setView)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-
-  useEffect(() => {
-    void reload();
-  }, []);
+  const reload = () => invalidateLive(client, memoryKey);
 
   const decide = async (id: number, action: 'approve' | 'reject' | 'revoke') => {
     setError(null);

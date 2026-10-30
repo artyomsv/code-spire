@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { SettingsOperators } from './SettingsOperators';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 /**
  * Which SCM accounts belong to which operator (P4 / FR-11).
@@ -35,11 +36,24 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchScmOAuthApps').mockResolvedValue([]);
   });
 
+  it('shows the links at once when the page opens again', async () => {
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+      { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '3218389' },
+    ]);
+    const wrapper = queryWrapper();
+    const first = render(<SettingsOperators />, { wrapper });
+    expect(await screen.findByText('TEST-SUBJECT-1')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchOperatorIdentities).mockReturnValue(new Promise(() => {}));
+    render(<SettingsOperators />, { wrapper });
+    expect(screen.getByText('TEST-SUBJECT-1')).toBeInTheDocument();
+  });
+
   /** The screen is the People tab of Accounts, and says so above its own content. */
   it('renders as the People tab of Accounts', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByRole('link', { name: 'People' })).toHaveAttribute('aria-current', 'page'));
     expect(screen.getByRole('link', { name: 'Machine accounts' })).toHaveAttribute('href', '#/settings/accounts');
@@ -50,7 +64,7 @@ describe('SettingsOperators', () => {
       { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '3218389' },
     ]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText('TEST-SUBJECT-1')).toBeTruthy());
     const row = screen.getByText('TEST-SUBJECT-1').closest('tr') as HTMLElement;
@@ -68,7 +82,7 @@ describe('SettingsOperators', () => {
   it('offers both ends as choices rather than text fields', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByLabelText(/SCM account/)).toBeTruthy());
     const account = screen.getByLabelText(/SCM account/) as HTMLSelectElement;
@@ -84,7 +98,7 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     const link = vi.spyOn(api, 'linkOperatorIdentity').mockResolvedValue(undefined);
 
-    const { container } = render(<SettingsOperators />);
+    const { container } = render(<SettingsOperators />, { wrapper: queryWrapper() });
     // Wait for the OPTIONS, not the button: the button is always there, and changing a select
     // before its options exist leaves the value at '' -- the browser refuses a value it has no
     // option for.
@@ -113,7 +127,7 @@ describe('SettingsOperators', () => {
       { oidcSubject: 'TEST-SUBJECT-1', providerType: 'gitlab', authorId: '40124851' },
     ]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getAllByText('TEST-SUBJECT-1').length).toBe(2));
   });
@@ -121,7 +135,7 @@ describe('SettingsOperators', () => {
   it('says what an empty list means', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText(/No operator is linked yet/)).toBeTruthy());
     expect(screen.getByText(/nobody can see their own activity/)).toBeTruthy();
@@ -132,7 +146,7 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     vi.spyOn(api, 'fetchOperatorCandidates').mockResolvedValue([]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText(/No author has been reviewed yet/)).toBeTruthy());
     expect((screen.getByText('Link') as HTMLButtonElement).disabled).toBe(true);
@@ -142,7 +156,7 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     vi.spyOn(api, 'fetchSeenOperators').mockResolvedValue([]);
 
-    render(<SettingsOperators />);
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText(/Nobody has signed in yet/)).toBeTruthy());
     expect((screen.getByText('Link') as HTMLButtonElement).disabled).toBe(true);
@@ -152,7 +166,7 @@ describe('SettingsOperators', () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
     vi.spyOn(api, 'linkOperatorIdentity').mockRejectedValue(new Error('TEST-REJECTED'));
 
-    const { container } = render(<SettingsOperators />);
+    const { container } = render(<SettingsOperators />, { wrapper: queryWrapper() });
     await waitFor(() => expect(screen.getByText(/TEST-AUTHOR-A · gitlab/)).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText(/^Operator$/), { target: { value: 'TEST-SUBJECT-9' } });
