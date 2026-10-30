@@ -28,6 +28,9 @@ async function request<T>(path: string, method = 'GET', body?: ActorInput): Prom
 export function actorPath(accountId: string, repositoryId?: string): string {
   return repositoryId ? `/api/repositories/${repositoryId}/fix-actors` : `/api/providers/${accountId}/actors`;
 }
+/** One policy per path: an account's allowed people, or a repository's fix overrides. */
+export const actorsKey = (path: string) => ['actors', path] as const;
+
 export async function fetchActors(path: string, refresh = false): Promise<ActorPolicy> {
   const result = await request<ActorPolicy | ActorDisplay[]>(`${path}?refresh=${refresh}`);
   return Array.isArray(result) ? { revision: 0, actors: result } : result;

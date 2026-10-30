@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { ConnectOptions, connectOutcome } from './ConnectOptions';
 import * as api from '../api';
 import * as auth from '../auth';
+import { queryWrapper, renderWithQuery } from '../test/queryWrapper';
 
 /**
  * An operator proving their own SCM account (P4 / FR-11).
@@ -19,12 +20,25 @@ describe('ConnectOptions', () => {
     vi.restoreAllMocks();
   });
 
+  it('shows the sign-in options at once when they are drawn again', async () => {
+    vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([
+      { providerType: 'github', configured: true, linked: false, authorId: '' },
+    ]);
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(<ConnectOptions />, { wrapper });
+    expect(await screen.findByText(/Connect my github account/)).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchConnectablePlatforms).mockReturnValue(new Promise(() => {}));
+    renderWithQuery(<ConnectOptions />, { wrapper });
+    expect(screen.getByText(/Connect my github account/)).toBeInTheDocument();
+  });
+
   it('offers a real navigation, not a fetch, for each configured platform', async () => {
     vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([
       { providerType: 'github', configured: true, linked: false, authorId: '' },
     ]);
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     const link = await screen.findByText(/Connect my github account/);
     const anchor = link.closest('a') as HTMLAnchorElement;
@@ -38,7 +52,7 @@ describe('ConnectOptions', () => {
       { providerType: 'github', configured: true, linked: true, authorId: '3218389' },
     ]);
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     await waitFor(() => expect(screen.queryByText(/Loading/)).toBeNull());
     expect(screen.queryByText(/Connect my github account/)).toBeNull();
@@ -53,7 +67,7 @@ describe('ConnectOptions', () => {
       { providerType: 'gitlab', configured: false, linked: false, authorId: '' },
     ]);
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     expect(await screen.findByText(/No platform is set up for sign-in yet/)).toBeTruthy();
     expect(screen.getByText(/Settings → Accounts → People/)).toBeTruthy();
@@ -70,7 +84,7 @@ describe('ConnectOptions', () => {
       { providerType: 'gitlab', configured: false, linked: false, authorId: '' },
     ]);
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     await waitFor(() => expect(screen.queryByText(/Loading/)).toBeNull());
     expect(screen.queryByText(/No platform is set up for sign-in yet/)).toBeNull();
@@ -92,7 +106,7 @@ describe('ConnectOptions', () => {
       roles: [],
     });
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     expect(await screen.findByText(/Authentication is off in this deployment/)).toBeTruthy();
     expect(screen.queryByText(/Connect my github account/)).toBeNull();
@@ -101,7 +115,7 @@ describe('ConnectOptions', () => {
   it('reports a failed load instead of looking like nothing is available', async () => {
     vi.spyOn(api, 'fetchConnectablePlatforms').mockRejectedValue(new Error('TEST-UNREACHABLE'));
 
-    render(<ConnectOptions />);
+    renderWithQuery(<ConnectOptions />);
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/TEST-UNREACHABLE/);
   });

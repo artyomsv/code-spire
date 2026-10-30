@@ -659,6 +659,8 @@ export interface ServingAccounts {
 
 // Which accounts would review and push for this forge + workspace, decided by the orchestrator's own
 // resolvers. Nothing on a repository row stores this; the screen asks rather than infers.
+export const servingAccountsKey = (repositoryId: string) => ['serving-accounts', repositoryId] as const;
+
 export async function fetchServingAccounts(repositoryId: string): Promise<ServingAccounts> {
   const query = new URLSearchParams({ repositoryId });
   const res = await apiFetch(`/api/providers/serving?${query.toString()}`);
@@ -1588,6 +1590,11 @@ export interface OperatorIdentityLink {
   authorId: string;
 }
 
+export const analyticsOverviewKey = ['analytics', 'overview'] as const;
+export const analyticsReposKey = ['analytics', 'repos'] as const;
+export const analyticsRepoKey = (workspace: string, slug: string) => ['analytics', 'repo', workspace, slug] as const;
+export const myActivityKey = ['my-activity'] as const;
+
 export async function fetchAnalyticsOverview(): Promise<AnalyticsLens> {
   const res = await apiFetch('/api/analytics/overview');
   if (!res.ok) throw new Error(`Analytics overview failed: ${res.status}`);
@@ -1701,6 +1708,8 @@ export interface ScmOAuthApp {
   connectable: boolean;
   redirectUri: string;
 }
+
+export const connectablePlatformsKey = ['connectable-platforms'] as const;
 
 export async function fetchConnectablePlatforms(): Promise<ConnectablePlatform[]> {
   const res = await apiFetch('/api/operator-connect');
