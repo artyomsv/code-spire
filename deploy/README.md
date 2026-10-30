@@ -198,7 +198,7 @@ docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml exec -T tls 
 SPIRE_E2E_CA_FILE=/tmp/spire-tls-root.crt ./deploy/e2e.sh https://localhost:34743 http://localhost:34767
 ```
 
-Twenty-one checks covering what no local dev run can: SCM ingress not being swallowed by the SPA,
+Twenty-eight checks covering what no local dev run can: SCM ingress not being swallowed by the SPA,
 role enforcement through the proxy, a WebSocket upgrade traversing nginx, a token minted for one
 service being refused by another, and the gateway's live database privileges.
 

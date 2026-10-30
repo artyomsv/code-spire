@@ -59,9 +59,29 @@ check_redirect_origin() {
         fail "$name — no redirect_uri in the login redirect"
     elif [ "$redirect" = "$want" ]; then
         pass "$name ($redirect)"
+        check_realm_accepts "$name" "$location"
     else
         fail "$name — redirect_uri is $redirect, not $want"
     fi
+}
+
+# check_realm_accepts <name> <authorization-url>
+# A correct redirect_uri is still a dead end if the realm has not registered it: the browser lands on
+# Keycloak's "Invalid parameter: redirect_uri" page and no one signs in. So the authorization request
+# itself is sent, and the realm must answer with its login form. The URL names the realm's advertised
+# host (KC_HOSTNAME), which this runner may not resolve; the request goes to $KC with the same path.
+check_realm_accepts() {
+    local name="$1" location="$2"
+    local reachable body status
+    reachable="${KC%/}/${location#*://*/}"
+    body="$(mktemp)"
+    status="$(curl -s -o "$body" --max-time 20 -w '%{http_code}' "$reachable")"
+    if [ "$status" = "200" ] && grep -qE 'id="kc-form-login"|name="username"' "$body"; then
+        pass "$name — the realm accepts it and shows its login form"
+    else
+        fail "$name — the realm refused the authorization request ($status): $(grep -o 'Invalid parameter[^<]*' "$body" | head -1)"
+    fi
+    rm -f "$body"
 }
 
 # token <client-id> <client-secret> <username> <password>
