@@ -341,6 +341,20 @@ describe('SettingsProviders — review of PR 359', () => {
     expect(screen.getByText('TEST kept account')).toBeInTheDocument();
   });
 
+  // M-3: rotating a token clears its stored scopes on the server; the overlay must not bring the old token's back.
+  it('drops a check\'s scopes once a later read reports none', async () => {
+    const client = createQueryClient();
+    vi.spyOn(api, 'fetchProviders')
+      .mockResolvedValueOnce([forge({ name: 'TEST rotated account', reportedScopes: null, scopesCheckedAt: null })])
+      .mockResolvedValue([forge({ name: 'TEST rotated account', enabled: false, reportedScopes: null, scopesCheckedAt: null })]);
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null,
+      reportedScopes: 'TEST-old-scope', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    showWith(client);
+    expect(await screen.findByText('Token reports: TEST-old-scope')).toBeInTheDocument();
+    await act(async () => { await client.invalidateQueries({ queryKey: api.providersKey }); });
+    await waitFor(() => expect(screen.queryByText('Token reports: TEST-old-scope')).toBeNull());
+  });
+
   // M-2: a cached row may be out of date; it may be read, but not edited, until this visit's read answers.
   it('offers Edit only once this visit has read the accounts', async () => {
     const client = createQueryClient();
