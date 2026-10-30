@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import PromptDetail from './PromptDetail';
 import * as api from '../api';
+import { renderWithQuery } from '../test/queryWrapper';
 
 /**
  * Task 18's drift fields (`baseKnown`/`defaultDrifted`/`baseSystem`/`baseBody`/
@@ -32,7 +33,7 @@ function driftedView(): api.PromptView {
 }
 
 function renderWithRouter(path: string) {
-  render(
+  renderWithQuery(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/settings/prompts/:kind" element={<PromptDetail />} />

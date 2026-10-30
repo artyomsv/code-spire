@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ReviewDetail from './ReviewDetail';
 import * as api from '../api';
 import * as auth from '../auth';
 import type { Me } from '../auth';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const detail = {
   id: 'review::TEST-WS/TEST-REPO#1',
@@ -51,7 +52,7 @@ const me = (roles: string[]): Me => ({
 });
 
 function renderDetail() {
-  return render(
+  return renderWithQuery(
     <MemoryRouter initialEntries={['/r/TEST-WS/TEST-REPO/1']}>
       <Routes>
         <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={[]} />} />

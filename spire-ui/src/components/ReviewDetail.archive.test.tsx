@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ReviewDetail from './ReviewDetail';
 import * as api from '../api';
 import * as auth from '../auth';
 import type { Me } from '../auth';
+import { renderWithQuery } from '../test/queryWrapper';
 
 /**
  * Archiving replaced deleting, and the two are not the same offer. Delete was irreversible and took
@@ -88,7 +89,7 @@ function stubFetch(conflictBody?: string) {
 }
 
 function renderDetail() {
-  return render(
+  return renderWithQuery(
     <MemoryRouter initialEntries={['/r/TEST-WS/TEST-REPO/1']}>
       <Routes>
         <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={[]} />} />

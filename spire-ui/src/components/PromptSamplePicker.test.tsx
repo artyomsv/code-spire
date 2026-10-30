@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import * as api from '../api';
 import PromptSamplePicker from './PromptSamplePicker';
+import { renderWithQuery } from '../test/queryWrapper';
 
 /**
  * Self-labelling fixture (TEST-* throughout): a review row can never be mistaken for a real one if
@@ -51,7 +52,7 @@ describe('PromptSamplePicker', () => {
   it('previews against no review by default', async () => {
     vi.spyOn(api, 'fetchReviews').mockResolvedValue([]);
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
-    render(<PromptSamplePicker kind="review" system="s" body="b" />);
+    renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
@@ -64,7 +65,7 @@ describe('PromptSamplePicker', () => {
     // the display label.
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(samplePreview());
     vi.spyOn(api, 'fetchReviews').mockResolvedValue([reviewRow()]);
-    render(<PromptSamplePicker kind="review" system="s" body="b" />);
+    renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
     // This project's dropdown is a custom accessible combobox (Select.tsx), not a native <select> —
     // opened and driven the same way every other test that touches it does (e.g.
@@ -89,7 +90,7 @@ describe('PromptSamplePicker', () => {
   it('previews at the scope the editor was given, not always global', async () => {
     vi.spyOn(api, 'fetchReviews').mockResolvedValue([]);
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
-    render(<PromptSamplePicker kind="review" system="s" body="b" scope="acme/widgets" />);
+    renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" scope="acme/widgets" />);
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
@@ -102,7 +103,7 @@ describe('PromptSamplePicker', () => {
       system: 's', user: '«diff inserted here»', errors: [],
       sampleReviewId: null, unavailableReason: 'diff fetch failed (404)',
     });
-    render(<PromptSamplePicker kind="review" system="s" body="b" />);
+    renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 
@@ -114,7 +115,7 @@ describe('PromptSamplePicker', () => {
     // succeeding — a deployment with no reviews, or a flaky reviews endpoint, must not block it.
     vi.spyOn(api, 'fetchReviews').mockRejectedValue(new Error('network down'));
     const preview = vi.spyOn(api, 'previewPrompt').mockResolvedValue(annotatedPreview());
-    render(<PromptSamplePicker kind="review" system="s" body="b" />);
+    renderWithQuery(<PromptSamplePicker kind="review" system="s" body="b" />);
 
     fireEvent.click(screen.getByRole('button', { name: /preview/i }));
 

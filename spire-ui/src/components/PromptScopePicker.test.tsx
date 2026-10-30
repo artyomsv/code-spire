@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import PromptScopePicker from './PromptScopePicker';
 import PromptDetail from './PromptDetail';
 import PromptsSettings from './PromptsSettings';
 import * as api from '../api';
+import { renderWithQuery } from '../test/queryWrapper';
 
 /**
  * Task 23's scope selector. The provenance tests (3 and 4) exercise `PromptDetail`, not the
@@ -37,7 +38,7 @@ function baseView(): api.PromptView {
 }
 
 function renderWithRouter(path: string) {
-  render(
+  renderWithQuery(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
@@ -50,14 +51,14 @@ describe('PromptScopePicker', () => {
   it('defaults to global', async () => {
     vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue(['acme/widgets']);
     const onChange = vi.fn();
-    render(<PromptScopePicker value="*" onChange={onChange} />);
+    renderWithQuery(<PromptScopePicker value="*" onChange={onChange} />);
 
     expect(await screen.findByDisplayValue(/global/i)).toBeInTheDocument();
   });
 
   it('lists the repositories the deployment has seen', async () => {
     vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue(['acme/widgets', 'acme/tools']);
-    render(<PromptScopePicker value="*" onChange={vi.fn()} />);
+    renderWithQuery(<PromptScopePicker value="*" onChange={vi.fn()} />);
 
     expect(await screen.findByRole('option', { name: 'acme/widgets' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'acme/tools' })).toBeInTheDocument();
@@ -101,7 +102,7 @@ describe('PromptScopePicker', () => {
     });
     vi.spyOn(api, 'fetchPrompts').mockResolvedValue([]);
     vi.spyOn(api, 'fetchPromptScopes').mockResolvedValue([]);
-    render(
+    renderWithQuery(
       <MemoryRouter initialEntries={['/settings/prompts/review?scope=acme/widgets']}>
         <Routes>
           <Route path="/settings/prompts" element={<PromptsSettings />} />

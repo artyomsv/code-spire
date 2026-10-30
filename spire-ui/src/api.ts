@@ -384,6 +384,8 @@ export async function fetchReviews(includeArchived = false): Promise<ReviewSumma
   return res.json();
 }
 
+export const reviewDetailKey = (workspace: string, slug: string, pr: string) => ['review', workspace, slug, pr] as const;
+
 export async function fetchReviewDetail(
   workspace: string,
   slug: string,
@@ -752,6 +754,8 @@ export type ReviewMode = 'observe' | 'active';
 export interface ReviewModeView {
   mode: ReviewMode;
 }
+
+export const reviewModeKey = ['review-mode'] as const;
 
 export async function getReviewMode(): Promise<ReviewModeView> {
   const res = await apiFetch('/api/settings/review-mode');
@@ -1370,6 +1374,10 @@ export interface PromptPreview {
   unavailableReason: string | null;
 }
 
+export const promptsKey = (scope: string) => ['prompts', scope] as const;
+export const promptKey = (kind: string, scope: string) => ['prompt', kind, scope] as const;
+export const promptScopesKey = ['prompt-scopes'] as const;
+
 export async function fetchPrompts(scope: string = GLOBAL_SCOPE): Promise<PromptView[]> {
   const res = await apiFetch(`/api/prompts?scope=${encodeURIComponent(scope)}`);
   if (!res.ok) return throwResponse(res, 'Failed to load prompts');
@@ -1480,6 +1488,11 @@ export interface ReviewContext {
 const seg = (s: string) => encodeURIComponent(s);
 
 /** What the model was given for this review — read from the stored blob, never re-resolved. */
+export const reviewContextKey = (workspace: string, slug: string, pr: number, sha: string) =>
+  ['review-context', workspace, slug, pr, sha] as const;
+export const prDescriptionKey = (workspace: string, slug: string, pr: number, sha: string) =>
+  ['pr-description', workspace, slug, pr, sha] as const;
+
 export async function fetchReviewContext(
   workspace: string,
   slug: string,
