@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import PromptsSettings from './PromptsSettings';
 import PromptDetail from './PromptDetail';
 import * as api from '../api';
@@ -186,6 +186,52 @@ describe('Prompt screens on the query cache', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.getByText('Loading…')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  const linked = (path: string) => (
+    <MemoryRouter initialEntries={[path]}>
+      <Link to="/settings/prompts/review">TEST to review</Link>
+      <Link to="/settings/prompts/followup">TEST to followup</Link>
+      <Link to="/settings/prompts/review?scope=acme/widgets">TEST to repo review</Link>
+      <Routes>
+        <Route path="/settings/prompts/:kind" element={<PromptDetail />} />
+      </Routes>
+    </MemoryRouter>
+  );
+
+  // Review of PR 361, M-1: coming back to a prompt is a new visit; its cached copy may be out of date.
+  it('opens the editor again only from the read made on the return visit', async () => {
+    renderWithQuery(linked('/settings/prompts/review'));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    vi.mocked(api.fetchPrompt).mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByText('TEST to followup'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    fireEvent.click(screen.getByText('TEST to review'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  // Review of PR 361, M-2: a repository's first read that started before a global save must not open the editor
+  // with the old inherited text; a read after the save does.
+  it('re-reads an inheriting scope whose first read began before a save', async () => {
+    let answerOld: (view: api.PromptView) => void = () => {};
+    let repoReads = 0;
+    vi.mocked(api.fetchPrompt).mockImplementation((_kind, scope) => {
+      if (scope !== 'acme/widgets') return Promise.resolve(reviewView);
+      repoReads += 1;
+      if (repoReads === 1) return new Promise((resolve) => { answerOld = resolve; });
+      return Promise.resolve({ ...reviewView, scope: 'acme/widgets', inheritedFrom: 'global', system: 'TEST-new' });
+    });
+    let saved: (view: api.PromptView) => void = () => {};
+    vi.spyOn(api, 'savePrompt').mockReturnValue(new Promise((resolve) => { saved = resolve; }));
+    renderWithQuery(linked('/settings/prompts/review'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByText('TEST to repo review'));
+    await waitFor(() => expect(repoReads).toBe(1));
+    await act(async () => { saved({ ...reviewView, customized: true, system: 'TEST-new' }); });
+    await act(async () => { answerOld({ ...reviewView, scope: 'acme/widgets', inheritedFrom: 'global', system: 'TEST-old' }); });
+    expect(await screen.findByDisplayValue('TEST-new')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('TEST-old')).toBeNull();
   });
 
   it('shows a save on the list before the list is read again', async () => {

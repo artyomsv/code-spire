@@ -246,6 +246,22 @@ describe('ContextCard', () => {
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
   });
 
+  // Review of PR 361, M-3: a new head whose read fails keeps the last items on screen, beside the failure.
+  it('keeps the last context beside a failed read for a new commit', async () => {
+    vi.spyOn(api, 'fetchPrDescription').mockResolvedValue(null);
+    const fetchSpy = vi.spyOn(api, 'fetchReviewContext').mockResolvedValue({
+      items: [item],
+      contributingSources: [],
+      missingSources: [],
+    });
+    const { rerender } = renderWithQuery(<ContextCard workspace="acme" slug="widgets" pr={7} sha="abc111" contextReady />);
+    await screen.findByText(/Cap discounts at 50%/);
+    fetchSpy.mockRejectedValue(new Error('TEST-BOOM'));
+    rerender(<ContextCard workspace="acme" slug="widgets" pr={7} sha="def222" contextReady />);
+    expect(await screen.findByText('Could not load the context for this review.')).toBeInTheDocument();
+    expect(screen.getByText(/Cap discounts at 50%/)).toBeInTheDocument();
+  });
+
   /**
    * The re-run case above keys on the commit, which is what a NEW run changes. Within one run
    * nothing it watched moved: context is assembled at the same commit the card already mounted on,
