@@ -76,8 +76,9 @@ jobs:
             echo "keyset generation produced nothing"; exit 1
           fi
 
+      # The TLS terminator rides along so the same stack is checked over https too (docs/TLS.md).
       - name: Up
-        run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d --pull always
+        run: docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env up -d --pull always
 
       - name: Wait for the dashboard
         run: |
@@ -97,12 +98,32 @@ jobs:
           export SPIRE_COMPOSE_FILE=deploy/compose.ghcr.yml
           bash ./deploy/e2e.sh http://localhost:34700 http://localhost:34767
 
+      # The same checks through the terminator. Things that break only behind TLS pass clean in plaintext:
+      # a forwarded scheme rewritten to http, a replaced Host, a callback registered for http only. curl
+      # verifies the certificate against the terminator's own test root instead of skipping the check.
+      - name: Round-trip over https
+        env:
+          DEV_VIEWER_PASSWORD: dev-viewer
+          DEV_OPERATOR_PASSWORD: dev-operator
+        run: |
+          set -a; . deploy/.env; set +a
+          export SPIRE_COMPOSE_FILE=deploy/compose.ghcr.yml
+          for _ in $(seq 1 30); do
+            docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env exec -T tls cat /data/caddy/pki/authorities/local/root.crt > "$RUNNER_TEMP/spire-tls-root.crt" 2>/dev/null \
+              && [ -s "$RUNNER_TEMP/spire-tls-root.crt" ] \
+              && curl -fsS -o /dev/null --cacert "$RUNNER_TEMP/spire-tls-root.crt" https://localhost:34743/api/me \
+              && break
+            sleep 2
+          done
+          SPIRE_E2E_CA_FILE="$RUNNER_TEMP/spire-tls-root.crt" \
+            bash ./deploy/e2e.sh https://localhost:34743 http://localhost:34767
+
       - name: Logs on failure
         if: failure()
-        run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env logs --tail 200
+        run: docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env logs --tail 200
       - name: Down
         if: always()
-        run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env down -v
+        run: docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env down -v
 
   # The review loop, against a REAL GitLab.
   #

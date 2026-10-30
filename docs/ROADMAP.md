@@ -652,10 +652,10 @@ environment makes differently. What remains is smaller and more infrastructural:
 per-repo admission rate limit each wait on a trigger (a diff/context blob outgrowing Postgres; a
 fleet actually needing per-repo, not just global, spend limits) rather than being blocked on anything,
 and **P3 (the repository knowledge base)** is the one item that changes what the product *is* rather
-than how well it runs — re-scoped by ADR-026 to something materially smaller than "RAG" implied. The
-nearest infrastructure item is extending `e2e.sh` to exercise an `https` origin — this codebase's own
-recorded trap is that things which break *only* behind TLS pass clean in plaintext, and that check
-does not exist yet. Operator decides.
+than how well it runs — re-scoped by ADR-026 to something materially smaller than "RAG" implied.
+`e2e.sh` now also runs over an `https` origin (2026-10-30): the nightly e2e job puts a test TLS
+terminator (`deploy/compose.tls.yml`) in front of the packaged stack and repeats every check through it,
+because things that break *only* behind TLS pass clean in plaintext. Operator decides.
 
 ---
 

@@ -1,0 +1,13 @@
+# A test TLS terminator in front of the dashboard (deploy/compose.tls.yml). It satisfies the contract in
+# docs/TLS.md the way an operator's terminator must: reverse_proxy sends X-Forwarded-Proto https and
+# keeps the Host the browser sent. `tls internal` issues a certificate from Caddy's own test root;
+# the e2e run verifies against that root rather than skipping verification.
+{
+	auto_https disable_redirects
+	admin off
+}
+
+https://localhost:34743 {
+	tls internal
+	reverse_proxy ui:8080
+}

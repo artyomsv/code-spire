@@ -72,12 +72,14 @@
         "http://localhost:39285/api/auth/callback",
         "http://localhost:34080/api/auth/callback",
         "http://localhost:39280/api/auth/callback",
-        "http://localhost:34700/api/auth/callback"
+        "http://localhost:34700/api/auth/callback",
+        "https://localhost:34743/api/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:34000",
         "http://localhost:39285",
-        "http://localhost:34700"
+        "http://localhost:34700",
+        "https://localhost:34743"
       ],
       "attributes": {
         "post.logout.redirect.uris": "http://localhost:34000/*##http://localhost:39285/*"
@@ -116,12 +118,14 @@
         "http://localhost:39285/gw/auth/callback",
         "http://localhost:34081/gw/auth/callback",
         "http://localhost:39281/gw/auth/callback",
-        "http://localhost:34700/gw/auth/callback"
+        "http://localhost:34700/gw/auth/callback",
+        "https://localhost:34743/gw/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:34000",
         "http://localhost:39285",
-        "http://localhost:34700"
+        "http://localhost:34700",
+        "https://localhost:34743"
       ],
       "protocolMappers": [
         {
@@ -157,12 +161,14 @@
         "http://localhost:39285/wk/auth/callback",
         "http://localhost:34082/wk/auth/callback",
         "http://localhost:39282/wk/auth/callback",
-        "http://localhost:34700/wk/auth/callback"
+        "http://localhost:34700/wk/auth/callback",
+        "https://localhost:34743/wk/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:34000",
         "http://localhost:39285",
-        "http://localhost:34700"
+        "http://localhost:34700",
+        "https://localhost:34743"
       ],
       "protocolMappers": [
         {
@@ -198,12 +204,14 @@
         "http://localhost:39285/rw/auth/callback",
         "http://localhost:34083/rw/auth/callback",
         "http://localhost:39283/rw/auth/callback",
-        "http://localhost:34700/rw/auth/callback"
+        "http://localhost:34700/rw/auth/callback",
+        "https://localhost:34743/rw/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:34000",
         "http://localhost:39285",
-        "http://localhost:34700"
+        "http://localhost:34700",
+        "https://localhost:34743"
       ],
       "protocolMappers": [
         {

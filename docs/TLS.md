@@ -298,6 +298,10 @@ them.
 
 Run these against the deployed origin, not localhost.
 
+The packaged stack's own end-to-end check runs over `https` too: the nightly job puts a test terminator
+(`deploy/compose.tls.yml`, Caddy) that meets requirements 1 and 2 in front of the dashboard and repeats
+`deploy/e2e.sh` through it, including the check that each login redirect names the `https` callback.
+
 **1. The session cookie is marked `Secure`.** In dev tools under Application → Cookies, look for
 cookies whose name begins `q_session` and ends `_api`, `_gw` or `_wk` (Quarkus composes the name from
 the tenant and the configured suffix, and splits large cookies into `…_chunk_N` parts). Each should
