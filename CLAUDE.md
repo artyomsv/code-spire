@@ -317,7 +317,12 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   re-reads it when the live list changes that review's summary (never for the first summary seen for a review); the
   prompt editor opens from a read made on this visit and stays open after a failed re-read, and a save writes the
   prompt and its list row before re-reading the other scopes. `FindingConversation` keeps its own fetch: `render.tsx`
-  draws it in static render tests that have no query provider. Tests render through `renderWithQuery`.
+  draws it in static render tests that have no query provider. Tests render through `renderWithQuery`. Step 6 is
+  done (PR #362): Analytics, the sign-in options, the register dialog's repositories, the people policy editor (Save and
+  Remove send its revision, so both wait for this visit's read) and the serving-account lookups (one entry per
+  repository) read through `useQuery` too. Still one-shot on purpose: `useMe` (the session read the app acts on
+  first), `useTicketTitles` (forge reads, three at a time, never stored), the dialog's URL resolution (an answer to
+  typing), the subscription sign-in poll and `FindingConversation`.
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —

@@ -1,9 +1,11 @@
 # Live data: one way for the dashboard to get server data
 
-Status: **steps 1–5 delivered** (PRs #352–#356, 2026-10-29); step 6 moves read-once screens as they are touched,
-its work-item batch is PR #357, its repository batch PR #358 and settings batch A
+Status: **steps 1–6 delivered** (PRs #352–#356, 2026-10-29; step 6 in PRs #357–#362, 2026-10-30). Step 6 moved the
+read-once screens: its work-item batch is PR #357, its repository batch PR #358 and settings batch A
 (accounts, webhooks, context) PR #359, and settings batch B (general, LLM, memory, people, dead-letter, harness
-credentials) PR #360, and the review and prompt screens PR #361. The subscription sign-in keeps its poll: a vendor
+credentials) PR #360, the review and prompt screens PR #361, and the remaining reads (analytics, sign-in options, the register dialog,
+the people policy editor, serving accounts) PR #362. `useMe`, `useTicketTitles` and the dialog's URL resolution stay
+one-shot reads on purpose. The subscription sign-in keeps its poll: a vendor
 device flow has no push channel. `FindingConversation` keeps its own fetch (static render tests have no provider).
 The tables in §1 describe master `a88e83fd`, before this work.
 
