@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { fetchServingAccounts, type ServingAccounts, type WebhookRepoView } from '../api';
+import { useQueries } from '@tanstack/react-query';
+import { fetchServingAccounts, servingAccountsKey, type ServingAccounts, type WebhookRepoView } from '../api';
 
 export interface ServingLookup {
   data?: ServingAccounts;
@@ -27,41 +27,20 @@ export function servingKey(type: string, owner: string): string {
  * the cell can say "unknown" — never "none", which is the answer that would send an operator to
  * register an account they already have.
  *
- * <p>The effect is keyed on the SET of pairs, not on the array that carried them. Keying it on the
- * array meant every save and delete re-fetched and flashed every chip back to "loading…", and a
- * caller passing an inline literal or a `.filter(…)` result would have rendered forever — this hook
- * is exported, so that caller is a matter of time. When the set does change, every pair is
- * re-fetched: the answers are no longer known to be current, and `setLookups({})` says so.
+ * <p>Each repository has its own cache entry, keyed on its id, not on the array that carried it. A save or a delete
+ * that rebuilds the array re-asks nothing, and a row added beside answered ones asks only for itself, so no chip
+ * flashes back to "loading…". A lookup absent from the record is still loading.
  */
 export function useServingAccounts(repos: WebhookRepoView[]): Record<string, ServingLookup> {
-  const [lookups, setLookups] = useState<Record<string, ServingLookup>>({});
-
-  const pairs = new Map<string, { type: string; owner: string }>();
-  for (const w of repos) {
-    if (w.repositoryId) pairs.set(w.repositoryId, { type: w.providerType, owner: w.repositoryId });
-  }
-  const dep = [...pairs.keys()].sort().join(',');
-
-  useEffect(() => {
-    let alive = true;
-    // A fresh `{}` is a new reference React cannot bail out of, so clearing an already-empty map
-    // would re-render every consumer of this hook for no change.
-    setLookups((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-    for (const [key, { owner }] of pairs) {
-      fetchServingAccounts(owner)
-        .then((data) => {
-          if (alive) setLookups((prev) => ({ ...prev, [key]: { data } }));
-        })
-        .catch((err: unknown) => {
-          if (alive) setLookups((prev) => ({ ...prev, [key]: { error: err instanceof Error ? err.message : String(err) } }));
-        });
-    }
-    return () => {
-      alive = false;
-    };
-    // `pairs` is rebuilt every render but its CONTENT is what `dep` encodes, so `dep` alone decides
-    // when this must run again.
-  }, [dep]);
-
+  const ids = [...new Set(repos.flatMap((w) => (w.repositoryId ? [w.repositoryId] : [])))].sort();
+  const reads = useQueries({
+    queries: ids.map((id) => ({ queryKey: servingAccountsKey(id), queryFn: () => fetchServingAccounts(id) })),
+  });
+  const lookups: Record<string, ServingLookup> = {};
+  ids.forEach((id, i) => {
+    const read = reads[i];
+    if (read.data !== undefined) lookups[id] = { data: read.data };
+    else if (read.error) lookups[id] = { error: read.error instanceof Error ? read.error.message : String(read.error) };
+  });
   return lookups;
 }

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 // Aliased: `Link` is react-router's navigation component throughout this codebase, and a second
 // meaning for that name in a file that also routes would be read wrong at a glance.
 import { Link2 as LinkIcon } from 'lucide-react';
-import { ConnectablePlatform, connectStartUrl, fetchConnectablePlatforms } from '../api';
+import { ConnectablePlatform, connectablePlatformsKey, connectStartUrl, fetchConnectablePlatforms } from '../api';
 import { useMe } from '../hooks/useMe';
 
 /**
@@ -17,15 +17,11 @@ import { useMe } from '../hooks/useMe';
  * thing they need to know is that an admin has one step to take.
  */
 export function ConnectOptions() {
-  const [platforms, setPlatforms] = useState<ConnectablePlatform[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const read = useQuery({ queryKey: connectablePlatformsKey, queryFn: () => fetchConnectablePlatforms() });
+  const platforms: ConnectablePlatform[] | null = read.data ?? null;
+  // A failed re-read keeps the options already shown.
+  const error = read.error && platforms === null ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
   const { me } = useMe();
-
-  useEffect(() => {
-    fetchConnectablePlatforms()
-      .then(setPlatforms)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
 
   if (error) {
     return (
