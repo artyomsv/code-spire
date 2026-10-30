@@ -58,7 +58,7 @@ export default function ReviewDetail({ reviews }: Props) {
     if (summaryUpdatedAt === undefined) return;
     const previous = seen.current;
     seen.current = { review: reviewId, updatedAt: summaryUpdatedAt };
-    if (previous && previous.updatedAt !== summaryUpdatedAt) load();
+    if (previous && previous.review === reviewId && previous.updatedAt !== summaryUpdatedAt) load();
   }, [reviewId, summaryUpdatedAt, load]);
 
   if (error && !detail) {

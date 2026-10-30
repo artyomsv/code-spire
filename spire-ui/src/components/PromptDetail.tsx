@@ -46,7 +46,7 @@ export default function PromptDetail() {
   // out of date), and stays open after a failed re-read rather than lose what the operator typed.
   const id = `${kind}:${scope}`;
   const [openFor, setOpenFor] = useState<string | null>(null);
-  const fresh = read.isSuccess;
+  const fresh = read.isFetchedAfterMount && read.isSuccess;
   useEffect(() => {
     if (fresh) setOpenFor(id);
   }, [fresh, id]);
