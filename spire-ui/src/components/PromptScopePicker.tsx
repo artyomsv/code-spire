@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { fetchPromptScopes, GLOBAL_SCOPE } from '../api';
+import { useQuery } from '@tanstack/react-query';
+import { fetchPromptScopes, GLOBAL_SCOPE, promptScopesKey } from '../api';
+
+const NO_SCOPES: string[] = [];
 
 interface PromptScopePickerProps {
   value: string;
@@ -15,19 +17,10 @@ interface PromptScopePickerProps {
  * to the custom combobox's portalled listbox here).
  */
 export default function PromptScopePicker({ value, onChange, disabled }: PromptScopePickerProps) {
-  const [scopes, setScopes] = useState<string[]>([]);
-
-  useEffect(() => {
-    let alive = true;
-    // Best-effort: a failed fetch leaves the picker at Global rather than blocking the page --
-    // every prompt endpoint already defaults to GLOBAL_SCOPE if this list can't be shown.
-    fetchPromptScopes()
-      .then((s) => alive && setScopes(s))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // Best-effort: a failed read leaves the picker at Global rather than blocking the page --
+  // every prompt endpoint already defaults to GLOBAL_SCOPE if this list can't be shown.
+  const read = useQuery({ queryKey: promptScopesKey, queryFn: () => fetchPromptScopes() });
+  const scopes = read.data ?? NO_SCOPES;
 
   return (
     <label className="field prompt-scope-picker">

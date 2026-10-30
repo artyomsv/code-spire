@@ -14,6 +14,11 @@ function sortReviews(list: ReviewSummary[]): ReviewSummary[] {
   return [...list].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
+/** The live list's read, shared by every reader of REVIEWS_KEY so they all hold one shape. */
+export async function readLiveReviews(): Promise<ReviewSummary[]> {
+  return sortReviews((await fetchReviews()).filter(isReviewSummary));
+}
+
 /**
  * Minimal wire validation: a summary without a string `id` would produce
  * undefined/duplicate React keys and unmergeable rows — drop it instead of
@@ -52,7 +57,7 @@ export function useLiveReviews(): LiveReviews {
   const [showArchived, setShowArchived] = useState(false);
   const live = useQuery({
     queryKey: REVIEWS_KEY,
-    queryFn: async () => sortReviews((await fetchReviews()).filter(isReviewSummary)),
+    queryFn: readLiveReviews,
   });
   const archived = useQuery({
     queryKey: ARCHIVED_REVIEWS_KEY,

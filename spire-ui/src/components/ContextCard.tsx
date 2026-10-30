@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { invalidateLive } from '../liveCache';
 import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
-import { fetchReviewContext, fetchPrDescription, type ContextItem, type ReviewContext } from '../api';
+import { fetchReviewContext, fetchPrDescription, prDescriptionKey, reviewContextKey, type ContextItem, type ReviewContext } from '../api';
 import { safeHttpUrl } from '../render';
 import Tooltip from './Tooltip';
 
@@ -103,33 +105,34 @@ interface ContextCardProps {
 }
 
 export default function ContextCard({ workspace, slug, pr, sha, contextReady }: ContextCardProps) {
-  const [context, setContext] = useState<ReviewContext | null>(null);
+  const client = useQueryClient();
+  // Old items stay on screen while a new head's context is read, as they did before.
+  const contextKey = reviewContextKey(workspace, slug, pr, sha);
+  const contextRead = useQuery({
+    queryKey: contextKey,
+    queryFn: async () => {
+      try {
+        return await fetchReviewContext(workspace, slug, pr);
+      } catch (err) {
+        console.error('Failed to load review context', err);
+        throw err;
+      }
+    },
+    placeholderData: keepPreviousData,
+  });
+  const context: ReviewContext | null = contextRead.data ?? null;
   // Kept separate from an empty ReviewContext: "we asked and there was nothing" and "we could not
   // ask" must never render the same message, or a rejected credential / 5xx looks identical to the
   // normal no-provider-configured path.
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [description, setDescription] = useState<string | null>(null);
-  // Distinct from "description === null" (not fetched yet): a failed fetch (revoked credential,
-  // network error) must not render as "this pull request has no description".
-  const [descriptionFailed, setDescriptionFailed] = useState(false);
+  const loadFailed = contextRead.isError;
 
+  // The context stage finishing is the moment there is something new to read; mounting is not.
+  const readyBefore = useRef(contextReady);
   useEffect(() => {
-    let cancelled = false;
-    setLoadFailed(false);
-    void fetchReviewContext(workspace, slug, pr)
-      .then((c) => {
-        if (!cancelled) setContext(c);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.error('Failed to load review context', err);
-          setLoadFailed(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, slug, pr, sha, contextReady]);
+    if (readyBefore.current === contextReady) return;
+    readyBefore.current = contextReady;
+    void invalidateLive(client, reviewContextKey(workspace, slug, pr, sha));
+  }, [client, contextReady, workspace, slug, pr, sha]);
 
   // The description is shown outright rather than behind a toggle, so it is fetched with the card.
   // That costs one SCM call per page view — the price of having the text that explains why a given
@@ -139,23 +142,21 @@ export default function ContextCard({ workspace, slug, pr, sha, contextReady }: 
   // request's description does not change because the pipeline assembled context, and this is the
   // one fetch on the page that spends an SCM call. Refetching it on a stage change would buy
   // nothing and cost a call per stage.
-  useEffect(() => {
-    let cancelled = false;
-    setDescriptionFailed(false);
-    void fetchPrDescription(workspace, slug, pr)
-      .then((d) => {
-        if (!cancelled) setDescription(d);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.error('Failed to load the pull request description', err);
-          setDescriptionFailed(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, slug, pr, sha]);
+  const descriptionRead = useQuery({
+    queryKey: prDescriptionKey(workspace, slug, pr, sha),
+    queryFn: async () => {
+      try {
+        return await fetchPrDescription(workspace, slug, pr);
+      } catch (err) {
+        console.error('Failed to load the pull request description', err);
+        throw err;
+      }
+    },
+  });
+  const description: string | null = descriptionRead.data ?? null;
+  // Distinct from "description === null" (not fetched yet): a failed fetch (revoked credential,
+  // network error) must not render as "this pull request has no description".
+  const descriptionFailed = descriptionRead.isError;
 
   return (
     <div className="card">

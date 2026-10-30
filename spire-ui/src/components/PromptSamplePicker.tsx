@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Eye } from 'lucide-react';
-import { fetchReviews, GLOBAL_SCOPE, previewPrompt, type PromptPreview, type ReviewSummary } from '../api';
+import { GLOBAL_SCOPE, previewPrompt, type PromptPreview, type ReviewSummary } from '../api';
+import { readLiveReviews, REVIEWS_KEY } from '../useLiveReviews';
+
+const NO_REVIEWS: ReviewSummary[] = [];
 import Select from './Select';
 import Tooltip from './Tooltip';
 
@@ -26,23 +30,15 @@ interface PromptSamplePickerProps {
  * server's own javadoc argues for, rather than silently previewing at global scope).
  */
 export default function PromptSamplePicker({ kind, system, body, disabled, scope = GLOBAL_SCOPE }: PromptSamplePickerProps) {
-  const [reviews, setReviews] = useState<ReviewSummary[]>([]);
+  // The live reviews list, kept fresh by its socket while the app is open. Never re-read from here: a failed read
+  // started by the picker would put an error on the reviews page, and the picker can do without a sample.
+  const read = useQuery({ queryKey: REVIEWS_KEY, queryFn: readLiveReviews, staleTime: Infinity });
+  const reviews = read.data ?? NO_REVIEWS;
   const [reviewId, setReviewId] = useState(NO_SAMPLE);
   const [preview, setPreview] = useState<PromptPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    // Best-effort: a failed fetch leaves the picker at its "no sample" default rather than
-    // blocking the preview feature on the reviews list being reachable.
-    fetchReviews()
-      .then((r) => alive && setReviews(r))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   async function onPreview() {
     setBusy(true);
