@@ -37,20 +37,25 @@ function referencedVariables(text: string): Set<string> {
  *  the "All prompts" link so leaving and returning keeps the same repository selected. */
 export default function PromptDetail() {
   const { kind = '' } = useParams();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const scope = searchParams.get('scope') ?? GLOBAL_SCOPE;
+  // Each kind and scope is its own visit: moving away and back starts over, so the editor never opens from a copy
+  // read before (review of PR 361, M-1).
+  return <PromptPage key={`${kind}:${scope}`} kind={kind} scope={scope} />;
+}
+
+function PromptPage({ kind, scope }: { kind: string; scope: string }) {
+  const navigate = useNavigate();
   const read = useQuery({ queryKey: promptKey(kind, scope), queryFn: () => fetchPrompt(kind, scope) });
   const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
   // The editor keeps its own copy of the text, so it opens only from a read made on this visit (a cached copy may be
   // out of date), and stays open after a failed re-read rather than lose what the operator typed.
-  const id = `${kind}:${scope}`;
-  const [openFor, setOpenFor] = useState<string | null>(null);
+  const [opened, setOpened] = useState(false);
   const fresh = read.isFetchedAfterMount && read.isSuccess;
   useEffect(() => {
-    if (fresh) setOpenFor(id);
-  }, [fresh, id]);
-  const view = openFor === id ? read.data ?? null : null;
+    if (fresh) setOpened(true);
+  }, [fresh]);
+  const view = opened ? read.data ?? null : null;
   const loading = !view;
 
   const backHref = scope === GLOBAL_SCOPE ? '/settings/prompts' : `/settings/prompts?scope=${encodeURIComponent(scope)}`;
@@ -89,8 +94,11 @@ function PromptEditor({ initial }: { initial: PromptView }) {
     const list = promptsKey(initial.scope);
     writeLive(client, own, view);
     updateLive<PromptView[] | undefined>(client, list, (rows) => rows?.map((row) => (row.kind === view.kind ? view : row)));
-    void client.invalidateQueries({ queryKey: ['prompt'], predicate: (q) => hashKey(q.queryKey) !== hashKey(own) });
-    void client.invalidateQueries({ queryKey: ['prompts'] });
+    // Cancel first: a first read still out may have started before the save, and an invalidate would only join it
+    // (review of PR 361, M-2). The cancelled reads that are on screen are read again.
+    const others = { queryKey: ['prompt'], predicate: (q: { queryKey: readonly unknown[] }) => hashKey(q.queryKey) !== hashKey(own) };
+    void client.cancelQueries(others).then(() => client.invalidateQueries(others));
+    void client.cancelQueries({ queryKey: ['prompts'] }).then(() => client.invalidateQueries({ queryKey: ['prompts'] }));
   }
   const [system, setSystem] = useState(initial.system);
   const [body, setBody] = useState(initial.body);

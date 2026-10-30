@@ -120,7 +120,14 @@ export default function ContextCard({ workspace, slug, pr, sha, contextReady }: 
     },
     placeholderData: keepPreviousData,
   });
-  const context: ReviewContext | null = contextRead.data ?? null;
+  // The last items read for this pull request stay on screen when a new commit's read fails, beside the failure, as
+  // they did before (review of PR 361, M-3). Placeholder data covers only the wait, not the failure.
+  const review = `${workspace}/${slug}/${pr}`;
+  const [kept, setKept] = useState<{ review: string; context: ReviewContext } | null>(null);
+  useEffect(() => {
+    if (contextRead.data && !contextRead.isPlaceholderData) setKept({ review, context: contextRead.data });
+  }, [contextRead.data, contextRead.isPlaceholderData, review]);
+  const context: ReviewContext | null = contextRead.data ?? (kept?.review === review ? kept.context : null);
   // Kept separate from an empty ReviewContext: "we asked and there was nothing" and "we could not
   // ask" must never render the same message, or a rejected credential / 5xx looks identical to the
   // normal no-provider-configured path.
