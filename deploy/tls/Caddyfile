@@ -9,7 +9,5 @@
 
 https://localhost:34743 {
 	tls internal
-	reverse_proxy ui:8080 {
-		header_up X-Forwarded-Proto http
-	}
+	reverse_proxy ui:8080
 }
