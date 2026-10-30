@@ -50,8 +50,12 @@ export default function SettingsDlq() {
           <h2 className="prov-title">Dead-letter</h2>
         </div>
 
-        {error && read.data === undefined ? (
-          <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
+        {error && entries.length > 0 && (
+          <p className="prov-note prov-error" role="alert">{error}</p>
+        )}
+        {/* With no rows to show, a failed read says so in place of the list: an old empty list proves nothing. */}
+        {error && entries.length === 0 ? (
+          <div role="alert" style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : entries.length === 0 ? (

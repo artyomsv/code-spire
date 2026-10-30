@@ -26,8 +26,10 @@ export function ScmConnections() {
   const client = useQueryClient();
   const read = useQuery({ queryKey: scmOAuthAppsKey, queryFn: () => fetchScmOAuthApps() });
   const apps = read.data ?? NO_APPS;
-  // A cached row may be out of date; its form opens only from a read made on this visit (PR 359, M-2).
-  const current = read.isFetchedAfterMount && read.isSuccess;
+  // A cached row may be out of date; its form opens only from a read made on this visit (PR 359, M-2), and after a
+  // save only once the re-read answered: until then the row still holds the fields the save replaced (PR 360, M-1).
+  const [rereading, setRereading] = useState(false);
+  const current = read.isFetchedAfterMount && read.isSuccess && !rereading;
   const [actionError, setError] = useState<string | null>(null);
   const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
   const [open, setOpen] = useState<string | null>(null);
@@ -98,7 +100,8 @@ export function ScmConnections() {
           onToggle={() => setOpen(open === app.providerType ? null : app.providerType)}
           onSaved={() => {
             setOpen(null);
-            void reload();
+            setRereading(true);
+            void reload().finally(() => setRereading(false));
           }}
           onDelete={() => void remove(app.providerType)}
           onError={setError}
