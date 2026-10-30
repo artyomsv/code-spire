@@ -985,10 +985,10 @@ public class ReviewWorker {
         Matcher span = CODE_SPAN.matcher(text);
         int at = 0;
         while (span.find()) {
-            sb.append(text.substring(at, span.start()).replace("<", "&lt;")).append(span.group());
+            sb.append(text.substring(at, span.start())).append(span.group());
             at = span.end();
         }
-        return sb.append(text.substring(at).replace("<", "&lt;")).toString();
+        return sb.append(text.substring(at)).toString();
     }
 
     // --- failure classification ---
