@@ -121,9 +121,11 @@ check "orchestrator token at the gateway" 401 -H "Authorization: Bearer $API_V" 
 
 echo "== websocket upgrade traverses nginx =="
 # --max-time matters: a SUCCESSFUL upgrade leaves curl holding an open socket, so without it this
-# check hangs CI rather than passing.
+# check hangs CI rather than passing. --http1.1 because the Upgrade handshake is an HTTP/1.1
+# mechanism: over TLS curl negotiates HTTP/2 with the terminator, where those headers are invalid
+# and the answer is 400. A browser opens its WebSocket over HTTP/1.1 the same way.
 ws() {
-    curl -s -o /dev/null --max-time 6 -w '%{http_code}' "${TLS[@]}" "$@" \
+    curl -s -o /dev/null --max-time 6 --http1.1 -w '%{http_code}' "${TLS[@]}" "$@" \
         -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
         -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' || true
 }
