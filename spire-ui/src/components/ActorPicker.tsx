@@ -18,7 +18,7 @@ export default function ActorPicker({ accountId, accountType, repositoryId }: Pr
   const policy: ActorPolicy | null = read.data ?? null;
   // Save and Remove send the policy's revision: a cached policy is shown, but sent back only once this visit's read
   // answered (PR 359, M-2).
-  const current = read.isFetchedAfterMount && read.isSuccess;
+  const current = read.isSuccess;
   const [draft, setDraft] = useState('');
   const [resolution, setResolution] = useState<{ choices: Actor[]; selected: string; detail: string | null }>({ choices: [], selected: '', detail: null });
   const { choices, selected, detail } = resolution;
