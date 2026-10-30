@@ -152,12 +152,16 @@ export default function SettingsContextProviders() {
   const read = useQuery({ queryKey: contextProvidersKey, queryFn: () => fetchContextProviders() });
   const providers = read.data ?? NO_SOURCES;
   const loading = read.data === undefined && !read.error;
+  // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's read
+  // answered, and a deep link opens from that read, so a save cannot send back a value someone else changed
+  // (review of PR 359, M-2). A failed re-read locks them again, as its error once replaced the table.
+  const current = read.isFetchedAfterMount && read.isSuccess;
   // An action's own failure, shown until the next action; a read's failure, shown until a read succeeds.
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
   const [form, setForm] = useState<'new' | ContextProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
-  useEditDeepLink(providers, setForm);
+  useEditDeepLink(current ? providers : NO_SOURCES, setForm);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
   const [testProvider, setTestProvider] = useState<ContextProviderView | null>(null);
@@ -213,6 +217,7 @@ export default function SettingsContextProviders() {
             </button>
           </Tooltip>
         </div>
+        {!current && !error && providers.length > 0 && <p className="prov-note" role="status">Showing the last list read. Editing opens once the current one answers.</p>}
         {loading && providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
@@ -270,9 +275,10 @@ export default function SettingsContextProviders() {
                           aria-label="Test"
                         />
                       )}
-                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" disabled={!current} />
                       <IconButton
                         kind="delete"
+                        disabled={!current}
                         onClick={() => setConfirmDelete({ id: p.id, name: p.name })}
                         title="Delete"
                         aria-label="Delete"

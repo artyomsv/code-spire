@@ -46,11 +46,15 @@ export default function SettingsWebhookRepos() {
   const repos = read.data ?? NO_HOOKS;
   const loading = read.data === undefined && !read.error;
   const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
+  // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's read
+  // answered, and a deep link opens from that read, so a save cannot send back a value someone else changed
+  // (review of PR 359, M-2). A failed re-read locks them again, as its error once replaced the table.
+  const current = read.isFetchedAfterMount && read.isSuccess;
 
   // null = form closed; a WebhookRepoView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | WebhookRepoView | null>(null);
   // An attention row names one registration; land the operator on it, not just on this page.
-  useEditDeepLink(repos, setForm);
+  useEditDeepLink(current ? repos : NO_HOOKS, setForm);
   const [confirmDelete, setConfirmDelete] = useState<WebhookRepoView | null>(null);
   const serving = useServingAccounts(repos);
 
@@ -82,6 +86,7 @@ export default function SettingsWebhookRepos() {
         )}
 
         {error && read.data !== undefined && <p className="prov-note prov-error" role="alert">{error}</p>}
+        {!current && !error && repos.length > 0 && <p className="prov-note" role="status">Showing the last list read. Editing opens once the current one answers.</p>}
         {error && read.data === undefined ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading ? (
@@ -172,9 +177,10 @@ export default function SettingsWebhookRepos() {
                     </td>
                     <td>
                       <div className="prov-actions">
-                        <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" />
+                        <IconButton kind="edit" onClick={() => setForm(w)} title="Edit" aria-label="Edit" disabled={!current} />
                         <IconButton
                           kind="delete"
+                          disabled={!current}
                           onClick={() => setConfirmDelete(w)}
                           title="Delete"
                           aria-label="Delete"

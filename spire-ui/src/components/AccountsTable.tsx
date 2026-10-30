@@ -21,13 +21,15 @@ interface Props {
   onRecheck: (id: string) => void;
   onEdit: (p: ProviderView) => void;
   onDelete: (p: ProviderView) => void;
+  /** Edit and Delete wait: the list on screen may be out of date. */
+  locked?: boolean;
 }
 
 /** A mono cell's type, hoisted: it closes over nothing and a fresh object per cell per render is waste. */
 const MONO = { fontSize: 12, color: 'var(--text-2)' } as const;
 
 /** Accounts own every credential. Usage comes from roles and source references. */
-export default function AccountsTable({ providers, conns, onRecheck, onEdit, onDelete }: Props) {
+export default function AccountsTable({ providers, conns, onRecheck, onEdit, onDelete, locked = false }: Props) {
   return (
     // Eight columns that each refuse to wrap can still outgrow a narrow window. Scrolling the table
     // sideways is the honest answer; wrapping them was the three-line row this replaced.
@@ -78,8 +80,8 @@ export default function AccountsTable({ providers, conns, onRecheck, onEdit, onD
               </td>
               <td>
                 <div className="prov-actions">
-                  <IconButton kind="edit" onClick={() => onEdit(p)} title="Edit" aria-label="Edit" />
-                  <IconButton kind="delete" onClick={() => onDelete(p)} title="Delete" aria-label="Delete" />
+                  <IconButton kind="edit" onClick={() => onEdit(p)} title="Edit" aria-label="Edit" disabled={locked} />
+                  <IconButton kind="delete" onClick={() => onDelete(p)} title="Delete" aria-label="Delete" disabled={locked} />
                 </div>
               </td>
             </tr>

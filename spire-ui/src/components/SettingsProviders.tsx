@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   checkProvider,
@@ -6,7 +6,7 @@ import {
   providersKey,
   type ProviderView,
 } from '../api';
-import { invalidateLive, mergeLive } from '../liveCache';
+import { invalidateLive } from '../liveCache';
 import { useEachRead } from '../hooks/useEachRead';
 import AccountsTable, { type Conn } from './AccountsTable';
 import AccountsTabs from './AccountsTabs';
@@ -19,28 +19,39 @@ export { conversationLabel } from './ProviderFormModal';
 /** One array while nothing is read, so the deep link's effect does not re-run on every render. */
 const NO_PROVIDERS: ProviderView[] = [];
 
+/** The scopes a connection check reported, kept beside the list rather than written into the cache. */
+type Scopes = Pick<ProviderView, 'reportedScopes' | 'scopesCheckedAt'>;
+const newer = (seen: Scopes, row: ProviderView) => !row.scopesCheckedAt || (seen.scopesCheckedAt ?? '') > row.scopesCheckedAt;
+
 export default function SettingsProviders() {
   const client = useQueryClient();
   // Shared with the repositories page and the context form. A re-read that fails after a success keeps the list.
   const read = useQuery({ queryKey: providersKey, queryFn: () => fetchProviders() });
-  const providers = read.data ?? NO_PROVIDERS;
+  // A check's scope result overlays its row until a read carries one as new. Written into the cache it would mark the
+  // list read a success and clear the error of a read that failed (review of PR 359, M-1).
+  const [scopes, setScopes] = useState<Record<string, Scopes>>({});
+  const providers = useMemo(() => (read.data ?? NO_PROVIDERS).map((row) => {
+    const seen = scopes[row.id];
+    return seen && newer(seen, row) ? { ...row, ...seen } : row;
+  }), [read.data, scopes]);
   const loading = read.data === undefined && !read.error;
   const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
+  // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's read
+  // answered, and a deep link opens from that read, so a save cannot send back a value someone else changed
+  // (review of PR 359, M-2). A failed re-read locks them again, as its error once replaced the table.
+  const current = read.isFetchedAfterMount && read.isSuccess;
   const [conns, setConns] = useState<Record<string, Conn>>({});
   // null = form closed; a ProviderView = editing; 'new' = adding.
   const [form, setForm] = useState<'new' | ProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
-  useEditDeepLink(providers, setForm);
+  useEditDeepLink(current ? providers : NO_PROVIDERS, setForm);
   const [confirmDelete, setConfirmDelete] = useState<ProviderView | null>(null);
 
   async function checkOne(id: string) {
     setConns((prev) => ({ ...prev, [id]: { state: 'checking' } }));
     try {
       const r = await checkProvider(id);
-      // Without cancelling a read: one a save started must not be lost to a check that answered late. The server stores
-      // the scopes too, so a read that lands afterwards carries them anyway.
-      if (r.scopesCheckedAt !== undefined) mergeLive<ProviderView[] | undefined>(client, providersKey, (rows) => rows?.map((row) => row.id === id
-        ? { ...row, reportedScopes: r.reportedScopes, scopesCheckedAt: r.scopesCheckedAt } : row));
+      if (r.scopesCheckedAt !== undefined) setScopes((prev) => ({ ...prev, [id]: { reportedScopes: r.reportedScopes, scopesCheckedAt: r.scopesCheckedAt } }));
       setConns((prev) => ({
         ...prev,
         [id]: r.ok ? { state: 'ok', account: r.account } : { state: 'fail', detail: r.detail },
@@ -84,6 +95,7 @@ export default function SettingsProviders() {
           </Tooltip>
         </div>
         {error && read.data !== undefined && <p className="prov-note prov-error" role="alert">{error}</p>}
+        {!current && !error && providers.length > 0 && <p className="prov-note" role="status">Showing the last list read. Editing opens once the current one answers.</p>}
         {error && read.data === undefined ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
         ) : loading ? (
@@ -106,6 +118,7 @@ export default function SettingsProviders() {
               onRecheck={(id) => void checkOne(id)}
               onEdit={setForm}
               onDelete={setConfirmDelete}
+              locked={!current}
             />
           </>
         )}
