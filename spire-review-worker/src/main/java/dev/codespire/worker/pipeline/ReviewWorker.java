@@ -53,6 +53,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -968,8 +970,25 @@ public class ReviewWorker {
         }
     }
 
+    /**
+     * A code span: a backtick run, then text, then a run of the same length (CommonMark §6.1). The forge shows its
+     * content literally, so it is neither HTML nor in need of an escape; an entity there would be shown as typed.
+     */
+    private static final Pattern CODE_SPAN = Pattern.compile("(?<!`)(`+)(.+?)(?<!`)\\1(?!`)", Pattern.DOTALL);
+
+    /** Raw HTML in model text is escaped outside code spans; a span keeps its text, so `List<Double>` reads as written. */
     private static String escapeHtml(String text) {
-        return text == null ? "" : text.replace("<", "&lt;");
+        if (text == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(text.length());
+        Matcher span = CODE_SPAN.matcher(text);
+        int at = 0;
+        while (span.find()) {
+            sb.append(text.substring(at, span.start()).replace("<", "&lt;")).append(span.group());
+            at = span.end();
+        }
+        return sb.append(text.substring(at).replace("<", "&lt;")).toString();
     }
 
     // --- failure classification ---
