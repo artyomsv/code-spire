@@ -45,7 +45,7 @@ export default function SettingsGeneral() {
   // The form fills once, from a read made on this visit: a cached copy may be out of date, and a save would send it
   // back (PR 357, M-1). A later re-read (a reconnect) never overwrites what the operator is typing.
   const filled = useRef(false);
-  const fresh = read.isFetchedAfterMount && read.isSuccess ? read.data : undefined;
+  const fresh = read.isSuccess ? read.data : undefined;
   useEffect(() => {
     if (!fresh || filled.current) return;
     filled.current = true;

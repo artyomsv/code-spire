@@ -106,8 +106,7 @@ export default function SettingsLlmProviders() {
   const error = actionError ?? (readError ? (readError instanceof Error ? readError.message : String(readError)) : null);
   // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's reads
   // answered, and a deep link opens from them, so a save cannot send back a value someone else changed (PR 359, M-2).
-  const current = providersRead.isFetchedAfterMount && providersRead.isSuccess
-    && modelsRead.isFetchedAfterMount && modelsRead.isSuccess;
+  const current = providersRead.isSuccess && modelsRead.isSuccess;
   const [providerForm, setProviderForm] = useState<'new' | LlmProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
   useEditDeepLink(current ? providers : NO_PROVIDERS, setProviderForm);
