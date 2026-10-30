@@ -140,7 +140,9 @@ services:
       #
       # Unset is a decision, not a mistake: /fix stays off until an operator names a harness and a
       # model, and the refusal an author reads names those two variables.
-      SPIRE_FACTORY_AGENT_IMAGE_CODEX: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:-}
+      # The image has a default and an empty value is not "unset": Quarkus reads "" as a missing value, which
+      # fails the orchestrator's config validation at startup. Unset falls back to the application's default.
+      SPIRE_FACTORY_AGENT_IMAGE_CODEX: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:-spire-agent-codex:latest}
       SPIRE_FACTORY_FIX_HARNESS: ${SPIRE_FACTORY_FIX_HARNESS:-}
       SPIRE_FACTORY_FIX_MODEL: ${SPIRE_FACTORY_FIX_MODEL:-}
       SPIRE_FACTORY_WALL_CLOCK_SECONDS: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:-1800}
