@@ -517,6 +517,44 @@ class ReviewWorkerTest {
         assertEquals(1, lastCommentsPosted().inline().size(), "one anchor key, one owned thread");
     }
 
+    /**
+     * Inside a code span the forge shows text literally, entities included, so an escaped `<` there
+     * read as `List&lt;Double>` on GitHub (spire-test PR 82). HTML in a code span is inert anyway; only
+     * text outside code needs the escape.
+     */
+    @Test
+    void aTypeInsideCodeIsPostedAsWritten() {
+        sink.nativeReviews = true;
+        Finding generic = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO,
+                "TEST `total` takes `List<Double>` and ``Map<String, List<Long>>`` here", null);
+        worker.postComments(nativeCommand(List.of(generic), ReviewVerdict.APPROVE, true));
+        String body = sink.reviewPosts.getFirst().comments().getFirst().bodyMd();
+        assertTrue(body.contains("`List<Double>`") && body.contains("``Map<String, List<Long>>``"),
+                "the type reads as written: " + body);
+        assertFalse(body.contains("&lt;"), "no entity inside code: " + body);
+    }
+
+    /** The other half: raw HTML outside a code span, or after an unclosed backtick, is still escaped. */
+    @Test
+    void rawHtmlOutsideCodeIsStillEscaped() {
+        sink.nativeReviews = true;
+        Finding html = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO,
+                "TEST <img src=x onerror=alert(1)> then `a <b> in code` and an unclosed ` <script>", null);
+        worker.postComments(nativeCommand(List.of(html), ReviewVerdict.APPROVE, true));
+        String body = sink.reviewPosts.getFirst().comments().getFirst().bodyMd();
+        assertTrue(body.contains("&lt;img src=x") && body.contains("&lt;script>"), "escaped outside code: " + body);
+        assertFalse(body.contains("<img") || body.contains("<script"), "no raw HTML outside code: " + body);
+        assertTrue(body.contains("`a <b> in code`"), "the closed span keeps its text: " + body);
+    }
+
+    /** The summary carries model text too, through the same escape. */
+    @Test
+    void aTypeInsideCodeInTheSummaryIsPostedAsWritten() {
+        var review = new ReviewResult(List.of(), "TEST the `Optional<String>` return is fine", ModelUsage.of("m", 1, 1));
+        worker.postComments(new PostComments(REVIEW_ID, REPO, 9, COMMIT, review, null));
+        assertTrue(sink.summaryBody.contains("`Optional<String>`"), sink.summaryBody);
+    }
+
     @Test
     void theInlineFallbackCarriesEveryFindingAtTheAnchor() {
         sink.nativeReviews = true;
