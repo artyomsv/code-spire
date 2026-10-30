@@ -72,7 +72,8 @@
         "http://localhost:39285/api/auth/callback",
         "http://localhost:34080/api/auth/callback",
         "http://localhost:39280/api/auth/callback",
-        "http://localhost:34700/api/auth/callback"
+        "http://localhost:34700/api/auth/callback",
+        "https://localhost:34743/api/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:34000",
