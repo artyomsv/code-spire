@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound } from 'lucide-react';
 import {
   addHarnessCredential, clearHarnessCredentialRejection, deleteHarnessCredential, disableHarnessCredential,
-  enableHarnessCredential, fetchHarnessCredentials, restHarnessCredential,
+  enableHarnessCredential, fetchHarnessCredentials, harnessCredentialsKey, restHarnessCredential,
   type HarnessCredentialView,
 } from '../api';
+import { invalidateLive } from '../liveCache';
 import HarnessSubscriptionSignIn from './HarnessSubscriptionSignIn';
 import SettingField from './SettingField';
 import SidePanel from './SidePanel';
@@ -50,24 +52,18 @@ function sentence(message: string): string {
  * <p>No response carries a key: the API has no field for one, so this screen cannot show one.
  */
 export default function SettingsHarnessCredentials() {
-  const [members, setMembers] = useState<HarnessCredentialView[] | null>(null);
-  const [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: harnessCredentialsKey, queryFn: () => fetchHarnessCredentials() });
+  const members: HarnessCredentialView[] | null = read.data ?? null;
+  const [actionError, setError] = useState(''), [notice, setNotice] = useState('');
+  const error = actionError || (read.error ? String(read.error instanceof Error ? read.error.message : read.error) : '');
   const [adding, setAdding] = useState(false), [busy, setBusy] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   // The member an operator asked to delete, waiting for them to confirm.
   const [deleting, setDeleting] = useState<string | null>(null);
   const [form, setForm] = useState({ label: '', type: 'openai', baseUrl: '', apiKey: '' });
-  const [refresh, setRefresh] = useState(0);
 
-  useEffect(() => {
-    let live = true;
-    fetchHarnessCredentials()
-      .then(rows => { if (live) { setMembers(rows); setError(''); } })
-      .catch(failure => { if (live) setError(String(failure instanceof Error ? failure.message : failure)); });
-    return () => { live = false; };
-  }, [refresh]);
-
-  const reload = (message: string) => { setNotice(message); setRefresh(value => value + 1); };
+  const reload = (message: string) => { setNotice(message); void invalidateLive(client, harnessCredentialsKey); };
 
   async function act(action: () => Promise<unknown>, message: string) {
     setBusy(true); setError('');

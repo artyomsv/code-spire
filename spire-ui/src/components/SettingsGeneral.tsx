@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
+  generalSettingsKey,
   getCapSettings,
   getConversationSettings,
   getReviewSettings,
@@ -33,22 +35,27 @@ export default function SettingsGeneral() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const read = useQuery({
+    queryKey: generalSettingsKey,
+    queryFn: async () => {
+      const [review, conversation, caps] = await Promise.all([getReviewSettings(), getConversationSettings(), getCapSettings()]);
+      return { review, conversation, caps };
+    },
+  });
+  // The form fills once, from a read made on this visit: a cached copy may be out of date, and a save would send it
+  // back (PR 357, M-1). A later re-read (a reconnect) never overwrites what the operator is typing.
+  const filled = useRef(false);
+  const fresh = read.isFetchedAfterMount && read.isSuccess ? read.data : undefined;
   useEffect(() => {
-    let alive = true;
-    Promise.all([getReviewSettings(), getConversationSettings(), getCapSettings()])
-      .then(([r, c, capsWire]) => {
-        if (!alive) return;
-        const capFields = initialCapFields(capsWire);
-        setReview(r);
-        setConversation(c);
-        setCaps(capFields);
-        setLoaded({ review: r, conversation: c, caps: capFields });
-      })
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)));
-    return () => {
-      alive = false;
-    };
-  }, []);
+    if (!fresh || filled.current) return;
+    filled.current = true;
+    const capFields = initialCapFields(fresh.caps);
+    setReview(fresh.review);
+    setConversation(fresh.conversation);
+    setCaps(capFields);
+    setLoaded({ review: fresh.review, conversation: fresh.conversation, caps: capFields });
+  }, [fresh]);
+  const readError = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
 
   async function save() {
     if (!review || !conversation || !caps || !loaded || busy) return;
@@ -94,7 +101,7 @@ export default function SettingsGeneral() {
         </div>
         <div style={{ padding: '4px 18px 18px' }}>
           {!review || !conversation || !caps ? (
-            error ? <p className="prov-error">{error}</p> : <p className="prov-sub">Loading…</p>
+            error ?? readError ? <p className="prov-error">{error ?? readError}</p> : <p className="prov-sub">Loading…</p>
           ) : (
             <>
               <h3 className="settings-group">Code review</h3>

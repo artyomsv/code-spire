@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   checkLlmProvider,
   createLlmProvider,
@@ -6,6 +7,7 @@ import {
   deleteLlmProvider,
   fetchLlmModels,
   fetchLlmProviders,
+  llmProvidersKey,
   setDefaultLlmProvider,
   updateLlmProvider,
   type LlmModelView,
@@ -21,6 +23,13 @@ import Select from './Select';
 import Tooltip from './Tooltip';
 import SettingsLlmModelForm from './SettingsLlmModelForm';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
+import { useEachRead } from '../hooks/useEachRead';
+import { invalidateLive } from '../liveCache';
+import { preparationKeys } from './work-items/workQueries';
+
+/** One array each while nothing is read, so the deep link's effect does not re-run on every render. */
+const NO_PROVIDERS: LlmProviderView[] = [];
+const NO_MODELS: LlmModelView[] = [];
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
@@ -84,13 +93,24 @@ interface Conn {
 }
 
 export default function SettingsLlmProviders() {
-  const [providers, setProviders] = useState<LlmProviderView[]>([]);
-  const [models, setModels] = useState<LlmModelView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  const providersRead = useQuery({ queryKey: llmProvidersKey, queryFn: () => fetchLlmProviders() });
+  // Shared with the preparation form and the build step: a model saved here reaches their model lists.
+  const modelsRead = useQuery({ queryKey: preparationKeys.llmModels(), queryFn: () => fetchLlmModels() });
+  const providers = providersRead.data ?? NO_PROVIDERS;
+  const models = modelsRead.data ?? NO_MODELS;
+  const providersLoading = providersRead.data === undefined && !providersRead.error;
+  const modelsLoading = modelsRead.data === undefined && !modelsRead.error;
+  const readError = providersRead.error ?? modelsRead.error;
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? (readError ? (readError instanceof Error ? readError.message : String(readError)) : null);
+  // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's reads
+  // answered, and a deep link opens from them, so a save cannot send back a value someone else changed (PR 359, M-2).
+  const current = providersRead.isFetchedAfterMount && providersRead.isSuccess
+    && modelsRead.isFetchedAfterMount && modelsRead.isSuccess;
   const [providerForm, setProviderForm] = useState<'new' | LlmProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
-  useEditDeepLink(providers, setProviderForm);
+  useEditDeepLink(current ? providers : NO_PROVIDERS, setProviderForm);
   const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ kind: 'provider' | 'model'; id: string; name: string } | null>(
     null,
@@ -113,34 +133,27 @@ export default function SettingsLlmProviders() {
     }
   }
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const [ps, ms] = await Promise.all([fetchLlmProviders(), fetchLlmModels()]);
-      setProviders(ps);
-      setModels(ms);
-      // Check connectivity once on load, but only for enabled providers — a disabled one
-      // is intentionally inactive and may hold a deliberately stale/revoked key.
-      ps.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
+  // After each completed read, including one whose list is unchanged. A provider no longer enabled loses its live
+  // result; the enabled ones are checked. A disabled one is intentionally inactive and may hold a deliberately
+  // stale/revoked key.
+  useEachRead<LlmProviderView[]>(llmProvidersKey, (list) => {
+    const live = new Set(list.filter((p) => p.enabled).map((p) => p.id));
+    setConns((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id))));
+    list.filter((p) => p.enabled).forEach((p) => void checkOne(p.id));
+  });
 
-  useEffect(() => {
-    void load();
-  }, []);
+  const load = () => Promise.all([
+    invalidateLive(client, llmProvidersKey),
+    invalidateLive(client, preparationKeys.llmModels()),
+  ]);
 
   async function act(fn: () => Promise<unknown>) {
-    setError(null);
+    setActionError(null);
     try {
       await fn();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setActionError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -163,7 +176,10 @@ export default function SettingsLlmProviders() {
             </button>
           </Tooltip>
         </div>
-        {loading && providers.length === 0 ? (
+        {!current && !error && providers.length > 0 && (
+          <p className="prov-note" role="status">Showing the last list read. Editing opens once the current one answers.</p>
+        )}
+        {providersLoading ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
@@ -212,9 +228,10 @@ export default function SettingsLlmProviders() {
                   </td>
                   <td>
                     <div className="prov-actions">
-                      <IconButton kind="edit" onClick={() => setProviderForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton kind="edit" onClick={() => setProviderForm(p)} title="Edit" aria-label="Edit" disabled={!current} />
                       <IconButton
                         kind="delete"
+                        disabled={!current}
                         onClick={() => setConfirmDelete({ kind: 'provider', id: p.id, name: p.name })}
                         title="Delete"
                         aria-label="Delete"
@@ -239,7 +256,7 @@ export default function SettingsLlmProviders() {
             </button>
           </Tooltip>
         </div>
-        {loading && models.length === 0 ? (
+        {modelsLoading ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : models.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
@@ -269,9 +286,10 @@ export default function SettingsLlmProviders() {
                     <td className={`mono${rates.warn ? ' rate-unset' : ''}`}>{rates.text}</td>
                     <td>
                       <div className="prov-actions">
-                        <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" />
+                        <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" disabled={!current} />
                         <IconButton
                           kind="delete"
+                          disabled={!current}
                           onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
                           title="Delete"
                           aria-label="Delete"

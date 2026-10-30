@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react';
-import { discardDlqEntry, getDlqEntries, replayDlqEntry, type DlqEntry } from '../api';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { discardDlqEntry, dlqKey, getDlqEntries, replayDlqEntry, type DlqEntry } from '../api';
+import { invalidateLive, updateLive } from '../liveCache';
+
+const NO_ENTRIES: DlqEntry[] = [];
 import ConfirmDialog from './ConfirmDialog';
 
 // First N characters shown of the payload — it can carry long encrypted-credential
@@ -11,31 +15,19 @@ function truncatePayload(payload: string): string {
 }
 
 export default function SettingsDlq() {
-  const [entries, setEntries] = useState<DlqEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: dlqKey, queryFn: () => getDlqEntries(true) });
+  const entries = read.data ?? NO_ENTRIES;
+  const loading = read.data === undefined && !read.error;
+  const error = read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null;
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string | null>>({});
   const [confirmDiscard, setConfirmDiscard] = useState<DlqEntry | null>(null);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      setEntries(await getDlqEntries(true));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
-
+  // The server removed the entry: the row goes at once. The write cancels a read already out, so one more follows.
   function removeEntry(id: string) {
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+    updateLive<DlqEntry[]>(client, dlqKey, (prev) => (prev ?? NO_ENTRIES).filter((e) => e.id !== id));
+    void invalidateLive(client, dlqKey);
   }
 
   async function replay(entry: DlqEntry) {
@@ -58,9 +50,9 @@ export default function SettingsDlq() {
           <h2 className="prov-title">Dead-letter</h2>
         </div>
 
-        {error ? (
+        {error && read.data === undefined ? (
           <div style={{ padding: '26px 18px', color: 'var(--crit)', fontSize: 13 }}>{error}</div>
-        ) : loading && entries.length === 0 ? (
+        ) : loading ? (
           <div style={{ padding: '26px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : entries.length === 0 ? (
           <div className="wh-empty">
