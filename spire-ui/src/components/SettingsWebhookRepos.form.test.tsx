@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createQueryClient } from '../queryClient';
 import SettingsWebhookRepos from './SettingsWebhookRepos';
 import { MemoryRouter } from 'react-router';
 import * as api from '../api';
@@ -51,5 +53,26 @@ describe('Webhooks — the query cache (step 6)', () => {
     vi.mocked(api.fetchWebhookRepos).mockReturnValue(new Promise(() => {}));
     renderPage('/settings/webhooks', wrapper);
     expect(await screen.findAllByText('TEST-org')).not.toHaveLength(0);
+  });
+});
+
+describe('Webhooks — review of PR 359, M-2', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  // Another operator disabled the webhook; a save from the cached row would have turned it back on.
+  it('opens a deep-linked webhook from this visit\'s read, not the cached row', async () => {
+    const client = createQueryClient();
+    client.setQueryData(api.webhookReposKey, [legacy]);
+    let fresh!: (rows: api.WebhookRepoView[]) => void;
+    vi.spyOn(api, 'fetchWebhookRepos').mockReturnValue(new Promise(done => { fresh = done; }));
+    const update = vi.spyOn(api, 'updateWebhookRepo').mockResolvedValue({ ...legacy, enabled: false });
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/settings/webhooks?edit=TEST-legacy']}>
+      <SettingsWebhookRepos /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findAllByText('TEST-org')).not.toHaveLength(0);
+    expect(screen.queryByRole('textbox', { name: 'Forge origin' })).toBeNull();
+    await act(async () => fresh([{ ...legacy, enabled: false }]));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Forge origin' }), { target: { value: 'https://api.github.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(legacy.id, expect.objectContaining({ enabled: false })));
   });
 });

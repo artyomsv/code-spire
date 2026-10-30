@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createQueryClient } from '../queryClient';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
 import { queryWrapper } from '../test/queryWrapper';
@@ -315,5 +317,41 @@ describe('SettingsProviders — the query cache (step 6)', () => {
     await act(async () => {});
     await act(async () => {});
     expect(api.checkProvider).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('SettingsProviders — review of PR 359', () => {
+  const showWith = (client: ReturnType<typeof createQueryClient>) => render(<QueryClientProvider client={client}><MemoryRouter>
+    <SettingsProviders /></MemoryRouter></QueryClientProvider>);
+
+  // M-1: a check's scope result must not erase the failure of the list read that started it.
+  it('keeps a failed list read on screen when a check reports scopes', async () => {
+    const client = createQueryClient();
+    vi.spyOn(api, 'fetchProviders').mockResolvedValueOnce([forge({ name: 'TEST kept account' })])
+      .mockRejectedValue(new Error('TEST-list outage'));
+    vi.spyOn(api, 'checkProvider').mockResolvedValueOnce({ ok: true, account: 'test-checked', detail: null })
+      .mockResolvedValue({ ok: true, account: 'test-checked', detail: null, reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    showWith(client);
+    await rowNamed('TEST kept account');
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(1));
+    await act(async () => { await client.invalidateQueries({ queryKey: api.providersKey }); });
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(screen.getByText('TEST-list outage')).toBeInTheDocument();
+    expect(screen.getByText('TEST kept account')).toBeInTheDocument();
+  });
+
+  // M-2: a cached row may be out of date; it may be read, but not edited, until this visit's read answers.
+  it('offers Edit only once this visit has read the accounts', async () => {
+    const client = createQueryClient();
+    client.setQueryData(api.providersKey, [forge({ name: 'TEST cached account' })]);
+    let fresh!: (rows: api.ProviderView[]) => void;
+    vi.spyOn(api, 'fetchProviders').mockReturnValue(new Promise(done => { fresh = done; }));
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null });
+    showWith(client);
+    const row = await rowNamed('TEST cached account');
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeDisabled();
+    await act(async () => fresh([forge({ name: 'TEST cached account' })]));
+    expect(within(await rowNamed('TEST cached account')).getByRole('button', { name: 'Edit' })).toBeEnabled();
   });
 });
