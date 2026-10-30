@@ -52,11 +52,16 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
-const page = (reviews: api.ReviewSummary[] = []) => (
+/** The live list carries summaries; a detail fixture becomes one with the list-only fields zeroed. */
+const asSummary = (detail: ReviewDetailData): api.ReviewSummary => ({
+  ...detail, carriedOverFindings: 0, costMillicents: 0, model: '', llmType: '',
+});
+
+const page = (details: ReviewDetailData[] = []) => (
   <MemoryRouter initialEntries={['/r/acme/web/42']}>
     <Link to="/r/acme/web/43">TEST next review</Link>
     <Routes>
-      <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={reviews} />} />
+      <Route path="/r/:workspace/:slug/:pr" element={<ReviewDetail reviews={details.map(asSummary)} />} />
     </Routes>
   </MemoryRouter>
 );
