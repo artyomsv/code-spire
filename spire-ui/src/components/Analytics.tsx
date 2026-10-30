@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery, type QueryKey } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { BarChart3, TriangleAlert, UserRound } from 'lucide-react';
 import {
@@ -7,10 +7,14 @@ import {
   AnalyticsRepository,
   AnalyticsTotals,
   MyActivity,
+  analyticsOverviewKey,
+  analyticsRepoKey,
+  analyticsReposKey,
   fetchAnalyticsOverview,
   fetchAnalyticsRepo,
   fetchAnalyticsRepos,
   fetchMyActivity,
+  myActivityKey,
 } from '../api';
 import { ConnectOptions, connectOutcome } from './ConnectOptions';
 import { providerBadge } from '../render';
@@ -28,23 +32,12 @@ type LoadState<T> =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; value: T };
 
-function useLoaded<T>(load: () => Promise<T>, deps: unknown[]): LoadState<T> {
-  const [state, setState] = useState<LoadState<T>>({ kind: 'loading' });
-  useEffect(() => {
-    let live = true;
-    setState({ kind: 'loading' });
-    load()
-      .then((value) => live && setState({ kind: 'ready', value }))
-      .catch(
-        (e: unknown) =>
-          live && setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) }),
-      );
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return state;
+/** A read as the three states these screens draw. A summary already answered stays ready through a failed re-read. */
+function useLoaded<T>(queryKey: QueryKey, load: () => Promise<T>): LoadState<T> {
+  const read = useQuery({ queryKey, queryFn: load });
+  if (read.data !== undefined) return { kind: 'ready', value: read.data };
+  if (read.error) return { kind: 'error', message: read.error instanceof Error ? read.error.message : String(read.error) };
+  return { kind: 'loading' };
 }
 
 /** A cell with no measurement reads `—`, never `0` — zero is a number, absence is not. */
@@ -197,8 +190,8 @@ function RepositoryTable({ rows }: { rows: AnalyticsRepository[] }) {
 }
 
 export function AnalyticsOverview() {
-  const overview = useLoaded<AnalyticsLens>(fetchAnalyticsOverview, []);
-  const repos = useLoaded<AnalyticsRepository[]>(fetchAnalyticsRepos, []);
+  const overview = useLoaded<AnalyticsLens>(analyticsOverviewKey, () => fetchAnalyticsOverview());
+  const repos = useLoaded<AnalyticsRepository[]>(analyticsReposKey, () => fetchAnalyticsRepos());
 
   return (
     <section className="content">
@@ -231,10 +224,7 @@ export function AnalyticsOverview() {
 
 export function AnalyticsRepo() {
   const { workspace = '', slug = '' } = useParams();
-  const lens = useLoaded<AnalyticsLens>(
-    () => fetchAnalyticsRepo(workspace, slug),
-    [workspace, slug],
-  );
+  const lens = useLoaded<AnalyticsLens>(analyticsRepoKey(workspace, slug), () => fetchAnalyticsRepo(workspace, slug));
   return (
     <section className="content">
       <div className="card">
@@ -260,7 +250,7 @@ export function AnalyticsRepo() {
  * person reading it.
  */
 export function MyAnalytics({ subject }: { subject?: string }) {
-  const state = useLoaded<MyActivity>(fetchMyActivity, []);
+  const state = useLoaded<MyActivity>(myActivityKey, () => fetchMyActivity());
   const [params] = useSearchParams();
   const accounts = state.kind === 'ready' && state.value.linked ? state.value.identities.length : null;
   // The sign-in returns here by a whole-window navigation, so its result arrives in the URL. It is

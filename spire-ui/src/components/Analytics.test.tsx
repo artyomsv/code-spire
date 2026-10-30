@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { AnalyticsOverview, MyAnalytics } from './Analytics';
 import * as api from '../api';
+import { queryWrapper, renderWithQuery } from '../test/queryWrapper';
 
 /**
  * The analytics screens (P4 / FR-11).
@@ -38,7 +39,7 @@ describe('MyAnalytics', () => {
       breakdown: [],
     });
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <MyAnalytics subject="TEST-SUBJECT-1" />
       </MemoryRouter>,
@@ -60,7 +61,7 @@ describe('MyAnalytics', () => {
       ],
     });
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <MyAnalytics />
       </MemoryRouter>,
@@ -71,11 +72,31 @@ describe('MyAnalytics', () => {
     expect(screen.getByText('50%')).toBeTruthy();
   });
 
+  it('shows the activity at once when it opens again, and keeps it beside a failed re-read', async () => {
+    const read = vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
+      linked: true,
+      identities: [{ oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: 'TEST-AUTHOR-9' }],
+      totals: { ...EMPTY_TOTALS, findings: 4, judged: 2, dismissed: 1, dismissalRate: 0.5 },
+      breakdown: [{ severity: 'NIT', category: 'NAMING', raised: 3, dismissed: 1, resolved: 1, unjudged: 1 }],
+    });
+    vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([]);
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(<MemoryRouter><MyAnalytics /></MemoryRouter>, { wrapper });
+    expect(await screen.findByText('NAMING')).toBeInTheDocument();
+    first.unmount();
+    read.mockRejectedValue(new Error('TEST-BOOM'));
+    renderWithQuery(<MemoryRouter><MyAnalytics /></MemoryRouter>, { wrapper });
+    expect(screen.getByText('NAMING')).toBeInTheDocument();
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('NAMING')).toBeInTheDocument();
+  });
+
   /** An error must not read as "no activity" either — three states, three sentences. */
   it('reports a failed load as an error rather than as no activity', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockRejectedValue(new Error('TEST-BOOM'));
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <MyAnalytics />
       </MemoryRouter>,
@@ -103,7 +124,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -122,7 +143,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -147,6 +168,21 @@ describe('AnalyticsOverview', () => {
    * the card said otherwise. The counts are what make it read as the repository the reviews belong
    * to, so their presence — not just the name — is the assertion.
    */
+  it('shows the repositories at once when the page opens again', async () => {
+    vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({ totals: EMPTY_TOTALS, breakdown: [] });
+    vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([
+      { repo: 'TEST-WS/TEST-REPO', providerType: 'github', reviews: 5, findings: 12 },
+    ]);
+    const wrapper = queryWrapper();
+    const first = renderWithQuery(<MemoryRouter><AnalyticsOverview /></MemoryRouter>, { wrapper });
+    expect(await screen.findByText('TEST-WS/TEST-REPO')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchAnalyticsRepos).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.fetchAnalyticsOverview).mockReturnValue(new Promise(() => {}));
+    renderWithQuery(<MemoryRouter><AnalyticsOverview /></MemoryRouter>, { wrapper });
+    expect(screen.getByText('TEST-WS/TEST-REPO')).toBeInTheDocument();
+  });
+
   it('lists each repository with the reviews and findings that make it read as one', async () => {
     vi.spyOn(api, 'fetchAnalyticsOverview').mockResolvedValue({
       totals: EMPTY_TOTALS,
@@ -156,7 +192,7 @@ describe('AnalyticsOverview', () => {
       { repo: 'TEST-WS/TEST-REPO', providerType: 'github', reviews: 5, findings: 12 },
     ]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -180,7 +216,7 @@ describe('AnalyticsOverview', () => {
       { repo: 'TEST-WS/TEST-B', providerType: 'github', reviews: 1, findings: 1 },
     ]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -202,7 +238,7 @@ describe('AnalyticsOverview', () => {
       { repo: 'TEST-WS/TEST-SAME', providerType: 'gitlab', reviews: 1, findings: 1 },
     ]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -222,7 +258,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -243,7 +279,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -261,7 +297,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,
@@ -280,7 +316,7 @@ describe('AnalyticsOverview', () => {
     });
     vi.spyOn(api, 'fetchAnalyticsRepos').mockResolvedValue([]);
 
-    render(
+    renderWithQuery(
       <MemoryRouter>
         <AnalyticsOverview />
       </MemoryRouter>,

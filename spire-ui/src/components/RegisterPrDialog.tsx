@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { registerPr, resolvePrUrl, type ResolvedUrl } from '../api';
-import { fetchRepositories, type Repository } from './repositories/repositoriesApi';
+import { fetchRepositories, repositoriesKey, type Repository } from './repositories/repositoriesApi';
+
+const NO_REPOSITORIES: Repository[] = [];
 
 /**
  * Parse the PR # field into a positive integer, or null when it isn't one —
@@ -25,7 +28,9 @@ export default function RegisterPrDialog({
   const [slug, setSlug] = useState('');
   const [pr, setPr] = useState('');
   const [resolved, setResolved] = useState<ResolvedUrl | null>(null);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
+  // Shared with the repositories page: a repository registered there is offered here at once.
+  const repositoriesRead = useQuery({ queryKey: repositoriesKey, queryFn: () => fetchRepositories() });
+  const repositories = repositoriesRead.data ?? NO_REPOSITORIES;
   const [repositoryId, setRepositoryId] = useState('');
   const [urlUnrecognised, setUrlUnrecognised] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,12 +39,9 @@ export default function RegisterPrDialog({
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const resolveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const resolveSeq = useRef(0);
-  useEffect(() => {
-    let active = true;
-    fetchRepositories().then(rows => { if (active) setRepositories(rows); })
-      .catch(() => { if (active) setError('Could not load registered repositories. Retry opening this dialog.'); });
-    return () => { active = false; };
-  }, []);
+  const readError = repositoriesRead.error && repositoriesRead.data === undefined
+    ? 'Could not load registered repositories. Retry opening this dialog.' : null;
+  const shownError = error ?? readError;
   useEffect(
     () => () => {
       if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -194,7 +196,7 @@ export default function RegisterPrDialog({
               />
             </label>
           </div>
-          {error && <div className="modal-msg modal-error">{error}</div>}
+          {shownError && <div className="modal-msg modal-error">{shownError}</div>}
           {ok && <div className="modal-msg modal-ok">Registered {ok}</div>}
           <div className="modal-actions">
             <button type="button" className="btn-ghost" onClick={onClose}>

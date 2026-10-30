@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import * as api from '../api';
 import { ownerOf, useServingAccounts } from './useServingAccounts';
+import { renderWithQuery } from '../test/queryWrapper';
 
 const repo = (over: Partial<api.WebhookRepoView>): api.WebhookRepoView => ({
   id: 'TEST-w1',
@@ -46,7 +47,7 @@ describe('useServingAccounts', () => {
       repo({ id: 'TEST-w2', target: 'TEST-acme/widgets', repositoryId: 'TEST-acme' }),
       repo({ id: 'TEST-w3', scope: 'org', target: 'TEST-other' }),
     ];
-    render(<Probe repos={repos} />);
+    renderWithQuery(<Probe repos={repos} />);
 
     await waitFor(() => expect(JSON.parse(screen.getByTestId('lookups').textContent ?? '{}')).toHaveProperty(['TEST-other']));
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -66,23 +67,23 @@ describe('useServingAccounts', () => {
       repo({ id: 'TEST-w1', target: 'TEST-acme/widgets', repositoryId: 'TEST-acme' }),
       repo({ id: 'TEST-w2', scope: 'org', target: 'TEST-other' }),
     ];
-    const { rerender } = render(<Probe repos={repos} />);
+    const { rerender } = renderWithQuery(<Probe repos={repos} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 
     rerender(<Probe repos={[...repos]} />);
     expect(fetch).toHaveBeenCalledTimes(2);
 
-    // A genuinely new owner does change the set, so it is asked — once. Every pair is re-asked with
-    // it, because clearing the answers is what makes the changed set honest.
+    // A genuinely new owner is asked — once. The owners already answered keep their answers: each has its own cache
+    // entry, so a row added beside them does not send them back to "loading…".
     rerender(<Probe repos={[...repos, repo({ id: 'TEST-w3', target: 'TEST-third/thing', repositoryId: 'TEST-third' })]} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('TEST-third'));
     expect(fetch.mock.calls.filter(([ws]) => ws === 'TEST-third')).toHaveLength(1);
-    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it('keeps a failed lookup as an error, not as an empty answer', async () => {
     vi.spyOn(api, 'fetchServingAccounts').mockRejectedValue(new Error('Failed to load the accounts serving this workspace'));
-    render(<Probe repos={[repo({})]} />);
+    renderWithQuery(<Probe repos={[repo({})]} />);
 
     await waitFor(() => {
       const lookups = JSON.parse(screen.getByTestId('lookups').textContent ?? '{}');

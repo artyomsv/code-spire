@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 import ActorPicker from './ActorPicker';
 import * as api from './actorsApi';
+import { queryWrapper, renderWithQuery } from '../test/queryWrapper';
 vi.mock('./actorsApi', async importOriginal => ({ ...await importOriginal<typeof api>(),
   fetchActors: vi.fn(), resolveActor: vi.fn(), saveActor: vi.fn(), deleteActor: vi.fn() }));
 
@@ -22,7 +23,7 @@ beforeEach(() => {
 
 test('saves a resolved handle and renders it after reload', async () => {
 
-  const first = render(<ActorPicker accountId="TEST-account" accountType="github" />);
+  const first = renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />);
   await user.type(screen.getByLabelText('Person'), '@TEST-person');
   await user.click(screen.getByRole('button', { name: 'Resolve person' }));
   expect(api.resolveActor).toHaveBeenCalledWith('/api/providers/TEST-account/actors', { handle: '@TEST-person' });
@@ -32,7 +33,7 @@ test('saves a resolved handle and renders it after reload', async () => {
     handle: '@TEST-person', providerUserId: '900123', revision: 1, effect: 'ALLOW',
   });
   first.unmount();
-  render(<ActorPicker accountId="TEST-account" accountType="github" />);
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />);
   const list = await screen.findByRole('list');
   expect(within(list).getByText('@TEST-person')).toBeVisible();
   expect(within(list).queryByText('900123')).not.toBeInTheDocument();
@@ -40,10 +41,36 @@ test('saves a resolved handle and renders it after reload', async () => {
   expect(list).toHaveTextContent('Allowed');
 });
 
+test('shows the people at once when the editor opens again, and saves only after this visit\'s read', async () => {
+  vi.mocked(api.fetchActors).mockResolvedValue({ revision: 2, actors: [stored] });
+  const wrapper = queryWrapper();
+  const first = renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />, { wrapper });
+  expect(within(await screen.findByRole('list')).getByText('@TEST-person')).toBeVisible();
+  first.unmount();
+  vi.mocked(api.fetchActors).mockReturnValue(new Promise(() => {}));
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />, { wrapper });
+  expect(within(screen.getByRole('list')).getByText('@TEST-person')).toBeVisible();
+  await user.type(screen.getByLabelText('Person'), '@TEST-person');
+  await user.click(screen.getByRole('button', { name: 'Resolve person' }));
+  // A cached policy's revision may be out of date: neither Save nor Remove may send it.
+  expect(screen.getByRole('button', { name: 'Save person' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: /^Remove/ })).toBeDisabled();
+});
+
+test('shows the refreshed names after Reload, with no plain read replacing them', async () => {
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />);
+  await screen.findByRole('list');
+  vi.mocked(api.fetchActors).mockClear();
+  vi.mocked(api.fetchActors).mockResolvedValue({ revision: 2, actors: [{ ...stored, handle: 'TEST-renamed' }] });
+  await user.click(screen.getByRole('button', { name: 'Reload people and refresh names' }));
+  expect(await screen.findByText('@TEST-renamed')).toBeVisible();
+  expect(vi.mocked(api.fetchActors).mock.calls).toEqual([['/api/providers/TEST-account/actors', true]]);
+});
+
 test('refuses unresolved input', async () => {
   vi.mocked(api.resolveActor).mockRejectedValue(new Error('No exact handle was found.'));
 
-  render(<ActorPicker accountId="TEST-account" accountType="github" />);
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />);
   await user.type(screen.getByLabelText('Person'), '@TEST-missing');
   await user.click(screen.getByRole('button', { name: 'Resolve person' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('No exact handle was found');
@@ -57,7 +84,7 @@ test('requires explicit selection for nonunique Jira display names', async () =>
     { ...actor, handle: '', providerUserId: 'TEST-jira-other' },
   ], detail: 'Select a person.' });
 
-  render(<ActorPicker accountId="TEST-jira" accountType="atlassian" />);
+  renderWithQuery(<ActorPicker accountId="TEST-jira" accountType="atlassian" />);
   expect(screen.getByText(/Browse users and groups/)).toBeVisible();
   await user.type(screen.getByLabelText('Person'), 'TEST Person');
   await user.click(screen.getByRole('button', { name: 'Resolve person' }));
@@ -69,7 +96,7 @@ test('requires explicit selection for nonunique Jira display names', async () =>
 
 test('changing the input discards the resolved selection', async () => {
 
-  render(<ActorPicker accountId="TEST-account" accountType="github" />);
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" />);
   await user.type(screen.getByLabelText('Person'), '@TEST-person');
   await user.click(screen.getByRole('button', { name: 'Resolve person' }));
   expect(screen.getByRole('button', { name: 'Save person' })).toBeEnabled();
@@ -80,7 +107,7 @@ test('changing the input discards the resolved selection', async () => {
 test('edits a repository deny with the stored version', async () => {
   vi.mocked(api.fetchActors).mockResolvedValue({ revision: 0, actors: [stored] });
 
-  render(<ActorPicker accountId="TEST-account" accountType="github" repositoryId="TEST-repo" />);
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" repositoryId="TEST-repo" />);
   await user.type(screen.getByLabelText('Person'), '@TEST-person');
   await user.click(screen.getByRole('button', { name: 'Resolve person' }));
   await user.selectOptions(screen.getByLabelText('Policy effect'), 'DENY');
