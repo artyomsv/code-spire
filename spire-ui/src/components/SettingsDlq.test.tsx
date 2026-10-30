@@ -26,6 +26,30 @@ describe('SettingsDlq', () => {
     expect(screen.getByText('TEST-MESSAGE')).toBeInTheDocument();
   });
 
+  // Review of PR 360, M-2: a failed re-read is shown beside the last list, and an old empty list claims nothing.
+  it('shows a failed re-read beside the last entries', async () => {
+    const wrapper = queryWrapper();
+    const first = render(<SettingsDlq />, { wrapper });
+    expect(await screen.findByText('TEST-MESSAGE')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.getDlqEntries).mockRejectedValue(new Error('TEST-BOOM'));
+    render(<SettingsDlq />, { wrapper });
+    expect(await screen.findByRole('alert')).toHaveTextContent('TEST-BOOM');
+    expect(screen.getByText('TEST-MESSAGE')).toBeInTheDocument();
+  });
+
+  it('does not call an old empty list healthy when the re-read failed', async () => {
+    vi.mocked(api.getDlqEntries).mockResolvedValue([]);
+    const wrapper = queryWrapper();
+    const first = render(<SettingsDlq />, { wrapper });
+    expect(await screen.findByText('No dead-lettered messages')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.getDlqEntries).mockRejectedValue(new Error('TEST-BOOM'));
+    render(<SettingsDlq />, { wrapper });
+    expect(await screen.findByRole('alert')).toHaveTextContent('TEST-BOOM');
+    expect(screen.queryByText('No dead-lettered messages')).toBeNull();
+  });
+
   // The server removed the replayed entry; the row goes at once, and a re-read must not bring it back.
   it('removes a replayed entry', async () => {
     render(<SettingsDlq />, { wrapper: queryWrapper() });

@@ -52,6 +52,23 @@ describe('ScmConnections', () => {
     expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
   });
 
+  // Review of PR 360, M-1: until the read after a save answers, the cached row still holds the old fields.
+  it('keeps Edit locked after a save until the re-read answers', async () => {
+    vi.spyOn(api, 'saveScmOAuthApp').mockResolvedValue(undefined);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    let answer: (apps: api.ScmOAuthApp[]) => void = () => {};
+    vi.mocked(api.fetchScmOAuthApps).mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    fireEvent.change(await screen.findByLabelText(/Client id/), { target: { value: 'TEST-CLIENT-NEW' } });
+    fireEvent.submit(document.querySelector('form.oauth-app-form') as HTMLFormElement);
+    await waitFor(() => expect(document.querySelector('form.oauth-app-form')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    answer([{ ...APPS[0], clientId: 'TEST-CLIENT-NEW' }, APPS[1]]);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByDisplayValue('TEST-CLIENT-NEW')).toBeInTheDocument();
+  });
+
   it('separates a platform that is set up from one that is not', async () => {
     render(<ScmConnections />, { wrapper: queryWrapper() });
 
