@@ -180,3 +180,60 @@ and they ship only once a review run's agent can reach nothing but its model end
 Mechanism details (proxy image, how the agent is pointed at it, how the allowlist is rendered) are left to the builder,
 within these limits: no `seccomp=unconfined`, no new privileges on the agent container, and the allowlist comes
 from the harness, never from the reviewed repository.
+
+## Final design review (2026-10-30; overrides the sections above where they disagree)
+
+**A new requirement that follows from the operator's answer B.** Closing the network does not close the output channel:
+the agent's findings are posted publicly, so an agent that can read its credential can publish it (encoded or split,
+past the exact-substring scrub). Reviewing untrusted pull requests safely therefore needs **the agent never to hold a
+usable credential**: a credential-injecting egress proxy holds the key or seat token and adds it to the model requests;
+the agent gets a placeholder. For an API key this is a plain-HTTP model endpoint inside the unit (Codex's custom
+`model_providers.*.base_url`); for a ChatGPT seat it may need TLS termination of `chatgpt.com` traffic. Which of these
+works is measured in slice 2, not assumed. Until both hold for a harness and payment, fork pull requests are not
+reviewed on that harness and payment (attention warning names why).
+
+**Corrections to the design.**
+
+- *Hosts are measured, never declared from memory.* A seat run calls `chatgpt.com/backend-api/…`, not only
+  `api.openai.com`; `auth.openai.com` is not needed (refresh tokens never reach the agent) and must not be allowed.
+  The egress proxy runs in the "report" mode `EXECUTION-LAYER.md` §5.2 specifies first, then enforces. An internal
+  Docker network has no DNS: the agent reaches the proxy by address. The proxy chains to the corporate
+  `HTTPS_PROXY`/`NO_PROXY` the unit already injects.
+- *A forge credential does enter the unit.* Init clones with the reviewer account's token, which can post (write).
+  This crosses ADR-038's two-authority split and is recorded as such (`docs/UNVERIFIED.md` §E); the agent never sees it.
+  A read-scoped clone token is the proper fix and is tracked, not built here.
+- *Review runs need their own lane.* The run-worker executes one run at a time (ordered consumer, one execute slot).
+  Review runs get their own topic, consumer group and replicas, with the concurrency cap there, so a review never
+  waits behind an hour-long build. A review's wall-clock bound must not exceed `spire.run.max-wall-clock-seconds`.
+- *Thread history is not stored.* A reply's run needs the transcript fetched (by the review worker, which holds the
+  forge clients) before dispatch, the `followup:<commentId>` claim moved to dispatch, and a post-only command after the
+  run.
+- *Reconcile keeps its deterministic backstops.* The compare diff, rename remapping, `downgradeUntouched` and
+  `dropAnchorCollisions` run on the harness result exactly as on an API result; the prompt numbers prior findings
+  1-based for `VerdictsParser`.
+- *Artifact size.* The 32 KiB artifact cap is per kind: a review's findings get a larger cap; an over-cap answer is a
+  degraded review, not a lost paid run.
+- *Charges.* `RunKind` gains REVIEW, RECONCILE and FOLLOWUP (schema CHECK too); run-plane charging skips them; review
+  charges carry `credential_ref` and are priced unmetered on a seat. Review results are taken before
+  `RunResultSaga`'s pull-request step.
+- *A refused seat is classified.* Codex's login failure (exit 120) becomes `CREDENTIAL_REJECTED`, which marks the pool;
+  a harness review's retry budget is 1, so a refused seat is not retried as full runs.
+- *Fork clone.* Init fetches the pull request ref with a refspec, checks out the head, and keeps the base under its own
+  ref.
+- *Also:* a deterministic run id (review, commit, run) so redelivery dedups on `run_claim`; context goes to the agent
+  in a read-only volume written by init, not in an environment variable; superseding a head sends `CancelRun` from a
+  new hook (ADR-013 still forbids `CancelReview` there); the review page links the run transcript while the review
+  stage runs; out-of-diff findings keep their current treatment for the verdict (folded into the summary, still
+  counted as open blockers).
+
+**Delivery order** (one pull request each, each accepted before the next):
+
+1. Per-repository API provider choice (the setting with its "API" half; no harness yet).
+2. Egress network and proxy for run units, report mode then enforce, hosts measured; closes the HIGH techdebt item;
+   includes the measurement of credential injection for API keys and for seats.
+3. Credential-injecting proxy for what step 2 proved possible.
+4. Review-run plumbing: run kinds, the review lane, command and result, charges, run id, cancellation.
+5. First reviews on a harness for same-repository pull requests (API key, then seat).
+6. Re-reviews (reconcile) on a harness.
+7. Replies on a harness.
+8. Fork pull requests on a harness, once steps 2 and 3 are accepted for that harness and payment.
