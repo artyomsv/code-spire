@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 import type { HarnessCredentialView } from '../api';
 import SettingsHarnessCredentials from './SettingsHarnessCredentials';
 
@@ -32,12 +33,22 @@ beforeEach(() => {
   vi.spyOn(api, 'restHarnessCredential').mockResolvedValue(undefined);
 });
 
+it('shows the pool at once when the page opens again', async () => {
+  const wrapper = queryWrapper();
+  const first = render(<SettingsHarnessCredentials />, { wrapper });
+  expect(await screen.findByText('TEST-key')).toBeInTheDocument();
+  first.unmount();
+  vi.mocked(api.fetchHarnessCredentials).mockReturnValue(new Promise(() => {}));
+  render(<SettingsHarnessCredentials />, { wrapper });
+  expect(screen.getByText('TEST-key')).toBeInTheDocument();
+});
+
 it('tells a resting key apart from a refused one, and offers the action each needs', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
     member({ id: 'TEST-resting', label: 'TEST-resting', rateLimitedUntil: '2099-01-01T00:00:00Z' }),
     member({ id: 'TEST-rejected', label: 'TEST-rejected', rejectedAt: '2026-09-16T09:00:00Z' }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   const resting = await row('TEST-resting');
   expect(within(resting).getByText('Resting')).toBeInTheDocument();
@@ -55,7 +66,7 @@ it('shows a signed-in seat as a ready subscription', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
     member({ id: 'TEST-seat-free', label: 'TEST-seat-free', type: 'codex', authMode: 'SUBSCRIPTION', identified: true }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   expect(within(await row('TEST-seat-free')).getByText('Ready · subscription')).toBeInTheDocument();
 });
@@ -66,7 +77,7 @@ it('asks for a new sign-in on a seat whose renewal was refused', async () => {
     member({ id: 'TEST-seat-refused', label: 'TEST-seat-refused', type: 'codex', authMode: 'SUBSCRIPTION', identified: true,
       rejectedAt: '2026-10-08T12:00:00Z' }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   const refused = await row('TEST-seat-refused');
   expect(within(refused).getByText('Sign in again')).toBeInTheDocument();
@@ -76,7 +87,7 @@ it('asks for a new sign-in on a seat whose renewal was refused', async () => {
 it('switches a member off and back on, and says which one changed', async () => {
   // The list is read again after the change, so the second answer is the switched-off row.
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValueOnce([member()]).mockResolvedValue([member({ enabled: false })]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   fireEvent.click(within(await row('TEST-key')).getByRole('button', { name: 'Switch off' }));
   await waitFor(() => expect(api.disableHarnessCredential).toHaveBeenCalledWith('TEST-credential-1'));
   expect(await screen.findByText(/TEST-key is switched off/)).toBeInTheDocument();
@@ -86,7 +97,7 @@ it('switches a member off and back on, and says which one changed', async () => 
 });
 
 it('adds a key beside the list and never asks for it again', async () => {
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Add an API key' }));
   fireEvent.change(screen.getByLabelText('Label', field), { target: { value: 'TEST-new' } });
   fireEvent.change(screen.getByLabelText('Endpoint', field), { target: { value: 'https://api.example.test/v1' } });
@@ -103,7 +114,7 @@ it('adds a key beside the list and never asks for it again', async () => {
 });
 
 it('will not add a key with a field missing', async () => {
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Add an API key' }));
   fireEvent.change(screen.getByLabelText('Label', field), { target: { value: 'TEST-new' } });
   expect(screen.getByRole('button', { name: 'Add the key' })).toBeDisabled();
@@ -112,14 +123,14 @@ it('will not add a key with a field missing', async () => {
 
 it('says plainly when the pool is empty, because then every run is refused', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   expect(await screen.findByText('No key yet')).toBeInTheDocument();
   expect(screen.getByText(/every factory run is refused before it starts/)).toBeInTheDocument();
 });
 
 it('shows the server refusal rather than a status line', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockRejectedValue(new Error('Failed to load the harness credential pool'));
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load the harness credential pool');
 });
 
@@ -128,7 +139,7 @@ it('asks for a new sign-in on a seat whose account is unknown', async () => {
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
     member({ id: 'TEST-seat-old', label: 'TEST-seat-old', type: 'codex', authMode: 'SUBSCRIPTION', identified: false }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   expect(within(await row('TEST-seat-old')).getByText('Sign in again')).toBeInTheDocument();
 });
@@ -138,7 +149,7 @@ it('says why a second seat of one account cannot be switched back on', async () 
   vi.mocked(api.fetchHarnessCredentials).mockResolvedValue([
     member({ id: 'TEST-seat-off', label: 'TEST-seat-off', type: 'codex', authMode: 'SUBSCRIPTION', enabled: false, identified: true }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   fireEvent.click(within(await row('TEST-seat-off')).getByRole('button', { name: 'Switch on' }));
 
@@ -152,7 +163,7 @@ it('deletes a switched-off member only after the operator confirms, and never on
     member({ id: 'TEST-off', label: 'TEST-off', enabled: false }),
     member({ id: 'TEST-on', label: 'TEST-on' }),
   ]);
-  render(<SettingsHarnessCredentials />);
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
 
   expect(within(await row('TEST-on')).queryByRole('button', { name: 'Delete' })).toBeNull();
   fireEvent.click(within(await row('TEST-off')).getByRole('button', { name: 'Delete' }));

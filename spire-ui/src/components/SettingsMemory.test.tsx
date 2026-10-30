@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { SettingsMemory } from './SettingsMemory';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 /**
  * The Memory screen (P4 / FR-10).
@@ -36,13 +37,24 @@ describe('SettingsMemory', () => {
     vi.restoreAllMocks();
   });
 
+  it('shows the proposals at once when the page opens again', async () => {
+    vi.spyOn(api, 'fetchMemory').mockResolvedValue({ preferences: [preference()], thresholds: THRESHOLDS });
+    const wrapper = queryWrapper();
+    const first = render(<SettingsMemory />, { wrapper });
+    expect(await screen.findByText(/14 of 16 dismissed/)).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchMemory).mockReturnValue(new Promise(() => {}));
+    render(<SettingsMemory />, { wrapper });
+    expect(screen.getByText(/14 of 16 dismissed/)).toBeInTheDocument();
+  });
+
   it('shows the evidence and the bar it had to clear', async () => {
     vi.spyOn(api, 'fetchMemory').mockResolvedValue({
       preferences: [preference()],
       thresholds: THRESHOLDS,
     });
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText(/14 of 16 dismissed/)).toBeTruthy());
     // 88% observed against a 75% bar — both numbers, or the operator is judging blind.
@@ -56,7 +68,7 @@ describe('SettingsMemory', () => {
       thresholds: THRESHOLDS,
     });
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText('Approve')).toBeTruthy());
     expect(screen.getByText('Reject')).toBeTruthy();
@@ -70,7 +82,7 @@ describe('SettingsMemory', () => {
       thresholds: THRESHOLDS,
     });
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByText('Hiding these findings')).toBeTruthy());
     expect(screen.getByText('Stop hiding')).toBeTruthy();
@@ -84,7 +96,7 @@ describe('SettingsMemory', () => {
     });
     const decide = vi.spyOn(api, 'decidePreference').mockResolvedValue(undefined);
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
     await waitFor(() => expect(screen.getByText('Approve')).toBeTruthy());
     fireEvent.click(screen.getByText('Approve'));
 
@@ -98,7 +110,7 @@ describe('SettingsMemory', () => {
   it('explains an empty list rather than leaving it blank', async () => {
     vi.spyOn(api, 'fetchMemory').mockResolvedValue({ preferences: [], thresholds: THRESHOLDS });
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
     expect(screen.getByRole('status').textContent).toMatch(/10 judged findings/);
@@ -108,7 +120,7 @@ describe('SettingsMemory', () => {
   it('reports a failure as an error rather than as an empty list', async () => {
     vi.spyOn(api, 'fetchMemory').mockRejectedValue(new Error('TEST-BOOM'));
 
-    render(<SettingsMemory />);
+    render(<SettingsMemory />, { wrapper: queryWrapper() });
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
     expect(screen.getByRole('alert').textContent).toMatch(/TEST-BOOM/);

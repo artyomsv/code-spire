@@ -807,6 +807,9 @@ export interface ReviewSettings {
   backoffFactor: number;
 }
 
+/** Review, conversation and cap settings: one page, one Save, read together. */
+export const generalSettingsKey = ['general-settings'] as const;
+
 export async function getReviewSettings(): Promise<ReviewSettings> {
   const res = await apiFetch('/api/settings/review');
   if (!res.ok) return throwResponse(res, 'Failed to load review settings');
@@ -924,6 +927,8 @@ export async function deleteLlmProvider(id: string): Promise<void> {
 }
 
 // Live connectivity check: probes the stored API key against the provider.
+export const llmProvidersKey = ['llm-providers'] as const;
+
 export async function checkLlmProvider(id: string): Promise<{ ok: boolean; detail: string | null }> {
   const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/check`, { method: 'POST' });
   if (!res.ok) throw new Error(`LLM provider check failed: ${res.status}`);
@@ -1255,6 +1260,8 @@ export async function getRuns(filter: RunFilter = {}): Promise<RunListEntry[]> {
   return res.json();
 }
 /** List dead-letter entries, newest first. `pending = false` returns replayed/discarded ones too. */
+export const dlqKey = ['dlq', 'pending'] as const;
+
 export async function getDlqEntries(pending = true): Promise<DlqEntry[]> {
   const res = await apiFetch(`/api/dlq?pending=${pending}`);
   if (!res.ok) return throwResponse(res, 'Failed to load dead-letter entries');
@@ -1614,6 +1621,9 @@ export async function fetchOperatorCandidates(): Promise<ObservedAuthor[]> {
   return res.json();
 }
 
+/** Operator links, observed authors and seen operators: the People tab reads them together. */
+export const operatorsKey = ['operators'] as const;
+
 export async function fetchOperatorIdentities(): Promise<OperatorIdentityLink[]> {
   const res = await apiFetch('/api/operator-identities');
   if (!res.ok) throw new Error(`Operator identities failed: ${res.status}`);
@@ -1695,6 +1705,8 @@ export function connectStartUrl(providerType: string): string {
   return `/api/operator-connect/${encodeURIComponent(providerType)}/start`;
 }
 
+export const scmOAuthAppsKey = ['scm-oauth-apps'] as const;
+
 export async function fetchScmOAuthApps(): Promise<ScmOAuthApp[]> {
   const res = await apiFetch('/api/scm-oauth-apps');
   if (!res.ok) throw new Error(`OAuth apps failed: ${res.status}`);
@@ -1760,6 +1772,8 @@ export interface MemoryView {
   thresholds: MemoryThresholds;
 }
 
+export const memoryKey = ['memory'] as const;
+
 export async function fetchMemory(): Promise<MemoryView> {
   const res = await apiFetch('/api/memory/preferences');
   if (!res.ok) throw new Error(`Learned memory failed: ${res.status}`);
@@ -1801,6 +1815,8 @@ export interface HarnessCredentialView {
 }
 
 export interface NewHarnessCredential { label: string; type: string; baseUrl: string; apiKey: string }
+
+export const harnessCredentialsKey = ['harness-credentials'] as const;
 
 export async function fetchHarnessCredentials(): Promise<HarnessCredentialView[]> {
   const res = await apiFetch('/api/harness-credentials');

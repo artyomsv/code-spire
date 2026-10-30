@@ -1,15 +1,63 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
+import { createQueryClient } from '../queryClient';
+import { invalidateLive } from '../liveCache';
+import { queryWrapper } from '../test/queryWrapper';
 import SettingsLlmProviders from './SettingsLlmProviders';
 import * as api from '../api';
 
-const renderPage = () =>
+const renderPage = (wrapper = queryWrapper()) =>
   render(
     <MemoryRouter>
       <SettingsLlmProviders />
     </MemoryRouter>,
+    { wrapper },
   );
+
+const provider = (over: Partial<api.LlmProviderView> = {}): api.LlmProviderView => ({
+  id: 'TEST-provider-1', name: 'TEST-provider', type: 'openai', baseUrl: 'https://llm.example.test/v1',
+  model: 'TEST-MODEL', temperature: 0.2, maxTokens: null, hasApiKey: true, enabled: true, isDefault: true,
+  createdAt: '1970-01-01T00:00:00Z', lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
+});
+
+describe('SettingsLlmProviders — reads', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([provider(), provider({ id: 'TEST-provider-2', name: 'TEST-off', enabled: false, isDefault: false })]);
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
+  });
+
+  // A cached row may be out of date; it may be read, but not edited, until this visit's read answers.
+  it('shows the providers at once when the page opens again, with Edit off until this visit\'s read answers', async () => {
+    const wrapper = queryWrapper();
+    const first = renderPage(wrapper);
+    expect(await screen.findByText('TEST-provider')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchLlmProviders).mockReturnValue(new Promise(() => {}));
+    renderPage(wrapper);
+    const row = screen.getByText('TEST-provider').closest('tr') as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeDisabled();
+  });
+
+  // A re-read with the same list keeps the same data reference; the checks must still run for it.
+  it('checks each enabled provider once per completed read', async () => {
+    const client = createQueryClient();
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <SettingsLlmProviders />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(api.checkLlmProvider).toHaveBeenCalledTimes(1));
+    await act(async () => { await invalidateLive(client, api.llmProvidersKey); });
+    await waitFor(() => expect(api.checkLlmProvider).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.checkLlmProvider).mock.calls.map(([id]) => id)).toEqual(['TEST-provider-1', 'TEST-provider-1']);
+  });
+});
 
 /** "Add model" names both the header icon and the modal's submit — scope form interactions to the
  *  dialog, and open it before the submit button exists so the opening click stays unambiguous. */
