@@ -5,6 +5,12 @@
 # supplies the single origin, and the webhook tunnel points straight at the gateway.
 #
 #   ./deploy/e2e.sh http://localhost:34700 http://localhost:34767
+#   SPIRE_E2E_CA_FILE=root.crt ./deploy/e2e.sh https://localhost:34743 http://localhost:34767
+#
+# The second form runs the same checks through a TLS terminator (deploy/compose.tls.yml). Things that
+# break only behind TLS pass clean in plaintext: an X-Forwarded-Proto rewritten to http, a Host the
+# terminator replaced, a callback registered for http only (docs/TLS.md). The CA file is the
+# terminator's own test root, so curl verifies the certificate instead of skipping the check.
 #
 # Requires, in the environment: the three SPIRE_OIDC_*_SECRET values and DEV_VIEWER_PASSWORD /
 # DEV_OPERATOR_PASSWORD from the realm. Source deploy/.env first.
@@ -14,6 +20,8 @@ BASE="${1:?usage: e2e.sh <base-url> <keycloak-url>}"
 KC="${2:?usage: e2e.sh <base-url> <keycloak-url>}"
 BASE="${BASE%/}"   # every URL below appends its own path
 FAILED=0
+TLS=()
+if [ -n "${SPIRE_E2E_CA_FILE:-}" ]; then TLS=(--cacert "$SPIRE_E2E_CA_FILE"); fi
 
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; FAILED=1; }
@@ -22,7 +30,7 @@ fail() { printf '  FAIL  %s\n' "$1"; FAILED=1; }
 check() {
     local name="$1" expected="$2"; shift 2
     local actual
-    actual="$(curl -s -o /dev/null --max-time 20 -w '%{http_code}' "$@")"
+    actual="$(curl -s -o /dev/null --max-time 20 -w '%{http_code}' "${TLS[@]}" "$@")"
     if [ "$actual" = "$expected" ]; then
         pass "$name ($actual)"
     else
@@ -44,7 +52,7 @@ check() {
 check_redirect_origin() {
     local name="$1" url="$2" want="$3"
     local location redirect
-    location="$(curl -s -o /dev/null -D - --max-time 20 "$url" | tr -d "\r" | sed -n "s/^[Ll]ocation: //p")"
+    location="$(curl -s -o /dev/null -D - --max-time 20 "${TLS[@]}" "$url" | tr -d "\r" | sed -n "s/^[Ll]ocation: //p")"
     redirect="$(printf "%s" "$location" | sed -n "s/.*[?&]redirect_uri=\([^&]*\).*/\1/p" \
                  | sed "s/%3[Aa]/:/g; s/%2[Ff]/\//g")"
     if [ -z "$redirect" ]; then
@@ -115,7 +123,7 @@ echo "== websocket upgrade traverses nginx =="
 # --max-time matters: a SUCCESSFUL upgrade leaves curl holding an open socket, so without it this
 # check hangs CI rather than passing.
 ws() {
-    curl -s -o /dev/null --max-time 6 -w '%{http_code}' "$@" \
+    curl -s -o /dev/null --max-time 6 -w '%{http_code}' "${TLS[@]}" "$@" \
         -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
         -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' || true
 }

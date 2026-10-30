@@ -231,6 +231,7 @@ cp deploy/.env.example deploy/.env        # every value required, no defaults
 docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build   # built here
 docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d      # from GHCR
 ./deploy/e2e.sh http://localhost:34700 http://localhost:34767               # 21 checks
+SPIRE_E2E_CA_FILE=… ./deploy/e2e.sh https://localhost:34743 http://localhost:34767  # same, through compose.tls.yml
 ./deploy/helm/spire/tests/render.sh --self-test                             # chart invariants
 ./deploy/render-manifests.sh --check                                        # rendered-manifest drift
 ```

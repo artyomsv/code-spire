@@ -1,0 +1,20 @@
+# Test overlay: a TLS terminator in front of the packaged stack, for the end-to-end check over https.
+#
+#   docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env up -d
+#   docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml exec -T tls \
+#       cat /data/caddy/pki/authorities/local/root.crt > /tmp/spire-tls-root.crt
+#   SPIRE_E2E_CA_FILE=/tmp/spire-tls-root.crt ./deploy/e2e.sh https://localhost:34743 http://localhost:34767
+#
+# Code Spire terminates no TLS (docs/TLS.md); this is the shape of the operator's terminator, not a
+# component to deploy. It is test only in one more way: the dashboard's plaintext port stays published
+# beside it so the same run can check both origins, which requirement 3 of docs/TLS.md forbids in a
+# real deployment.
+services:
+  tls:
+    image: caddy:2.10.2-alpine
+    depends_on: [ui]
+    volumes:
+      - ./tls/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "34743:34743"
+    restart: unless-stopped

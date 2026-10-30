@@ -188,6 +188,16 @@ export DEV_VIEWER_PASSWORD=... DEV_OPERATOR_PASSWORD=...
 ./deploy/e2e.sh http://localhost:34700 http://localhost:34767
 ```
 
+The same checks run over `https` through a test TLS terminator (`deploy/compose.tls.yml`, Caddy with its own
+test root; the nightly e2e job does both):
+
+```bash
+docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml --env-file deploy/.env up -d
+docker compose -f deploy/compose.ghcr.yml -f deploy/compose.tls.yml exec -T tls \
+    cat /data/caddy/pki/authorities/local/root.crt > /tmp/spire-tls-root.crt
+SPIRE_E2E_CA_FILE=/tmp/spire-tls-root.crt ./deploy/e2e.sh https://localhost:34743 http://localhost:34767
+```
+
 Twenty-one checks covering what no local dev run can: SCM ingress not being swallowed by the SPA,
 role enforcement through the proxy, a WebSocket upgrade traversing nginx, a token minted for one
 service being refused by another, and the gateway's live database privileges.
