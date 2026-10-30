@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsContextProviders from './SettingsContextProviders';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 const account = (id: string, type: string, enabled = true): api.ProviderView => ({
   id, name: id, type, enabled, baseUrl: 'https://source.example.test',
@@ -15,7 +16,7 @@ const source: api.ContextProviderView = {
   accountId: 'site-account', accountName: 'site-account', accountEnabled: true,
   projectKeys: 'ONE', enabled: true, createdAt: '', lastCheckAt: null, lastCheckOk: null, lastCheckError: null,
 };
-const renderPage = () => render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>);
+const renderPage = (wrapper = queryWrapper()) => render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>, { wrapper });
 async function select(name: string, option: string) {
   fireEvent.click(await screen.findByRole('combobox', { name }));
   fireEvent.click(await screen.findByRole('option', { name: option }));
@@ -89,5 +90,23 @@ describe('Context sources select accounts', () => {
     expect(screen.getByRole('option', { name: 'lab-account · gitlab · Context' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'site-account · atlassian · Context' })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('src/main/, src/allowed/')).toBeInTheDocument();
+  });
+});
+
+describe('Context providers — the query cache (step 6)', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchContextProviders').mockResolvedValue([source]);
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([account('site-account', 'atlassian')]);
+    vi.spyOn(api, 'checkContextProvider').mockResolvedValue({ ok: true, account: 'bot', detail: null });
+  });
+
+  it('shows the context providers at once when the page opens again', async () => {
+    const wrapper = queryWrapper();
+    const first = renderPage(wrapper);
+    expect(await screen.findByText('Project source')).toBeInTheDocument();
+    first.unmount();
+    vi.mocked(api.fetchContextProviders).mockReturnValue(new Promise(() => {}));
+    renderPage(wrapper);
+    expect(await screen.findByText('Project source')).toBeInTheDocument();
   });
 });

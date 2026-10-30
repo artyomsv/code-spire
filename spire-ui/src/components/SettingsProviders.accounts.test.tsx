@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createQueryClient } from '../queryClient';
 import SettingsProviders from './SettingsProviders';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
-const renderPage = () =>
+const renderPage = (wrapper = queryWrapper()) =>
   render(
     <MemoryRouter>
       <SettingsProviders />
     </MemoryRouter>,
+    { wrapper },
   );
 
 const forge = (over: Partial<api.ProviderView>): api.ProviderView => ({
@@ -283,4 +287,85 @@ describe('SettingsProviders — the Machine accounts list', () => {
    * neither — so a deployment holding only tracker accounts flashed the empty state for one render.
    * The tracker fetch is left unresolved here, which IS that gap, held open.
    */
+});
+
+describe('SettingsProviders — the query cache (step 6)', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null });
+  });
+
+  it('shows the accounts at once when the page opens again', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ name: 'TEST cached account' })]);
+    const wrapper = queryWrapper();
+    const first = renderPage(wrapper);
+    await rowNamed('TEST cached account');
+    first.unmount();
+    vi.mocked(api.fetchProviders).mockReturnValue(new Promise(() => {}));
+    renderPage(wrapper);
+    expect(await screen.findByText('TEST cached account')).toBeInTheDocument();
+  });
+
+  // A check writes the scopes it saw into the list; that write must not start another round of checks.
+  it('checks each enabled account once per read, not again when a check writes its scopes', async () => {
+    vi.spyOn(api, 'fetchProviders').mockResolvedValue([forge({ id: 'TEST-a', name: 'TEST account a' }), forge({ id: 'TEST-b', name: 'TEST account b' })]);
+    // Two answers, then none: a loop driven by the scope write stops after one extra round and fails the count cleanly.
+    const scoped = { ok: true, account: 'test-checked', detail: null, reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' };
+    vi.mocked(api.checkProvider).mockResolvedValueOnce(scoped).mockResolvedValueOnce(scoped).mockReturnValue(new Promise(() => {}));
+    renderPage();
+    await rowNamed('TEST account a');
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    await act(async () => {});
+    expect(api.checkProvider).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('SettingsProviders — review of PR 359', () => {
+  const showWith = (client: ReturnType<typeof createQueryClient>) => render(<QueryClientProvider client={client}><MemoryRouter>
+    <SettingsProviders /></MemoryRouter></QueryClientProvider>);
+
+  // M-1: a check's scope result must not erase the failure of the list read that started it.
+  it('keeps a failed list read on screen when a check reports scopes', async () => {
+    const client = createQueryClient();
+    vi.spyOn(api, 'fetchProviders').mockResolvedValueOnce([forge({ name: 'TEST kept account' })])
+      .mockRejectedValue(new Error('TEST-list outage'));
+    vi.spyOn(api, 'checkProvider').mockResolvedValueOnce({ ok: true, account: 'test-checked', detail: null })
+      .mockResolvedValue({ ok: true, account: 'test-checked', detail: null, reportedScopes: 'repo', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    showWith(client);
+    await rowNamed('TEST kept account');
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(1));
+    await act(async () => { await client.invalidateQueries({ queryKey: api.providersKey }); });
+    await waitFor(() => expect(api.checkProvider).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(screen.getByText('TEST-list outage')).toBeInTheDocument();
+    expect(screen.getByText('TEST kept account')).toBeInTheDocument();
+  });
+
+  // M-3: rotating a token clears its stored scopes on the server; the overlay must not bring the old token's back.
+  it('drops a check\'s scopes once a later read reports none', async () => {
+    const client = createQueryClient();
+    vi.spyOn(api, 'fetchProviders')
+      .mockResolvedValueOnce([forge({ name: 'TEST rotated account', reportedScopes: null, scopesCheckedAt: null })])
+      .mockResolvedValue([forge({ name: 'TEST rotated account', enabled: false, reportedScopes: null, scopesCheckedAt: null })]);
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null,
+      reportedScopes: 'TEST-old-scope', scopesCheckedAt: '2026-10-30T00:00:00Z' });
+    showWith(client);
+    expect(await screen.findByText('Token reports: TEST-old-scope')).toBeInTheDocument();
+    await act(async () => { await client.invalidateQueries({ queryKey: api.providersKey }); });
+    await waitFor(() => expect(screen.queryByText('Token reports: TEST-old-scope')).toBeNull());
+  });
+
+  // M-2: a cached row may be out of date; it may be read, but not edited, until this visit's read answers.
+  it('offers Edit only once this visit has read the accounts', async () => {
+    const client = createQueryClient();
+    client.setQueryData(api.providersKey, [forge({ name: 'TEST cached account' })]);
+    let fresh!: (rows: api.ProviderView[]) => void;
+    vi.spyOn(api, 'fetchProviders').mockReturnValue(new Promise(done => { fresh = done; }));
+    vi.spyOn(api, 'checkProvider').mockResolvedValue({ ok: true, account: 'test-checked', detail: null });
+    showWith(client);
+    const row = await rowNamed('TEST cached account');
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeDisabled();
+    await act(async () => fresh([forge({ name: 'TEST cached account' })]));
+    expect(within(await rowNamed('TEST cached account')).getByRole('button', { name: 'Edit' })).toBeEnabled();
+  });
 });

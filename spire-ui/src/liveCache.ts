@@ -32,10 +32,11 @@ export function mergeLive<T>(client: QueryClient, key: QueryKey, update: (previo
 /**
  * Marks `key` stale and re-reads it if a screen shows it. A read already out is cancelled first: it may have started
  * before the change this notice announces, and React Query would otherwise join it while the key has no data yet.
+ * Resolves when the re-read settles and never rejects, so an action that waited for its old `load()` can await it.
  */
-export function invalidateLive(client: QueryClient, key: QueryKey): void {
+export function invalidateLive(client: QueryClient, key: QueryKey): Promise<void> {
   void client.cancelQueries({ queryKey: key, exact: true });
-  void client.invalidateQueries({ queryKey: key, exact: true });
+  return client.invalidateQueries({ queryKey: key, exact: true });
 }
 
 /** Queries waiting for their read to finish before the notice that found them out re-reads them. */

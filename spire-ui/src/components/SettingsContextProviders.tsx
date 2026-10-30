@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   checkContextProvider,
+  contextProvidersKey,
   createContextProvider,
   deleteContextProvider,
   fetchContextProviders,
   fetchProviders,
+  providersKey,
   type ProviderView,
   previewContextProvider,
   updateContextProvider,
@@ -14,6 +17,8 @@ import {
   type ContextType,
 } from '../api';
 import { Plus } from 'lucide-react';
+import { invalidateLive } from '../liveCache';
+import { useEachRead } from '../hooks/useEachRead';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Tooltip from './Tooltip';
@@ -139,13 +144,24 @@ interface Conn {
   detail?: string | null;
 }
 
+/** One array while nothing is read. */
+const NO_SOURCES: ContextProviderView[] = [];
+
 export default function SettingsContextProviders() {
-  const [providers, setProviders] = useState<ContextProviderView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const client = useQueryClient();
+  const read = useQuery({ queryKey: contextProvidersKey, queryFn: () => fetchContextProviders() });
+  const providers = read.data ?? NO_SOURCES;
+  const loading = read.data === undefined && !read.error;
+  // A cached list is shown at once but may be out of date: a row is edited or deleted only once this visit's read
+  // answered, and a deep link opens from that read, so a save cannot send back a value someone else changed
+  // (review of PR 359, M-2). A failed re-read locks them again, as its error once replaced the table.
+  const current = read.isFetchedAfterMount && read.isSuccess;
+  // An action's own failure, shown until the next action; a read's failure, shown until a read succeeds.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
   const [form, setForm] = useState<'new' | ContextProviderView | null>(null);
   // An attention row names one provider; land the operator on it, not just on this page.
-  useEditDeepLink(providers, setForm);
+  useEditDeepLink(current ? providers : NO_SOURCES, setForm);
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
   const [conns, setConns] = useState<Record<string, Conn>>({});
   const [testProvider, setTestProvider] = useState<ContextProviderView | null>(null);
@@ -166,32 +182,20 @@ export default function SettingsContextProviders() {
     }
   }
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await fetchContextProviders();
-      setProviders(list);
-      // Check connectivity once on load — no continuous polling.
-      list.filter((p) => p.accountEnabled !== false && p.accountId).forEach((p) => void checkOne(p.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
+  // Check connectivity after each completed read — no continuous polling.
+  useEachRead<ContextProviderView[]>(contextProvidersKey, (list) => {
+    list.filter((p) => p.accountEnabled !== false && p.accountId).forEach((p) => void checkOne(p.id));
+  });
+  /** Re-reads the list; resolves once the read settles, so a caller that waited for its old load() still does. */
+  const load = () => invalidateLive(client, contextProvidersKey);
 
   async function act(fn: () => Promise<unknown>) {
-    setError(null);
+    setActionError(null);
     try {
       await fn();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setActionError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -213,6 +217,7 @@ export default function SettingsContextProviders() {
             </button>
           </Tooltip>
         </div>
+        {!current && !error && providers.length > 0 && <p className="prov-note" role="status">Showing the last list read. Editing opens once the current one answers.</p>}
         {loading && providers.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
         ) : providers.length === 0 ? (
@@ -270,9 +275,10 @@ export default function SettingsContextProviders() {
                           aria-label="Test"
                         />
                       )}
-                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" />
+                      <IconButton kind="edit" onClick={() => setForm(p)} title="Edit" aria-label="Edit" disabled={!current} />
                       <IconButton
                         kind="delete"
+                        disabled={!current}
                         onClick={() => setConfirmDelete({ id: p.id, name: p.name })}
                         title="Delete"
                         aria-label="Delete"
@@ -371,14 +377,10 @@ function ContextProviderForm({
   const [type, setType] = useState<ContextType>(initial?.type ?? 'jira');
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '');
   const [accountId, setAccountId] = useState(initial?.accountId ?? '');
-  const [accounts, setAccounts] = useState<ProviderView[] | null>(null);
-  const [accountError, setAccountError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    fetchProviders().then((list) => { if (active) setAccounts(list); })
-      .catch((err) => { if (active) setAccountError(String(err)); });
-    return () => { active = false; };
-  }, []);
+  // The accounts page's read, shared.
+  const accountsRead = useQuery({ queryKey: providersKey, queryFn: () => fetchProviders() });
+  const accounts: ProviderView[] | null = accountsRead.data ?? null;
+  const accountError = accountsRead.error && accountsRead.data === undefined ? String(accountsRead.error) : null;
   const [projectKeys, setProjectKeys] = useState(initial?.projectKeys ?? '');
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [busy, setBusy] = useState(false);

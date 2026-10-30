@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SettingsContextProviders from './SettingsContextProviders';
 import * as api from '../api';
+import { queryWrapper } from '../test/queryWrapper';
 
 const source: api.ContextProviderView = {
   id: 'TEST-c1',
@@ -32,7 +33,7 @@ describe('SettingsContextProviders — Used by', () => {
   });
 
   it('shows Site bot on every row', async () => {
-    render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>);
+    render(<MemoryRouter><SettingsContextProviders /></MemoryRouter>, { wrapper: queryWrapper() });
     expect(await screen.findAllByText('Site bot')).toHaveLength(2);
     expect(screen.getByRole('columnheader', { name: 'Account' })).toBeInTheDocument();
   });

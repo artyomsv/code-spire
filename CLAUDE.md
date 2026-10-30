@@ -301,7 +301,13 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   `buildDefaultsKey`, `landSettingsKey`), so a Factory-tab save (the saved row, then an invalidate) reaches the list's
   setup column and the preparation form with no callback. A save writes through `liveCache.ts` (`writeLive`,
   `updateLive`: cancel a read of the key, then write), mounted or not; a repository save also re-reads the work sources,
-  whose enabled state the server derives from the repository's.
+  whose enabled state the server derives from the repository's. Settings batch A is done: Accounts, Webhooks and
+  Context read `providersKey`, `webhookReposKey` and `contextProvidersKey`; their per-read connection checks run through
+  `hooks/useEachRead.ts` (once per completed read, or a failed read that keeps the last good list, never for a cache
+  write; a check's scope result overlays its row in component state until the next answered read, since a cache write
+  would clear a failed read's error). A cached list is shown at once, but Edit, Delete and `?edit=` deep links wait for a read made on this visit
+  (`isFetchedAfterMount && isSuccess`), so a save never sends back a stale field. `invalidateLive` returns the re-read,
+  so an action can await it; inside a synchronous `act()` discard it (`act(() => { void invalidateLive(...); })`).
 - **Money in millicents.** Host-exposed dev ports in the **34xxx** range.
 - **Author identity** is data (stable `providerUserId`), never a gate; `email` never logged/persisted.
 - Java 25 / Quarkus 3.38.3 / Gradle Kotlin DSL; **pure domain code stays free of framework imports** —
