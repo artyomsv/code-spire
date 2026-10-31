@@ -200,6 +200,35 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 .exec();
     }
 
+    /** Bounds the proxy log a failure message quotes. */
+    private static final int DIAGNOSIS_CHARS = 4096;
+
+    /**
+     * What was parsed beside what the proxy actually wrote, so a failure shows the real log format rather than an empty
+     * list. Read straight from the daemon, not through the code under test.
+     */
+    private String diagnosis(List<EgressAttempt> parsed, String runId) {
+        StringBuilder log = new StringBuilder();
+        for (Container proxy : proxyOf(runId)) {
+            try (var stream = runtime.client().logContainerCmd(proxy.getId()).withStdOut(true).withStdErr(true)
+                    .withTailAll().exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<
+                            com.github.dockerjava.api.model.Frame>() {
+                        @Override
+                        public void onNext(com.github.dockerjava.api.model.Frame frame) {
+                            if (log.length() < DIAGNOSIS_CHARS) {
+                                log.append(new String(frame.getPayload(), java.nio.charset.StandardCharsets.UTF_8));
+                            }
+                        }
+                    })) {
+                stream.awaitCompletion(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException | java.io.IOException | RuntimeException unreadable) {
+                log.append("[proxy log unreadable: ").append(unreadable).append("]");
+            }
+        }
+        String raw = log.length() > DIAGNOSIS_CHARS ? log.substring(0, DIAGNOSIS_CHARS) + "[...]" : log.toString();
+        return "parsed=" + parsed + "; proxy log (" + proxyOf(runId).size() + " proxy containers):\n" + raw;
+    }
+
     private List<String> agentLog(RunHandle handle) {
         List<String> lines = new ArrayList<>();
         runtime.attach(handle, LogChannel.AGENT, lines::add);
@@ -672,9 +701,11 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         List<String> agent = agentLog(handle);
         runtime.salvage(handle);
 
+        List<EgressAttempt> egress = runtime.egressOf(handle);
+
         assertTrue(agent.contains("PROXIED-REACHED"), agent.toString());
-        assertTrue(runtime.egressOf(handle).contains(new EgressAttempt(target, 80, true)),
-                "the proxy must record the host it let through: " + runtime.egressOf(handle));
+        assertTrue(egress.contains(new EgressAttempt(target, 80, true)),
+                "the proxy must record the host it let through: " + diagnosis(egress, "run_egress_report"));
     }
 
     /**
@@ -695,9 +726,10 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
         assertTrue(agent.contains("DECLARED-REACHED"), "a declared host must get through: " + agent);
         assertTrue(agent.contains("UNDECLARED-FAILED"), agent.toString());
-        assertTrue(egress.contains(new EgressAttempt(target, 80, true)), egress.toString());
+        assertTrue(egress.contains(new EgressAttempt(target, 80, true)), diagnosis(egress, "run_egress_enforce"));
         assertTrue(egress.contains(new EgressAttempt(undeclared, 80, false)),
-                "a refusal the run cannot name is a BLOCKED_EGRESS nobody can act on: " + egress);
+                "a refusal the run cannot name is a BLOCKED_EGRESS nobody can act on: "
+                        + diagnosis(egress, "run_egress_enforce"));
     }
 
     /** An operator's cancel ends the proxy too: a stopped run must not leave its way out open. */

@@ -99,6 +99,10 @@ class DockerRunNetworksTest {
         assertTrue(report.contains("Port 8888"), report);
         assertTrue(report.contains("ConnectPort 443") && report.contains("ConnectPort 80"), report);
         assertTrue(report.contains("LogLevel Connect"), report);
+        // A named LogFile, /dev/stdout included, is refused by tinyproxy's create_file_safely and the log goes to a
+        // syslog the container does not have. With none, tinyproxy writes to stdout, which is what egressOf reads.
+        assertFalse(report.contains("LogFile"), report);
+        assertFalse(report.contains("Syslog"), report);
         assertFalse(report.contains("Filter"), report);
         assertTrue(enforce.contains("Filter \"/tmp/filter\""), enforce);
         assertTrue(enforce.contains("FilterDefaultDeny Yes"), enforce);

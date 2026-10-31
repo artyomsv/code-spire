@@ -285,7 +285,9 @@ final class DockerRunNetworks {
                 "Port " + EgressPolicy.PROXY_PORT,
                 "Timeout 600",
                 "MaxClients 64",
-                "LogFile \"/dev/stdout\"",
+                // No LogFile, and that is what sends the log to stdout. tinyproxy opens a named log file through
+                // create_file_safely, which refuses a symlink or anything not a regular file -- so "/dev/stdout"
+                // failed, tinyproxy fell back to syslog, and with no syslog in the container every line was lost.
                 "LogLevel Connect",
                 "DisableViaHeader Yes",
                 "Allow " + subnet));
