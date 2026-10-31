@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { ProviderView } from '../../api';
+import { useQuery } from '@tanstack/react-query';
+import { fetchLlmProviders, llmProvidersKey, type ProviderView } from '../../api';
 import { saveRepository, type Repository, type RepositoryInput } from './repositoriesApi';
 import RepositoryAccountSelects from './RepositoryAccountSelects';
 import RepositorySwitches from './RepositorySwitches';
+import RepositoryReviewProvider from './RepositoryReviewProvider';
 
 interface Props {
   repository: Repository;
@@ -25,7 +27,7 @@ function inputOf(repository: Repository): RepositoryInput {
   return {
     scmType: repository.scmType, forgeOrigin: repository.forgeOrigin, workspace: repository.workspace, slug: repository.slug,
     enabled: repository.enabled, reviewerAccountId: repository.reviewer?.id ?? null, factoryAccountId: repository.factory?.id ?? null,
-    reviewerMayApprove: repository.reviewerMayApprove,
+    reviewerMayApprove: repository.reviewerMayApprove, reviewLlmProviderId: repository.reviewLlmProviderId ?? null,
   };
 }
 
@@ -44,6 +46,7 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  const llmProviders = useQuery({ queryKey: llmProvidersKey, queryFn: () => fetchLlmProviders() });
   const dirty = changed(fields, inputOf(saved));
   // The panel owns the lock: an input still editable while a save is in flight is overwritten by its answer.
   useEffect(() => { onState({ dirty, busy }); }, [dirty, busy, onState]);
@@ -64,7 +67,9 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
     <section aria-label="Accounts" className="settings-group"><h4>Accounts</h4>
       <RepositoryAccountSelects fields={fields} providers={providers} onChange={patch} /></section>
     <section aria-label="Reviewing" className="settings-group"><h4>Reviewing</h4>
-      <RepositorySwitches fields={fields} onChange={patch} /></section>
+      <RepositorySwitches fields={fields} onChange={patch} />
+      <RepositoryReviewProvider value={fields.reviewLlmProviderId} providers={llmProviders.data ?? []}
+        onChange={reviewLlmProviderId => patch({ reviewLlmProviderId })} /></section>
     <section aria-label="Identity" className="settings-group"><h4>Identity</h4>
       <dl className="repo-identity">
         <div><dt>Forge kind</dt><dd>{saved.scmType}</dd></div>

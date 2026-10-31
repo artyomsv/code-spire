@@ -62,6 +62,8 @@ its ticket told. M5 is next.
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
   parity. Jira, Confluence, GitHub/GitLab Issues, repository rules and rung-2 code knowledge supply
   context. Repository prompts, /finding, learned memory, analytics and operator SCM sign-in remain.
+  Reviews and replies may use a per-repository LLM provider (Settings → Repositories → Settings →
+  Review with, V105); a named provider that is switched off refuses rather than falls back.
 - **Operations are delivered.** Hybrid OIDC uses separate service prefixes and session cookies;
   stored sensitive content is encrypted with Tink. The charge ledger, fleet caps, refused status,
   archive policy, attention, circuit breakers, provider-neutral boundaries and split licensing

@@ -131,6 +131,13 @@ with unique `(scm_type, forge_origin, workspace, slug)`, and `repository_account
 FK, account FK and one row per REVIEWER/FACTORY role. `review_status.repository_id` and
 `factory_run.repository_id` are nullable during the bridge. Existing history keys stay intact.
 
+Two settings live on the repository row. V88 adds `reviewer_may_approve` (boolean, default true,
+ADR-047): off, every review there is posted as a Comment. V105 adds nullable
+`review_llm_provider_id` (FK to `llm_provider`, no ON DELETE action): the LLM provider the
+repository's reviews and replies use, null meaning the global default. Deleting a provider a
+repository names is refused (409); a switched-off one refuses the repository's reviews rather than
+falling back to the default.
+
 `repository_legacy_account` is immutable migration evidence: account UUID, kind, base URL,
 workspace and role, without credentials or an FK that would erase evidence on deletion.
 `repository_registration_bridge` stores the latest registration revision, metadata, selected

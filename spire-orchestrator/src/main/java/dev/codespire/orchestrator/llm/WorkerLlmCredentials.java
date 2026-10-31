@@ -6,11 +6,14 @@ import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.llm.LlmCredential;
 import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.encryption.EncryptionService;
+import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Resolves the global-default LLM provider and packs its config, encrypted, onto a
@@ -34,6 +37,12 @@ public class WorkerLlmCredentials {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    ReviewProjection reviews;
+
+    @Inject
+    RepositoryRegistry repositories;
+
     /**
      * The encrypted default LLM credential bound to a workspace, or the reason it must not be spent.
      *
@@ -51,21 +60,42 @@ public class WorkerLlmCredentials {
         if (cfg.isEmpty()) {
             return DefaultLlm.noDefaultProvider();
         }
-        String model = cfg.get().model();
-        if (!models.isPriceable(model)) {
-            return DefaultLlm.notPriceable(model);
-        }
-        return DefaultLlm.spendable(pack(cfg.get(), workspace), model);
+        return priced(cfg.get(), workspace);
     }
 
     /**
-     * The encrypted LLM credential a review and its replies spend, or the reason it must not be spent.
+     * The encrypted LLM credential a review and its replies spend, or the reason it must not be spent:
+     * the provider the review's repository names, else the global default.
      *
-     * <p>Not yet per repository: it answers with the global default until the repository's named
-     * provider is read.
+     * <p>A review with no repository (a legacy row, or no row yet) and a repository that names none keep
+     * the default. A named provider is never replaced by the default: switched off, it refuses, so the
+     * payer does not change without the operator choosing it. The priceability guard applies to it
+     * exactly as to the default.
      */
     public DefaultLlm resolveForReview(String reviewId) {
-        return resolveDefault(ReviewIds.parse(reviewId).repo().workspace());
+        String workspace = ReviewIds.parse(reviewId).repo().workspace();
+        Optional<UUID> named = reviews.repositoryIdOf(reviewId).flatMap(repositories::reviewLlmProviderId);
+        if (named.isEmpty()) {
+            return resolveDefault(workspace);
+        }
+        // A provider a repository names cannot be deleted, so an empty answer is a row removed under us;
+        // it refuses like a switched-off one rather than falling back.
+        Optional<LlmProviderConfig> cfg = registry.resolveById(named.get());
+        if (cfg.isEmpty()) {
+            return DefaultLlm.repositoryProviderOff(named.get().toString());
+        }
+        if (!cfg.get().enabled()) {
+            return DefaultLlm.repositoryProviderOff(cfg.get().name());
+        }
+        return priced(cfg.get(), workspace);
+    }
+
+    /** An unpriceable model is refused BEFORE packing, so no credential is encrypted for a call not made. */
+    private DefaultLlm priced(LlmProviderConfig cfg, String workspace) {
+        if (!models.isPriceable(cfg.model())) {
+            return DefaultLlm.notPriceable(cfg.model());
+        }
+        return DefaultLlm.spendable(pack(cfg, workspace), cfg.model());
     }
 
     private String pack(LlmProviderConfig cfg, String workspace) {

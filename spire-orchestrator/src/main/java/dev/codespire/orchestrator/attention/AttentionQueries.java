@@ -83,6 +83,7 @@ public class AttentionQueries {
             dev.codespire.orchestrator.repository.RepositoryAttentionRows.collect(c, rows);
             dev.codespire.orchestrator.work.WorkAttentionRows.collect(c, rows);
             buildDefaultsPricingRows(c, rows);
+            repositoryLlmProviderRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
             runRows.collect(c, rows);
@@ -179,6 +180,43 @@ public class AttentionQueries {
                             + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
                             + ". A build is refused before it starts until each type has a rate, or is marked"
                             + " as one this vendor does not bill, in Settings → LLM → Models.", "/settings/llm"));
+        }
+    }
+
+    /**
+     * A repository whose named review provider cannot be spent, so every review and reply on it is refused
+     * ({@code WorkerLlmCredentials.resolveForReview} never falls back to the default). The repository's row,
+     * because each repository chooses its own provider.
+     *
+     * <p>{@code LLM_DEFAULT_MISSING} still fires when no default exists even if every repository names its
+     * own provider. Accepted: a repository registered later, or one switched back to the default, would
+     * have nothing to use.
+     */
+    private void repositoryLlmProviderRows(Connection c, List<AttentionView> rows) throws SQLException {
+        record Named(String repository, String provider, String model, boolean enabled) {}
+        List<Named> named = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT r.workspace || '/' || r.slug AS repository, p.name, p.model, p.enabled
+                  FROM repository r JOIN llm_provider p ON p.id = r.review_llm_provider_id
+                 WHERE r.enabled = TRUE
+                """);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) named.add(new Named(rs.getString("repository"), rs.getString("name"),
+                    rs.getString("model"), rs.getBoolean("enabled")));
+        }
+        for (Named repository : named) {
+            if (!repository.enabled()) {
+                rows.add(new AttentionView("REPOSITORY_LLM_PROVIDER_OFF", Severity.BLOCKING, repository.repository(),
+                        "This repository reviews with LLM provider " + repository.provider() + ", which is switched"
+                                + " off, so its reviews and replies are refused. Switch it on in Settings → LLM, or"
+                                + " choose another provider in the repository's settings.", "/settings/repositories"));
+            } else if (!pricer.isPriceable(repository.model())) {
+                rows.add(new AttentionView("REPOSITORY_LLM_MODEL_NOT_PRICEABLE", Severity.BLOCKING,
+                        repository.repository(), "This repository reviews with LLM provider " + repository.provider()
+                                + ", whose model " + repository.model() + " has no usable pricing, so its reviews and"
+                                + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
+                                + " mark the model unmetered if it is self-hosted.", "/settings/llm"));
+            }
         }
     }
 

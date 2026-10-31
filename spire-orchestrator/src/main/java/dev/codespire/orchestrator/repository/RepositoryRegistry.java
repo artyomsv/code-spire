@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.repository;
 
 import dev.codespire.contract.scm.ForgeOrigin;
+import dev.codespire.orchestrator.llm.LlmProviderRegistry;
 import dev.codespire.orchestrator.provider.ProviderClients;
 import dev.codespire.orchestrator.provider.ProviderRegistry.AccountConflict;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -10,6 +11,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +37,7 @@ public class RepositoryRegistry {
             """;
     @Inject DataSource dataSource;
     @Inject RepositoryBindings bindings;
+    @Inject LlmProviderRegistry llmProviders;
 
     public List<RepositoryView> list() {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
@@ -70,13 +73,14 @@ public class RepositoryRegistry {
     @Transactional
     public RepositoryView create(RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
+        requireReviewProvider(input);
         UUID id = UUID.randomUUID();
         try (Connection connection = dataSource.getConnection()) {
             insert(connection, id, input);
             bindings.replace(connection, id, input);
         } catch (SQLException failure) {
             if ("23505".equals(failure.getSQLState())) throw new AccountConflict("Repository is already registered at this forge origin");
-            throw database(failure);
+            throw referenceGone(failure);
         }
         return get(id).orElseThrow();
     }
@@ -84,27 +88,29 @@ public class RepositoryRegistry {
     @Transactional
     public RepositoryView update(UUID id, long expectedRevision, RepositoryInput raw) {
         RepositoryInput input = normalize(raw);
+        requireReviewProvider(input);
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
-                UPDATE repository SET enabled=?, reviewer_may_approve=?, revision=revision+1
+                UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
             statement.setBoolean(2, input.reviewerMayApprove());
-            statement.setObject(3, id);
-            statement.setLong(4, expectedRevision);
-            statement.setString(5, input.scmType());
-            statement.setString(6, input.forgeOrigin());
-            statement.setString(7, input.workspace());
-            statement.setString(8, input.slug());
+            statement.setObject(3, input.reviewLlmProviderId(), Types.OTHER);
+            statement.setObject(4, id);
+            statement.setLong(5, expectedRevision);
+            statement.setString(6, input.scmType());
+            statement.setString(7, input.forgeOrigin());
+            statement.setString(8, input.workspace());
+            statement.setString(9, input.slug());
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
-        } catch (SQLException failure) { throw database(failure); }
+        } catch (SQLException failure) { throw referenceGone(failure); }
         return get(id).orElseThrow();
     }
 
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
-                "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve) VALUES (?,?,?,?,?,?,?)")) {
+                "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve,review_llm_provider_id) VALUES (?,?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());
             statement.setString(3, input.forgeOrigin());
@@ -112,6 +118,7 @@ public class RepositoryRegistry {
             statement.setString(5, input.slug());
             statement.setBoolean(6, input.enabled());
             statement.setBoolean(7, input.reviewerMayApprove());
+            statement.setObject(8, input.reviewLlmProviderId(), Types.OTHER);
             statement.executeUpdate();
         }
     }
@@ -123,7 +130,26 @@ public class RepositoryRegistry {
         if (slug.contains("/")) throw new IllegalArgumentException("Repository slug cannot contain a slash");
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
-                input.reviewerMayApprove() == null || input.reviewerMayApprove());
+                input.reviewerMayApprove() == null || input.reviewerMayApprove(), input.reviewLlmProviderId());
+    }
+
+    /** Looked up before any write, so an id naming no provider is the caller's mistake (400), not a key violation. */
+    private void requireReviewProvider(RepositoryInput input) {
+        UUID provider = input.reviewLlmProviderId();
+        if (provider != null && llmProviders.get(provider).isEmpty()) {
+            throw new IllegalArgumentException("LLM provider " + provider + " does not exist; choose one listed in Settings → LLM");
+        }
+    }
+
+    /** The provider a repository's reviews use (harness reviews, decision 1); empty means the global default. */
+    public Optional<UUID> reviewLlmProviderId(UUID id) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT review_llm_provider_id FROM repository WHERE id=?")) {
+            statement.setObject(1, id);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.ofNullable(rows.getObject(1, UUID.class)) : Optional.empty();
+            }
+        } catch (SQLException failure) { throw database(failure); }
     }
 
     /** The setting for the saga (ADR-047 §4.1); empty when the row is missing, never a default. */
@@ -148,7 +174,8 @@ public class RepositoryRegistry {
     private RepositoryView view(ResultSet rows) throws SQLException {
         return new RepositoryView(rows.getObject("id", UUID.class), rows.getString("scm_type"), rows.getString("forge_origin"),
                 rows.getString("workspace"), rows.getString("slug"), rows.getBoolean("enabled"), rows.getLong("revision"),
-                account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"));
+                account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"),
+                rows.getObject("review_llm_provider_id", UUID.class));
     }
 
     private RepositoryView.Account account(ResultSet rows, String role) throws SQLException {
@@ -162,6 +189,15 @@ public class RepositoryRegistry {
                 : "factory".equals(role) && (handle == null || handle.isBlank()) ? "no-login"
                 : "reviewer".equals(role) && (identity == null || identity.isBlank()) ? "no-identity" : "configured";
         return new RepositoryView.Account(id, rows.getString(role + "_name"), role.toUpperCase(java.util.Locale.ROOT), handle, state);
+    }
+
+    /** A provider deleted between the lookup and the write is a stale form, not a server fault. */
+    private RuntimeException referenceGone(SQLException failure) {
+        String message = failure.getMessage();
+        if ("23503".equals(failure.getSQLState()) && message != null && message.contains("review_llm_provider_id")) {
+            return new IllegalArgumentException("The selected LLM provider no longer exists; reload before saving");
+        }
+        return database(failure);
     }
 
     private IllegalStateException database(SQLException failure) {

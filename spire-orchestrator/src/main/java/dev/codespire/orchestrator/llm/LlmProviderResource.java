@@ -4,6 +4,7 @@ import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -107,7 +108,14 @@ public class LlmProviderResource {
     @RolesAllowed("spire-admin")
     @Path("/{id}")
     public Response delete(@PathParam("id") String id) {
-        if (!registry.delete(uuid(id))) {
+        boolean deleted;
+        try {
+            deleted = registry.delete(uuid(id));
+        } catch (LlmProviderRegistry.ProviderInUse inUse) {
+            throw new ClientErrorException(Response.status(Response.Status.CONFLICT)
+                    .type(MediaType.TEXT_PLAIN).entity(inUse.getMessage()).build());
+        }
+        if (!deleted) {
             throw new NotFoundException("No LLM provider " + id);
         }
         return Response.noContent().build();
