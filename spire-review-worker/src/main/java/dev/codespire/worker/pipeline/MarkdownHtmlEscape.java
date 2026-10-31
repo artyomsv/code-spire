@@ -92,7 +92,7 @@ final class MarkdownHtmlEscape {
 
         @Override
         public void visit(Code code) {
-            if (!insideTableCell(code)) {
+            if (!insideTableCell(code) || code != null) {
                 add(code);
             }
         }
