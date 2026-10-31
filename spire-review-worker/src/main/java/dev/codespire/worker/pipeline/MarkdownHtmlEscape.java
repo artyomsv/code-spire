@@ -3,6 +3,7 @@ package dev.codespire.worker.pipeline;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.AbstractVisitor;
 import org.commonmark.node.Code;
 import org.commonmark.node.FencedCodeBlock;
@@ -28,7 +29,7 @@ import org.commonmark.parser.Parser;
 final class MarkdownHtmlEscape {
 
     private static final Parser PARSER = Parser.builder()
-            .extensions(List.of())
+            .extensions(List.of(TablesExtension.create()))
             .includeSourceSpans(IncludeSourceSpans.BLOCKS_AND_INLINES)
             .build();
 
