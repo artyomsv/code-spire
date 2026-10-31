@@ -148,6 +148,20 @@ describe('Repository registry', () => {
       expect.objectContaining({ reviewLlmProviderId: 'TEST-off-llm' }), named));
   });
 
+  /** Review of PR 365, M-1: a failed read says so and can be retried; it never claims no default is set. */
+  it('says the provider list failed to load, offers a retry, and claims no default only after a read', async () => {
+    vi.mocked(accounts.fetchLlmProviders).mockRejectedValueOnce(new Error('TEST-llm down'));
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    expect(await screen.findByText(/TEST-llm down/)).toBeInTheDocument();
+    const reviewWith = screen.getByRole('combobox', { name: 'Review with' });
+    expect(within(reviewWith).queryByRole('option', { name: /none set/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading LLM providers' }));
+    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm)' })).toBeInTheDocument();
+    expect(screen.queryByText(/TEST-llm down/)).not.toBeInTheDocument();
+  });
+
   it('keeps a stale-save error visible without pretending it saved', async () => {
     vi.mocked(api.saveRepository).mockRejectedValue(new Error('Repository changed; reload before saving'));
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
