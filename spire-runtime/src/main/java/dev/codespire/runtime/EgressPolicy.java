@@ -24,13 +24,19 @@ public record EgressPolicy(Mode mode, Set<String> hosts) {
 
     public static final EgressPolicy OFF = new EgressPolicy(Mode.OFF, Set.of());
 
+    /** The egress proxy's name on the unit's internal network. */
+    public static final String PROXY_ALIAS = "spire-egress";
+
+    /** The port the egress proxy listens on. */
+    public static final int PROXY_PORT = 8888;
+
     /**
      * What the agent's {@code HTTP(S)_PROXY} name: the proxy's alias on the unit's own internal network.
      *
      * <p>A constant, because the alias is scoped to that network and each unit has its own, so two units never meet
      * on it; the proxy CONTAINER still has a name derived from the run id, which the daemon needs to be unique.
      */
-    public static final String PROXY_ADDRESS = "http://spire-egress:8888";
+    public static final String PROXY_ADDRESS = "http://" + EgressPolicy.PROXY_ALIAS + ":" + EgressPolicy.PROXY_PORT;
 
     /** The ports the proxy forwards to, for every host it lets through. */
     public static final Set<Integer> PORTS = Set.of(443, 80);
@@ -42,7 +48,11 @@ public record EgressPolicy(Mode mode, Set<String> hosts) {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    public boolean isOn() {
+    /**
+     * Whether the agent is behind the proxy at all. Not named {@code isOn}: a unit spec is persisted as JSON for a
+     * held build, and a bean-style getter would be written as a property no constructor reads back.
+     */
+    public boolean proxiesTheAgent() {
         return mode != Mode.OFF;
     }
 

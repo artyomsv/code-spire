@@ -52,6 +52,23 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     private final DockerRunRuntime runtime = new DockerRunRuntime();
 
+    /**
+     * The egress proxy image, built from deploy/egress under the tag the runtime names by default, so the proxy these
+     * tests meet is the one a deployment runs and CI needs no registry for it.
+     */
+    @org.junit.jupiter.api.BeforeAll
+    static void buildTheEgressProxyImage() {
+        String root = System.getProperty("spire.repoRoot");
+        if (root == null || root.isBlank()) {
+            throw new IllegalStateException("spire.repoRoot is unset — see spire-runtime-docker/build.gradle.kts");
+        }
+        new DockerRunRuntime().client()
+                .buildImageCmd(Path.of(root, "deploy", "egress").toFile())
+                .withTags(java.util.Set.of(DockerRunRuntime.DEFAULT_EGRESS_IMAGE))
+                .exec(new com.github.dockerjava.api.command.BuildImageResultCallback())
+                .awaitImageId();
+    }
+
     private final List<RunHandle> started = new CopyOnWriteArrayList<>();
 
     @AfterEach

@@ -2005,6 +2005,40 @@ SELECT failure_cause, failure_detail FROM orchestrator.factory_run WHERE run_id 
 The proxy **host** must appear; the **password** must not. The host is what makes the error legible,
 so it is deliberately kept.
 
+### 7. The agent's egress proxy
+
+Since harness reviews PR 2, the agent does not use the corporate proxy directly. It sits on the unit's
+own internal network behind a per-run egress proxy, which chains to the corporate proxy. Build the
+proxy image once, like the publisher image:
+
+```bash
+./deploy/egress/build.sh                    # spire-egress-proxy:latest, what the worker names by default
+```
+
+The worker's `SPIRE_RUN_EGRESS_MODE` is `report` by default. Dispatch a run, then:
+
+```bash
+docker ps -a --filter label=dev.codespire.runId --format '{{.Names}} {{.Label "dev.codespire.role"}}'
+docker inspect --format '{{json .NetworkSettings.Networks}}' <agent id>   # only spire-<digest>-agent
+docker inspect --format '{{json .Config.Env}}' <agent id>                 # HTTPS_PROXY=http://spire-egress:8888, NO_PROXY empty
+docker logs <egress-proxy id>                                             # every CONNECT and GET, and the upstream used
+```
+
+```sql
+SELECT host, port, allowed, first_seen_at FROM orchestrator.run_egress WHERE run_id = '<runId>';
+```
+
+The agent must be on its internal network **only**, with no `bridge`. init and the publisher must keep
+the corporate proxy and must not be on the agent's network. With a corporate proxy configured, the
+egress proxy's log shows requests leaving through it. A model call that fails here, while a run with
+`SPIRE_RUN_EGRESS_MODE=off` succeeds, means the chain to the corporate proxy is wrong: check the URL
+form (`http://[user:pass@]host:port`) and `NO_PROXY`.
+
+To try enforce, set `SPIRE_RUN_EGRESS_MODE=enforce`. A run whose agent asks for an undeclared host
+shows `allowed = false` in `run_egress`. If the run then fails, its cause is `BLOCKED_EGRESS`, naming
+the host. Enforce is global and declares only the harness's model host, so a factory build that needs
+a package registry will be refused it. Use it for review runs first.
+
 ### Troubleshooting
 
 | Symptom | Likely cause |
@@ -2016,6 +2050,8 @@ so it is deliberately kept.
 | Clone hangs to the init timeout | A proxy is set and the forge is not in `NO_PROXY` |
 | Image pull reports *not found* for a private image | `SPIRE_RUN_REGISTRY_HOST` does not match the image reference's registry, so the pull went anonymous |
 | A container has the bundle bound `rw` | Not reachable through configuration — `HostMount` cannot express a writable bind. Report it |
+| Every run fails at create, "the egress proxy exited before it listened" | The proxy image is missing or old (`./deploy/egress/build.sh`), or it refused its configuration; the message quotes its log |
+| Agent's calls fail only with egress on | The corporate proxy URL is not `[scheme://][user:pass@]host:port`, or the model host is in `NO_PROXY` but unreachable directly from the proxy |
 
 ## Mode S — the agent image contract (FR-F13)
 

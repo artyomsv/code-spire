@@ -215,4 +215,23 @@ class SandboxControlsTest {
                 container(List.of()), container(List.of()), container(List.of()),
                 EnterpriseEnvironment.NONE, EgressPolicy.OFF, MEMORY_BYTES, NANO_CPUS, 0, Duration.ofMinutes(30)));
     }
+
+    /**
+     * Behind the proxy, the agent alone is placed on the unit's internal network; init and the publisher keep the
+     * daemon's default, which reaches the forge. With egress off, nobody's network changes.
+     */
+    @Test
+    void onlyAProxiedAgentIsPlacedOnTheUnitsInternalNetwork() {
+        RunUnitSpec off = unit();
+        RunUnitSpec proxied = new RunUnitSpec(off.runId(), off.init(), off.agent(), off.publisher(), off.enterprise(),
+                new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of()),
+                off.memoryBytes(), off.nanoCpus(), off.diskBytes(), off.wallClock());
+
+        assertEquals(DockerRunNetworks.agentNetworkName(off.runId()),
+                runtime.hostConfigFor(proxied, proxied.agent()).getNetworkMode());
+        for (ContainerSpec trusted : List.of(proxied.init(), proxied.publisher())) {
+            assertEquals(null, runtime.hostConfigFor(proxied, trusted).getNetworkMode());
+        }
+        assertEquals(null, runtime.hostConfigFor(off, off.agent()).getNetworkMode());
+    }
 }

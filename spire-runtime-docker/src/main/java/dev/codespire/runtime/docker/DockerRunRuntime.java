@@ -182,11 +182,21 @@ public final class DockerRunRuntime implements PublicationRuntime {
      */
     private final RegistryCredential registry;
 
+    /** The image a unit's egress proxy runs, built from deploy/egress unless the deployment names another. */
+    public static final String DEFAULT_EGRESS_IMAGE = "spire-egress-proxy:latest";
+
+    /** The unit's internal network and egress proxy, for a unit whose agent is behind one. */
+    private final DockerRunNetworks networks;
+
     public DockerRunRuntime() {
         this(null);
     }
 
     public DockerRunRuntime(RegistryCredential registry) {
+        this(registry, DEFAULT_EGRESS_IMAGE);
+    }
+
+    public DockerRunRuntime(RegistryCredential registry, String egressImage) {
         this.registry = registry;
         DefaultDockerClientConfig config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
         DockerHttpClient http = new ApacheDockerHttpClient.Builder()
@@ -194,6 +204,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 .sslConfig(config.getSSLConfig())
                 .build();
         this.client = DockerClientImpl.getInstance(config, http);
+        this.networks = new DockerRunNetworks(client, java.util.Objects.requireNonNull(egressImage, "egressImage"));
     }
 
     DockerClient client() {
@@ -213,8 +224,8 @@ public final class DockerRunRuntime implements PublicationRuntime {
     @Override
     public RuntimeCapabilities capabilities() {
         // No native sidecar semantics in Docker: this adapter sequences the parts itself. No
-        // network policy either — egress restriction needs a Kubernetes NetworkPolicy or an
-        // explicit user-defined network, so the model-provider allowlist is advisory on this arm.
+        // network policy either: the agent's egress goes through the unit's own proxy
+        // (DockerRunNetworks), which is enforced per unit rather than by a policy the daemon applies.
         return new RuntimeCapabilities(false, true, false, true, true, false);
     }
 
@@ -280,6 +291,12 @@ public final class DockerRunRuntime implements PublicationRuntime {
                     + " for run " + spec.runId() + initReport(initId));
         }
 
+        if (spec.egress().proxiesTheAgent()) {
+            // Before the agent exists, so its first call already has somewhere to go. Labelled like the volumes,
+            // so destroy and the watchdog find the network and the proxy by the run id alone.
+            ensureImage(networks.image());
+            networks.open(spec, volumeLabels);
+        }
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER, binding, null);
         String agentId = createContainer(spec, spec.agent(), AGENT, binding, null);
         // Publisher first, but ONLY as a defensive habit — nothing depends on it. The handoff is a
@@ -427,6 +444,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
         return pull;
     }
 
+    /** The image this runtime starts egress proxies from. Exposed so the worker wiring is assertable. */
+    public String egressImage() {
+        return networks.image();
+    }
+
     /** The credential this runtime pulls with, or empty. Exposed so the worker wiring is assertable. */
     public Optional<RegistryCredential> registryCredential() {
         return Optional.ofNullable(registry);
@@ -501,6 +523,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 // none to read. Teardown is destroy()'s job and nothing else's.
                 .withAutoRemove(false);
         tmpFsFor(spec, container).ifPresent(host::withTmpFs);
+        if (container == spec.agent() && spec.egress().proxiesTheAgent()) {
+            // The unit's internal network and nothing else: no default bridge, so no route to the host, its
+            // published ports or any other container. The egress proxy is the one thing on it that leads out.
+            host.withNetworkMode(DockerRunNetworks.agentNetworkName(spec.runId()));
+        }
         return host;
     }
 
@@ -767,7 +794,9 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
         for (Container container : containersOf(handle.runId())) {
             String role = container.getLabels().get(ROLE_LABEL);
-            if (DELIVERY.equals(role) || VERIFY.equals(role)) killQuietly(container.getId());
+            if (DELIVERY.equals(role) || VERIFY.equals(role) || DockerRunNetworks.PROXY.equals(role)) {
+                killQuietly(container.getId());
+            }
         }
     }
 
@@ -865,6 +894,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // publisher here would take away, one line before it, the drain window it is given next.
             killAgent(handle);
             drainPublisher(handle);
+            stopProxy(handle);
             // WHICH failure this was is our fact, not the library's. awaitStatusCode reports the
             // timeout, an interrupt, a response with no status, and any stream fault as the same
             // exception type — so trusting it to mean "overran" labelled a dropped daemon connection
@@ -879,10 +909,25 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // A response arrived carrying no status code. The clock is not what failed here.
             killAgent(handle);
             drainPublisher(handle);
+            stopProxy(handle);
             return Finalization.faulted("the agent exited but the daemon reported no status code");
         }
         drainPublisher(handle);
+        stopProxy(handle);
         return Finalization.salvaged(exit, "agent exited " + exit);
+    }
+
+    /**
+     * The agent is gone, so its way out closes. A held unit is kept for days; a proxy left running with it would be
+     * an open door into nothing and a process to account for. Its log stays readable after it stops.
+     */
+    private void stopProxy(RunHandle handle) {
+        containerOf(handle.runId(), DockerRunNetworks.PROXY).ifPresent(this::stopQuietly);
+    }
+
+    @Override
+    public List<dev.codespire.runtime.EgressAttempt> egressOf(RunHandle handle) {
+        return networks.egressOf(handle.runId());
     }
 
     /**
@@ -950,6 +995,8 @@ public final class DockerRunRuntime implements PublicationRuntime {
                         // already gone
                     }
                 });
+        // After the containers: a network with a container still attached cannot be removed.
+        networks.removeNetworks(handle.runId());
     }
 
     @Override
@@ -963,6 +1010,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
         containersOf(runId).forEach(container -> labels.add(container.getLabels()));
         client.listVolumesCmd().withFilter("label", List.of(RUN_ID_LABEL + "=" + runId))
                 .exec().getVolumes().forEach(volume -> labels.add(volume.getLabels()));
+        labels.addAll(networks.networkLabels(runId));
         return labels;
     }
 
@@ -1060,6 +1108,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 client.removeVolumeCmd(volume.getName()).exec();
             } catch (NotFoundException gone) { /* idempotent removal */ }
         }
+        networks.removeNetworks(handle.runId());
     }
 
     /**

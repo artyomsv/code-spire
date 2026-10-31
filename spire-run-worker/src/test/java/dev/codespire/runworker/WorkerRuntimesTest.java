@@ -29,7 +29,16 @@ class WorkerRuntimesTest {
         WorkerRuntimes runtimes = new WorkerRuntimes();
         runtimes.enterprise = RunLauncherTest.corporateFake(
                 dev.codespire.runtime.EnterpriseEnvironment.NONE, List.of(), registry);
+        runtimes.egressImage = "TEST-egress-proxy:1";
         return runtimes;
+    }
+
+    /** The egress proxy image is the deployment's to name, like the publisher image, and reaches the arm. */
+    @Test
+    void theConfiguredEgressImageReachesTheRuntime() {
+        DockerRunRuntime runtime = (DockerRunRuntime) with(Optional.empty()).dockerRuntime();
+
+        assertEquals("TEST-egress-proxy:1", runtime.egressImage());
     }
 
     @Test

@@ -90,6 +90,28 @@ class RunEgressTest {
         assertEquals(List.of(), rows(runId));
     }
 
+    /**
+     * Both sides of a rolling upgrade read: a result from a worker that predates egress has no field and reads as
+     * none, and the field from a new worker arrives whole. (An old orchestrator ignores the unknown field: Quarkus's
+     * mapper does not fail on unknown properties.)
+     */
+    @Test
+    void theResultDeserializerReadsAResultWithAndWithoutEgress() {
+        RunResultDeserializer deserializer = new RunResultDeserializer();
+        String old = "{\"type\":\"RunFinished\",\"runId\":\"run::github:TEST-acme/app:old:1\",\"pushedRef\":null,"
+                + "\"changedPaths\":[],\"blocked\":[],\"tokenUsage\":null,\"agentUnobserved\":false}";
+        String current = old.replace("\"agentUnobserved\":false}",
+                "\"agentUnobserved\":false,\"egress\":[{\"host\":\"api.openai.com\",\"port\":443,\"allowed\":true}]}");
+
+        RunResult.RunFinished before = (RunResult.RunFinished) deserializer.deserialize("cs.run-results",
+                old.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        RunResult.RunFinished after = (RunResult.RunFinished) deserializer.deserialize("cs.run-results",
+                current.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        assertEquals(List.of(), before.egress());
+        assertEquals(List.of(new RunResult.EgressAttempt("api.openai.com", 443, true)), after.egress());
+    }
+
     // ---- V106 ------------------------------------------------------------------------------
 
     @Test

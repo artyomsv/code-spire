@@ -416,6 +416,23 @@ public final class CodexAdapter implements HarnessAdapter {
                 "auth.openai.com"));
     }
 
+    /**
+     * The model API for a run paid by a key, the ChatGPT backend for a run paid by a seat, and nothing else.
+     *
+     * <p>Never {@code auth.openai.com}: that is the sign-in host, which the operator's sign-in container reaches, not a
+     * run. The orchestrator empties a seat's refresh token before it reaches a run, so a run has nothing to renew there,
+     * and an agent that could reach it could only try to mint a credential it was never given.
+     *
+     * <p>Not yet measured: these are the hosts the CLI is documented and observed to call, and report mode records
+     * what it really calls before enforce is recommended (docs/UNVERIFIED.md).
+     */
+    @Override
+    public java.util.Set<String> egressHosts(HarnessInvocation invocation) {
+        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)
+                ? java.util.Set.of("chatgpt.com")
+                : java.util.Set.of("api.openai.com");
+    }
+
     @Override
     public UsageReport usage(RunEventSummary seen) {
         UsageReport latest = UsageReport.unknown();

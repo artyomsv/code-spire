@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The three images the M0 walking-skeleton test needs, built once per JVM through the docker CLI.
+ * The four images the M0 walking-skeleton test needs, built once per JVM through the docker CLI.
  *
  * <p>The CLI rather than docker-java, deliberately: the test only builds, runs, inspects and execs,
  * and every host that has the daemon has the CLI. The publisher image is built from the module's
@@ -21,6 +21,9 @@ final class TestImages {
 
     /** What RunUnitBuilder names. Built here from spire-publisher/Dockerfile. */
     static final String PUBLISHER = "spire-publisher:latest";
+
+    /** What the worker names by default (spire.run.egress.image). Built here from deploy/egress. */
+    static final String EGRESS_PROXY = "spire-egress-proxy:latest";
 
     /** alpine + git + the reference entrypoint: a shell script stands in for the model. */
     static final String AGENT = "spire-test-agent:m0";
@@ -49,6 +52,9 @@ final class TestImages {
         Path testDocker = root.resolve("spire-run-worker/src/test/docker");
 
         docker("build", "-q", "-t", PUBLISHER, root.resolve("spire-publisher").toString());
+        // The worker's default egress mode is report, so every unit these tests run puts its agent behind the
+        // proxy: the image a deployment builds with deploy/egress/build.sh, under the tag the worker names.
+        docker("build", "-q", "-t", EGRESS_PROXY, root.resolve("deploy/egress").toString());
 
         Path agentContext = Files.createTempDirectory("spire-m0-agent-");
         Files.copy(testDocker.resolve("agent/Dockerfile"), agentContext.resolve("Dockerfile"));
@@ -98,6 +104,12 @@ final class TestImages {
         for (String volume : docker("volume", "ls", "-q", "--filter", filter).split("\\s+")) {
             if (!volume.isBlank()) {
                 docker("volume", "rm", "-f", volume);
+            }
+        }
+        // A unit behind its egress proxy also leaves its internal network, removable once its containers are gone.
+        for (String network : docker("network", "ls", "-q", "--filter", filter).split("\\s+")) {
+            if (!network.isBlank()) {
+                docker("network", "rm", network);
             }
         }
     }

@@ -45,4 +45,7 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // DockerRunRuntimeIT builds the egress proxy image from deploy/egress, as a deployment would; handed in
+    // explicitly rather than guessed from the working directory, the same property spire-agent-image uses.
+    systemProperty("spire.repoRoot", rootProject.projectDir.absolutePath)
 }

@@ -25,7 +25,8 @@ import java.util.Set;
  * out loud, the same reasoning that makes {@link Mount#writable} spell its {@code false}.
  *
  * <p>{@code egress} says whether the agent reaches the network only through the unit's egress proxy; see
- * {@link EgressPolicy}. It has no default for the same reason: {@link EgressPolicy#OFF} is said out loud.
+ * {@link EgressPolicy}. It has no defaulting constructor for the same reason: {@link EgressPolicy#OFF} is said
+ * out loud. Only a unit stored before the field existed reads back without one, and then as OFF, which is how it ran.
  *
  * <p><b>{@code diskBytes} is a limit like the other two, and it is stated in the SPI rather than
  * left to each arm, because the portable answer differs per arm while the guarantee must not.</b>
@@ -68,7 +69,12 @@ public record RunUnitSpec(String runId,
         Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(publisher, "publisher");
         Objects.requireNonNull(enterprise, "enterprise");
-        Objects.requireNonNull(egress, "egress");
+        if (egress == null) {
+            // A held build's unit is stored as JSON and read back to resume its publisher. One stored before the
+            // proxy existed carries no egress, and that unit truly ran with none, so OFF is what happened, not a
+            // default chosen for it. A unit built today always names its egress.
+            egress = EgressPolicy.OFF;
+        }
         Objects.requireNonNull(wallClock, "wallClock");
         if (memoryBytes <= 0 || nanoCpus <= 0 || diskBytes <= 0) {
             throw new IllegalArgumentException(
@@ -84,7 +90,7 @@ public record RunUnitSpec(String runId,
             throw new IllegalArgumentException("a run unit needs a wall clock, was: " + wallClock);
         }
         requireContainment(agent, publisher);
-        requireNoEnvironmentCollision(enterprise, init, agent, publisher);
+        requireNoEnvironmentCollision(enterprise, egress, init, agent, publisher);
         requireHostPathsDoNotShadowVolumes(enterprise, init, agent, publisher);
     }
 
@@ -95,12 +101,31 @@ public record RunUnitSpec(String runId,
      * {@link ContainerSpec#environment()} directly, which is why the merge lives here and not in
      * the Docker arm — a per-arm copy would let the Kubernetes arm ship a unit with no proxy and
      * no error, and the symptom (calls that hang, then time out) names nothing.
+     *
+     * <p>With the agent behind its egress proxy, the agent gets the deployment's trust and NOT its proxy: every
+     * proxy variable names the egress proxy, and nothing is exempt from it (an empty {@code NO_PROXY}). The egress
+     * proxy chains to the corporate proxy itself. The other containers get the deployment's environment whole.
      */
     public Map<String, String> environmentFor(ContainerSpec container) {
         Objects.requireNonNull(container, "container");
         Map<String, String> merged = new LinkedHashMap<>(container.environment());
-        merged.putAll(enterprise.environment());
+        merged.putAll(deploymentEnvironment(enterprise, egress, container == agent));
         return Map.copyOf(merged);
+    }
+
+    /** What the deployment adds to one container: all of it, or for a proxied agent its trust and the egress proxy. */
+    private static Map<String, String> deploymentEnvironment(EnterpriseEnvironment enterprise, EgressPolicy egress,
+                                                             boolean isAgent) {
+        if (!isAgent || !egress.proxiesTheAgent()) {
+            return enterprise.environment();
+        }
+        Map<String, String> applied = new LinkedHashMap<>(enterprise.trustEnvironment());
+        for (String name : List.of("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")) {
+            applied.put(name, EgressPolicy.PROXY_ADDRESS);
+        }
+        applied.put("NO_PROXY", "");
+        applied.put("no_proxy", "");
+        return applied;
     }
 
     /** Rebuild with another init container, enumerating the components once. */
@@ -167,12 +192,12 @@ public record RunUnitSpec(String runId,
      * an operator-supplied variable name can reach it; by then the silent-precedence bug would be
      * a live one and this refusal would be a behaviour change rather than an invariant.
      */
-    private static void requireNoEnvironmentCollision(EnterpriseEnvironment enterprise,
+    private static void requireNoEnvironmentCollision(EnterpriseEnvironment enterprise, EgressPolicy egress,
                                                       ContainerSpec init, ContainerSpec agent,
                                                       ContainerSpec publisher) {
-        refuseCollision(enterprise, init, "init");
-        refuseCollision(enterprise, agent, "agent");
-        refuseCollision(enterprise, publisher, "publisher");
+        refuseCollision(deploymentEnvironment(enterprise, egress, false), init, "init");
+        refuseCollision(deploymentEnvironment(enterprise, egress, true), agent, "agent");
+        refuseCollision(deploymentEnvironment(enterprise, egress, false), publisher, "publisher");
     }
 
     /**
@@ -182,9 +207,9 @@ public record RunUnitSpec(String runId,
      * cannot tell an operator which of the two collided — and the role is the only thing that
      * makes the collision actionable.
      */
-    private static void refuseCollision(EnterpriseEnvironment enterprise, ContainerSpec container,
+    private static void refuseCollision(Map<String, String> deployment, ContainerSpec container,
                                         String role) {
-        for (String name : enterprise.environment().keySet()) {
+        for (String name : deployment.keySet()) {
             if (container.environment().containsKey(name)) {
                 throw new IllegalArgumentException("the deployment sets \"" + name
                         + "\", which this unit's " + role + " container also sets."
