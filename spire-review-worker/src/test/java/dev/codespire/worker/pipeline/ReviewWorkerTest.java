@@ -547,6 +547,21 @@ class ReviewWorkerTest {
         assertTrue(body.contains("`a <b> in code`"), "the closed span keeps its text: " + body);
     }
 
+    /**
+     * The escape judges the finished comment: a message that opens with a fence is code on its own, but the severity
+     * label in front of it makes that line a paragraph, so the HTML after it is markup there (review of PR 364, M-2).
+     */
+    @Test
+    void aFenceThatStartsAMessageIsNotCodeAfterTheLabel() {
+        sink.nativeReviews = true;
+        Finding fenced = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO,
+                "~~~html\n<b>TEST HTML</b>\n~~~", null);
+        worker.postComments(nativeCommand(List.of(fenced), ReviewVerdict.APPROVE, true));
+        String body = sink.reviewPosts.getFirst().comments().getFirst().bodyMd();
+        assertTrue(body.contains("&lt;b>TEST HTML"), "escaped once the label precedes the fence: " + body);
+        assertFalse(body.contains("<b>"), "no raw HTML: " + body);
+    }
+
     /** The summary carries model text too, through the same escape. */
     @Test
     void aTypeInsideCodeInTheSummaryIsPostedAsWritten() {

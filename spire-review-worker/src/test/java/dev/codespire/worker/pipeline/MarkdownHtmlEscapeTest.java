@@ -40,6 +40,19 @@ class MarkdownHtmlEscapeTest {
         assertEquals("`a\n\n&lt;b>TEST&lt;/b>`", escape("`a\n\n<b>TEST</b>`"));
     }
 
+    /** A heading interrupts a paragraph without a blank line, so no span runs across it (review of PR 364, M-1). */
+    @Test
+    void aHeadingEndsTheParagraph() {
+        assertEquals("`a\n# &lt;b>TEST HTML&lt;/b>`", escape("`a\n# <b>TEST HTML</b>`"));
+    }
+
+    /** GitHub splits a table cell at a pipe even inside backticks, so the two halves are not code there. */
+    @Test
+    void aTableCellSplitsAtAPipe() {
+        assertEquals("| h | i |\n|---|---|\n| `a|&lt;b>TEST&lt;/b>` |",
+                escape("| h | i |\n|---|---|\n| `a|<b>TEST</b>` |"));
+    }
+
     @Test
     void aCodeSpanMayCrossASingleLineBreak() {
         assertEquals("`List<\nDouble>`", escape("`List<\nDouble>`"));
