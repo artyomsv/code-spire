@@ -255,7 +255,7 @@ class SpendCapGateTest {
         saga.projection = projection;
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("packed-llm-cred", "TEST-MODEL");
             }
         };

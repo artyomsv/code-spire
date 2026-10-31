@@ -198,7 +198,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -260,7 +260,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -337,7 +337,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -383,7 +383,7 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -406,7 +406,7 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -446,7 +446,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -545,7 +545,7 @@ class ConversationSagaTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 throw new AssertionError("the cap notice is fixed text — it must not need an LLM credential");
             }
         };
@@ -601,7 +601,7 @@ class ConversationSagaTest {
         // The mention override takes the paid path, so this saga needs a working LLM credential.
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("llm-cred", "TEST-MODEL");
             }
         };
@@ -635,7 +635,7 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, types);
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.notPriceable("TEST-RATELESS-MODEL");
             }
         };
@@ -671,7 +671,7 @@ class ConversationSagaTest {
         ConversationSaga saga = cappedThreadSaga(0, types);
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.noDefaultProvider();
             }
         };
@@ -686,6 +686,70 @@ class ConversationSagaTest {
         assertTrue(types.contains("skipped:AnswerFollowUp"));
         assertTrue(dashboardNotes.stream().anyMatch(n -> n.contains("Settings → LLM")),
                 "the operator has to be told which page fixes it: " + dashboardNotes);
+    }
+
+    // --- the review's repository decides which provider a reply spends ---
+
+    /**
+     * A reply spends the credential resolved for its review's repository, the same one the review used,
+     * not the global default. {@code resolveDefault} answers with a different value so a saga that still
+     * asks for the default fails this assertion instead of opening a database.
+     */
+    @Test
+    void aReplySpendsTheCredentialResolvedForItsReview() {
+        List<String> resolvedFor = new ArrayList<>();
+        ConversationSaga saga = cappedThreadSaga(0, new ArrayList<>());
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveForReview(String reviewId) {
+                resolvedFor.add(reviewId);
+                return DefaultLlm.spendable("TEST-REPOSITORY-CRED-" + reviewId, "TEST-MODEL");
+            }
+
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("TEST-DEFAULT-CRED", "TEST-MODEL");
+            }
+        };
+
+        Optional<ActionCommand> cmd = saga.planFollowUp(inlineReply(List.of()));
+
+        ActionCommand.AnswerFollowUp answer =
+                assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.orElseThrow());
+        assertEquals("TEST-REPOSITORY-CRED-review::acme/web#412", answer.llmCredential(),
+                "the reply must carry the credential resolved for its own review");
+        assertEquals(List.of("review::acme/web#412"), resolvedFor, "resolved once, for the thread's review");
+    }
+
+    /** A switched-off named provider refuses the reply and names the provider; it never falls back. */
+    @Test
+    void aSwitchedOffRepositoryProviderRefusesTheReplyAndNamesIt() {
+        List<String> types = new ArrayList<>();
+        List<String> dashboardNotes = new ArrayList<>();
+        ConversationSaga saga = cappedThreadSaga(0, types);
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveForReview(String reviewId) {
+                return DefaultLlm.repositoryProviderOff("TEST-PROVIDER-OFF");
+            }
+
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("TEST-DEFAULT-CRED", "TEST-MODEL");
+            }
+        };
+        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
+            @Override
+            public void setNote(String reviewId, String note) {
+                dashboardNotes.add(note);
+            }
+        };
+
+        assertTrue(saga.planFollowUp(inlineReply(List.of())).isEmpty(),
+                "a switched-off provider must not fall back to the default");
+        assertTrue(types.contains("skipped:AnswerFollowUp"));
+        assertTrue(dashboardNotes.stream().anyMatch(n -> n.contains("TEST-PROVIDER-OFF")),
+                "the dashboard must name the provider that is switched off: " + dashboardNotes);
     }
 
     @Test

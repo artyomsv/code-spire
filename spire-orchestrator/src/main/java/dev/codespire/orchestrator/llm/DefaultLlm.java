@@ -9,11 +9,12 @@ package dev.codespire.orchestrator.llm;
  * {@code AnswerFollowUp} with no price check at all. Answering both together makes the next emit site
  * guarded by construction instead of by remembering.
  *
- * @param packed  the encrypted credential, null exactly when {@code refusal} is set
- * @param model   the model that would have been spent on; blank when there is no provider to name
- * @param refusal why it must not be spent, null exactly when {@code packed} is set
+ * @param packed       the encrypted credential, null exactly when {@code refusal} is set
+ * @param model        the model that would have been spent on; blank when there is no provider to name
+ * @param providerName the provider a refusal names; blank unless the refusal is about a named provider
+ * @param refusal      why it must not be spent, null exactly when {@code packed} is set
  */
-public record DefaultLlm(String packed, String model, Refusal refusal) {
+public record DefaultLlm(String packed, String model, String providerName, Refusal refusal) {
 
     /** Why a paid call is refused. Two causes with different fixes, so they are never conflated. */
     public enum Refusal {
@@ -24,7 +25,12 @@ public record DefaultLlm(String packed, String model, Refusal refusal) {
          * registry guard: V30 leaves every legacy zero-priced model rateless, so an upgraded
          * deployment is in this state before an operator touches anything.
          */
-        MODEL_NOT_PRICEABLE
+        MODEL_NOT_PRICEABLE,
+        /**
+         * The repository names a provider for its reviews and that provider is switched off. Refused
+         * rather than falling back to the global default, so the payer never changes silently.
+         */
+        REPOSITORY_PROVIDER_OFF
     }
 
     public DefaultLlm {
@@ -33,18 +39,23 @@ public record DefaultLlm(String packed, String model, Refusal refusal) {
                     "A default LLM is either spendable or refused, never both and never neither");
         }
         model = model == null ? "" : model;
+        providerName = providerName == null ? "" : providerName;
     }
 
     public static DefaultLlm spendable(String packed, String model) {
-        return new DefaultLlm(packed, model, null);
+        return new DefaultLlm(packed, model, null, null);
     }
 
     public static DefaultLlm noDefaultProvider() {
-        return new DefaultLlm(null, "", Refusal.NO_DEFAULT_PROVIDER);
+        return new DefaultLlm(null, "", null, Refusal.NO_DEFAULT_PROVIDER);
     }
 
     public static DefaultLlm notPriceable(String model) {
-        return new DefaultLlm(null, model, Refusal.MODEL_NOT_PRICEABLE);
+        return new DefaultLlm(null, model, null, Refusal.MODEL_NOT_PRICEABLE);
+    }
+
+    public static DefaultLlm repositoryProviderOff(String providerName) {
+        return new DefaultLlm(null, "", providerName, Refusal.REPOSITORY_PROVIDER_OFF);
     }
 
     public boolean isSpendable() {
@@ -62,6 +73,7 @@ public record DefaultLlm(String packed, String model, Refusal refusal) {
         return switch (refusal) {
             case NO_DEFAULT_PROVIDER -> "no default LLM provider configured";
             case MODEL_NOT_PRICEABLE -> "model '" + model + "' has no usable pricing";
+            case REPOSITORY_PROVIDER_OFF -> "repository LLM provider '" + providerName + "' is switched off";
         };
     }
 
@@ -76,6 +88,9 @@ public record DefaultLlm(String packed, String model, Refusal refusal) {
             case MODEL_NOT_PRICEABLE -> "Model '" + model + "' has no usable pricing — set input and"
                     + " output rates in Settings → LLM → Models, or mark it UNMETERED if it is"
                     + " self-hosted.";
+            case REPOSITORY_PROVIDER_OFF -> "This repository reviews with LLM provider '" + providerName
+                    + "', which is switched off — switch it on in Settings → LLM, or choose another"
+                    + " provider in the repository's settings.";
         };
     }
 }

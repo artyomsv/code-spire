@@ -261,7 +261,7 @@ class ConversationSpendCapTest {
         };
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return DefaultLlm.spendable("TEST-LLM-CREDENTIAL", "TEST-MODEL");
             }
         };

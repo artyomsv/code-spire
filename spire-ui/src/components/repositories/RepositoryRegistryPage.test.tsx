@@ -19,6 +19,10 @@ const repo: api.Repository = {
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
+const llmProvider = (id: string, enabled: boolean, isDefault = false): accounts.LlmProviderView => ({
+  id, name: id, type: 'openai', baseUrl: 'https://llm.example.test', model: `TEST-model-${id}`, temperature: 0.2,
+  maxTokens: null, hasApiKey: true, enabled, isDefault, createdAt: '', lastCheckAt: null, lastCheckOk: null, lastCheckError: null,
+});
 
 describe('Repository registry', () => {
   it('uses a text link and shared account column and keeps repair labels concise', async () => {
@@ -69,6 +73,8 @@ describe('Repository registry', () => {
     vi.spyOn(api, 'fetchRepositoryKinds').mockResolvedValue(['gitlab']);
     vi.spyOn(api, 'fetchPendingMappings').mockResolvedValue([]);
     vi.spyOn(api, 'saveRepository').mockResolvedValue(repo);
+    vi.spyOn(accounts, 'fetchLlmProviders').mockResolvedValue([llmProvider('TEST-default-llm', true, true),
+      llmProvider('TEST-other-llm', true), llmProvider('TEST-off-llm', false)]);
   });
 
   it('shows workspace and the selected reviewer and disabled factory', async () => {
@@ -107,6 +113,39 @@ describe('Repository registry', () => {
     fireEvent.click(setting);
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerMayApprove: false }), repo));
+  });
+
+  /** Harness reviews, decision 1: the global default, or one enabled provider; a switched-off one is never offered. */
+  it('offers the global default and the enabled providers to review with, and saves the choice', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const reviewWith = await screen.findByRole('combobox', { name: 'Review with' });
+    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm)' })).toBeInTheDocument();
+    expect(reviewWith).toHaveDisplayValue('Global default (TEST-default-llm)');
+    expect(within(reviewWith).getByRole('option', { name: 'TEST-other-llm' })).toBeInTheDocument();
+    expect(within(reviewWith).queryByRole('option', { name: /TEST-off-llm/ })).not.toBeInTheDocument();
+    fireEvent.change(reviewWith, { target: { value: 'TEST-other-llm' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm' }), repo));
+  });
+
+  /** A repository already naming a switched-off provider shows it, and a save keeps it: nothing changes the payer silently. */
+  it('shows a named provider that is switched off, selected, and saves it unchanged', async () => {
+    const named = { ...repo, reviewLlmProviderId: 'TEST-off-llm' };
+    vi.mocked(api.fetchRepositories).mockResolvedValue([named]);
+    vi.mocked(api.saveRepository).mockResolvedValue(named);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const reviewWith = await screen.findByRole('combobox', { name: 'Review with' });
+    expect(await within(reviewWith).findByRole('option', { name: 'TEST-off-llm (switched off)' })).toBeInTheDocument();
+    expect(reviewWith).toHaveValue('TEST-off-llm');
+    fireEvent.click(screen.getByLabelText('Enabled'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewLlmProviderId: 'TEST-off-llm' }), named));
   });
 
   it('keeps a stale-save error visible without pretending it saved', async () => {

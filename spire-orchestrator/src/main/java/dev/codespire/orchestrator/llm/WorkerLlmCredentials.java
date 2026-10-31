@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.llm;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.llm.LlmCredential;
 import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.encryption.EncryptionService;
@@ -55,6 +56,16 @@ public class WorkerLlmCredentials {
             return DefaultLlm.notPriceable(model);
         }
         return DefaultLlm.spendable(pack(cfg.get(), workspace), model);
+    }
+
+    /**
+     * The encrypted LLM credential a review and its replies spend, or the reason it must not be spent.
+     *
+     * <p>Not yet per repository: it answers with the global default until the repository's named
+     * provider is read.
+     */
+    public DefaultLlm resolveForReview(String reviewId) {
+        return resolveDefault(ReviewIds.parse(reviewId).repo().workspace());
     }
 
     private String pack(LlmProviderConfig cfg, String workspace) {

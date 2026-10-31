@@ -22,6 +22,8 @@ export interface Repository {
   factory: RepositoryAccount | null;
   // The reviewer may post Approve / Request changes here (ADR-047); off means every review is a comment.
   reviewerMayApprove: boolean;
+  // The LLM provider this repository's reviews and replies use; null means the global default.
+  reviewLlmProviderId?: string | null;
 }
 export interface RepositoryInput {
   scmType: string;
@@ -32,6 +34,7 @@ export interface RepositoryInput {
   reviewerAccountId: string | null;
   factoryAccountId: string | null;
   reviewerMayApprove: boolean;
+  reviewLlmProviderId?: string | null;
 }
 export interface PendingMapping {
   registrationId: string; revision: number; scmType: string;
