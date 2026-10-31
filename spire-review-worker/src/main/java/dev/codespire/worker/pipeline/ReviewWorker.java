@@ -715,14 +715,14 @@ public class ReviewWorker {
 
     private String renderVerdictReply(FindingVerdict verdict, String commit) {
         String sha = commit.length() > 7 ? commit.substring(0, 7) : commit;
-        String note = verdict.note() == null || verdict.note().isBlank() ? "" : " " + escapeHtml(verdict.note());
-        return switch (verdict.status()) {
+        String note = verdict.note() == null || verdict.note().isBlank() ? "" : " " + verdict.note();
+        return escapeHtml(switch (verdict.status()) {
             case RESOLVED -> "**Fixed in `" + sha + "`.**" + note;
             case STILL_OPEN -> "**Still open after `" + sha + "`:**" + note;
             case ACKNOWLEDGED -> "**Acknowledged** — closing this thread." + note;
             case SUPERSEDED -> "**The flagged code changed in `" + sha + "`** — this finding no longer applies." + note;
             case UNCHANGED -> throw new IllegalStateException("UNCHANGED verdicts never reply");
-        };
+        });
     }
 
     private void postOneInline(CommentSink commentSink, PostComments command, Diff diff, Finding finding,
@@ -744,7 +744,7 @@ public class ReviewWorker {
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
-                            renderInline(finding), backoffBudget);
+                            escapeHtml(renderInline(finding)), backoffBudget);
                     // Both ids: the comment identifies what was posted, the thread identifies where a
                     // reply will land. GitLab's discussion id differs from its note id, and ownership is
                     // keyed by the thread — recording only the comment left the bot unable to recognize
@@ -921,11 +921,12 @@ public class ReviewWorker {
 
     private String renderInline(Finding finding) {
         StringBuilder sb = new StringBuilder();
-        sb.append("**").append(finding.severity()).append("** ").append(escapeHtml(finding.message()));
+        sb.append("**").append(finding.severity()).append("** ").append(finding.message());
         if (finding.suggestion() != null && !finding.suggestion().isBlank()) {
             // fenced code block: rendered inert, applied only by a human
             sb.append("\n\nSuggestion:\n```\n").append(finding.suggestion()).append("\n```");
         }
+        // Unescaped: the comment it goes into is escaped whole, since text around it changes what its Markdown means.
         return sb.toString();
     }
 
@@ -937,7 +938,7 @@ public class ReviewWorker {
             sb.append("> **Partial review:** this PR's diff exceeded the review budget and was ")
                     .append("truncated — changes beyond the token limit were not reviewed.\n\n");
         }
-        sb.append(escapeHtml(review.summary())).append('\n');
+        sb.append(review.summary() == null ? "" : review.summary()).append('\n');
         if (!review.findings().isEmpty()) {
             sb.append("\n**Findings:** ").append(review.findings().size()).append('\n');
         }
@@ -954,7 +955,7 @@ public class ReviewWorker {
                     .append("back on the next review._\n");
         }
         sb.append("\nRun `/finding` in any inline thread to file what you discussed there as a tracked finding.\n");
-        return sb.toString();
+        return escapeHtml(sb.toString());
     }
 
     private void appendFindingList(StringBuilder sb, String heading, List<Finding> findings) {
@@ -964,12 +965,13 @@ public class ReviewWorker {
         sb.append(heading);
         for (Finding f : findings) {
             sb.append("- `").append(f.path()).append(':').append(f.range().startLine())
-                    .append("` — ").append(f.severity()).append(' ').append(escapeHtml(f.message())).append('\n');
+                    .append("` — ").append(f.severity()).append(' ').append(f.message()).append('\n');
         }
     }
 
+    /** Raw HTML in a finished comment is escaped outside Markdown code; code keeps its text, so `List<Double>` reads as written. */
     private static String escapeHtml(String text) {
-        return text == null ? "" : text.replace("<", "&lt;");
+        return MarkdownHtmlEscape.outsideCode(text);
     }
 
     // --- failure classification ---
