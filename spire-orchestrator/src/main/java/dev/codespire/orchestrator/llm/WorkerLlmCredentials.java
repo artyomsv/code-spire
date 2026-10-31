@@ -85,7 +85,7 @@ public class WorkerLlmCredentials {
             return DefaultLlm.repositoryProviderOff(named.get().toString());
         }
         if (!cfg.get().enabled()) {
-            return DefaultLlm.repositoryProviderOff(cfg.get().name());
+            return resolveDefault(workspace);
         }
         return priced(cfg.get(), workspace);
     }
