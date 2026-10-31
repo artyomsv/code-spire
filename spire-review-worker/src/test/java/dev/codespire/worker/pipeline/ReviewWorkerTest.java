@@ -562,6 +562,36 @@ class ReviewWorkerTest {
         assertFalse(body.contains("<b>"), "no raw HTML: " + body);
     }
 
+    /**
+     * Findings at one anchor share a comment. Escaped one by one, a fence one finding leaves open is closed by the
+     * next, and HTML that was code in its own finding is markup in the comment; the comment is escaped once, whole
+     * (review of PR 364, M-3).
+     */
+    @Test
+    void aSharedCommentIsEscapedWhole() {
+        sink.nativeReviews = true;
+        Finding opens = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST zero\n~~~", null);
+        Finding closes = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO,
+                "TEST one\n~~~\n<b>TEST HTML</b>", null);
+        worker.postComments(nativeCommand(List.of(opens, closes), ReviewVerdict.APPROVE, true));
+        String body = sink.reviewPosts.getFirst().comments().getFirst().bodyMd();
+        assertTrue(body.contains("&lt;b>TEST HTML"), "escaped as the shared comment renders: " + body);
+        assertFalse(body.contains("<b>"), "no raw HTML: " + body);
+    }
+
+    /** The same shared comment, posted one by one on the fallback, is escaped whole too. */
+    @Test
+    void aSharedCommentOnTheFallbackIsEscapedWhole() {
+        sink.nativeReviews = true;
+        idempotency.claim(REVIEW_ID, COMMIT, "REVIEW");
+        sink.foundReview = Optional.of(new PostedReview("rv-9", ReviewVerdict.APPROVE, Map.of(), "https://forge.example.test/TEST/rv-9"));
+        Finding opens = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO, "TEST zero\n~~~", null);
+        Finding closes = new Finding("src/A.java", new LineRange(2, 2), Severity.INFO,
+                "TEST one\n~~~\n<b>TEST HTML</b>", null);
+        worker.postComments(nativeCommand(List.of(opens, closes), ReviewVerdict.APPROVE, true));
+        assertFalse(sink.inlineBodies.getFirst().contains("<b>"), "no raw HTML: " + sink.inlineBodies.getFirst());
+    }
+
     /** The summary carries model text too, through the same escape. */
     @Test
     void aTypeInsideCodeInTheSummaryIsPostedAsWritten() {

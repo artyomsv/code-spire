@@ -53,6 +53,17 @@ class MarkdownHtmlEscapeTest {
                 escape("| h | i |\n|---|---|\n| `a|<b>TEST</b>` |"));
     }
 
+    /**
+     * Escaped pipes shorten a table cell's text while the parser keeps reporting positions in the original line, so a
+     * code span's position lands earlier than the span (commonmark 0.24.0). Code positions inside a table cell are
+     * not trusted: everything there is escaped (review of PR 364, M-4).
+     */
+    @Test
+    void codeInATableCellIsEscapedLikeText() {
+        assertEquals("| h |\n|---|\n| \\|\\|\\|&lt;b>`TEST CODE`&lt;/b> |",
+                escape("| h |\n|---|\n| \\|\\|\\|<b>`TEST CODE`</b> |"));
+    }
+
     @Test
     void aCodeSpanMayCrossASingleLineBreak() {
         assertEquals("`List<\nDouble>`", escape("`List<\nDouble>`"));
