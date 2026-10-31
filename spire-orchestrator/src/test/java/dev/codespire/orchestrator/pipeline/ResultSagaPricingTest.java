@@ -122,6 +122,59 @@ class ResultSagaPricingTest {
     }
 
     /**
+     * The review spends the credential resolved for ITS repository, not the global default.
+     *
+     * <p>{@code resolveDefault} answers too, with a different value, so a saga that still asks for the
+     * default fails this assertion instead of opening a database from a unit test.
+     */
+    @Test
+    void contextAssembledSpendsTheCredentialResolvedForThisReview() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveForReview(String reviewId) {
+                return DefaultLlm.spendable("TEST-REPOSITORY-CRED-" + reviewId, "TEST-MODEL");
+            }
+
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("TEST-DEFAULT-CRED", "TEST-MODEL");
+            }
+        };
+
+        saga.on(contextAssembled(REVIEW_ID, COMMIT));
+
+        assertEquals(1, emitted.size());
+        ActionCommand.GenerateReview command =
+                assertInstanceOf(ActionCommand.GenerateReview.class, emitted.get(0));
+        assertEquals("TEST-REPOSITORY-CRED-" + REVIEW_ID, command.llmCredential(),
+                "the review must carry the credential resolved for its own repository");
+    }
+
+    /** A repository whose named provider is switched off refuses; the default is never spent instead. */
+    @Test
+    void contextAssembledRefusesWhenTheRepositoryProviderIsSwitchedOff() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+        saga.workerLlmCredentials = new WorkerLlmCredentials() {
+            @Override
+            public DefaultLlm resolveForReview(String reviewId) {
+                return DefaultLlm.repositoryProviderOff("TEST-PROVIDER-OFF");
+            }
+
+            @Override
+            public DefaultLlm resolveDefault(String workspace) {
+                return DefaultLlm.spendable("TEST-DEFAULT-CRED", "TEST-MODEL");
+            }
+        };
+
+        saga.on(contextAssembled(REVIEW_ID, COMMIT));
+
+        assertTrue(emitted.isEmpty(), "a switched-off provider must not fall back to the default");
+        assertTrue(projection.note().contains("TEST-PROVIDER-OFF"),
+                "the dashboard must name the provider that is switched off: " + projection.note());
+    }
+
+    /**
      * The prompt {@link WorkerPromptTemplates} resolves must be the one that actually reaches the
      * command — not merely resolved and discarded. {@code GenerateReview} has 9-/10-arg convenience
      * constructors that silently default {@code reviewPrompt}/{@code reconcilePrompt} to null (see
@@ -399,7 +452,7 @@ class ResultSagaPricingTest {
         // longer resolve a credential without being told whether spending it can be priced.
         saga.workerLlmCredentials = new WorkerLlmCredentials() {
             @Override
-            public DefaultLlm resolveDefault(String workspace) {
+            public DefaultLlm resolveForReview(String reviewId) {
                 return priceable ? DefaultLlm.spendable("packed-llm-cred", model)
                         : DefaultLlm.notPriceable(model);
             }

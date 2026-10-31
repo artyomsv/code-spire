@@ -2485,6 +2485,13 @@ Correctness note: the params ride via the request; the real `OpenAiChatModel` ke
 OpenAI subtype so the merge preserves these fields on the wire (a bare mock `ChatModel` would drop them,
 so the mapping is unit-tested directly).
 
+**Note (2026-10-31): the phase-3 override is delivered per repository, not per SCM provider.** V105 adds
+`repository.review_llm_provider_id`; a review and its replies resolve the provider their repository names,
+else the global default (`WorkerLlmCredentials.resolveForReview`). A named provider that is switched off
+refuses rather than falling back, and one a repository names cannot be deleted. `scm_provider.llm_provider_id`
+will not be built. Subscription backends for reviews are being designed in
+[the harness reviews design](superpowers/specs/2026-10-30-harness-reviews-design.md).
+
 ---
 
 ## ADR-017 — Self-loop guard in the orchestrator; bot account id lives only in the registry

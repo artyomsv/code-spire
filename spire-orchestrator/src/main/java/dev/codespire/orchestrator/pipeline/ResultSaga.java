@@ -183,12 +183,11 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
-                // GenerateReview also needs the LLM credential (ADR-018): resolve the global-default
-                // provider and pack it encrypted. The resolve also answers whether the model can be
-                // priced — the pre-spend guard, which arrives with the credential so it cannot be
-                // skipped here.
-                String workspace = ReviewIds.parse(e.reviewId()).repo().workspace();
-                DefaultLlm llm = workerLlmCredentials.resolveDefault(workspace);
+                // GenerateReview also needs the LLM credential (ADR-018): resolve the provider the
+                // review's repository names, else the global default, and pack it encrypted. The resolve
+                // also answers whether the model can be priced — the pre-spend guard, which arrives with
+                // the credential so it cannot be skipped here.
+                DefaultLlm llm = workerLlmCredentials.resolveForReview(e.reviewId());
                 if (!llm.isSpendable()) {
                     skipUnspendable(e.reviewId(), "GenerateReview", llm);
                     return;

@@ -6,6 +6,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,14 @@ class LlmProviderResourceTest {
 
     @Inject
     LlmModelRegistry models;
+
+    @Inject
+    dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
+
+    @Inject
+    javax.sql.DataSource dataSource;
+
+    private static final String NAMING_WORKSPACE = "TEST-llm-provider-delete";
 
     @BeforeAll
     static void startLlm() {
@@ -177,6 +186,39 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
         given().when().delete("/api/llm-providers/" + id).then().statusCode(204);
         when().get("/api/llm-providers/" + id).then().statusCode(404);
+    }
+
+    /**
+     * A provider a repository reviews with cannot be deleted: the answer names the repository, so the
+     * operator knows what to change first, and the provider row is left exactly as it was.
+     */
+    @Test
+    void deletingAProviderARepositoryNamesIsRefusedAndNamesTheRepository() throws Exception {
+        String id = given().contentType("application/json").body(body("sk-named"))
+                .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
+        UUID repository = repositories.create(new dev.codespire.orchestrator.repository.RepositoryInput(
+                "github", "https://github.example.invalid", NAMING_WORKSPACE, "TEST-repo", true, null, null)).id();
+        execute("UPDATE repository SET review_llm_provider_id=? WHERE id=?", UUID.fromString(id), repository);
+
+        given().when().delete("/api/llm-providers/" + id)
+                .then().statusCode(409).body(org.hamcrest.Matchers.containsString(NAMING_WORKSPACE + "/TEST-repo"));
+        when().get("/api/llm-providers/" + id).then().statusCode(200).body("hasApiKey", is(true));
+    }
+
+    /** The repository goes first: the next reset deletes every provider, and this one is still named. */
+    @AfterEach
+    void removeTheNamingRepository() throws Exception {
+        execute("DELETE FROM repository_registration_bridge WHERE target=?", NAMING_WORKSPACE + "/TEST-repo");
+        execute("DELETE FROM repository_account WHERE repository_id IN (SELECT id FROM repository WHERE workspace=?)",
+                NAMING_WORKSPACE);
+        execute("DELETE FROM repository WHERE workspace=?", NAMING_WORKSPACE);
+    }
+
+    private void execute(String sql, Object... parameters) throws Exception {
+        try (java.sql.Connection c = dataSource.getConnection(); var ps = c.prepareStatement(sql)) {
+            for (int i = 0; i < parameters.length; i++) ps.setObject(i + 1, parameters[i]);
+            ps.executeUpdate();
+        }
     }
 
     @Test

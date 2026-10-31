@@ -154,14 +154,55 @@ public class LlmProviderRegistry {
         return get(id);
     }
 
+    /**
+     * Delete a provider no repository reviews with.
+     *
+     * <p>The check and the delete share one transaction, and the provider row is locked first. A
+     * repository save that names it takes a key-share lock on the same row for its foreign key, so the
+     * two are ordered: a save committed before the lock is seen by the check and refused here, and a
+     * later one waits and then finds the provider gone (a 400 there), never a key violation here.
+     *
+     * @throws ProviderInUse when a repository names this provider; nothing is deleted
+     */
     @Transactional
     public boolean delete(UUID id) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("DELETE FROM llm_provider WHERE id = ?")) {
-            ps.setObject(1, id);
-            return ps.executeUpdate() > 0;
+        try (Connection c = dataSource.getConnection()) {
+            try (PreparedStatement lock = c.prepareStatement("SELECT 1 FROM llm_provider WHERE id = ? FOR UPDATE")) {
+                lock.setObject(1, id);
+                lock.executeQuery().close();
+            }
+            List<String> naming = repositoriesNaming(c, id);
+            if (!naming.isEmpty()) {
+                throw new ProviderInUse(naming);
+            }
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_provider WHERE id = ?")) {
+                ps.setObject(1, id);
+                return ps.executeUpdate() > 0;
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to delete LLM provider " + id, e);
+        }
+    }
+
+    /** A provider that repositories review with; switch it off instead, or choose another for them first. */
+    public static final class ProviderInUse extends RuntimeException {
+        public ProviderInUse(List<String> repositories) {
+            super("This LLM provider is used by repositories: " + String.join(", ", repositories)
+                    + ". Choose another provider in their settings first, or switch this one off.");
+        }
+    }
+
+    private static List<String> repositoriesNaming(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT workspace || '/' || slug FROM repository"
+                + " WHERE review_llm_provider_id = ? ORDER BY workspace, slug")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<String> out = new ArrayList<>();
+                while (rs.next()) {
+                    out.add(rs.getString(1));
+                }
+                return out;
+            }
         }
     }
 

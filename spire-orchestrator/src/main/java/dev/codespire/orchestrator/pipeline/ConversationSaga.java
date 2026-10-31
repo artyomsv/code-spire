@@ -115,7 +115,8 @@ public class ConversationSaga {
         // up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
         // construction because the registry guard makes an unpriceable provider impossible; V30
         // falsifies that, creating rateless models in SQL without passing through the registry at all.
-        DefaultLlm llm = workerLlmCredentials.resolveDefault(e.repo().workspace());
+        // Resolved for the thread's review, so a reply spends the provider its review's repository names.
+        DefaultLlm llm = workerLlmCredentials.resolveForReview(e.reviewId());
         if (!llm.isSpendable()) {
             skipUnspendable(e, llm);
             return Optional.empty();

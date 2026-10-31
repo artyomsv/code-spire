@@ -10,7 +10,7 @@ export function account(type = 'github', overrides: Partial<ProviderView> = {}):
     role: type === 'atlassian' ? 'CONTEXT' : 'FACTORY', botUsername: 'TEST-bot', createdAt: '2026-09-13T12:00:00Z', lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...overrides };
 }
 export const repository: Repository = { id: 'TEST-repository', scmType: 'github', forgeOrigin: 'https://github.example.test', workspace: 'TEST-owner', slug: 'TEST-repo',
-  enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true };
+  enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true, reviewLlmProviderId: null };
 export function source(overrides: Partial<WorkSource> = {}): WorkSource {
   return { id: 'TEST-source', name: 'TEST-source name', type: 'GITHUB', origin: 'https://github.example.test', projectId: '10001', scope: 'TEST-owner/TEST-repo',
     repositoryId: repository.id, accountId: 'TEST-github', enabled: true, configuredEnabled: true, version: { source: 4, repository: 1, account: 1 }, cursor: null,
