@@ -76,6 +76,9 @@ final class MarkdownHtmlEscape {
         int at = from;
         while (at < text.length()) {
             char c = text.charAt(at);
+            if (c == '\n' && blankLineFollows(text, at)) {
+                return -1;
+            }
             if (c != BACKTICK) {
                 at++;
                 continue;
