@@ -60,7 +60,7 @@ public class WorkerLlmCredentials {
         if (cfg.isEmpty()) {
             return DefaultLlm.noDefaultProvider();
         }
-        return priced(cfg.get(), workspace);
+        return priced(cfg.orElseThrow(), workspace);
     }
 
     /**
@@ -80,14 +80,16 @@ public class WorkerLlmCredentials {
         }
         // A provider a repository names cannot be deleted, so an empty answer is a row removed under us;
         // it refuses like a switched-off one rather than falling back.
-        Optional<LlmProviderConfig> cfg = registry.resolveById(named.get());
-        if (cfg.isEmpty()) {
-            return DefaultLlm.repositoryProviderOff(named.get().toString());
+        UUID providerId = named.orElseThrow();
+        Optional<LlmProviderConfig> found = registry.resolveById(providerId);
+        if (found.isEmpty()) {
+            return DefaultLlm.repositoryProviderOff(providerId.toString());
         }
-        if (!cfg.get().enabled()) {
-            return DefaultLlm.repositoryProviderOff(cfg.get().name());
+        LlmProviderConfig cfg = found.orElseThrow();
+        if (!cfg.enabled()) {
+            return DefaultLlm.repositoryProviderOff(cfg.name());
         }
-        return priced(cfg.get(), workspace);
+        return priced(cfg, workspace);
     }
 
     /** An unpriceable model is refused BEFORE packing, so no credential is encrypted for a call not made. */

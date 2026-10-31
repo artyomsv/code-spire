@@ -68,7 +68,9 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
       <RepositoryAccountSelects fields={fields} providers={providers} onChange={patch} /></section>
     <section aria-label="Reviewing" className="settings-group"><h4>Reviewing</h4>
       <RepositorySwitches fields={fields} onChange={patch} />
-      <RepositoryReviewProvider value={fields.reviewLlmProviderId} providers={llmProviders.data ?? []}
+      <RepositoryReviewProvider value={fields.reviewLlmProviderId} providers={llmProviders.data}
+        failure={llmProviders.error ? (llmProviders.error instanceof Error ? llmProviders.error.message : String(llmProviders.error)) : null}
+        onRetry={() => void llmProviders.refetch()}
         onChange={reviewLlmProviderId => patch({ reviewLlmProviderId })} /></section>
     <section aria-label="Identity" className="settings-group"><h4>Identity</h4>
       <dl className="repo-identity">
