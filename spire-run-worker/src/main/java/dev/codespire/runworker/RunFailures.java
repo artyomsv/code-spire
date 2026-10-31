@@ -58,7 +58,7 @@ public class RunFailures {
     public RunResult.RunFailed of(RunCommand.ExecuteRun command, String cause, String detail) {
         return new RunResult.RunFailed(command.runId(), cause,
                 clip(scrubFor(command).clean(detail)),
-                RunFailureCause.of(cause).isRetryable(), null);
+                RunFailureCause.of(cause).isRetryable(), null, List.of());
     }
 
     /** Publication may use a rotated identity. Redact it as well as the original build secrets. */

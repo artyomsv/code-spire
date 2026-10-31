@@ -147,7 +147,7 @@ class WorkLandRetryIT extends WorkLandFixture {
         dispatcher.drain();RunCommand.ExecuteWorkRun fix=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(fix.runId(),fix.work(),FIXED,List.of("TEST-file"),Map.of("INPUT",7L),9));
         UUID attempt=verifyPassed(id);delivery.advance(attempt);
-        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false, List.of()));
         delivery.advance(attempt);
         assertEquals("review",store.load(id).phase(),store.load(id).reason());
         stopBeforeReview(id);

@@ -104,7 +104,7 @@ class RunResultSagaTest {
         };
 
         saga.on(new RunResult.RunFinished("run::github:TEST-acme/app:s:1", "refs/heads/spire/s",
-                List.of("src/Foo.java"), List.of(), Map.of("input", 10L), false));
+                List.of("src/Foo.java"), List.of(), Map.of("input", 10L), false, List.of()));
 
         assertEquals(List.of(1), appliedWhenProposed, "the row must exist before it is read");
     }
@@ -113,7 +113,7 @@ class RunResultSagaTest {
     void everyReadableResultReachesTheProjection() {
         RecordingProjection projection = new RecordingProjection();
         RunResult started = new RunResult.RunStarted("run::github:TEST-acme/app:s:1", "unit-1");
-        RunResult failed = new RunResult.RunFailed("run::github:TEST-acme/app:s:1", "WORKER_FAILED", "x", true, null);
+        RunResult failed = new RunResult.RunFailed("run::github:TEST-acme/app:s:1", "WORKER_FAILED", "x", true, null, List.of());
 
         saga(projection).on(started);
         saga(projection).on(failed);
@@ -127,7 +127,7 @@ class RunResultSagaTest {
             assertEquals(List.of(result),projection.applied);assertEquals(List.of(result),charges.charged);continued.add(result);return true;
         }};
         saga.pullRequests=new FactoryPullRequests(){@Override public void propose(RunResult result){proposed.add(result);}};
-        var result=new RunResult.RunFinished(RUN_ID,"refs/heads/spire/TEST-item",List.of("TEST-file"),List.of(),Map.of("INPUT",1L),false);saga.on(result);
+        var result=new RunResult.RunFinished(RUN_ID,"refs/heads/spire/TEST-item",List.of("TEST-file"),List.of(),Map.of("INPUT",1L),false, List.of());saga.on(result);
         assertEquals(List.of(result),continued);assertTrue(proposed.isEmpty(),"An associated result belongs exclusively to the item continuation");
     }
 
@@ -195,7 +195,7 @@ class RunResultSagaTest {
         saga.pullRequests = new FactoryPullRequests() {
             @Override public void propose(RunResult result) { proposed.add(result); }
         };
-        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L));
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L), List.of());
 
         saga.on(failed);
 
@@ -216,7 +216,7 @@ class RunResultSagaTest {
             @Override public boolean accept(RunResult result) { drafted.add(result); return true; }
         };
 
-        saga.on(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L)));
+        saga.on(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L), List.of()));
 
         assertTrue(projection.applied.isEmpty());
         assertTrue(charges.charged.isEmpty());
@@ -244,8 +244,8 @@ class RunResultSagaTest {
         // rejected, and those tokens were bought.
         RecordingCharges charges = new RecordingCharges();
         RunResult finished = new RunResult.RunFinished(RUN_ID, "refs/heads/spire/x",
-                List.of(), List.of(), Map.of("INPUT", 10L), false);
-        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "x", false, Map.of("INPUT", 5L));
+                List.of(), List.of(), Map.of("INPUT", 10L), false, List.of());
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "x", false, Map.of("INPUT", 5L), List.of());
 
         RunResultSaga saga = saga(new RecordingProjection(), charges);
         saga.on(finished);
@@ -285,7 +285,7 @@ class RunResultSagaTest {
         };
 
         saga(projection, charges).on(new RunResult.RunFinished(RUN_ID, "refs/heads/spire/x",
-                List.of(), List.of(), Map.of("INPUT", 10L), false));
+                List.of(), List.of(), Map.of("INPUT", 10L), false, List.of()));
 
         assertEquals(List.of("project", "charge"), order);
     }

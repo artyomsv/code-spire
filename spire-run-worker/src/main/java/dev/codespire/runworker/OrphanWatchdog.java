@@ -318,7 +318,7 @@ public class OrphanWatchdog {
                 RunFailureCause.SANDBOX_LOST.isRetryable(),
                 // Unknown, and it stays unknown: nothing here measured what the agent spent, and a
                 // zero would price a reclaimed run as free.
-                null));
+                null, List.of()));
         if (!published) {
             // The claim is taken BEFORE the publish so a duplicate report cannot land a second
             // unpriceable charge line on a run whose spend is already recorded. That ordering is

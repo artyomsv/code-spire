@@ -44,7 +44,7 @@ class WorkReviewIT extends WorkPreparedFixture {
         String id=admit(profile,55);register(id);dispatcher.drain();var command=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(command.runId(),command.work(),"b".repeat(40),List.of("TEST-file"),Map.of("INPUT",7L),9));
         UUID attempt=verifyPassed(id);delivery.advance(attempt);
-        saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false, List.of()));
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());return id;
     }
     void reviewResult(String id,String head,boolean degraded,boolean blocker) {

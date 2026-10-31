@@ -430,7 +430,7 @@ public class RunDispatcher {
                     // The agent's spend survives the result being too large to publish. Dropping
                     // it here would lose the charge for a run that definitely ran, and this
                     // failure is the ONLY record of it that reaches the orchestrator.
-                    finished.tokenUsage());
+                    finished.tokenUsage(), java.util.List.of());
             if (publish(compact)) {
                 return;
             }

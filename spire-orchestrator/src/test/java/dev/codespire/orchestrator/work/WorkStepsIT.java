@@ -145,7 +145,7 @@ class WorkStepsIT extends WorkSpecRunFixture {
     }
 
     private static RunResult.RunFailed runFailed(RunCommand.ExecuteWorkRun command, String cause) {
-        return new RunResult.RunFailed(command.runId(), cause, "TEST " + cause, false, null);
+        return new RunResult.RunFailed(command.runId(), cause, "TEST " + cause, false, null, List.of());
     }
 
     private long milestones(String id, String milestone) {

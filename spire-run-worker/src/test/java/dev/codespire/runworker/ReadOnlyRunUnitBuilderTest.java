@@ -38,6 +38,7 @@ class ReadOnlyRunUnitBuilderTest {
         builder.enterprise = RunLauncherTest.noCorporateEnvironment();
         builder.publisherImage = "TEST-publisher";
         builder.maxWallClockSeconds = 3600;
+        builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.OFF;
     }
 
     private RunCommand.ExecuteWorkDraftRun draft() throws Exception {
@@ -64,6 +65,17 @@ class ReadOnlyRunUnitBuilderTest {
         assertFalse(unit.publisher().environment().containsKey("SPIRE_REMOTE_URI"), "it has nowhere to push to");
         assertEquals("/handoff", unit.publisher().environment().get("SPIRE_HANDOFF_DIR"));
         assertEquals(List.of(Mount.readOnly(RunUnitBuilder.HANDOFF, "/handoff")), unit.publisher().mounts());
+    }
+
+    /** A specification or plan run's agent holds the model credential like a build's, so it is behind the proxy too. */
+    @Test
+    void aReadOnlyUnitsAgentIsBehindTheEgressProxy() throws Exception {
+        builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.REPORT;
+
+        RunUnitSpec unit = unit();
+
+        assertEquals(dev.codespire.runtime.EgressPolicy.Mode.REPORT, unit.egress().mode());
+        assertEquals(dev.codespire.runtime.EgressPolicy.PROXY_ADDRESS, unit.environmentFor(unit.agent()).get("HTTPS_PROXY"));
     }
 
     @Test

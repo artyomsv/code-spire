@@ -5,6 +5,7 @@ import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
@@ -65,6 +66,10 @@ public class RunUnitBuilder {
     @ConfigProperty(name = "spire.run.max-wall-clock-seconds")
     long maxWallClockSeconds;
 
+    /** Whether a unit's agent reaches the network only through its egress proxy, and whether that proxy refuses. */
+    @ConfigProperty(name = "spire.run.egress.mode", defaultValue = "off")
+    EgressPolicy.Mode egressMode;
+
     /** An agent can write an object bomb; the publisher refuses one larger than this. */
     static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
 
@@ -124,7 +129,7 @@ public class RunUnitBuilder {
     public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter adapter) {
         RunUnitSpec unit = build(draft.execution(), adapter, Topology.READ_ONLY);
         return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), PublisherEnvironments.readOnly(unit.publisher()),
-                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+                unit.enterprise(), unit.egress(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
     }
 
     /** Where a retried build's init reads the previous run's handoff. */
@@ -170,7 +175,7 @@ public class RunUnitBuilder {
         ContainerSpec publisher = PublisherEnvironments.held(unit.publisher(), command);
         if (!command.execution().pushesToAnExistingBranch())
             return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), publisher,
-                    unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+                    unit.enterprise(), unit.egress(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
@@ -178,7 +183,7 @@ public class RunUnitBuilder {
         initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
         ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
         return new RunUnitSpec(unit.runId(), init, unit.agent(), publisher,
-                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+                unit.enterprise(), unit.egress(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
     }
 
     /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */
@@ -259,7 +264,7 @@ public class RunUnitBuilder {
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
         return new RunUnitSpec(command.runId(), init, agent, publisher,
-                enterprise.environment(),
+                enterprise.environment(), EgressPolicy.OFF,
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 
@@ -282,7 +287,7 @@ public class RunUnitBuilder {
         env.put("SPIRE_PERMIT_EXPIRES_AT", request.permit().expiresAt().toString());
         ContainerSpec publisher = new ContainerSpec(held.publisher().image(), List.of("spire-publish-permitted"),
                 env, held.publisher().mounts());
-        return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
+        return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(), held.egress(),
                 held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
     }
 }

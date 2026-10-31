@@ -89,14 +89,14 @@ class WorkRunStoreTest {
         // A second store instance represents lost worker memory; data and its encrypted decode remain real.
         WorkRunStore restarted=new WorkRunStore();restarted.dataSource=dataSource;restarted.mapper=mapper;restarted.encryption=encryption;
         assertEquals(ready,restarted.find(command.runId()).orElseThrow().ready());
-        var finished=new RunResult.RunFinished(command.runId(),"refs/heads/spire/TEST-build",ready.changedPaths(),List.of(),ready.tokenUsage(),false);
+        var finished=new RunResult.RunFinished(command.runId(),"refs/heads/spire/TEST-build",ready.changedPaths(),List.of(),ready.tokenUsage(),false, List.of());
         restarted.terminal(finished);
         assertEquals(List.of(ready,finished),pending(command.runId()));
         restarted.acknowledged(ready);
         assertEquals(List.of(finished),pending(command.runId()),"a ready ack cannot consume the terminal result");
         restarted.acknowledged(finished);
         assertEquals(List.of(),pending(command.runId()));
-        restarted.terminal(new RunResult.RunFailed(command.runId(),"WORKER_FAILED","TEST late duplicate",false,null));
+        restarted.terminal(new RunResult.RunFailed(command.runId(),"WORKER_FAILED","TEST late duplicate",false,null, List.of()));
         assertEquals(finished,restarted.find(command.runId()).orElseThrow().terminal(),"first terminal evidence remains stable");
     }
 
@@ -197,7 +197,7 @@ class WorkRunStoreTest {
     }
     @Test void staleBuildRecoveryCannotOverwriteCommittedReadiness() {
         var command=prepared();store.buildResult(ready(command));
-        store.abandonBuild(new RunResult.RunFailed(command.runId(),"SALVAGE_FAILED","TEST old observation",false,null));
+        store.abandonBuild(new RunResult.RunFailed(command.runId(),"SALVAGE_FAILED","TEST old observation",false,null, List.of()));
         assertEquals("ready",store.find(command.runId()).orElseThrow().state());assertNull(store.find(command.runId()).orElseThrow().terminal());
     }
     @Test void readinessIsWrittenOnlyOnce() {
@@ -207,13 +207,13 @@ class WorkRunStoreTest {
     }
     @Test void onlyObservedSuccessfulPublicationSchedulesDeletion() {
         var command=prepared();store.buildResult(ready(command));
-        store.terminal(new RunResult.RunFinished(command.runId(),"refs/heads/spire/TEST-build",List.of(),List.of(),Map.of("INPUT",7L),false));
+        store.terminal(new RunResult.RunFinished(command.runId(),"refs/heads/spire/TEST-build",List.of(),List.of(),Map.of("INPUT",7L),false, List.of()));
         assertTrue(store.awaitingRelease().stream().anyMatch(held->held.execution().runId().equals(command.runId())));
         store.released(command.runId());assertTrue(store.awaitingRelease().stream().noneMatch(held->held.execution().runId().equals(command.runId())));
         for(int shape=0;shape<3;shape++) {
             var other=prepared();store.buildResult(ready(other));
             var terminal=new RunResult.RunFinished(other.runId(),shape==1?"refs/heads/spire/TEST-build":null,List.of(),
-                    shape==2?List.of(new RunResult.BlockedChange("TEST-protected","MODIFY")):List.of(),Map.of("INPUT",7L),false).withAgentUnobserved(shape==1);
+                    shape==2?List.of(new RunResult.BlockedChange("TEST-protected","MODIFY")):List.of(),Map.of("INPUT",7L),false, List.of()).withAgentUnobserved(shape==1);
             store.terminal(terminal);
             assertTrue(store.awaitingRelease().stream().noneMatch(held->held.execution().runId().equals(other.runId())),"Unsafe terminal shape "+shape+" must retain work");
         }
@@ -222,7 +222,7 @@ class WorkRunStoreTest {
     /** Review of PR #184 (M-3): a retired build's workspace stays owed until it is actually removed. */
     @Test void aRetiredBuildAwaitsReleaseUntilItsWorkspaceIsRemoved() {
         var command=prepared();store.buildResult(ready(command));
-        assertTrue(store.retire(command.runId(),new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null)));
+        assertTrue(store.retire(command.runId(),new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null, List.of())));
         assertTrue(store.awaitingRelease().stream().anyMatch(held->held.execution().runId().equals(command.runId())),"a crash before removal must leave the removal owed");
         store.released(command.runId());
         assertTrue(store.awaitingRelease().stream().noneMatch(held->held.execution().runId().equals(command.runId())));
@@ -241,6 +241,6 @@ class WorkRunStoreTest {
     }
     private RunUnitSpec unit(String id) {
         var part=new ContainerSpec("TEST-image",List.of("TEST-command"),Map.of("TEST_SECRET","TEST-private-key"),List.of());
-        return new RunUnitSpec(id,part,part,part,EnterpriseEnvironment.NONE,64*1024*1024,500_000_000,16*1024*1024,Duration.ofSeconds(60));
+        return new RunUnitSpec(id,part,part,part,EnterpriseEnvironment.NONE, EgressPolicy.OFF,64*1024*1024,500_000_000,16*1024*1024,Duration.ofSeconds(60));
     }
 }

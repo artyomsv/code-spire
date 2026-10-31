@@ -169,7 +169,7 @@ class DockerPublicationIT {
         RunUnitSpec original = unit("init-failure", "true", "true");
         RunUnitSpec spec = new RunUnitSpec(original.runId(),
                 new ContainerSpec("alpine:3.20", List.of("sh", "-c", "exit 17"), Map.of(), original.init().mounts()),
-                original.agent(), original.publisher(), original.enterprise(), original.memoryBytes(),
+                original.agent(), original.publisher(), original.enterprise(), original.egress(), original.memoryBytes(),
                 original.nanoCpus(), original.diskBytes(), original.wallClock());
         assertThrows(IllegalStateException.class, () -> runtime.createHeld(spec, KEY));
         assertEquals(1, containers(spec.runId()).size());
@@ -252,13 +252,13 @@ class DockerPublicationIT {
                 new ContainerSpec("alpine:3.20", List.of("sh", "-c", agent), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"), Mount.writable("ho", "/handoff"))),
                 new ContainerSpec("alpine:3.20", List.of("sh", "-c", publisher), Map.of(), List.of(Mount.readOnly("ho", "/handoff"))),
-                EnterpriseEnvironment.NONE, 64L*1024*1024, 500_000_000L, 16L*1024*1024, Duration.ofSeconds(15));
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, 64L*1024*1024, 500_000_000L, 16L*1024*1024, Duration.ofSeconds(15));
     }
 
     private RunUnitSpec publisher(RunUnitSpec spec, String script, List<Mount> mounts) {
         return new RunUnitSpec(spec.runId(), spec.init(), spec.agent(),
                 new ContainerSpec("alpine:3.20", List.of("sh", "-c", script), Map.of(), mounts),
-                spec.enterprise(), spec.memoryBytes(), spec.nanoCpus(), spec.diskBytes(), spec.wallClock());
+                spec.enterprise(), spec.egress(), spec.memoryBytes(), spec.nanoCpus(), spec.diskBytes(), spec.wallClock());
     }
 
     private List<com.github.dockerjava.api.model.Container> containers(String id) {

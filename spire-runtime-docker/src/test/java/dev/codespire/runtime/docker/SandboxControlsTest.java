@@ -3,6 +3,7 @@ package dev.codespire.runtime.docker;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.HostConfig;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
@@ -56,7 +57,7 @@ class SandboxControlsTest {
                 container(List.of(Mount.writable("workspace", "/workspace"),
                         Mount.writable("handoff", "/handoff"))),
                 container(List.of(Mount.readOnly("handoff", "/handoff"))),
-                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofMinutes(30));
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofMinutes(30));
     }
 
     /**
@@ -192,7 +193,7 @@ class SandboxControlsTest {
                 container(List.of(Mount.writable("ws", "/workspace"))),
                 container(List.of(Mount.writable("ws", "/workspace"))),
                 container(List.of(Mount.readOnly("ho", "/handoff"))),
-                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, unusualBudget,
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, MEMORY_BYTES, NANO_CPUS, unusualBudget,
                 Duration.ofMinutes(30));
 
         HostConfig config = runtime.hostConfigFor(spec, spec.agent());
@@ -212,6 +213,6 @@ class SandboxControlsTest {
     void aUnitWithNoDiskBoundIsRefused() {
         assertThrows(IllegalArgumentException.class, () -> new RunUnitSpec("run_unbounded",
                 container(List.of()), container(List.of()), container(List.of()),
-                EnterpriseEnvironment.NONE, MEMORY_BYTES, NANO_CPUS, 0, Duration.ofMinutes(30)));
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, MEMORY_BYTES, NANO_CPUS, 0, Duration.ofMinutes(30)));
     }
 }

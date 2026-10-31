@@ -55,7 +55,7 @@ class WorkDeliveryIT extends WorkPreparedFixture {
     }
     void publisherFinished(String id) {
         var execution=store.load(id).progress().execution();var run=runs.find(execution.runId()).orElseThrow();
-        saga.on(new RunResult.RunFinished(run.runId(),"refs/heads/"+run.branch(),List.of("TEST-result"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(run.runId(),"refs/heads/"+run.branch(),List.of("TEST-result"),List.of(),Map.of("INPUT",7L),false, List.of()));
     }
     String proposed(boolean draft){return "{\"number\":901,\"html_url\":\"https://forge.example.test/TEST-pull/901\",\"draft\":"+draft+"}";}
     void deliveryProof(String profileName,boolean draft) throws Exception {
@@ -161,7 +161,7 @@ class WorkDeliveryIT extends WorkPreparedFixture {
     void rejectPublication(boolean unobserved) throws Exception {
         String id=buildForVerification("autonomous");UUID attempt=verify(id);delivery.advance(attempt);
         var run=runs.find(store.load(id).progress().execution().runId()).orElseThrow();
-        saga.on(new RunResult.RunFinished(run.runId(),"refs/heads/"+(unobserved?run.branch():"TEST-another-branch"),List.of("TEST-result"),List.of(),Map.of("INPUT",7L),false).withAgentUnobserved(unobserved));
+        saga.on(new RunResult.RunFinished(run.runId(),"refs/heads/"+(unobserved?run.branch():"TEST-another-branch"),List.of("TEST-result"),List.of(),Map.of("INPUT",7L),false, List.of()).withAgentUnobserved(unobserved));
         assertEquals(unobserved?"delivered_unfinished":"succeeded",runs.find(run.runId()).orElseThrow().status());
         delivery.advance(attempt);assertEquals("publication_failed",store.load(id).reason());assertEquals("stopped",store.load(id).workflowStatus());
         assertEquals(1,permits.size());forge.verify(0,postRequestedFor(urlPathEqualTo(pulls())));

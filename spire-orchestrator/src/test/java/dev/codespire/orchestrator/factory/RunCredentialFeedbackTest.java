@@ -84,7 +84,7 @@ class RunCredentialFeedbackTest {
         String runId = runOn(refused);
 
         feedback.reactTo(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED",
-                "the provider refused the key", false, null));
+                "the provider refused the key", false, null, java.util.List.of()));
 
         assertEquals(healthy, assertChosen(), "the refused member is out; its neighbour still serves");
         assertTrue(view(refused).rejectedAt() != null);
@@ -105,7 +105,7 @@ class RunCredentialFeedbackTest {
         String runId = runOn(only);
 
         feedback.reactTo(new RunResult.RunFailed(runId, "MODEL_UNAVAILABLE", "502 from the provider",
-                true, null));
+                true, null, java.util.List.of()));
 
         assertNull(view(only).rejectedAt());
         assertNull(view(only).rateLimitedUntil());
@@ -125,7 +125,7 @@ class RunCredentialFeedbackTest {
         UUID refused = member("refused");
         String runId = runOn(refused);
 
-        saga.on(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED", "the provider refused", false, null));
+        saga.on(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED", "the provider refused", false, null, java.util.List.of()));
 
         assertTrue(view(refused).rejectedAt() != null,
                 "the saga must reach the feedback path; a direct call proves the translation, not the"
@@ -139,7 +139,7 @@ class RunCredentialFeedbackTest {
         UUID healthy = member("healthy");
         String runId = runOn(null);
 
-        feedback.reactTo(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED", "refused", false, null));
+        feedback.reactTo(new RunResult.RunFailed(runId, "CREDENTIAL_REJECTED", "refused", false, null, java.util.List.of()));
 
         assertNull(view(healthy).rejectedAt());
     }
@@ -151,7 +151,7 @@ class RunCredentialFeedbackTest {
         UUID only = member("only");
         String runId = runOn(only);
 
-        feedback.reactTo(new RunResult.RunFailed(runId, "AGENT_FAILED", "exit 1", false, null));
+        feedback.reactTo(new RunResult.RunFailed(runId, "AGENT_FAILED", "exit 1", false, null, java.util.List.of()));
 
         assertNull(view(only).rejectedAt());
     }
@@ -169,7 +169,7 @@ class RunCredentialFeedbackTest {
         String runId = runOn(credential);
 
         charges.record(new RunResult.RunFinished(runId, "refs/heads/spire/x", java.util.List.of("a.txt"),
-                java.util.List.of(), Map.of("INPUT", 100L, "OUTPUT", 50L), false));
+                java.util.List.of(), Map.of("INPUT", 100L, "OUTPUT", 50L), false, java.util.List.of()));
 
         assertEquals(credential.toString(), credentialRefOf(runId),
                 "V42 added this column for exactly this and nothing had ever written it");
@@ -183,7 +183,7 @@ class RunCredentialFeedbackTest {
         String runId = runOn(null);
 
         charges.record(new RunResult.RunFinished(runId, null, java.util.List.of(), java.util.List.of(),
-                Map.of("INPUT", 10L), false));
+                Map.of("INPUT", 10L), false, java.util.List.of()));
 
         assertNull(credentialRefOf(runId));
     }
@@ -201,14 +201,14 @@ class RunCredentialFeedbackTest {
         UUID first = member("first");
         String firstRun = runOn(first);
         charges.record(new RunResult.RunFinished(firstRun, null, java.util.List.of(), java.util.List.of(),
-                Map.of("INPUT", 100L), false));
+                Map.of("INPUT", 100L), false, java.util.List.of()));
         int firstRows = chargeRowsFor(firstRun);
 
         pool.markRejected(first);
         UUID second = member("second");
         String secondRun = runOn(second);
         charges.record(new RunResult.RunFinished(secondRun, null, java.util.List.of(), java.util.List.of(),
-                Map.of("INPUT", 100L), false));
+                Map.of("INPUT", 100L), false, java.util.List.of()));
 
         assertEquals(firstRows, chargeRowsFor(firstRun), "the first run's spend is untouched");
         assertEquals(second.toString(), credentialRefOf(secondRun));

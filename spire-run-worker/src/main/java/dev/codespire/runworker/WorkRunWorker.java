@@ -115,9 +115,9 @@ public class WorkRunWorker {
                         held.permit().permit().deliveryAttemptId(),spec,outcome::accept,()->publicationAllowed(held.execution()));
                 if(outcome.pushedRef().isPresent() && !outcome.refused()) {
                     result=new RunResult.RunFinished(id,outcome.pushedRef().orElseThrow(),held.ready().changedPaths(),
-                            List.of(),held.ready().tokenUsage(),false);
+                            List.of(),held.ready().tokenUsage(),false, List.of());
                 } else if(outcome.refused()) {
-                    result=new RunResult.RunFinished(id,null,held.ready().changedPaths(),outcome.blocked(),held.ready().tokenUsage(),false);
+                    result=new RunResult.RunFinished(id,null,held.ready().changedPaths(),outcome.blocked(),held.ready().tokenUsage(),false, List.of());
                 } else if(outcome.failureCause().filter("PUBLICATION_CANCELLED"::equals).isPresent()) {
                     result=cancelledResult(held.execution(),held.ready());
                 } else if(!end.salvaged()) {

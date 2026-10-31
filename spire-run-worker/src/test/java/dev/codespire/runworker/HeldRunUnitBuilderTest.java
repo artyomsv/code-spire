@@ -6,6 +6,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.work.*;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.harness.codex.CodexAdapter;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.Test;
 import java.time.Instant;
@@ -20,6 +21,7 @@ class HeldRunUnitBuilderTest {
     HeldRunUnitBuilderTest(){
         builder.credentials=new Credentials();builder.credentials.encryption=encryption;builder.credentials.mapper=mapper;
         builder.enterprise=RunLauncherTest.noCorporateEnvironment();builder.publisherImage="TEST-original-publisher";builder.maxWallClockSeconds=3600;
+        builder.egressMode=EgressPolicy.Mode.OFF;
     }
     String scm(String id,String secret) throws Exception {return encryption.encryptString(mapper.writeValueAsString(new MachineAccountCredential("TEST-bot",secret)),RunCommand.scmCredentialAad(id));}
     RunCommand.ExecuteWorkRun command(String id,String harness) throws Exception {
@@ -69,6 +71,15 @@ class HeldRunUnitBuilderTest {
         assertEquals(held.publisher().image(),resumed.publisher().image());assertEquals(held.publisher().mounts(),resumed.publisher().mounts());
         assertEquals(held.init(),resumed.init());assertEquals(held.agent(),resumed.agent());assertEquals(held.enterprise(),resumed.enterprise());
         assertEquals(held.memoryBytes(),resumed.memoryBytes());assertEquals(held.nanoCpus(),resumed.nanoCpus());assertEquals(held.diskBytes(),resumed.diskBytes());assertEquals(held.wallClock(),resumed.wallClock());
+    }
+    /** A held build's agent is behind the proxy like any other, and resuming its publisher keeps the unit's egress, not today's setting. */
+    @Test void publicationKeepsTheHeldUnitsEgress() throws Exception {
+        builder.egressMode=EgressPolicy.Mode.REPORT;
+        var original=command("TEST-run",null);var held=builder.buildHeld(original,new CodexAdapter());
+        assertEquals(EgressPolicy.Mode.REPORT,held.egress().mode());
+        builder.egressMode=EgressPolicy.Mode.OFF;
+        var resumed=builder.publication(held,original,permit(original.runId(),binding));
+        assertEquals(held.egress(),resumed.egress());
     }
     /** A land fix (M4 slice 7a): the item's own branch exists, at the approved head "b"x40, and its pull request targets TEST-main. */
     RunCommand.ExecuteWorkRun landFix(String id) throws Exception {

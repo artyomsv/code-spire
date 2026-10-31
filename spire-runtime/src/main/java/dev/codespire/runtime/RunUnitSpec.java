@@ -24,6 +24,9 @@ import java.util.Set;
  * constructor on purpose: a caller that does not need it says {@link EnterpriseEnvironment#NONE}
  * out loud, the same reasoning that makes {@link Mount#writable} spell its {@code false}.
  *
+ * <p>{@code egress} says whether the agent reaches the network only through the unit's egress proxy; see
+ * {@link EgressPolicy}. It has no default for the same reason: {@link EgressPolicy#OFF} is said out loud.
+ *
  * <p><b>{@code diskBytes} is a limit like the other two, and it is stated in the SPI rather than
  * left to each arm, because the portable answer differs per arm while the guarantee must not.</b>
  * Memory, CPU and process count were bounded and disk was not, so one {@code fallocate} from an
@@ -56,7 +59,7 @@ import java.util.Set;
  */
 public record RunUnitSpec(String runId,
                           ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
-                          EnterpriseEnvironment enterprise,
+                          EnterpriseEnvironment enterprise, EgressPolicy egress,
                           long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
 
     public RunUnitSpec {
@@ -65,6 +68,7 @@ public record RunUnitSpec(String runId,
         Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(publisher, "publisher");
         Objects.requireNonNull(enterprise, "enterprise");
+        Objects.requireNonNull(egress, "egress");
         Objects.requireNonNull(wallClock, "wallClock");
         if (memoryBytes <= 0 || nanoCpus <= 0 || diskBytes <= 0) {
             throw new IllegalArgumentException(
@@ -97,6 +101,18 @@ public record RunUnitSpec(String runId,
         Map<String, String> merged = new LinkedHashMap<>(container.environment());
         merged.putAll(enterprise.environment());
         return Map.copyOf(merged);
+    }
+
+    /** Rebuild with another init container, enumerating the components once. */
+    public RunUnitSpec withInit(ContainerSpec container) {
+        return new RunUnitSpec(runId, container, agent, publisher, enterprise, egress,
+                memoryBytes, nanoCpus, diskBytes, wallClock);
+    }
+
+    /** Rebuild with another publisher, enumerating the components once. */
+    public RunUnitSpec withPublisher(ContainerSpec container) {
+        return new RunUnitSpec(runId, init, agent, container, enterprise, egress,
+                memoryBytes, nanoCpus, diskBytes, wallClock);
     }
 
     /** The host paths every container of this unit mounts, read-only. */

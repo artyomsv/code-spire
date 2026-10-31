@@ -20,7 +20,7 @@ class RunResultTest {
         return new RunResult.RunFinished("run::github:a/b:s:1", pushedRef,
                 List.of("src/Foo.java"),
                 blocked.stream().map(path -> new RunResult.BlockedChange(path, "MODIFIED")).toList(),
-                usage, false);
+                usage, false, List.of());
     }
 
     @Test
@@ -92,9 +92,9 @@ class RunResultTest {
         // "read the logs" is not a failure cause (FR-F9): a failure with no named cause reaches an
         // operator as a row saying only that something went wrong.
         assertThrows(IllegalArgumentException.class,
-                () -> new RunResult.RunFailed("run::github:a/b:s:1", " ", "detail", false, null));
+                () -> new RunResult.RunFailed("run::github:a/b:s:1", " ", "detail", false, null, List.of()));
         assertEquals("SANDBOX_LOST",
-                new RunResult.RunFailed("run::github:a/b:s:1", "SANDBOX_LOST", "gone", true, null).cause());
+                new RunResult.RunFailed("run::github:a/b:s:1", "SANDBOX_LOST", "gone", true, null, List.of()).cause());
     }
 
     @Test

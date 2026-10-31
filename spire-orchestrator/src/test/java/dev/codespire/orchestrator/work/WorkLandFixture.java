@@ -68,7 +68,7 @@ abstract class WorkLandFixture extends WorkPreparedFixture {
         String id=admit("autonomous-land",number);register(id);dispatcher.drain();var command=heldCommands.getLast();
         saga.on(new RunResult.RunWorkReady(command.runId(),command.work(),HEAD,List.of("TEST-file"),Map.of("INPUT",7L),9));
         UUID attempt=verifyPassed(id);delivery.advance(attempt);
-        saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(command.runId(),"refs/heads/"+command.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false, List.of()));
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());return id;
     }
     void reviewResult(String id) {

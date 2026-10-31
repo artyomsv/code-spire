@@ -121,7 +121,7 @@ class DockerVerifyIT {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", agent), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"), Mount.writable("handoff", "/handoff"))),
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "true"), Map.of(), List.of(Mount.readOnly("handoff", "/handoff"))),
-                EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024, Duration.ofSeconds(15));
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024, Duration.ofSeconds(15));
         RunHandle handle = runtime.createHeld(spec, KEY);
         runtime.salvage(handle);
         return handle;

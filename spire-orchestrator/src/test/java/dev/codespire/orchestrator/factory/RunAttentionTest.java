@@ -40,7 +40,7 @@ class RunAttentionTest {
         projection.apply(new RunResult.RunFinished(runId, null,
                 List.of(".github/workflows/ci.yml", "src/App.java"),
                 List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "DELETED")),
-                null, false));
+                null, false, List.of()));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)
@@ -65,7 +65,7 @@ class RunAttentionTest {
     void aSucceededRunRaisesNothing() {
         String runId = run();
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("src/App.java"),
-                List.of(), null, false));
+                List.of(), null, false, List.of()));
 
         given().when().get("/api/attention")
                 .then().statusCode(200)

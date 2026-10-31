@@ -355,7 +355,7 @@ public class RunLauncher {
             // the overrun it hid the one row RUN_PUSH_GATE_REFUSED exists to raise.
             return new RunResult.RunFinished(command.runId(), null,
                     outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
-                    true);
+                    true, List.of());
         }
         if (outcome.pushedRef().isPresent()) {
             // The work is on the branch, so this is finished — but NOT complete, and the result says
@@ -364,7 +364,7 @@ public class RunLauncher {
             // lose the largest charge there is.
             return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
                     outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
-                    true);
+                    true, List.of());
         }
         Map<String, Long> spent = usageOf(adapter, observed.seen().summary());
         if (outcome.failureCause().isPresent()) {
@@ -427,7 +427,7 @@ public class RunLauncher {
                     .withUsage(usageOf(adapter, summary));
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
-                outcome.changedPaths(), outcome.blocked(), usageOf(adapter, summary), false);
+                outcome.changedPaths(), outcome.blocked(), usageOf(adapter, summary), false, List.of());
     }
 
     private static void awaitBriefly(Future<?> agentStream, Future<?> publisherStream) {

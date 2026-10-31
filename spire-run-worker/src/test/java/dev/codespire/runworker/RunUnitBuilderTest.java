@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.harness.codex.CodexAdapter;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.Mount;
@@ -56,6 +57,7 @@ class RunUnitBuilderTest {
         builder.publisherImage = "spire-publisher:TEST";
         builder.maxWallClockSeconds = 3600;
         builder.enterprise = unconfigured();
+        builder.egressMode = EgressPolicy.Mode.OFF;
         return builder;
     }
 
@@ -390,28 +392,115 @@ class RunUnitBuilderTest {
         assertFalse(scm.toString().contains("ghp-do-not-print"), scm.toString());
         assertTrue(scm.toString().contains("spire-bot"));
     }
+    private static final String BUNDLE = "/etc/spire/ca-bundle.crt";
+
+    private static final String CORPORATE_PROXY = "http://TEST-proxy:3128";
+
+    private static final List<String> TRUST_VARIABLES = List.of("SSL_CERT_FILE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS");
+
+    private static final List<String> PROXY_VARIABLES = List.of("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy");
+
+    private static final List<String> NO_PROXY_VARIABLES = List.of("NO_PROXY", "no_proxy");
+
+    /** What EnterpriseEnvironmentConfig resolves for a deployment with a corporate CA and proxy: both spellings. */
+    private static EnterpriseEnvironment corporateTrustAndProxy() {
+        Map<String, String> environment = new java.util.LinkedHashMap<>();
+        TRUST_VARIABLES.forEach(name -> environment.put(name, BUNDLE));
+        PROXY_VARIABLES.forEach(name -> environment.put(name, CORPORATE_PROXY));
+        NO_PROXY_VARIABLES.forEach(name -> environment.put(name, "TEST-intranet.example.test"));
+        return new EnterpriseEnvironment(List.of(new HostMount("/opt/acme/ca.crt", BUNDLE)), environment);
+    }
+
+    private RunUnitSpec corporateUnit(EgressPolicy.Mode egress) {
+        RunUnitBuilder builder = builder(encryption);
+        builder.enterprise = corporate(corporateTrustAndProxy());
+        builder.egressMode = egress;
+        return builder.build(command(), new CodexAdapter());
+    }
+
     /**
-     * The corporate environment reaches the unit, and reaches it ONCE.
+     * The corporate TRUST reaches every container of the unit, and its PROXY every container but the agent's.
      *
-     * <p>Asserted on the spec rather than on each container, because that placement is the
-     * requirement: held at unit level, "every container" is structural and a future arm cannot
-     * apply it to two of the three. The init container is the one that matters -- without the
-     * bundle its clone fails at the forge, which reads like a bad credential.
+     * <p>Asserted on the spec rather than on each container, because that placement is the requirement: held at unit
+     * level, "every container" is structural and a future arm cannot apply it to two of the three. The init container
+     * is the one that matters for trust -- without the bundle its clone fails at the forge, which reads like a bad
+     * credential.
+     *
+     * <p>The agent is the exception for the proxy only. Its one way out is the unit's egress proxy, which chains to the
+     * corporate proxy itself; the agent still needs the bundle, since the corporate proxy re-signs what it forwards.
      */
     @Test
-    void theCorporateEnvironmentReachesEveryContainerOfTheUnit() throws JsonProcessingException {
-        String bundle = "/etc/spire/ca-bundle.crt";
+    void theCorporateEnvironmentReachesEveryContainerOfTheUnit() {
+        RunUnitSpec spec = corporateUnit(EgressPolicy.Mode.REPORT);
+
+        assertEquals(List.of(new HostMount("/opt/acme/ca.crt", BUNDLE)), spec.hostMounts());
+        for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
+            for (String name : TRUST_VARIABLES) {
+                assertEquals(BUNDLE, spec.environmentFor(container).get(name), name);
+            }
+        }
+        for (ContainerSpec trusted : List.of(spec.init(), spec.publisher())) {
+            for (String name : PROXY_VARIABLES) {
+                assertEquals(CORPORATE_PROXY, spec.environmentFor(trusted).get(name),
+                        name + ": init and the publisher run our own code and keep the deployment's path out");
+            }
+        }
+    }
+
+    /**
+     * With egress on, the agent's every proxy variable names the egress proxy, and nothing is exempt from it.
+     *
+     * <p>Both spellings, because tools disagree on case and a unit where curl is proxied and git is not presents as an
+     * intermittent network fault. An inherited {@code NO_PROXY} would let the agent name a host that skips the proxy;
+     * there is no route to it anyway, so the call would fail, but it would also go unrecorded.
+     */
+    @Test
+    void withEgressTheAgentsOnlyProxyIsTheEgressProxy() {
+        RunUnitSpec spec = corporateUnit(EgressPolicy.Mode.REPORT);
+        Map<String, String> agent = spec.environmentFor(spec.agent());
+
+        for (String name : PROXY_VARIABLES) {
+            assertEquals(EgressPolicy.PROXY_ADDRESS, agent.get(name), name);
+        }
+        for (String name : NO_PROXY_VARIABLES) {
+            assertEquals("", agent.get(name), name + " must be empty for the agent, not inherited");
+        }
+    }
+
+    /** No corporate proxy at all: the agent is still pointed at the egress proxy, and init gets no proxy. */
+    @Test
+    void withEgressAndNoCorporateProxyOnlyTheAgentIsProxied() {
         RunUnitBuilder builder = builder(encryption);
-        builder.enterprise = corporate(new EnterpriseEnvironment(
-                List.of(new HostMount("/opt/acme/ca.crt", bundle)),
-                java.util.Map.of("SSL_CERT_FILE", bundle, "HTTPS_PROXY", "http://proxy:3128")));
+        builder.egressMode = EgressPolicy.Mode.ENFORCE;
 
         RunUnitSpec spec = builder.build(command(), new CodexAdapter());
 
-        assertEquals(List.of(new HostMount("/opt/acme/ca.crt", bundle)), spec.hostMounts());
+        assertEquals(EgressPolicy.PROXY_ADDRESS, spec.environmentFor(spec.agent()).get("HTTPS_PROXY"));
+        assertFalse(spec.environmentFor(spec.init()).containsKey("HTTPS_PROXY"));
+        assertFalse(spec.environmentFor(spec.publisher()).containsKey("HTTPS_PROXY"));
+    }
+
+    /** The unit carries the configured mode and the hosts the HARNESS declares for this payment, never the command's. */
+    @Test
+    void theUnitsEgressIsTheConfiguredModeWithTheHarnessesHosts() {
+        RunUnitBuilder builder = builder(encryption);
+        builder.egressMode = EgressPolicy.Mode.ENFORCE;
+
+        assertEquals(new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of("api.openai.com")),
+                builder.build(command(), new CodexAdapter()).egress());
+        assertEquals(new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of("chatgpt.com")),
+                builder.build(command().paidBySignIn(), new CodexAdapter()).egress());
+    }
+
+    /** Off is the kill switch: today's unit, with the corporate proxy in the agent too. */
+    @Test
+    void withEgressOffTheUnitIsTodays() {
+        RunUnitSpec spec = corporateUnit(EgressPolicy.Mode.OFF);
+
+        assertEquals(EgressPolicy.OFF, spec.egress());
         for (ContainerSpec container : List.of(spec.init(), spec.agent(), spec.publisher())) {
-            assertEquals(bundle, spec.environmentFor(container).get("SSL_CERT_FILE"));
-            assertEquals("http://proxy:3128", spec.environmentFor(container).get("HTTPS_PROXY"));
+            assertEquals(CORPORATE_PROXY, spec.environmentFor(container).get("HTTPS_PROXY"));
+            assertEquals("TEST-intranet.example.test", spec.environmentFor(container).get("NO_PROXY"));
         }
     }
 

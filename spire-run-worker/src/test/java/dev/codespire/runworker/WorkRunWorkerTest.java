@@ -103,12 +103,12 @@ class WorkRunWorkerTest {
         worker.launcher=new RunLauncher(){@Override public RunResult launchHeld(RunCommand.ExecuteWorkRun execution,RunObserver observer,Consumer<RunUnitSpec> saved){
             launches++;launched=execution;
             // As the real launcher does: a failed topology save ends the launch before creation.
-            if(attemptsCreation){try{saved.accept(null);}catch(RuntimeException saveFailed){return new RunResult.RunFailed(execution.runId(),"RUNTIME_UNAVAILABLE","TEST save failed",true,null);}}
+            if(attemptsCreation){try{saved.accept(null);}catch(RuntimeException saveFailed){return new RunResult.RunFailed(execution.runId(),"RUNTIME_UNAVAILABLE","TEST save failed",true,null, List.of());}}
             if(createsUnit)observer.unitCreated("TEST-unit",RunNotes.IGNORING);
             if(lateCancel)cancelled=true;return buildResult;}};
         worker.builder=new RunUnitBuilder(){@Override public RunUnitSpec publication(RunUnitSpec original,RunCommand.ExecuteWorkRun execution,RunCommand.PublishWorkRun request){return null; /* TEST runtime does not consume topology. */}};
         worker.failures=new RunFailures(){
-            @Override public RunResult.RunFailed of(RunCommand.ExecuteRun execution,String cause,String detail){return new RunResult.RunFailed(execution.runId(),cause,detail,false,null);}
+            @Override public RunResult.RunFailed of(RunCommand.ExecuteRun execution,String cause,String detail){return new RunResult.RunFailed(execution.runId(),cause,detail,false,null, List.of());}
             // This decision fixture does not decrypt credentials; the focused publication tests below do.
             @Override public RunResult.RunFailed ofPublication(RunCommand.ExecuteRun execution,RunCommand.PublishWorkRun publication,String cause,String detail){return of(execution,cause,detail);}
             // Answered here rather than left to the parent, whose credentials are not injected: the held
@@ -132,14 +132,14 @@ class WorkRunWorkerTest {
     }
     /** Review of PR #184 (M-3): a superseded workspace whose removal failed is removed by a later recovery. */
     @Test void recoveryRemovesARetiredWorkspaceThatWasNotRemoved(){
-        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null, List.of());state="finished";
         awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
         worker.recover();
         assertEquals(1,deletions,"the retired workspace is removed");assertTrue(events.contains("released"));
     }
     /** Review of PR #184 (M-3, round 2): volumes that outlived their containers are still removed, and only then is the removal recorded. */
     @Test void recoveryRemovesARetiredWorkspacesSurvivingVolumes(){
-        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null);state="finished";
+        terminal=new RunResult.RunFailed(command.runId(),"CANCELLED","TEST superseded",false,null, List.of());state="finished";
         awaiting=List.of(new WorkRunStore.Held(command,null,"TEST-unit","finished",ready,terminal,null,Instant.now()));
         present=false;volumesSurvive=true;
         worker.recover();

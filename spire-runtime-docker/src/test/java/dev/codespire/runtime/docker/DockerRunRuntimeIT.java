@@ -3,6 +3,8 @@ package dev.codespire.runtime.docker;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.exception.NotFoundException;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EgressAttempt;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.HostMount;
 import dev.codespire.runtime.RegistryCredential;
@@ -67,6 +69,22 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
             } catch (RuntimeException alreadyGone) {
                 // The ordinary case for a test that destroyed its own unit.
             }
+            // Independent of destroy, so a destroy that leaves a network behind fails its own test and not every
+            // later run on this daemon.
+            for (var network : labelledNetworks(handle.runId())) {
+                try {
+                    runtime.client().removeNetworkCmd(network.getId()).exec();
+                } catch (RuntimeException alreadyGone) {
+                    // removed by destroy, or by a test
+                }
+            }
+        }
+        for (String target : targets) {
+            try {
+                runtime.client().removeContainerCmd(target).withForce(true).exec();
+            } catch (RuntimeException alreadyGone) {
+                // never started
+            }
         }
     }
 
@@ -84,6 +102,11 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock,
                              EnterpriseEnvironment enterprise) {
+        return unit(id, agentScript, publisherScript, wallClock, enterprise, EgressPolicy.OFF);
+    }
+
+    private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock,
+                             EnterpriseEnvironment enterprise, EgressPolicy egress) {
         return new RunUnitSpec(id,
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo seeded > /workspace/seed.txt"),
                         Map.of(),
@@ -94,7 +117,76 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
-                enterprise, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024, wallClock);
+                enterprise, egress, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024, wallClock);
+    }
+
+    /** A unit whose agent runs {@code agentScript} behind an egress proxy, with a publisher that has nothing to do. */
+    private RunUnitSpec egressUnit(String id, String agentScript, EgressPolicy egress) {
+        return unit(id, agentScript, "true", Duration.ofMinutes(2), EnterpriseEnvironment.NONE, egress);
+    }
+
+    private static final EgressPolicy REPORT = new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of());
+
+    /** busybox carries httpd; alpine moved it to busybox-extras. */
+    private static final String TARGET_IMAGE = "busybox:1.37.0";
+
+    private final List<String> targets = new CopyOnWriteArrayList<>();
+
+    /**
+     * A small HTTP server on the daemon's default bridge, standing in for everything an agent must not reach
+     * directly: a developer's database, the orchestrator, another unit. It is reached by address, since the default
+     * bridge has no DNS, and from the proxy it is an ordinary outbound host, so no test depends on the internet.
+     */
+    private String startTarget() {
+        runtime.ensureImage(TARGET_IMAGE);
+        String id = runtime.client().createContainerCmd(TARGET_IMAGE)
+                .withCmd("sh", "-c", "mkdir -p /www && echo TEST-EGRESS-TARGET > /www/index.html"
+                        + " && exec httpd -f -p 80 -h /www")
+                .exec().getId();
+        targets.add(id);
+        runtime.client().startContainerCmd(id).exec();
+        return runtime.client().inspectContainerCmd(id).exec()
+                .getNetworkSettings().getNetworks().get("bridge").getIpAddress();
+    }
+
+    /** One fetch, printed as a verdict line, so the log says which way it went rather than how wget failed. */
+    private static String fetch(String label, String url, String proxyFlag) {
+        return "if wget " + proxyFlag + " -T 5 -q -O - " + url + " 2>/dev/null | grep -q TEST-EGRESS-TARGET; "
+                + "then echo " + label + "-REACHED; else echo " + label + "-FAILED; fi; ";
+    }
+
+    /** Through the proxy the agent was handed: busybox wget reads the lower-case variable. */
+    private static String viaProxy(String label, String url) {
+        return "export http_proxy=\"${http_proxy:-$HTTP_PROXY}\"; " + fetch(label, url, "-Y on");
+    }
+
+    private static String direct(String label, String url) {
+        return fetch(label, url, "-Y off");
+    }
+
+    private List<com.github.dockerjava.api.model.Network> labelledNetworks(String runId) {
+        return runtime.client().listNetworksCmd()
+                .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=" + runId))
+                .exec();
+    }
+
+    private Map<String, com.github.dockerjava.api.model.ContainerNetwork> networksOf(String runId, String role) {
+        Container container = runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId, DockerRunRuntime.ROLE_LABEL, role))
+                .exec().getFirst();
+        return runtime.client().inspectContainerCmd(container.getId()).exec().getNetworkSettings().getNetworks();
+    }
+
+    private List<Container> proxyOf(String runId) {
+        return runtime.client().listContainersCmd().withShowAll(true)
+                .withNameFilter(List.of(DockerRunNetworks.proxyName(runId)))
+                .exec();
+    }
+
+    private List<String> agentLog(RunHandle handle) {
+        List<String> lines = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, lines::add);
+        return lines;
     }
 
     @Override
@@ -141,7 +233,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
         RunHandle handle = start(new RunUnitSpec("pull-1", noop,
                 new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
-                noop, EnterpriseEnvironment.NONE, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024,
+                noop, EnterpriseEnvironment.NONE, EgressPolicy.OFF, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024,
                 Duration.ofMinutes(2)));
 
         Finalization finalization = runtime.salvage(handle);
@@ -334,7 +426,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(),
                         List.of(Mount.writable("ws", "/workspace"))),
                 new ContainerSpec(IMAGE, List.of("sh", "-c", "echo never"), Map.of(), List.of()),
-                EnterpriseEnvironment.NONE, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
                 Duration.ofMinutes(1));
 
         assertThrows(IllegalStateException.class, () -> runtime.create(spec));
@@ -435,7 +527,10 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // RESTARTED worker — which is how RUN-TOPOLOGY says recovery works — would discover an
         // orphan by label, call destroy, find nothing in the map, and return successfully having
         // deleted nothing. A fresh runtime instance stands in for that restart.
-        start(unit("run_unit5", "sleep 30", "sleep 30"));
+        // Behind a proxy, so the unit has every kind of part: containers, volumes, networks and the proxy.
+        start(unit("run_unit5", "sleep 30", "sleep 30", Duration.ofMinutes(2), EnterpriseEnvironment.NONE, REPORT));
+        assertFalse(labelledNetworks("run_unit5").isEmpty(),
+                "the unit must have its network, or the check that destroy removed it checks nothing");
 
         DockerRunRuntime afterRestart = new DockerRunRuntime();
         assertTrue(afterRestart.discoverUnits().stream()
@@ -455,6 +550,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=run_unit5"))
                         .exec().getVolumes().isEmpty(),
                 "including its volumes, which no map remembered either");
+        assertTrue(labelledNetworks("run_unit5").isEmpty(), "and its networks");
+        assertTrue(proxyOf("run_unit5").isEmpty(), "and its egress proxy");
     }
 
     /**
@@ -518,6 +615,102 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                     "the " + role + " container is still running after cancel; an operator who "
                             + "stopped this run is still being charged for it");
         }
+    }
+
+    /**
+     * Behind the proxy, the agent is on the unit's internal network and nothing else, so it cannot reach a neighbour
+     * on the default bridge, and the forge credential's containers are not on its network.
+     *
+     * <p>Asserted on the daemon's view AND by trying, because each misses what the other sees: a container can be
+     * off the bridge and still routed by a second network, and a failed fetch alone could be a server that was not up.
+     * The proxied fetch of the same target in the same script is what proves the target was up.
+     */
+    @Test
+    void anAgentBehindTheProxyIsOnTheUnitsInternalNetworkOnly() {
+        String target = startTarget();
+        RunHandle handle = start(egressUnit("run_egress_isolated",
+                direct("DIRECT", "http://" + target + "/") + viaProxy("PROXIED", "http://" + target + "/"), REPORT));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+
+        Map<String, com.github.dockerjava.api.model.ContainerNetwork> networks = networksOf("run_egress_isolated", "agent");
+        assertEquals(java.util.Set.of(DockerRunNetworks.agentNetworkName("run_egress_isolated")), networks.keySet(),
+                "the agent must be on the unit's internal network and on nothing else, the default bridge included");
+        for (String role : List.of("init", "publisher")) {
+            assertFalse(networksOf("run_egress_isolated", role)
+                            .containsKey(DockerRunNetworks.agentNetworkName("run_egress_isolated")),
+                    "the " + role + " holds the forge credential and must never share the agent's network");
+        }
+        assertTrue(agent.contains("DIRECT-FAILED"), "the agent reached a bridge neighbour directly: " + agent);
+        assertTrue(agent.contains("PROXIED-REACHED"), "and the proxy must still let it out in report mode: " + agent);
+    }
+
+    /** Report mode lets every host through and records it, which is how a harness's real hosts are measured. */
+    @Test
+    void reportModeRecordsEveryHostTheAgentAskedFor() {
+        String target = startTarget();
+        RunHandle handle = start(egressUnit("run_egress_report", viaProxy("PROXIED", "http://" + target + "/"), REPORT));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+
+        assertTrue(agent.contains("PROXIED-REACHED"), agent.toString());
+        assertTrue(runtime.egressOf(handle).contains(new EgressAttempt(target, 80, true)),
+                "the proxy must record the host it let through: " + runtime.egressOf(handle));
+    }
+
+    /**
+     * Enforce mode lets a declared host through and refuses any other, and records both. The refused host is a name
+     * that does not resolve anywhere, so only a proxy that refused it before looking it up can report it as refused.
+     */
+    @Test
+    void enforceModeRefusesAnUndeclaredHostAndRecordsTheRefusal() {
+        String target = startTarget();
+        String undeclared = "undeclared.example.invalid";
+        RunHandle handle = start(egressUnit("run_egress_enforce",
+                viaProxy("DECLARED", "http://" + target + "/") + viaProxy("UNDECLARED", "http://" + undeclared + "/"),
+                new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(target))));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+        List<EgressAttempt> egress = runtime.egressOf(handle);
+
+        assertTrue(agent.contains("DECLARED-REACHED"), "a declared host must get through: " + agent);
+        assertTrue(agent.contains("UNDECLARED-FAILED"), agent.toString());
+        assertTrue(egress.contains(new EgressAttempt(target, 80, true)), egress.toString());
+        assertTrue(egress.contains(new EgressAttempt(undeclared, 80, false)),
+                "a refusal the run cannot name is a BLOCKED_EGRESS nobody can act on: " + egress);
+    }
+
+    /** An operator's cancel ends the proxy too: a stopped run must not leave its way out open. */
+    @Test
+    void cancelStopsTheEgressProxy() {
+        RunHandle handle = start(egressUnit("run_egress_cancel", "sleep 300", REPORT));
+
+        runtime.cancel(handle);
+
+        List<Container> proxy = proxyOf("run_egress_cancel");
+        assertEquals(1, proxy.size(), "the unit must have exactly one egress proxy: " + proxy);
+        assertEquals(Boolean.FALSE, runtime.client().inspectContainerCmd(proxy.getFirst().getId()).exec()
+                .getState().getRunning(), "the proxy is still running after cancel");
+    }
+
+    /** A held unit's networks and proxy go with destroyHeld, which is a teardown of its own. */
+    @Test
+    void destroyHeldRemovesTheUnitsNetworksAndProxy() {
+        dev.codespire.runtime.PublicationKey key = new dev.codespire.runtime.PublicationKey("e".repeat(64));
+        RunHandle handle = runtime.createHeld(egressUnit("run_egress_held", "true", REPORT), key);
+        started.add(handle);
+        runtime.salvage(handle);
+        boolean hadNetwork = !labelledNetworks("run_egress_held").isEmpty();
+
+        // Before any assertion: ordinary teardown refuses a held unit, so a failure here must not leak it.
+        runtime.destroyHeld(handle, key);
+
+        assertTrue(hadNetwork, "the held unit must have had its network, or the check below checks nothing");
+        assertTrue(labelledNetworks("run_egress_held").isEmpty(), "a network outlived its held unit");
+        assertTrue(proxyOf("run_egress_held").isEmpty(), "the proxy outlived its held unit");
     }
 
     @Test

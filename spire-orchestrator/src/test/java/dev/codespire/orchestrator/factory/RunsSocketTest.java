@@ -83,7 +83,7 @@ class RunsSocketTest {
             assertRow(running, runId, "running");
             assertFalse(running.get("agentStartedAt").isNull());
 
-            runs.apply(new RunResult.RunFinished(runId, "refs/heads/spire/test", List.of(), List.of(), null, false));
+            runs.apply(new RunResult.RunFinished(runId, "refs/heads/spire/test", List.of(), List.of(), null, false, List.of()));
             JsonNode finished = feed.next();
             assertRow(finished, runId, "succeeded");
             assertTrue(finished.get("prUrl").isNull());
@@ -116,7 +116,7 @@ class RunsSocketTest {
             assertRow(feed.next(), runId, "failed");
             runs.apply(new RunResult.RunStarted(runId, "TEST-unit"));
             assertRow(feed.next(), runId, "running");
-            runs.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "TEST-crash", true, null));
+            runs.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "TEST-crash", true, null, List.of()));
             assertRow(feed.next(), runId, "failed");
             runs.pullRequestFailed(runId, "TEST-proposal-error");
             assertEquals("TEST-proposal-error", feed.next().get("prError").asText());
@@ -140,11 +140,11 @@ class RunsSocketTest {
     void everyOtherTerminalStatusIsPushed(String status) throws Exception {
         String runId = queue();
         RunResult result = switch (status) {
-            case "cancelled" -> new RunResult.RunFailed(runId, "CANCELLED", "TEST-cancel", false, null);
-            case "delivered_nothing" -> new RunResult.RunFinished(runId, null, List.of(), List.of(), null, false);
-            case "delivered_unfinished" -> new RunResult.RunFinished(runId, "refs/heads/spire/test", List.of(), List.of(), null, true);
+            case "cancelled" -> new RunResult.RunFailed(runId, "CANCELLED", "TEST-cancel", false, null, List.of());
+            case "delivered_nothing" -> new RunResult.RunFinished(runId, null, List.of(), List.of(), null, false, List.of());
+            case "delivered_unfinished" -> new RunResult.RunFinished(runId, "refs/heads/spire/test", List.of(), List.of(), null, true, List.of());
             default -> new RunResult.RunFinished(runId, null, List.of(),
-                    List.of(new RunResult.BlockedChange("secrets.txt", "TEST-blocked")), null, false);
+                    List.of(new RunResult.BlockedChange("secrets.txt", "TEST-blocked")), null, false, List.of());
         };
         try (Feed feed = open()) {
             feed.next();
@@ -186,7 +186,7 @@ class RunsSocketTest {
         try (Feed feed = open()) {
             feed.next();
             saga.on(new RunResult.RunFinished(runId, fix ? "refs/heads/feature/test" : null,
-                    List.of(), List.of(), Map.of("INPUT", 100L, "OUTPUT", 40L), false));
+                    List.of(), List.of(), Map.of("INPUT", 100L, "OUTPUT", 40L), false, List.of()));
 
             JsonNode terminal = feed.next();
             assertRow(terminal, runId, fix ? "succeeded" : "delivered_nothing");

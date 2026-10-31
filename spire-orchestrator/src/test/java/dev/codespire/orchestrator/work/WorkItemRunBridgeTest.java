@@ -31,7 +31,7 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
     @Test void itemRunCannotUseStandaloneAutomaticProposal() throws Exception {
         String id=build();String run=dispatched.getFirst().runId();
         // A result carrying a pushed head is deliberately used to make the standalone proposal path eligible.
-        var result=new RunResult.RunFinished(run,"refs/heads/spire/TEST-built",List.of("TEST-task.txt"),List.of(),Map.of("INPUT",1L),false);
+        var result=new RunResult.RunFinished(run,"refs/heads/spire/TEST-built",List.of("TEST-task.txt"),List.of(),Map.of("INPUT",1L),false, List.of());
         runs.apply(result);assertNotNull(runs.find(run).orElseThrow().pushedRef());
         proposals.propose(result);
         assertNull(runs.find(run).orElseThrow().prError(),"The item guard must stop BEFORE attempting the otherwise eligible standalone proposal");
@@ -70,19 +70,19 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         assertTrue(store.load(id).progress().usageUnknown());assertEquals("run_usage_unknown",store.load(id).reason());assertEquals(1,store.load(id).progress().calls());
     }
     @Test void anUnobservedAgentDoesNotCompleteTheBuild() throws Exception {
-        String id=build();saga.on(new RunResult.RunFinished(dispatched.getFirst().runId(),null,List.of("TEST-task.txt"),List.of(),Map.of("INPUT",1L),false).withAgentUnobserved(true));
+        String id=build();saga.on(new RunResult.RunFinished(dispatched.getFirst().runId(),null,List.of("TEST-task.txt"),List.of(),Map.of("INPUT",1L),false, List.of()).withAgentUnobserved(true));
         assertEquals("build",store.load(id).phase());assertEquals("failed",store.load(id).workflowStatus());assertEquals(1,store.load(id).progress().calls());
     }
     @Test void aRefusedBuildDoesNotAdvanceToVerify() throws Exception {
-        String id=build();saga.on(new RunResult.RunFinished(dispatched.getFirst().runId(),null,List.of("TEST-sensitive/file"),List.of(new RunResult.BlockedChange("TEST-sensitive/file","MODIFY")),Map.of("INPUT",1L),false));
+        String id=build();saga.on(new RunResult.RunFinished(dispatched.getFirst().runId(),null,List.of("TEST-sensitive/file"),List.of(new RunResult.BlockedChange("TEST-sensitive/file","MODIFY")),Map.of("INPUT",1L),false, List.of()));
         assertEquals("build",store.load(id).phase());assertEquals("failed",store.load(id).workflowStatus());assertFalse(store.load(id).progress().reserved());
     }
     @Test void aFailedBuildStillRecordsItsUsage() throws Exception {
-        String id=build();saga.on(new RunResult.RunFailed(dispatched.getFirst().runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L)));
+        String id=build();saga.on(new RunResult.RunFailed(dispatched.getFirst().runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L), List.of()));
         assertEquals("failed",store.load(id).workflowStatus());assertEquals("build",store.load(id).phase());assertEquals(1,store.load(id).progress().calls());assertFalse(store.load(id).progress().reserved());
     }
     @Test void aProvenPreAgentFailureCanBeReadmittedWithoutInventingACall() throws Exception {
-        String id=build();String run=dispatched.getFirst().runId();saga.on(new RunResult.RunFailed(run,"BAD_COMMAND","TEST-rejected before execution",false,null));
+        String id=build();String run=dispatched.getFirst().runId();saga.on(new RunResult.RunFailed(run,"BAD_COMMAND","TEST-rejected before execution",false,null, List.of()));
         assertEquals(0,count("SELECT count(*) FROM llm_charge WHERE subject_id=?",run));
         var failed=store.load(id);assertEquals("failed",failed.workflowStatus());assertFalse(failed.progress().usageUnknown());assertEquals(0,failed.progress().calls());assertEquals(0,failed.progress().costMillicents());
         assertEquals(200,transitions.resume(id,store.history(id).size(),true).status());assertEquals("active",store.load(id).workflowStatus());dispatcher.drain();
@@ -90,7 +90,7 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
     }
     @Test void readinessCannotBeOverwrittenByATerminalResult() throws Exception {
         String id=build();var result=priorBuildResult();runs.apply(result);charges.record(result);bridge.record(result);
-        bridge.record(new RunResult.RunFailed(result.runId(),"AGENT_FAILED","TEST-later conflicting terminal",false,Map.of("INPUT",1L)));
+        bridge.record(new RunResult.RunFailed(result.runId(),"AGENT_FAILED","TEST-later conflicting terminal",false,Map.of("INPUT",1L), List.of()));
         bridge.recover();assertEquals("verify",store.load(id).phase());assertEquals(1,store.load(id).progress().calls());
     }
     @Test void aCompletedBuildResultIsAcknowledgedWhileVerificationIsActive() throws Exception {
@@ -129,7 +129,7 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
         String id=build();var ready=priorBuildResult();saga.on(ready);
         var before=store.load(id).progress();long revision=store.history(id).size();
         assertEquals("awaiting_delivery",runs.find(ready.runId()).orElseThrow().status());
-        var finished=new RunResult.RunFinished(ready.runId(),"refs/heads/spire/TEST-held",ready.changedPaths(),List.of(),ready.tokenUsage(),false);
+        var finished=new RunResult.RunFinished(ready.runId(),"refs/heads/spire/TEST-held",ready.changedPaths(),List.of(),ready.tokenUsage(),false, List.of());
         saga.on(finished);saga.on(ready);bridge.recover();
         assertEquals(before,store.load(id).progress());assertEquals(revision,store.history(id).size());
         assertEquals("verify",store.load(id).phase());assertEquals("phase_started",store.load(id).reason());
@@ -140,7 +140,7 @@ class WorkItemRunBridgeTest extends WorkPreparedFixture {
 
     @Test void publicationBeforeReadinessCannotSkipTheBuildCheckpoint() throws Exception {
         String id=build();var ready=priorBuildResult();
-        saga.on(new RunResult.RunFinished(ready.runId(),"refs/heads/spire/TEST-held",ready.changedPaths(),List.of(),ready.tokenUsage(),false));
+        saga.on(new RunResult.RunFinished(ready.runId(),"refs/heads/spire/TEST-held",ready.changedPaths(),List.of(),ready.tokenUsage(),false, List.of()));
         assertEquals("build",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());
         saga.on(ready);assertEquals("verify",store.load(id).phase());assertEquals(9,store.load(id).progress().wallSeconds());
         assertEquals(1,store.load(id).progress().calls());

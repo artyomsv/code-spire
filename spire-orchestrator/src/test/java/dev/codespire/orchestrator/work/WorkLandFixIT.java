@@ -55,7 +55,7 @@ class WorkLandFixIT extends WorkLandFixture {
     RunCommand.PublishWorkRun pushed(String id,RunCommand.ExecuteWorkRun fix,UUID attempt) {
         delivery.advance(attempt);
         RunCommand.PublishWorkRun permit=publications.getLast();
-        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false, List.of()));
         delivery.advance(attempt);
         return permit;
     }
@@ -406,7 +406,7 @@ class WorkLandFixIT extends WorkLandFixture {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         RunCommand.ExecuteWorkRun fix=dispatchedFix();UUID attempt=built(id,fix,FIXED);
         delivery.advance(attempt);
-        saga.on(new RunResult.RunFinished(fix.runId(),null,List.of(),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(fix.runId(),null,List.of(),List.of(),Map.of("INPUT",7L),false, List.of()));
         delivery.advance(attempt);
         handedAtLand(id,"land_fix_stopped");
         assertEquals("publication_failed",latestEffect(id,"note"));
@@ -443,7 +443,7 @@ class WorkLandFixIT extends WorkLandFixture {
     UUID claimedNotCompleted(String id) throws Exception {
         RunCommand.ExecuteWorkRun fix=dispatchedFix();UUID attempt=built(id,fix,FIXED);
         delivery.advance(attempt);
-        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false));
+        saga.on(new RunResult.RunFinished(fix.runId(),"refs/heads/"+fix.execution().branch(),List.of("TEST-file"),List.of(),Map.of("INPUT",7L),false, List.of()));
         PullRequestRef kept=store.load(id).progress().execution().pullRequest();
         executeWith("UPDATE work_delivery_effect SET state='proposing',request=? WHERE attempt_id=?",
                 encryption.encrypt(mapper.writeValueAsBytes(kept),"work-delivery-request:"+attempt),attempt);
@@ -481,7 +481,7 @@ class WorkLandFixIT extends WorkLandFixture {
     @Test void aFailedFixRunIsHandedNotFailed() throws Exception {
         String id=approved();openAt(HEAD,"unstable","failure");land.drain();
         RunCommand.ExecuteWorkRun fix=dispatchedFix();long calls=store.load(id).progress().calls();
-        saga.on(new RunResult.RunFailed(fix.runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L)));
+        saga.on(new RunResult.RunFailed(fix.runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L), List.of()));
         handedAtLand(id,"land_fix_run_failed");
         assertEquals(calls+1,store.load(id).progress().calls(),"the failed run's usage is accounted");
         assertEquals(409,transitions.resume(id,store.history(id).size(),true).status(),"readmit would build beside the open pull request");
@@ -511,7 +511,7 @@ class WorkLandFixIT extends WorkLandFixture {
     }
     @Test void aFailedBuildOutsideAFixStillFails() throws Exception {
         String id=admit("autonomous-land",61);register(id);dispatcher.drain();
-        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L)));
+        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(),"AGENT_FAILED","TEST-agent failure",false,Map.of("INPUT",1L), List.of()));
         assertEquals("build",store.load(id).phase());assertEquals("failed",store.load(id).workflowStatus());assertEquals("phase_failed",store.load(id).reason());
     }
     @Test void aLandFixRunGoesThroughTheBuildsSpendChecks() throws Exception {

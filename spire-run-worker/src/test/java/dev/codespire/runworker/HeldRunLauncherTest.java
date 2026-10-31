@@ -52,6 +52,12 @@ class HeldRunLauncherTest {
         assertNotNull(ready.stepSummary());var decision=ready.stepSummary().decisions().getFirst();
         assertTrue(decision.startsWith("TEST-decision "),decision);assertFalse(decision.contains(RunLauncherTest.MODEL_KEY),"the model key reached the summary");
     }
+    /** A held build's ready carries what its egress proxy saw, refused hosts included: the build still checkpointed. */
+    @Test void theReadyResultCarriesTheEgress(){
+        runtime.egress=List.of(new EgressAttempt("api.openai.com",443,true),new EgressAttempt("TEST-undeclared.example.test",443,false));
+        var ready=assertInstanceOf(RunResult.RunWorkReady.class,launch());
+        assertEquals(List.of(new RunResult.EgressAttempt("api.openai.com",443,true),new RunResult.EgressAttempt("TEST-undeclared.example.test",443,false)),ready.egress());
+    }
     @Test void noSummaryLineMeansNull(){assertNull(assertInstanceOf(RunResult.RunWorkReady.class,launch()).stepSummary());}
     @Test void aFinishedHeldBuildRetainsItsUnit(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.destroyed.isEmpty());}
     @Test void anAlreadyStoppedHeldBuildNeedsNoCancellation(){assertInstanceOf(RunResult.RunWorkReady.class,launch());assertTrue(runtime.cancelled.isEmpty());}

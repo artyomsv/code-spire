@@ -23,7 +23,7 @@ class RunTokenUsageTest {
 
     private static RunResult.RunFinished finished(Map<String, Long> usage) {
         return new RunResult.RunFinished("run::github:TEST-acme/app:s:1", "refs/heads/spire/s",
-                List.of(), List.of(), usage, false);
+                List.of(), List.of(), usage, false, List.of());
     }
 
     @Test
@@ -145,7 +145,7 @@ class RunTokenUsageTest {
         // so the branch that reads a failure's usage was covered only indirectly, one layer up.
         ModelUsage usage = RunTokenUsage.of(new RunResult.RunFailed(
                 "run::github:TEST-acme/app:s:1", "AGENT_FAILED", "exit 2", false,
-                Map.of("INPUT", 700L, "OUTPUT", 90L)), "TEST-model");
+                Map.of("INPUT", 700L, "OUTPUT", 90L), List.of()), "TEST-model");
 
         assertTrue(usage.reconciled());
         assertEquals(700, usage.tokensOf(TokenType.INPUT));

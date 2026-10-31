@@ -180,7 +180,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         String id = started("spec-approve", 86);
         RunCommand.ExecuteWorkDraftRun command = dispatched();
 
-        saga.on(new RunResult.RunFailed(command.runId(), "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 1L)));
+        saga.on(new RunResult.RunFailed(command.runId(), "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 1L), List.of()));
 
         assertState(store.load(id), "spec", "awaiting_input", "draft_run_failed");
         assertEquals("done", effectState(command.draft().attemptId()));
@@ -343,7 +343,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         started("spec-approve", 97);
         RunCommand.ExecuteWorkDraftRun command = dispatched();
 
-        saga.on(new RunResult.RunFailed(command.runId(), "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 1L)));
+        saga.on(new RunResult.RunFailed(command.runId(), "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 1L), List.of()));
 
         assertTrue(proposed.isEmpty(), "a draft run is never proposed");
     }

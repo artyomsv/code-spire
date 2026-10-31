@@ -15,6 +15,7 @@ import dev.codespire.harness.RunEventSummary;
 import dev.codespire.harness.TerminalOutcome;
 import dev.codespire.harness.TokenBucket;
 import dev.codespire.harness.UsageReport;
+import dev.codespire.runtime.EgressAttempt;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
 import dev.codespire.runtime.RunHandle;
@@ -220,6 +221,21 @@ class RunLauncherTest {
         @Override
         public Duration drainWindow() {
             return drainWindow;
+        }
+
+        /** What the unit's egress proxy saw. Nothing unless a test says otherwise. */
+        List<EgressAttempt> egress = List.of();
+
+        /**
+         * The lifecycle as it stood when the egress was read, or null if it never was. A snapshot rather than an
+         * entry in {@link #lifecycle}, so the tests that pin the lifecycle's exact order do not learn about egress.
+         */
+        List<String> egressReadAfter;
+
+        @Override
+        public List<EgressAttempt> egressOf(RunHandle handle) {
+            egressReadAfter = List.copyOf(lifecycle);
+            return egress;
         }
     }
 
@@ -956,5 +972,105 @@ class RunLauncherTest {
         // throwing stop, which is the only thing it is here for.
         assertFalse(runtime.cancelled.isEmpty(),
                 "the stop must have been attempted, or a throwing stop proves nothing");
+    }
+
+    // ---- egress ----------------------------------------------------------------------------
+
+    private static final String REFUSED_HOST = "TEST-undeclared.example.test";
+
+    private static final EgressAttempt MODEL_CALL = new EgressAttempt("api.openai.com", 443, true);
+
+    private static final EgressAttempt REFUSED = new EgressAttempt(REFUSED_HOST, 443, false);
+
+    private static final List<RunResult.EgressAttempt> ON_THE_WIRE = List.of(
+            new RunResult.EgressAttempt("api.openai.com", 443, true),
+            new RunResult.EgressAttempt(REFUSED_HOST, 443, false));
+
+    /**
+     * Read once the agent is gone and before the result is decided: after salvage, which is when the proxy has seen
+     * everything, and before destroy, which removes the proxy and its log with it.
+     */
+    @Test
+    void theEgressIsReadBetweenSalvageAndDestroy() {
+        launcher.launch(COMMAND, RunObserver.IGNORING);
+
+        assertEquals(List.of("salvage"), runtime.egressReadAfter,
+                "read before salvage it misses the agent's last calls; read after destroy there is nothing left");
+        assertEquals(List.of("salvage", "destroy"), runtime.lifecycle);
+    }
+
+    /** What the proxy saw in report mode rides the result, which is how a harness's real hosts get measured. */
+    @Test
+    void theHostsTheAgentAskedForRideAFinishedRun() {
+        runtime.egress = List.of(MODEL_CALL);
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"MODIFIED\"}]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertEquals(List.of(new RunResult.EgressAttempt("api.openai.com", 443, true)), finished.egress());
+    }
+
+    /**
+     * A refusal on a run that delivered anyway keeps the delivery. The work is on the branch, and calling it blocked
+     * would send an operator looking for a failure that did not happen; the refused host is still beside it.
+     */
+    @Test
+    void aRunThatPushedKeepsItsOutcomeWithTheRefusedHostBesideIt() {
+        runtime.egress = List.of(MODEL_CALL, REFUSED);
+        runtime.publisherLines = List.of(
+                "{\"event\":\"pushed\",\"ref\":\"refs/heads/spire/finding-1\",\"changed\":[{\"path\":\"a.txt\",\"kind\":\"MODIFIED\"}]}");
+
+        RunResult.RunFinished finished =
+                assertInstanceOf(RunResult.RunFinished.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertEquals("refs/heads/spire/finding-1", finished.pushedRef());
+        assertEquals(ON_THE_WIRE, finished.egress());
+    }
+
+    /**
+     * A run that failed after the proxy refused a host fails as BLOCKED_EGRESS naming the host: the refusal is the
+     * likely reason, and "the agent exited 1" would send an operator to the model rather than to the allowlist.
+     */
+    @Test
+    void aFailedRunWithARefusedHostIsBlockedEgressNamingTheHost() {
+        runtime.egress = List.of(MODEL_CALL, REFUSED);
+        runtime.finalization = Finalization.salvaged(1, "exited 1");
+        adapter.usage = UsageReport.of(Map.of(TokenBucket.INPUT, 5L));
+
+        RunResult.RunFailed failed =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertEquals(RunFailureCause.BLOCKED_EGRESS.name(), failed.cause());
+        assertTrue(failed.detail().contains(REFUSED_HOST), failed.detail());
+        assertEquals(ON_THE_WIRE, failed.egress());
+        assertEquals(Map.of("INPUT", 5L), failed.tokenUsage(), "the agent ran and spent before it was refused");
+    }
+
+    /** A failure with nothing refused keeps its own cause, and still carries what the proxy saw. */
+    @Test
+    void aFailedRunWithNothingRefusedKeepsItsOwnCause() {
+        runtime.egress = List.of(MODEL_CALL);
+        runtime.finalization = Finalization.salvaged(1, "exited 1");
+
+        RunResult.RunFailed failed =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertNotEquals(RunFailureCause.BLOCKED_EGRESS.name(), failed.cause());
+        assertEquals(List.of(new RunResult.EgressAttempt("api.openai.com", 443, true)), failed.egress());
+    }
+
+    /** An overrun after a refusal is the same story: the agent waited on a host it could not reach. */
+    @Test
+    void anOverrunWithARefusedHostIsBlockedEgress() {
+        runtime.egress = List.of(REFUSED);
+        runtime.finalization = Finalization.overran("the wall clock ran out");
+
+        RunResult.RunFailed failed =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertEquals(RunFailureCause.BLOCKED_EGRESS.name(), failed.cause());
+        assertTrue(failed.detail().contains(REFUSED_HOST), failed.detail());
     }
 }

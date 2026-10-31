@@ -87,7 +87,7 @@ class FactoryPullRequestsTest {
     void aRunThatPushedNothingProposesNothing() {
         propose(new RunResult.RunFinished(RUN, null, List.of(),
                 List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "PROTECTED")),
-                Map.of("input", 10L), false));
+                Map.of("input", 10L), false, List.of()));
 
         assertTrue(opened.isEmpty());
         assertTrue(recorded.isEmpty());
@@ -167,7 +167,7 @@ class FactoryPullRequestsTest {
 
     private static RunResult.RunFinished finished(String pushedRef, List<String> changedPaths) {
         return new RunResult.RunFinished(RUN, pushedRef, changedPaths, List.of(),
-                Map.of("input", 100L), false);
+                Map.of("input", 100L), false, List.of());
     }
 
     private FactoryPullRequests subject() {
