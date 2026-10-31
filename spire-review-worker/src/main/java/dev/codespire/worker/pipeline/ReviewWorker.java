@@ -744,7 +744,7 @@ public class ReviewWorker {
             case CommentIdempotencyStore.Claim.Post ignored -> {
                 try {
                     CommentRef ref = postInlineWithBackoff(commentSink, command, diff, anchor.get(),
-                            renderInline(finding), backoffBudget);
+                            escapeHtml(renderInline(finding)), backoffBudget);
                     // Both ids: the comment identifies what was posted, the thread identifies where a
                     // reply will land. GitLab's discussion id differs from its note id, and ownership is
                     // keyed by the thread — recording only the comment left the bot unable to recognize
@@ -926,8 +926,8 @@ public class ReviewWorker {
             // fenced code block: rendered inert, applied only by a human
             sb.append("\n\nSuggestion:\n```\n").append(finding.suggestion()).append("\n```");
         }
-        // Judged whole: the label in front of the message changes what the message's own Markdown means.
-        return escapeHtml(sb.toString());
+        // Unescaped: the comment it goes into is escaped whole, since text around it changes what its Markdown means.
+        return sb.toString();
     }
 
     private String renderSummary(ReviewResult review, List<Finding> unanchored,

@@ -382,6 +382,13 @@ the LLM mock's request journal, and GitLab's own webhook-delivery history.
   CSS must first assert it read something (`styles.contract.test.ts` uses `node:fs`). `vi.spyOn`
   re-wraps the same module function, so call history leaks between tests in a file;
   `vitest.setup.ts` restores all mocks.
+- **A posted comment is escaped once, whole, outside Markdown code** (`MarkdownHtmlEscape`, review worker). Raw HTML in
+  model text must not become markup (SECURITY.md), but an escaped `<` inside code reads as `&lt;` on the forge. Which
+  characters are code is decided by commonmark-java with its GFM tables extension (GitHub splits a table cell at a
+  pipe even inside backticks), on the FINISHED comment: the severity label and a shared anchor's other findings change
+  what a message's own Markdown means. Code inside a table cell is escaped anyway, because escaped pipes shift the
+  parser's positions there. Hand-written rules were tried first and lost to mismatched runs, escaped openers, blank
+  lines and headings (PR 364).
 - **Mutation-verify every guard**: break the production line, confirm exactly one test fails.
   Tests here have passed with their guard deleted because the list they iterated was empty, because
   a second guard covered the same case, or because the round chosen let a bound alone exclude the

@@ -204,8 +204,13 @@ final class NativeReviewPost {
         return comments;
     }
 
+    /**
+     * The comment for one anchor, escaped once and whole: escaped one finding at a time, a fence one finding leaves open
+     * is closed by the next, and HTML that was code on its own is markup in the shared comment (review of PR 364, M-3).
+     */
     private String inlineBody(Anchored entry) {
-        return String.join(FINDING_SEPARATOR, entry.findings().stream().map(rendering.inline()).toList());
+        return MarkdownHtmlEscape.outsideCode(
+                String.join(FINDING_SEPARATOR, entry.findings().stream().map(rendering.inline()).toList()));
     }
 
     private ReviewSubmission submission(ReviewVerdict posting, Plan plan, List<InlineComment> comments) {
