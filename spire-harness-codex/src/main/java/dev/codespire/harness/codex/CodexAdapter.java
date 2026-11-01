@@ -78,10 +78,11 @@ public final class CodexAdapter implements HarnessAdapter {
     /** A seat also calls the apps endpoints (measured the same day); a key run was never seen to. */
     private static final String NO_APPS = " -c features.apps=false";
 
-    /** The content hosts a seat run was measured calling on 2026-11-01, beside the ChatGPT backend. */
-    private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com",
-            "sdmntprcentralus.oaiusercontent.com", "sdmntprsouthcentralus.oaiusercontent.com",
-            "sdmntprwestus.oaiusercontent.com");
+    /**
+     * The hosts a seat run calls: the ChatGPT backend only. Measured live on 2026-11-01 (spire-test #91, three runs),
+     * where no {@code oaiusercontent.com} content host was called; the step 5 live proof re-checks it in report mode.
+     */
+    private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com");
 
     @Override
     public HarnessType type() {

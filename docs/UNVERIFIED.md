@@ -49,10 +49,11 @@ not declare.
   that rewords them would empty the record without failing a run. Only the IT would notice.
 - **Codex's hosts are measured in report mode only (2026-11-01).** `spire-test` #85 (seat) and #87 (API key)
   recorded what Codex calls (docs/factory/RUN-TOPOLOGY.md §7.1). Codex now switches off plugins, analytics
-  and, on a seat, apps, and declares `api.openai.com` for a key and `chatgpt.com` plus three
-  `sdmntpr*.oaiusercontent.com` hosts for a seat. No run has been made with those flags in report mode,
-  and none in enforce mode: where the seat's content-host calls come from, and which paths a long run adds
-  (remote compaction), are not settled, so enforce may still refuse a host Codex needs and fail the run as
+  and, on a seat, apps, and declares `api.openai.com` for a key and `chatgpt.com` alone for a seat. With
+  those flags, three seat runs in report mode (`spire-test` #91, harness reviews step 4) called only
+  `chatgpt.com`, so the three `sdmntpr*.oaiusercontent.com` content hosts were dropped; the step 5 live proof
+  re-checks it in report mode. No run has been made in enforce mode: which paths a long run adds (remote
+  compaction) is not settled, so enforce may still refuse a host Codex needs and fail the run as
   `BLOCKED_EGRESS`.
 - **Not every container is isolated.** Verify check containers and the operator's sign-in container
   are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request

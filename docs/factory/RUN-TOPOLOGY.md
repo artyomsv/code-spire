@@ -449,10 +449,12 @@ Some of these calls are features a run never needs. Every `codex exec` now carri
 With them off, Codex declares:
 
 - **API key:** `api.openai.com`.
-- **Seat:** `chatgpt.com` and the three `sdmntpr*.oaiusercontent.com` content hosts.
+- **Seat:** `chatgpt.com` only. Re-measured in harness reviews step 4 (`spire-test` #91, three seat runs): with
+  apps, plugins and analytics off, a seat called no `oaiusercontent.com` content host. The step 5 live proof runs in
+  report mode and puts a content host back if one appears.
 
 `auth.openai.com` is never declared: the orchestrator empties a seat's refresh token, so a run has nothing
-to renew. Where a seat's content-host calls come from, and which paths a long run adds, is not settled
+to renew. Which paths a long run adds is not settled
 (docs/UNVERIFIED.md).
 
 ---

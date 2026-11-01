@@ -136,12 +136,22 @@ public class RunUnitBuilder {
 
     /**
      * A harness review run's unit (harness reviews, step 4): the read-only topology, with the review answer's artifact
-     * cap handed to the publisher.
+     * cap handed to the publisher and to the agent's entrypoint, which would otherwise cut the answer at its own 32 KiB
+     * (step 5).
      */
     public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter adapter) {
         RunUnitSpec unit = build(review.execution(), adapter, Topology.READ_ONLY);
-        return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
-                dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
+        String cap = Integer.toString(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES);
+        return unit.withAgent(withVariable(unit.agent(), PublisherEnvironments.ARTIFACT_MAX_BYTES, cap))
+                .withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
+                        dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
+    }
+
+    /** The same container with one more environment variable. */
+    private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
+        Map<String, String> env = new LinkedHashMap<>(container.environment());
+        env.put(name, value);
+        return new ContainerSpec(container.image(), container.argv(), env, container.mounts(), container.entrypoint());
     }
 
     /** Where a retried build's init reads the previous run's handoff. */
