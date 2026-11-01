@@ -37,12 +37,15 @@ review behind an hour-long build would wait an hour.
   one charge with `ChargeCall.forReview` under `CallRefs.of(reviewId, callSlot, kind)`, with the paying member's
   `credential_ref`, priced unmetered on a seat; the Runs list shows a dash for a review run's cost.
 - **Deterministic, cancellable.** The run id derives from the pull request, the head, the kind and the slot, so a
-  redelivered dispatch is dropped by the worker's execute claim. A superseded head (from `cs.events` on its own
-  group, offset latest) or a closed pull request sends `CancelRun` for the review's live review runs; never
+  redelivered dispatch is dropped by the worker's execute claim. A supersede (from `cs.events` on its own group,
+  offset latest) ends a review ROUND, not a commit, because a forced re-run supersedes round N and requests round N+1
+  on the same head: it cancels the live review runs of the round it ended, read from the review's stream at the
+  supersede's own position. A closed pull request cancels every live review run. Both send `CancelRun`, never
   `CancelReview` (ADR-013). A run still being funded has no row to cancel, so dispatch and cancellation share one
   advisory lock per review: `ReviewRunAdmission` refuses the run (`review_run_cancelled`) when `review_status.pr_state`
-  is not `OPEN` or V108's `review_run_cancel` names its head, and inserts the row in the same transaction; the send
-  follows the commit. A close writes no intent row, because a reopened pull request keeps its review id.
+  is not `OPEN` or V108's `review_run_superseded` has ended its round or a later one, and inserts the row in the same
+  transaction; the send follows the commit. Every call names its round (`ReviewRunBinding.round`, a reply the current
+  one). A close writes no record, because a reopened pull request keeps its review id.
 - **A review's wall clock** (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`, default 900) may not exceed a build's;
   startup refuses otherwise, since the run-worker would refuse the unit after it was paid for.
 
@@ -55,9 +58,8 @@ review behind an hour-long build would wait an hour.
   two-authority split, recorded in docs/UNVERIFIED.md until a read-scoped clone token exists.
 - A supersede missed while the orchestrator was down leaves a run that finishes and is charged: a cost, never a
   wrong review.
-- `review_run_cancel` keeps one small row per superseded head and is never swept. A row matters only while a dispatch
-  for that head could still be in flight, which is seconds, so a sweep would be safe; it is not built because the rows
-  are tens of bytes and grow with pushes, not with time. Sweep them with the review archive if that ever matters.
+- `review_run_superseded` keeps one row per review, its newest ended round, raised and never lowered, so a late
+  listener cannot reopen a newer refusal. It grows with reviews and needs no sweep.
 
 **Rejected.**
 - **Running the harness in the review worker.** ADR-029: the review worker holds forge clients and no sandbox.

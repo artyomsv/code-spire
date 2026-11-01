@@ -204,6 +204,7 @@ The prompt and preamble, init cloning the pull request head, the workspace files
 12. **Smaller.** `ChargeCall.forReview` takes a `ReviewSpend(reviewId, callRef, kind, credentialRef)` record; `ReviewRunIds.of(RepoRef, ScmType, ReviewRunBinding)`. The Runs list shows `—` as the cost of a review run in this step (its charge is under the review; step 5 links them), and a label map renders the kinds (`Runs.tsx` :216). The Codex command is at `CodexAdapter.java:130-135`. Task order: all V107 columns and constraints in Task 2; `apply` and `RunTokenUsage` arms in Task 3; the artifact parts in Task 4.
 13. **Review of PR #367.** The review lane reads from `earliest` (above). A dispatch and a cancellation of the same
     review share `pg_advisory_xact_lock(hashtextextended('review-run:'||reviewId, 0))`: `ReviewRunAdmission` checks
-    `review_status.pr_state` and V108's `review_run_cancel` (one row per superseded head) and inserts the queued row in
-    one transaction, and the command is sent after the commit; a close or supersede during funding refuses the run as
-    `review_run_cancelled`.
+    `review_status.pr_state` and V108's `review_run_superseded` (one row per review: the newest ended round) and inserts
+    the queued row in one transaction, and the command is sent after the commit; a close or supersede during funding
+    refuses the run as `review_run_cancelled`. A supersede ends a round, not a commit: `ReviewRunBinding.round` names
+    each call's round, and the supersede listener reads the round it ended from the review's stream at its position.

@@ -12,8 +12,9 @@ import org.eclipse.microprofile.reactive.messaging.Incoming;
  * superseded head's review run. Not the timeline projector: that one is rebuildable and replays from the start, and a
  * replay must never send a cancel.
  *
- * <p>{@code ReviewSuperseded} names the OLD commit, the head now replaced, so that is the head whose run is cancelled;
- * the new head's run, dispatched after it, reads another commit and is left alone.
+ * <p>A supersede ends a review ROUND, not a commit: a forced re-run supersedes round N and requests round N+1 on the
+ * same head. So the round cancelled is the one the supersede ended, counted from the review's stream at the supersede's
+ * own position, and the next round's runs, on whatever head, are left alone (review of PR #367).
  */
 @ApplicationScoped
 public class ReviewRunSupersedeListener {
@@ -30,8 +31,15 @@ public class ReviewRunSupersedeListener {
         if (envelope == null) {
             return; // undeserializable envelope already logged by the deserializer
         }
-        if (envelope.payload() instanceof DomainEvent.ReviewSuperseded superseded) {
-            cancellation.supersede(envelope.streamId(), dev.codespire.orchestrator.llm.ReviewRuns.UNKNOWN_RUN);
+        if (!(envelope.payload() instanceof DomainEvent.ReviewSuperseded)) {
+            return;
         }
+        // The round this supersede ended, read at its own position in the stream: the request it was emitted with is
+        // after it, so a forced re-run on the same head is never the round cancelled.
+        int round = rounds.roundSupersededAt(envelope.streamId(), envelope.sequence());
+        if (round == dev.codespire.orchestrator.llm.ReviewRuns.UNKNOWN_RUN) {
+            return; // ReviewRuns logged why; a guessed round could stop the current one
+        }
+        cancellation.supersede(envelope.streamId(), round);
     }
 }

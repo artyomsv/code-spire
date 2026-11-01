@@ -17,8 +17,12 @@ import java.util.UUID;
  *
  * <p>Admission and cancellation take one advisory lock per review. A dispatch that holds it first commits its row before
  * a cancellation reads the live runs, so the cancellation sees it; one that takes it after a cancellation sees what the
- * cancellation left: a closed pull request ({@code review_status.pr_state}) or a superseded head ({@code
- * review_run_cancel}). The check and the row commit together, and the command is sent after the commit.
+ * cancellation left: a closed pull request ({@code review_status.pr_state}) or an ended round ({@code
+ * review_run_superseded}). The check and the row commit together, and the command is sent after the commit.
+ *
+ * <p>Rounds, not commits: a forced re-run and a return to an earlier head are later rounds on a head seen before, and
+ * are admitted; a call of the ended round, or an earlier one, is refused whenever it arrives. A reply carries the round
+ * it was decided in, the current one, so an older supersede never refuses it.
  */
 @ApplicationScoped
 public class ReviewRunAdmission {
@@ -28,7 +32,7 @@ public class ReviewRunAdmission {
 
     private static final String CANCELLED = """
             SELECT EXISTS (SELECT 1 FROM review_status WHERE review_id = ? AND pr_state <> 'OPEN')
-                OR EXISTS (SELECT 1 FROM review_run_cancel WHERE review_id = ? AND commit_sha = ?)
+                OR EXISTS (SELECT 1 FROM review_run_superseded WHERE review_id = ? AND superseded_round >= ?)
             """;
 
     @Inject
@@ -48,7 +52,7 @@ public class ReviewRunAdmission {
                     c.rollback();
                     return Admission.CANCELLED;
                 }
-                admitted = runs.queued(c, row, null, repositoryId);
+                admitted = runs.queued(new FactoryRunProjection.QueuedIn(c, row, null, repositoryId));
                 c.commit();
             } catch (SQLException | RuntimeException e) {
                 c.rollback();
@@ -77,7 +81,7 @@ public class ReviewRunAdmission {
         try (PreparedStatement ps = c.prepareStatement(CANCELLED)) {
             ps.setString(1, binding.reviewId());
             ps.setString(2, binding.reviewId());
-            ps.setString(3, binding.commit());
+            ps.setInt(3, binding.round());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getBoolean(1);

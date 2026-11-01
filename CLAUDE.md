@@ -171,8 +171,8 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   pool, `SPIRE_RUN_REVIEW_CONCURRENCY` runs per run-worker instance), so it never waits behind a build. Its answer,
   `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts; one over the cap is still charged. It is charged once under the
   review's call slot, never as a run; its wall clock (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`) may not exceed a build's;
-  a superseded head or a closed pull request cancels it, a dispatch in flight included (V108, one advisory lock per
-  review). **Nothing dispatches a review run until step 5.** The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+  a supersede cancels its review round's runs (rounds, not commits, so a forced re-run on the same head is admitted)
+  and a closed pull request cancels all of them, a dispatch in flight included (V108, one advisory lock per review). **Nothing dispatches a review run until step 5.** The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

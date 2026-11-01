@@ -406,10 +406,11 @@ ordered parts on separate outcome lines, each small enough that its JSON-escaped
 cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
 answer with no text, which is charged, never a lost run.
 
-A superseded head or a closed pull request cancels the review's live review runs with `CancelRun`. A run still being
-funded has no row yet, so the orchestrator admits a review run's row under an advisory lock per review that the
-cancellation also takes: the admission refuses the run when the pull request is no longer `OPEN` or its head is
-recorded as superseded (V108, `review_run_cancel`), and sends only after its row commits.
+A supersede cancels the live review runs of the review round it ended (rounds, not commits: a forced re-run keeps the
+head), and a closed pull request cancels every live review run, with `CancelRun`. A run still being funded has no row
+yet, so the orchestrator admits a review run's row under an advisory lock per review that the cancellation also takes:
+the admission refuses the run when the pull request is no longer `OPEN` or its round has ended (V108,
+`review_run_superseded`), and sends only after its row commits.
 
 ## 7. What leaves the pod, and how
 

@@ -79,8 +79,8 @@ whose egress proxy log shows the upstream used.
 
 **The claim.** A review may run on a harness: `ReviewRunDispatch` funds it and sends `ExecuteReviewRun` on
 `cs.review-runs`, the run-worker runs it on its own bounded lane, its `RunReviewArtifact` comes back (in parts,
-up to 256 KiB, over-cap as a degraded answer), it is charged once under the review's call slot, and a superseded
-head or a closed pull request cancels it.
+up to 256 KiB, over-cap as a degraded answer), it is charged once under the review's call slot, and a supersede of
+its review round or a closed pull request cancels it, a dispatch in flight included.
 
 **Why nothing catches it today.**
 - **Nothing dispatches a review run.** `ReviewRunDispatch` has no caller until step 5, so the whole path is proven

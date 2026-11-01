@@ -22,19 +22,22 @@ import java.util.List;
  * that arrives while it runs stops the unit. A finished run is not live and is sent nothing.
  *
  * <p>A run still being dispatched has no row to cancel yet, so each cancellation takes the review's admission lock
- * ({@link ReviewRunAdmission}) before it reads the live runs, and a supersede records the replaced head first: a
- * dispatch admitted before the lock is visible here, and one admitted after it is refused (review of PR #367).
+ * ({@link ReviewRunAdmission}) before it reads the live runs, and a supersede records the round it ended first: a
+ * dispatch admitted before the lock is visible here, and one of that round or earlier admitted after it is refused
+ * (review of PR #367).
  */
 @ApplicationScoped
 public class ReviewRunCancellation {
 
     private static final Logger LOG = Logger.getLogger(ReviewRunCancellation.class);
 
-    /** Twelve characters of a head, as the run id spells it. */
-    private static final int COMMIT_CHARS = 12;
-
-    private static final String INTENT =
-            "INSERT INTO review_run_cancel (review_id, commit_sha) VALUES (?, ?) ON CONFLICT DO NOTHING";
+    /** Raised, never lowered: a late listener's older round must not reopen a newer one's refusal. */
+    private static final String SUPERSEDED = """
+            INSERT INTO review_run_superseded (review_id, superseded_round) VALUES (?, ?)
+            ON CONFLICT (review_id) DO UPDATE
+               SET superseded_round = GREATEST(review_run_superseded.superseded_round, EXCLUDED.superseded_round),
+                   superseded_at = now()
+            """;
 
     @Inject
     DataSource dataSource;
@@ -47,7 +50,7 @@ public class ReviewRunCancellation {
 
     /** Cancel every live review run of {@code reviewId} in {@code supersededRound} or earlier: that round has ended. */
     public void supersede(String reviewId, int supersededRound) {
-        throw new UnsupportedOperationException("a supersede is not keyed by round yet: " + reviewId);
+        cancel(underLock(reviewId, supersededRound), "superseded: review round " + supersededRound + " was replaced");
     }
 
     /**
@@ -58,16 +61,16 @@ public class ReviewRunCancellation {
         cancel(underLock(reviewId, null), "pull request closed");
     }
 
-    /** The live runs to cancel, read under the admission lock after recording a superseded head (when one is given). */
-    private List<String> underLock(String reviewId, String supersededCommit) {
+    /** The live runs to cancel, read under the admission lock after recording a superseded round (when one is given). */
+    private List<String> underLock(String reviewId, Integer supersededRound) {
         try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
             try {
                 ReviewRunAdmission.lock(c, reviewId);
-                if (supersededCommit != null) {
-                    record(c, reviewId, supersededCommit);
+                if (supersededRound != null) {
+                    record(c, reviewId, supersededRound);
                 }
-                List<String> live = runs.liveReviewRuns(reviewId, supersededCommit);
+                List<String> live = runs.liveReviewRuns(reviewId, supersededRound);
                 c.commit();
                 return live;
             } catch (SQLException | RuntimeException e) {
@@ -84,10 +87,10 @@ public class ReviewRunCancellation {
         }
     }
 
-    private static void record(Connection c, String reviewId, String supersededCommit) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(INTENT)) {
+    private static void record(Connection c, String reviewId, int supersededRound) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(SUPERSEDED)) {
             ps.setString(1, reviewId);
-            ps.setString(2, supersededCommit);
+            ps.setInt(2, supersededRound);
             ps.executeUpdate();
         }
     }

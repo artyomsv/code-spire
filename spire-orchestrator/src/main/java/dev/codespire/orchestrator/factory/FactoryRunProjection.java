@@ -191,14 +191,16 @@ public class FactoryRunProjection {
      * no binding, and a {@code RunReviewArtifact}'s must equal this one. Empty for a run that is not a review run.
      */
     public Optional<dev.codespire.contract.review.ReviewRunBinding> reviewBindingOf(String runId) {
-        String sql = "SELECT review_id, kind, review_pr_id, base_commit, review_call_slot FROM factory_run WHERE run_id = ?";
+        String sql = "SELECT review_id, kind, review_pr_id, base_commit, review_call_slot, review_round"
+                + " FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next() || !RunKind.valueOf(rs.getString("kind")).isReview()) return Optional.empty();
                 return Optional.of(new dev.codespire.contract.review.ReviewRunBinding(rs.getString("review_id"),
                         dev.codespire.contract.review.ReviewRunBinding.Kind.valueOf(rs.getString("kind")),
-                        rs.getLong("review_pr_id"), rs.getString("base_commit"), rs.getString("review_call_slot"), 1));
+                        rs.getLong("review_pr_id"), rs.getString("base_commit"), rs.getString("review_call_slot"),
+                        rs.getInt("review_round")));
             }
         } catch (SQLException e) {
             // A throw, as kindOf: an unreadable review row read as "not a review run" would charge it as a run.
@@ -207,17 +209,18 @@ public class FactoryRunProjection {
     }
 
     /**
-     * The live review runs of one review (harness reviews, step 4), for a cancel: every one, or only those reading
-     * {@code commit} when it is not null. Live by the same rule a result projects by, so a run whose dispatch is still
-     * unresolved is cancelled too and never starts. A factory run of the same review (a fix) is never returned.
+     * The live review runs of one review (harness reviews, step 4), for a cancel: every one, or only those of round
+     * {@code upToRound} or earlier when it is not null (a supersede ends a round, never a commit, which a forced re-run
+     * keeps). Live by the same rule a result projects by, so a run whose dispatch is still unresolved is cancelled too and
+     * never starts. A factory run of the same review (a fix) is never returned.
      */
-    public List<String> liveReviewRuns(String reviewId, String commit) {
+    public List<String> liveReviewRuns(String reviewId, Integer upToRound) {
         String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')"
-                + " AND (CAST(? AS TEXT) IS NULL OR base_commit = ?) AND " + LIVE;
+                + " AND (CAST(? AS INT) IS NULL OR review_round <= ?) AND " + LIVE;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
-            ps.setString(2, commit);
-            ps.setString(3, commit);
+            ps.setObject(2, upToRound, java.sql.Types.INTEGER);
+            ps.setObject(3, upToRound, java.sql.Types.INTEGER);
             try (ResultSet rs = ps.executeQuery()) {
                 List<String> runIds = new ArrayList<>();
                 while (rs.next()) {
@@ -656,7 +659,7 @@ public class FactoryRunProjection {
     public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
         boolean changed;
         try (Connection c = dataSource.getConnection()) {
-            changed = queued(c, row, taskSummary, repositoryId);
+            changed = queued(new QueuedIn(c, row, taskSummary, repositoryId));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to record run " + row.runId(), e);
         }
@@ -670,7 +673,8 @@ public class FactoryRunProjection {
      * the row with {@link #queuedCommitted} once its transaction has committed; a push before the commit would show a
      * row that may yet be rolled back.
      */
-    public boolean queued(Connection c, QueuedRun row, String taskSummary, UUID repositoryId) throws SQLException {
+    public boolean queued(QueuedIn write) throws SQLException {
+        QueuedRun row = write.row();
         String runId = row.runId();
         String harness = row.harness();
         String model = row.model();
@@ -684,8 +688,8 @@ public class FactoryRunProjection {
                                          harness, model, base_branch, base_commit, branch, pushed_as,
                                          harness_credential_id, kind, review_id, finding_ref,
                                          comment_id, task_summary, repository_id, paid_by, step_index,
-                                         review_call_slot, review_pr_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         review_call_slot, review_pr_id, review_round)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id) DO UPDATE
                    -- The credential is NULLED on a re-arm, not carried and not overwritten, and this
                    -- is a correctness rule rather than tidiness. The re-arm exists because the FIRST
@@ -739,8 +743,9 @@ public class FactoryRunProjection {
                    -- re-armed here would leave this call's answer charged under that one.
                    AND factory_run.review_call_slot IS NOT DISTINCT FROM EXCLUDED.review_call_slot
                    AND factory_run.review_pr_id IS NOT DISTINCT FROM EXCLUDED.review_pr_id
+                   AND factory_run.review_round IS NOT DISTINCT FROM EXCLUDED.review_round
                 """;
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
+        try (PreparedStatement ps = write.connection().prepareStatement(sql)) {
             ps.setString(1, runId);
             ps.setString(2, parsed.scmType().providerType());
             ps.setString(3, parsed.workspace());
@@ -763,23 +768,32 @@ public class FactoryRunProjection {
             ps.setString(18, row.commentId());
             // Kept from the dispatch because nothing later can reconstruct it: the prompt is not a
             // column, and a finished run knows only a branch name and a list of paths.
-            ps.setString(19, taskSummary);
-            ps.setObject(20, repositoryId);
+            ps.setString(19, write.taskSummary());
+            ps.setObject(20, write.repositoryId());
             ps.setString(21, row.paidBy());
             ps.setObject(22, row.stepIndex(), java.sql.Types.INTEGER);
             ps.setString(23, row.review() == null ? null : row.review().callSlot());
             ps.setObject(24, row.review() == null ? null : row.review().prId(), java.sql.Types.BIGINT);
-            ps.setString(25, FAILED);
-            ps.setString(26, DISPATCH_FAILED);
+            ps.setObject(25, row.review() == null ? null : row.review().round(), java.sql.Types.INTEGER);
+            ps.setString(26, FAILED);
+            ps.setString(27, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
             return ps.executeUpdate() == 1;
         }
     }
 
-    /** Announce a row written through {@link #queued(Connection, QueuedRun, String, UUID)} after its commit. */
+    /** Announce a row written through {@link #queued(QueuedIn)} after its commit. */
     public void queuedCommitted(String runId) {
         push(runId);
+    }
+
+    /**
+     * A queued row written on the caller's connection, inside its transaction (a review run's admission, ADR-050).
+     *
+     * @param taskSummary as {@link #queued(QueuedRun, String, UUID)} takes it, or null when there is none
+     */
+    public record QueuedIn(Connection connection, QueuedRun row, String taskSummary, UUID repositoryId) {
     }
 
     /**

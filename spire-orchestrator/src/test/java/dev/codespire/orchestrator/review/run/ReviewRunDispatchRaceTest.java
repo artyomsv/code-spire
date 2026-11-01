@@ -141,6 +141,36 @@ class ReviewRunDispatchRaceTest {
         assertEquals(1, reviewLane.size());
     }
 
+    /**
+     * A reply carries the round it was decided in, the current one, so a supersede of an earlier round never refuses it;
+     * a reply decided in the ended round is refused like that round's review.
+     */
+    @Test
+    void aReplyOfTheCurrentRoundIsAdmittedAfterAnOlderSupersede() {
+        cancellation.supersede(reviewId, 1);
+
+        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(reply(2)));
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(reply(1)));
+        assertEquals(1, reviewLane.size());
+    }
+
+    /** The ended round is raised, never lowered: a supersede read late for an older round reopens nothing. */
+    @Test
+    void aLateOlderSupersedeDoesNotReopenANewerOne() {
+        cancellation.supersede(reviewId, 2);
+        cancellation.supersede(reviewId, 1);
+
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(request(OTHER_HEAD, 2)));
+        assertTrue(reviewLane.isEmpty());
+    }
+
+    private ReviewRunRequest reply(int round) {
+        long prId = Long.parseLong(reviewId.substring(reviewId.indexOf('#') + 1));
+        return new ReviewRunRequest(null, new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.FOLLOWUP, prId, HEAD,
+                "TEST-thread|TEST-comment-" + round, round), new RunFunding.Choice("TEST-harness", "TEST-model", null, false),
+                "TEST-prompt");
+    }
+
     private ReviewRunRequest request() {
         return request(HEAD, 1);
     }

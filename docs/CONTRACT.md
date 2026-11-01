@@ -95,9 +95,11 @@ so no draft result reaches the work-run inbox or a pull request proposal. A plan
 way, from the approved specification as stored (never the ticket read again) and at the commit the specification read.
 
 `ExecuteReviewRun(runId, execution, review)` (harness reviews, step 4, ADR-050) is a harness review run, on its own
-topic `cs.review-runs`, keyed by run ID. `review` is a `ReviewRunBinding(reviewId, kind, prId, commit, callSlot)`:
+topic `cs.review-runs`, keyed by run ID. `review` is a `ReviewRunBinding(reviewId, kind, prId, commit, callSlot, round)`:
 `kind` is `REVIEW`, `RECONCILE` or `FOLLOWUP`, `commit` the head the run reads and `callSlot` the review's call slot
-its charge is recorded under; every component is required and `prId` is positive. The command refuses a checkpoint
+its charge is recorded under, and `round` the review round the call was decided in (`ReviewRuns.currentRun`, the count
+of `ReviewRequested` in the review's stream; a reply carries the current round); every component is required, and `prId`
+and `round` are positive. The command refuses a checkpoint
 start and an existing branch, and its credentials are the execution's, sealed with the run's AAD and redacted from
 `toString`. The run ID is deterministic: subject `review-<prId>-<commit12>-<slotDigest>` (8 hex of SHA-256 over
 `kind|callSlot`), attempt 1, so a redelivered dispatch is dropped by the worker's execute claim. The run-worker's
@@ -111,11 +113,13 @@ The orchestrator stores the binding on the run's row (V107: `review_id`, `kind`,
 `base_commit`), refuses an artifact whose binding is not the row's, projects it as `succeeded` with no pushed ref,
 and charges the run once, under `CallRefs.of(reviewId, callSlot, kind)` with the paying credential's
 `credential_ref` (unmetered on a seat); `RunCharges` skips the three review kinds. The result then goes to the
-review-run port and no further: no draft inbox, no work-run inbox, no pull request proposal. A superseded head
-(`ReviewSuperseded` names the old commit) or a closed pull request sends `CancelRun` on `cs.run-control` for the
-review's live review runs, never `CancelReview` (ADR-013). The row is admitted under an advisory lock per review that
-the cancellation shares, and refused as `review_run_cancelled` when `review_status.pr_state` is not `OPEN` or V108's
-`review_run_cancel` records its head as superseded, so a cancellation during funding is never lost.
+review-run port and no further: no draft inbox, no work-run inbox, no pull request proposal. A supersede ends a review
+round, not a commit (a forced re-run keeps the commit): `ReviewSuperseded` cancels the live review runs of the round it
+ended, counted from the review's stream at the supersede's position, and a closed pull request cancels every live review
+run, both with `CancelRun` on `cs.run-control`, never `CancelReview` (ADR-013). The row is admitted under an advisory
+lock per review that the cancellation shares, and refused as `review_run_cancelled` when `review_status.pr_state` is not
+`OPEN` or V108's `review_run_superseded` has ended the call's round or a later one, so a cancellation during funding is
+never lost and a later round on a head seen before is still admitted.
 
 `WorkItemEvent` gains the component `draft` (`WorkDraft`, M4 slice 3, A4), carried by every wither:
 `mode` (`generated`), the stored `specification` and `plan` references (`STORED` only), the revision counts (at most

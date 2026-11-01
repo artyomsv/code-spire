@@ -25,5 +25,6 @@ public record ReviewRunBinding(String reviewId, Kind kind, long prId, String com
         if (prId < 1) throw new IllegalArgumentException("A review run names its pull request, not " + prId);
         if (commit == null || commit.isBlank()) throw new IllegalArgumentException("A review run names the head it reads");
         if (callSlot == null || callSlot.isBlank()) throw new IllegalArgumentException("A review run names its call slot");
+        if (round < 1) throw new IllegalArgumentException("A review run names its round, counted from 1, not " + round);
     }
 }

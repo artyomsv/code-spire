@@ -103,7 +103,21 @@ public class ReviewRuns {
      * could not be read: a cancel keyed by round must skip rather than guess.
      */
     public int roundSupersededAt(String reviewId, long sequence) {
-        return UNKNOWN_RUN;
+        String sql = "SELECT count(*) FROM event_log WHERE stream_id = ? AND event_type = ? AND sequence < ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, REQUEST_EVENT);
+            ps.setLong(3, sequence);
+            try (ResultSet rs = ps.executeQuery()) {
+                int requests = rs.next() ? rs.getInt(1) : 0;
+                // A supersede follows the request of the round it ends; none before it is no round to end.
+                return requests >= FIRST_RUN ? requests : UNKNOWN_RUN;
+            }
+        } catch (SQLException e) {
+            LOG.errorf(e, "Could not read the round the supersede of %s ended -- cancelling no review run rather "
+                    + "than guessing one", reviewId);
+            return UNKNOWN_RUN;
+        }
     }
 
     public int currentRun(String reviewId) {
