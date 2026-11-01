@@ -6,8 +6,9 @@ Architecture decision records for Code Spire. Newest first.
 
 ## ADR-050 — Reviews may run on a harness, on the run-worker's own lane
 
-**Status:** step 4 of harness reviews, the plumbing, on `feat/harness-reviews-4-review-runs` (PR #367), 2026-11-01.
-Nothing dispatches a review run yet: step 5 sends the first reviews, so every claim below is proven by tests only
+**Status:** step 4 of harness reviews, the plumbing, merged to master with PR #367, 2026-11-01. Step 5, first
+reviews (the "Step 5" part below), is built on `feat/harness-reviews-5-first-reviews` (PR #368) and dispatches the
+first review runs; its live proof has not been made, so every claim below is proven by tests only
 (docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
@@ -65,6 +66,53 @@ review behind an hour-long build would wait an hour.
 - **Running the harness in the review worker.** ADR-029: the review worker holds forge clients and no sandbox.
 - **Review runs on the build lane.** One execute slot, ordered: a review would wait behind a build.
 - **Charging the run plane and the review both.** One call would count twice against the cap.
+
+**Step 5: first reviews on a harness** ([step 5 plan](superpowers/plans/2026-11-01-harness-reviews-5-first-reviews.md),
+"Changes after the plan check" included).
+- **One "Review with" choice per repository.** V109 adds `review_harness`, `review_harness_model`,
+  `review_harness_effort` and `review_harness_pay_with` (`API_KEY` or `SUBSCRIPTION`). The CHECK
+  `repository_review_harness_whole` keeps them whole or absent and refuses a harness beside
+  `review_llm_provider_id`. `RepositoryRegistry` refuses a harness with no agent image
+  (`spire.factory.agent-image.<harness>`) or no model before the write. Settings → Repositories → Settings →
+  Review with offers Harness, Pay with, model and thinking level.
+- **First reviews only.** On `ContextAssembled`, `ResultSaga` asks `HarnessReviewStart`. A repository with no
+  harness, or a re-review (a prior round was posted, `ReviewProjection.priorRunFor`), takes the API path as before:
+  re-reviews stay on the API until step 6, which brings the prior findings a harness re-review needs.
+- **Forks are refused.** A fork pull request, and one whose fork status is unknown (`PushTarget.fromFork()` not
+  `false`), is refused with `fork_pull_request_not_reviewed_on_harness` until step 8: the agent would run the fork's
+  code beside the model credential. A refused dispatch is refused with the dispatch's own reason
+  (`review_run_target_unavailable`, `subscription_unavailable`, `model_pricing_incomplete:…`, and the others
+  `ReviewRunDispatch` and `RunFunding` give). A refusal sets the review `refused`, records `RecordFailure` under phase
+  `harness-review`, writes `review_status.harness_refusal` (`<harness>: <reason>`) and raises a
+  `REVIEW_HARNESS_REFUSED` attention warning. Nothing falls back to the API or to another harness.
+- **The prompt.** The repository's REVIEW prompt's system text, then a preamble (the pull request, the checkout of
+  its head, the diff command against the target branch, five working rules, and the artifact as the answer), then
+  `PromptCatalog.lockedSystemSuffix(REVIEW)` (the security clause and the findings contract), a line that maps the
+  contract's "respond" and "diff hunks" onto the run, and a last line that asks for no verdict: the verdict is
+  decided from the findings, as for an API review. The template's body is not used, and the run command carries no
+  diff (ADR-011).
+- **Rules from the target branch.** The dispatch sets the execution's `protectedBranch` to the pull request's target
+  branch; the run worker's init receives it as `SPIRE_FETCH_BRANCH` and keeps it as `refs/spire-base/<target>`. The
+  agent diffs against `git merge-base refs/spire-base/<target> HEAD` and is told to read `.codespire`, `CLAUDE.md`,
+  `AGENTS.md` and the rule files they name with `git show refs/spire-base/<target>:…`, because the commit under
+  review must not rewrite the instructions reviewing it (docs/REPO-RULES.md). A review with no target branch is
+  refused before funding (`review_run_target_unavailable`).
+- **No assembled context yet.** The agent gets no linked issues, Confluence pages or code knowledge; it reads the
+  repository itself. The design puts context in a read-only volume written by init, and that volume does not exist;
+  the prompt travels to the agent by environment variable, where the design forbids context. Context moves to step 6
+  with the re-review's prior findings, which need the same volume.
+- **The answer takes the API review's outcome path.** `HarnessReviewResults` replaces `RecordingReviewRunResults`.
+  A `RunReviewArtifact` of the current round is parsed by `FindingsParser` into a `ReviewGenerated` (an over-cap
+  answer becomes a degraded review with a summary) and handed to `ResultSaga.acceptHarnessOutcome`, which runs the
+  existing `onReviewGenerated` (corpus, filter, verdict, `PostComments`) behind the stale-run guard. It is never
+  charged there: `ReviewRunCharges` already charged the run under the review's call slot. An answer or a failure of
+  an ended round is dropped. The agent image honours `SPIRE_ARTIFACT_MAX_BYTES`, so a 256 KiB answer is not cut at
+  32 KiB.
+- **A failed run is not retried.** `RunFailed` becomes `ReviewFailed` with retry budget 1 (a cancel of the current
+  round reads `Harness review run cancelled`); the operator re-runs the review. It is never `credentialRejected`:
+  that flag marks the reviewer's forge account, and a refused seat is marked by the run plane's credential feedback.
+- **The review page links its run.** A review run's row carries its `review_id`; the review page shows the harness
+  run with its status, and run detail names the review kinds in words.
 
 ---
 

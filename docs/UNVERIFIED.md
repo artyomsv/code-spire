@@ -80,9 +80,28 @@ whose egress proxy log shows the upstream used.
 
 **The claim.** A repository whose "Review with" names a harness has the first review of each same-repository pull
 request made by a read-only review run. The agent reads the repository's rules from the target branch, never from the
-change under review, and its findings are posted through the API review's own outcome path.
+change under review, and its findings are posted through the API review's own outcome path. A fork pull request, or
+one whose fork status is unknown, and a refused dispatch are refused with a `REVIEW_HARNESS_REFUSED` attention
+warning, never sent to the API.
 
 **Why nothing catches it today.**
+- **The whole live path is unproven until step 5's live proof.** No harness review has run on a live stack: the
+  "Review with: Harness" setting saved and read back, the dispatch from `ContextAssembled`, init keeping
+  `refs/spire-base/<target>`, the agent reading the rules from it and writing a JSON answer to `$SPIRE_ARTIFACT`,
+  the answer parsed into findings, the verdict and the GitHub review posted, the one charge under the review (key and
+  seat), a refusal and its attention row, the review page's run link, and the seat's hosts with `chatgpt.com` alone
+  (docs/factory/RUN-TOPOLOGY.md §7.1). Each is proven by unit and service tests only.
+- **Some paths no test or planned live run reaches.** These stay unproven after the live proof:
+  - **`Uncertain` launch recovery.** A launch whose send outcome is unknown counts as started; the queued row
+    exists, and a launch that never arrived is expected to surface as `REVIEW_STUCK`. No test drives that path end to
+    end.
+  - **An over-cap answer live.** The degraded review for an answer over 256 KiB is proven against fakes; no real
+    agent has written one.
+  - **A rejected seat live.** A seat refused by the vendor fails the run and the review (never marking the reviewer's
+    forge account); proven against fakes only.
+  - **The entrypoint's fallback for a bad `SPIRE_ARTIFACT_MAX_BYTES`.** The reference entrypoint keeps 32768 for a
+    value that is not a positive integer without a leading zero; the run worker always sets 262144, so no run
+    reaches the fallback. `AgentArtifactCapIsConfigurableTest` reads the script; it does not run it.
 - **Codex reads `AGENTS.md` from the head, by itself.** The prompt tells the agent to read the rules from
   `refs/spire-base/<target>`, but Codex loads `AGENTS.md` from its working directory before it reads the prompt, and
   the working directory is the head commit. So a change that edits `AGENTS.md` may steer its own review. This is
@@ -101,7 +120,8 @@ change under review, and its findings are posted through the API review's own ou
   be handed over for nothing. Neither is driven by a test.
 
 **What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
-harness, its findings posted with a verdict; and one pull request whose change edits `AGENTS.md` with an instruction
+harness on an API key and another on a seat, findings posted with a verdict as a GitHub review, one charge under the
+review, egress hosts recorded in report mode; a third refused with no seat signed in, with its attention row; and one pull request whose change edits `AGENTS.md` with an instruction
 the review visibly follows or ignores.
 
 ---
@@ -114,8 +134,9 @@ up to 256 KiB, over-cap as a degraded answer), it is charged once under the revi
 its review round or a closed pull request cancels it, a dispatch in flight included.
 
 **Why nothing catches it today.**
-- **Nothing dispatches a review run.** `ReviewRunDispatch` has no caller until step 5, so the whole path is proven
-  by unit and service tests only. No review run has executed on a live stack.
+- **No review run has executed on a live stack.** Step 5 wires the dispatch: `HarnessReviewStart` calls
+  `ReviewRunDispatch` for the first review of a same-repository pull request on a harness repository (the entry
+  above). Until step 5's live proof the whole path is proven by unit and service tests only.
 - **The lane's isolation is proven by configuration, not load.** Tests assert the review lane's topic, group and
   pool differ from the build lane's; no test runs a build and a review at once and measures the review's wait.
 - **The concurrency cap is per run-worker instance.** Across replicas it multiplies, and it needs
@@ -125,7 +146,8 @@ its review round or a closed pull request cancels it, a dispatch in flight inclu
   enters the unit's init container (never the agent's), crossing ADR-038's two-authority split. A read-scoped
   clone token is the fix and is not built.
 - **The agent holds the model credential.** The credential-injecting proxy is deferred (design "After step 2"), so
-  fork pull requests must not be reviewed on a harness; the refusal and its attention warning are step 5's.
+  fork pull requests must not be reviewed on a harness. Step 5 refuses them, and a pull request whose fork status
+  is unknown, with a `REVIEW_HARNESS_REFUSED` attention warning; the refusal is proven by tests only.
 - **A missed supersede is not replayed.** The supersede listener reads `cs.events` from `latest` on its own group;
   an event published while the orchestrator was down is never read, so that run finishes and is charged.
 - **The over-cap path and the parts are proven against fakes.** No real agent has produced an answer over 32 KiB.
