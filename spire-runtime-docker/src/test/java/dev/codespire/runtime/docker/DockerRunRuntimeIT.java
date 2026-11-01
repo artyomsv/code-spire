@@ -838,11 +838,49 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 .findFirst()
                 .orElse(null);
         assertTrue(found != null, "a network-only remnant must be discoverable by its label");
-        assertTrue(afterRestart.salvage(found).salvaged(),
-                "nothing is left to salvage, and saying otherwise keeps the watchdog from ever destroying it");
+        Finalization finalization = afterRestart.salvage(found);
+        assertTrue(finalization.vanished(),
+                "nothing is left to observe or keep, and saying so is what lets the watchdog remove it: " + finalization);
+        assertFalse(finalization.salvaged(), "no agent exit was observed, so none may be claimed: " + finalization);
         afterRestart.destroy(found);
 
         assertTrue(labelledNetworks(runId).isEmpty(), "the remnant network must be removed");
+    }
+
+    /**
+     * Containers gone, the workspace still there: a prune after a worker crash leaves exactly this. No exit was
+     * observed and the work may be in the volume, so the unit is neither salvaged nor vanished. It is preserved, and
+     * the watchdog keeps it. Only a unit with nothing left to keep may be cleaned up unobserved.
+     */
+    @Test
+    void aRunWhoseContainersWentButWhoseVolumesRemainIsPreserved() {
+        String runId = "run_egress_pruned";
+        RunHandle handle = start(egressUnit(runId, "echo work > /workspace/TEST-work.txt", REPORT));
+        runtime.salvage(handle);
+        for (Container container : runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId)).exec()) {
+            runtime.client().removeContainerCmd(container.getId()).withForce(true).exec();
+        }
+        List<String> volumesBefore = volumeNames(runId);
+        assertFalse(volumesBefore.isEmpty(), "the workspace this test is about must exist");
+
+        DockerRunRuntime afterRestart = new DockerRunRuntime();
+        RunHandle found = afterRestart.discoverUnits().stream()
+                .filter(unit -> unit.runId().equals(runId))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the unit must still be discoverable by its network"));
+        Finalization finalization = afterRestart.salvage(found);
+
+        assertFalse(finalization.salvaged(), "no agent exit was observed: " + finalization);
+        assertFalse(finalization.vanished(), "the workspace is still there, so something is left to keep: "
+                + finalization);
+        assertEquals(volumesBefore, volumeNames(runId), "salvage must not touch the volumes");
+    }
+
+    private List<String> volumeNames(String runId) {
+        return runtime.client().listVolumesCmd()
+                .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=" + runId)).exec().getVolumes()
+                .stream().map(volume -> volume.getName()).sorted().toList();
     }
 
     /** A held unit's networks and proxy go with destroyHeld, which is a teardown of its own. */

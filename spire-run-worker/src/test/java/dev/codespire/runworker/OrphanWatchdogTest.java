@@ -538,6 +538,26 @@ class OrphanWatchdogTest {
                 "destroying here removes the only remaining evidence of what the agent was doing");
     }
 
+    /**
+     * A unit with nothing left but a remnant (its network, after a teardown interrupted once its containers and
+     * volumes had gone) has nothing to preserve, so it is removed and its lease released. No exit was observed, so the
+     * report claims none.
+     */
+    @Test
+    void aUnitWithNothingLeftIsRemovedWithoutClaimingAnExit() {
+        runtime.finalization = Finalization.vanished("no container or volume of the unit remains");
+        runtime.units.add(new RunHandle("run::github:TEST-acme/app:remnant:1", "network-remnant"));
+
+        watchdog().sweep();
+
+        assertEquals(List.of(new RunHandle("run::github:TEST-acme/app:remnant:1", "network-remnant")), runtime.destroyed);
+        assertEquals(List.of("run::github:TEST-acme/app:remnant:1"), leases.released);
+        assertTrue(reported.stream()
+                        .map(result -> result instanceof RunResult.RunFailed failed ? failed.detail() : "")
+                        .noneMatch(detail -> detail.contains("exit")),
+                "nothing exited where anybody saw it: " + reported);
+    }
+
     @Test
     void anOverrunReportedAsDataAlsoKeepsTheUnit() {
         // The third Finalization outcome, collapsed to two by the version this replaces.

@@ -5,7 +5,8 @@ import java.util.Objects;
 /**
  * How a run's sandbox ended, as far as the runtime could observe it.
  *
- * <p>Three outcomes, not two. An earlier version had only "salvaged or not", which collapsed an
+ * <p>Three outcomes of a run, not two (a fourth, {@link Outcome#VANISHED}, says no run is left to have
+ * one). An earlier version had only "salvaged or not", which collapsed an
  * agent that outlived its wall clock with a daemon that hung up mid-wait. They send different people
  * to different places: an operator told "salvage failed" for a timeout goes looking for broken
  * infrastructure, and one told "the agent timed out" for a broken daemon goes looking for a slow
@@ -28,7 +29,13 @@ public record Finalization(int exitCode, Outcome outcome, String detail) {
         /** The agent outlived the run's wall clock and was stopped. Its doing, not the runtime's. */
         OVERRAN,
         /** The runtime could not observe the agent at all. */
-        FAULTED
+        FAULTED,
+        /**
+         * Nothing of the unit is left to observe or keep: no container and no volume, only a remnant such as its
+         * network, from a teardown interrupted after the rest went. Not an observed exit, so not {@link #SALVAGED};
+         * but nothing to preserve either, so the remnant may be removed.
+         */
+        VANISHED
     }
 
     public Finalization {
@@ -78,5 +85,15 @@ public record Finalization(int exitCode, Outcome outcome, String detail) {
      */
     public static Finalization faulted(String detail) {
         return new Finalization(NOT_OBSERVED, Outcome.FAULTED, detail);
+    }
+
+    /** No container and no volume of the unit remains, so there is nothing to observe and nothing to keep. */
+    public static Finalization vanished(String detail) {
+        return new Finalization(NOT_OBSERVED, Outcome.VANISHED, detail);
+    }
+
+    /** Whether nothing of the unit was left but a remnant: teardown may finish, and no exit was observed. */
+    public boolean vanished() {
+        return outcome == Outcome.VANISHED;
     }
 }
