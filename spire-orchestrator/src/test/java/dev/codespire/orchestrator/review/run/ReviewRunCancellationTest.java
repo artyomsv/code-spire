@@ -106,14 +106,20 @@ class ReviewRunCancellationTest {
         return cancelled.stream().map(RunCommand.CancelRun::runId).collect(Collectors.toSet());
     }
 
+    /**
+     * A review run's row. A finished one carries its end: V70's CHECK ties a null {@code ended_at} to exactly the
+     * statuses still going, so a terminal row without one is refused.
+     */
     private String reviewRun(String kind, String status, String commit) {
         String runId = runId(kind);
         exec("""
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status, harness, model,
-                                         base_branch, base_commit, branch, kind, review_id, review_call_slot, review_pr_id)
+                                         base_branch, base_commit, branch, kind, review_id, review_call_slot, review_pr_id,
+                                         ended_at)
                 VALUES (?, 'github', 'TEST-V107C', 'TEST-REPO', 'TEST-SUBJECT', 1, ?, 'TEST-harness', 'TEST-MODEL',
-                        'TEST-source', ?, 'TEST-source', ?, ?, 'TEST-slot', 7)
-                """, runId, status, commit, kind, reviewId);
+                        'TEST-source', ?, 'TEST-source', ?, ?, 'TEST-slot', 7,
+                        CASE WHEN CAST(? AS TEXT) IN ('queued', 'running') THEN NULL ELSE now() END)
+                """, runId, status, commit, kind, reviewId, status);
         return runId;
     }
 
