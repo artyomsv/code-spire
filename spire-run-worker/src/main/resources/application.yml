@@ -246,9 +246,13 @@ mp:
           id: spire-run-worker-reviews
         value:
           deserializer: dev.codespire.runworker.RunCommandDeserializer
+        # Earliest (review of PR #367). Under latest a review command sent before this group's first assignment, or
+        # onto a partition added to scale, was skipped for ever while its row stayed queued and a retry answered
+        # AlreadyQueued. Replaying from the start is safe: the execute claim drops a command already run, and a cancel
+        # claim refuses one that was cancelled, so only a command never run and never cancelled runs now.
         auto:
           offset:
-            reset: latest
+            reset: earliest
         failure-strategy: dead-letter-queue
         dead-letter-queue:
           topic: cs.dlq
