@@ -53,7 +53,7 @@ class ReviewRunCancellationTest {
 
     @Test
     void aSupersededRoundCancelsItsLiveRun() {
-        String older = reviewRun("REVIEW", "running", OLD, 1);
+        String older = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));
 
         cancellation.supersede(reviewId, 1);
 
@@ -63,7 +63,7 @@ class ReviewRunCancellationTest {
 
     @Test
     void aSupersedeAfterTheRunFinishedSendsNothing() {
-        reviewRun("REVIEW", "succeeded", OLD, 1);
+        reviewRun(new ReviewRunRow("REVIEW", "succeeded", OLD, 1));
 
         cancellation.supersede(reviewId, 1);
 
@@ -72,8 +72,8 @@ class ReviewRunCancellationTest {
 
     @Test
     void theNewHeadsOwnRunIsNotCancelled() {
-        String older = reviewRun("REVIEW", "running", OLD, 1);
-        reviewRun("RECONCILE", "queued", NEW, 2);
+        String older = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));
+        reviewRun(new ReviewRunRow("RECONCILE", "queued", NEW, 2));
 
         cancellation.supersede(reviewId, 1);
 
@@ -86,8 +86,8 @@ class ReviewRunCancellationTest {
      */
     @Test
     void aForcedRerunsRunOnTheSameHeadIsNotCancelled() {
-        String older = reviewRun("REVIEW", "running", OLD, 1);
-        reviewRun("REVIEW", "queued", OLD, 2);
+        String older = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));
+        reviewRun(new ReviewRunRow("REVIEW", "queued", OLD, 2));
 
         cancellation.supersede(reviewId, 1);
 
@@ -96,9 +96,9 @@ class ReviewRunCancellationTest {
 
     @Test
     void aClosedPullRequestCancelsEveryLiveReviewRun() {
-        String review = reviewRun("REVIEW", "running", OLD, 1);
-        String reply = reviewRun("FOLLOWUP", "queued", NEW, 2);
-        reviewRun("RECONCILE", "succeeded", NEW, 2);
+        String review = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));
+        String reply = reviewRun(new ReviewRunRow("FOLLOWUP", "queued", NEW, 2));
+        reviewRun(new ReviewRunRow("RECONCILE", "succeeded", NEW, 2));
 
         cancellation.close(reviewId);
 
@@ -120,12 +120,16 @@ class ReviewRunCancellationTest {
         return cancelled.stream().map(RunCommand.CancelRun::runId).collect(Collectors.toSet());
     }
 
+    /** One review run's row: what it is, where it stands, the head it reads and the review round it belongs to. */
+    private record ReviewRunRow(String kind, String status, String commit, int round) {
+    }
+
     /**
-     * A review run's row. A finished one carries its end: V70's CHECK ties a null {@code ended_at} to exactly the
-     * statuses still going, so a terminal row without one is refused.
+     * A review run's row, written as raw SQL. A finished one carries its end: V70's CHECK ties a null {@code ended_at}
+     * to exactly the statuses still going, so a terminal row without one is refused.
      */
-    private String reviewRun(String kind, String status, String commit, int round) {
-        String runId = runId(kind);
+    private String reviewRun(ReviewRunRow row) {
+        String runId = runId(row.kind());
         exec("""
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status, harness, model,
                                          base_branch, base_commit, branch, kind, review_id, review_call_slot, review_pr_id,
@@ -133,7 +137,7 @@ class ReviewRunCancellationTest {
                 VALUES (?, 'github', 'TEST-V107C', 'TEST-REPO', 'TEST-SUBJECT', 1, ?, 'TEST-harness', 'TEST-MODEL',
                         'TEST-source', ?, 'TEST-source', ?, ?, 'TEST-slot', 7, CAST(? AS INT),
                         CASE WHEN CAST(? AS TEXT) IN ('queued', 'running') THEN NULL ELSE now() END)
-                """, runId, status, commit, kind, reviewId, Integer.toString(round), status);
+                """, runId, row.status(), row.commit(), row.kind(), reviewId, Integer.toString(row.round()), row.status());
         return runId;
     }
 
