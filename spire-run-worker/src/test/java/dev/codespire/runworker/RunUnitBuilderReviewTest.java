@@ -56,9 +56,47 @@ class RunUnitBuilderReviewTest {
     }
 
     private RunUnitSpec reviewUnit() throws Exception {
-        RunCommand.ExecuteReviewRun review = new RunCommand.ExecuteReviewRun(RUN_ID, execution(RUN_ID, "TEST-source"),
+        return reviewUnit(execution(RUN_ID, "TEST-source"));
+    }
+
+    private RunUnitSpec reviewUnit(RunCommand.ExecuteRun execution) {
+        RunCommand.ExecuteReviewRun review = new RunCommand.ExecuteReviewRun(RUN_ID, execution,
                 new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1));
         return builder.buildReview(review, new CodexAdapter());
+    }
+
+    /** A review's execution as the dispatch sends it: the pull request's target branch as its protected branch. */
+    private RunCommand.ExecuteRun targeting(String targetBranch) throws Exception {
+        RunCommand.ExecuteRun plain = execution(RUN_ID, "TEST-source");
+        return new RunCommand.ExecuteRun(plain.runId(), plain.repo(), plain.remoteUri(), plain.baseBranch(),
+                plain.baseCommit(), plain.branch(), plain.prompt(), plain.harness(), plain.model(), plain.agentImage(),
+                plain.protectedPaths(), plain.maxWallClockSeconds(), plain.scmCredential(), plain.harnessCredential(),
+                false, targetBranch);
+    }
+
+    /** Step 5: the agent's own entrypoint is told the review cap, or it cuts a 200 KiB answer at 32 KiB. */
+    @Test
+    void aReviewRunsAgentIsToldTheReviewCap() throws Exception {
+        assertEquals("262144", reviewUnit().agent().environment().get("SPIRE_ARTIFACT_MAX_BYTES"));
+    }
+
+    /** A draft's agent keeps the image's own default: the larger cap is the review's alone. */
+    @Test
+    void aDraftRunsAgentKeepsTheImageDefault() throws Exception {
+        assertFalse(draftUnit().agent().environment().containsKey("SPIRE_ARTIFACT_MAX_BYTES"),
+                draftUnit().agent().environment().keySet().toString());
+    }
+
+    /**
+     * Step 5: init keeps the pull request's target branch under refs/spire-base, as a held land fix's init does, so
+     * the agent can diff the change against it. The agent itself is never given the variable.
+     */
+    @Test
+    void aReviewRunsInitFetchesTheTargetBranch() throws Exception {
+        RunUnitSpec unit = reviewUnit(targeting("TEST-main"));
+
+        assertEquals("TEST-main", unit.init().environment().get("SPIRE_FETCH_BRANCH"));
+        assertFalse(unit.agent().environment().containsKey("SPIRE_FETCH_BRANCH"));
     }
 
     private RunUnitSpec draftUnit() throws Exception {

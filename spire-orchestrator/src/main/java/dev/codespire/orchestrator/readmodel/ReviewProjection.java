@@ -304,6 +304,16 @@ public class ReviewProjection {
     }
 
     /**
+     * Why this review's harness run was refused (harness reviews, step 5), or null for none: the attention feed raises
+     * a row for a refused review that carries one.
+     *
+     * <p>Not built yet: the red phase of step 5 declares the write so the saga's fakes compile.
+     */
+    public void setHarnessRefusal(String reviewId, String reason) {
+        throw new UnsupportedOperationException("not built yet");
+    }
+
+    /**
      * The operator acknowledged this review's current stuck/failed state, so the attention panel
      * stops raising a row for it. A later failure raises it again, because the panel compares this
      * against {@code updated_at}.

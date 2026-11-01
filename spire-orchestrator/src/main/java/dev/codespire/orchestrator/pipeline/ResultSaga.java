@@ -126,8 +126,22 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
 
+    /** Whether a first review runs on the repository's harness (harness reviews, step 5). Not consulted yet. */
+    @Inject
+    dev.codespire.orchestrator.review.run.HarnessReviewStart harnessStart;
+
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
+    }
+
+    /**
+     * A harness review run's outcome (harness reviews, step 5): a {@code ReviewGenerated} or a {@code ReviewFailed}
+     * built from the run's result, taken through the same outcome path as a worker's, never charged again.
+     *
+     * <p>Not built yet: the red phase of step 5 declares the entry point so the tests compile.
+     */
+    public void acceptHarnessOutcome(IntegrationEvent outcome) {
+        throw new UnsupportedOperationException("not built yet");
     }
 
     @Incoming("results-in")

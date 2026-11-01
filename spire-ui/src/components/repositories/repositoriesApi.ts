@@ -1,4 +1,5 @@
 import { apiFetch } from '../../auth';
+import type { PayWith } from './factory/buildDefaultsApi';
 
 /** Every registered repository. Other keys start with `build-defaults`, so invalidate this one `exact`. */
 export const repositoriesKey = ['repositories'] as const;
@@ -24,6 +25,16 @@ export interface Repository {
   reviewerMayApprove: boolean;
   // The LLM provider this repository's reviews and replies use; null means the global default.
   reviewLlmProviderId: string | null;
+  // The harness this repository's reviews run on (harness reviews, step 5); null means the API.
+  reviewHarness: ReviewHarness | null;
+}
+/** The harness half of "Review with": never set beside an API provider. */
+export interface ReviewHarness {
+  harness: string;
+  model: string;
+  /** The thinking level, or null for the model's own default. */
+  effort: string | null;
+  payWith: PayWith;
 }
 export interface RepositoryInput {
   scmType: string;
@@ -35,6 +46,7 @@ export interface RepositoryInput {
   factoryAccountId: string | null;
   reviewerMayApprove: boolean;
   reviewLlmProviderId: string | null;
+  reviewHarness: ReviewHarness | null;
 }
 export interface PendingMapping {
   registrationId: string; revision: number; scmType: string;

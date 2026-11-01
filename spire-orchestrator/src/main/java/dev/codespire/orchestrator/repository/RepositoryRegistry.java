@@ -152,6 +152,15 @@ public class RepositoryRegistry {
         } catch (SQLException failure) { throw database(failure); }
     }
 
+    /**
+     * The harness a repository's reviews run on (harness reviews, step 5); empty means the API.
+     *
+     * <p>Not built yet: the red phase of step 5 declares the read so its callers and tests compile.
+     */
+    public Optional<ReviewHarness> reviewHarness(UUID repositoryId) {
+        return Optional.empty();
+    }
+
     /** The setting for the saga (ADR-047 §4.1); empty when the row is missing, never a default. */
     public Optional<Boolean> reviewerMayApprove(UUID id) {
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
