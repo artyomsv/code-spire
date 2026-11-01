@@ -20,7 +20,8 @@ import org.jboss.logging.Logger;
 /**
  * A harness review run's answer becomes the review's outcome (harness reviews, step 5): the artifact is parsed into
  * findings with the API review's own parser and handed to {@link ResultSaga#acceptHarnessOutcome}, a failed run fails
- * the review once, and a result of an ended round is dropped.
+ * the review once, and a result of an ended round is dropped. The round is read and the outcome applied under the
+ * review's {@link ReviewRoundLock}; a round that cannot be read is thrown, never guessed (review of PR #368).
  *
  * <p>Never charged here: {@code ReviewRunCharges} already charged the run under the review's call slot. Reconcile and
  * follow-up answers are only logged until steps 6 and 7. The artifact's text is never logged: it is model output about
@@ -44,8 +45,12 @@ public class HarnessReviewResults implements ReviewRunResults {
     @Inject
     ResultSaga saga;
 
+    /** The fail-closed round read: a failed read is {@code UNKNOWN_RUN}, never the ledger's run 1. */
     @Inject
     ReviewRuns runs;
+
+    @Inject
+    ReviewRoundLock rounds;
 
     @Inject
     FactoryRunProjection runRows;
@@ -63,14 +68,29 @@ public class HarnessReviewResults implements ReviewRunResults {
         if (!(result instanceof RunReviewArtifact) && !(result instanceof RunResult.RunFailed)) {
             return;
         }
-        int current = runs.currentRun(binding.reviewId());
+        // Read and acted on under the lock a forced re-run holds while it appends its round and replaces the run token:
+        // a re-run keeps the commit, so the outcome path's commit checks cannot tell round 1's answer from round 2's.
+        rounds.holding(binding.reviewId(), () -> applyIfCurrent(result, binding));
+    }
+
+    /** True when the answer was handed to the review; false when its round has ended. */
+    private boolean applyIfCurrent(RunResult result, ReviewRunBinding binding) {
+        int current = runs.roundOrUnknown(binding.reviewId());
+        if (current == ReviewRuns.UNKNOWN_RUN) {
+            // Neither applied nor dropped: thrown, so the run-results consumer dead-letters the result for a replay. The
+            // steps before this one are idempotent on a replay (status-guarded projection, deduplicated charge).
+            throw new IllegalStateException("The current round of " + binding.reviewId() + " could not be read, so"
+                    + " review run " + result.runId() + "'s outcome was neither applied nor dropped; replay it from the"
+                    + " dead-letter queue once the database answers");
+        }
         if (binding.round() != current) {
             // A supersede, a close or a re-run ended this round: its answer or its cancel is never said to the review.
             LOG.infof("review run %s answered round %d of %s, whose current round is %d: dropped", result.runId(),
                     binding.round(), binding.reviewId(), current);
-            return;
+            return false;
         }
         saga.acceptHarnessOutcome(outcome(result, binding));
+        return true;
     }
 
     private IntegrationEvent outcome(RunResult result, ReviewRunBinding binding) {

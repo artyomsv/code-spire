@@ -24,7 +24,7 @@ import java.util.UUID;
  *
  * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; a re-review (a prior round was
  * posted) is {@link NotHarness}, because re-reviews stay on the API until step 6; a fork pull request, or one whose
- * fork status is unknown, is {@link Refused}; otherwise the run is dispatched, and a refused dispatch is
+ * fork status is unknown, is {@link Refused}; a review whose round cannot be read is {@link Refused}; otherwise the run is dispatched, and a refused dispatch is
  * {@link Refused} with its reason. A refusal never falls back to the API (operator decision 6).
  *
  * <p>The texts the saga writes for each decision are built here, so {@code ResultSaga} only routes them.
@@ -34,6 +34,9 @@ public class HarnessReviewStart {
 
     /** Forks wait for step 8: the agent would run the fork's code with the reviewer's clone credential. */
     static final String FORK_REFUSED = "fork_pull_request_not_reviewed_on_harness";
+
+    /** The review's round could not be read, so no run is bound to one; a re-run asks again. */
+    static final String ROUND_UNKNOWN = "review_round_unknown";
 
     @Inject
     RepositoryRegistry repositories;
@@ -88,6 +91,10 @@ public class HarnessReviewStart {
     private record OnHarness(UUID repositoryId, ReviewHarness harness) {
     }
 
+    /** A same-repository first review ready to dispatch: where it runs, what it reads, and the round it answers. */
+    private record Prepared(OnHarness onHarness, FixTargets.PushTarget target, int round) {
+    }
+
     public Decision start(IntegrationEvent.ContextAssembled event) {
         Optional<OnHarness> onHarness = onHarness(event.reviewId());
         if (onHarness.isEmpty()) {
@@ -103,7 +110,13 @@ public class HarnessReviewStart {
         if (!Boolean.FALSE.equals(target.map(FixTargets.PushTarget::fromFork).orElse(null))) {
             return new Refused(harness, FORK_REFUSED);
         }
-        return dispatched(onHarness.orElseThrow(), event, target.orElseThrow());
+        // Fail-closed: the ledger's read answers run 1 on a failed read, and a run bound to a guessed round is either
+        // refused at admission or dropped as stale after it was paid for (review of PR #368, code-quality/M-1).
+        int round = runs.roundOrUnknown(event.reviewId());
+        if (round == ReviewRuns.UNKNOWN_RUN) {
+            return new Refused(harness, ROUND_UNKNOWN);
+        }
+        return dispatched(new Prepared(onHarness.orElseThrow(), target.orElseThrow(), round), event);
     }
 
     private Optional<OnHarness> onHarness(String reviewId) {
@@ -111,12 +124,12 @@ public class HarnessReviewStart {
                 .map(harness -> new OnHarness(id, harness)));
     }
 
-    private Decision dispatched(OnHarness onHarness, IntegrationEvent.ContextAssembled event,
-                                FixTargets.PushTarget target) {
-        ReviewHarness harness = onHarness.harness();
-        ReviewRunRequest request = new ReviewRunRequest(onHarness.repositoryId(), binding(event),
+    private Decision dispatched(Prepared prepared, IntegrationEvent.ContextAssembled event) {
+        ReviewHarness harness = prepared.onHarness().harness();
+        ReviewRunRequest request = new ReviewRunRequest(prepared.onHarness().repositoryId(),
+                binding(event, prepared.round()),
                 new RunFunding.Choice(harness.harness(), harness.model(), harness.effort(), harness.subscription()),
-                prompt(event, target));
+                prompt(event, prepared.target()));
         return switch (dispatch.dispatch(request)) {
             case ReviewRunDispatch.Dispatched sent -> new Started(sent.runId(), harness.harness());
             case ReviewRunDispatch.AlreadyQueued queued -> new Started(queued.runId(), harness.harness());
@@ -127,8 +140,7 @@ public class HarnessReviewStart {
     }
 
     /** The review call this run answers: the current round's slot, so its one charge lands where an API call's would. */
-    private ReviewRunBinding binding(IntegrationEvent.ContextAssembled event) {
-        int round = runs.currentRun(event.reviewId());
+    private static ReviewRunBinding binding(IntegrationEvent.ContextAssembled event, int round) {
         return new ReviewRunBinding(event.reviewId(), ReviewRunBinding.Kind.REVIEW, event.prId(), event.commit(),
                 CallRefs.reviewSlot(event.commit(), round), round);
     }

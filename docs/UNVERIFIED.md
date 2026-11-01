@@ -114,11 +114,24 @@ warning, never sent to the API.
 - **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
   and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
   hands it to `ResultSaga.acceptHarnessOutcome` from there. So a push, a re-run or a close for the same review may be
-  processed at the same moment as the answer. The mitigations: the round check drops an ended round's answer,
-  `ifCurrentRun` drops one for a commit that is no longer current, `RecordReviewOutcome` is commit-guarded in the
-  aggregate, and the worker re-checks the pull request's head before it posts. No test races the two consumers, so a
-  window between the round read and the post is argued, not measured. Routing the answer through `cs.results` would
-  close it and needs an orchestrator producer for that topic.
+  processed at the same moment as the answer.
+  - **A forced re-run on the same head is fenced** (review of PR #368, code-quality/H-1). `ReviewRerunService` appends
+    the next round and replaces the run token under the review's `ReviewRoundLock`, and `HarnessReviewResults` reads
+    the round and takes every effect of the answer under the same lock, so round 1's answer is never applied as round
+    2. `ReviewRoundLockTest` shows the advisory lock blocks a second holder on the database; the unit tests show what
+    runs inside it. No test races the two real consumers.
+  - **A push to a new head is not fenced by the lock.** `IntegrationSaga` appends the new round and resets the row
+    without it. The commit changes, so `ifCurrentRun` drops an answer read after the push; one already past that check
+    when the push lands is caught by the commit-guarded `RecordReviewOutcome` and the worker's head re-check, but its
+    read-model writes (`recordOutcome`, findings, note) can land on the new round's row. The API path has the same
+    window today.
+  - **The API path has no round check at all.** A worker's `ReviewGenerated` carries no round, so one of round 1
+    that arrives on `cs.results` after a forced re-run on the same commit passes `ifCurrentRun` and is applied as round
+    2, with round 2's run token. This predates harness reviews and was left as it was.
+  - An answer whose round cannot be read is thrown, so `cs.run-results` dead-letters it to `cs.dlq`; it waits there
+    for an operator's replay from Settings → Dead-letter. The steps before it (status-guarded projection, the charge
+    deduplicated on `UNIQUE (call_ref, token_type)`, the seat marked once) repeat harmlessly on the replay; no test
+    replays one.
 - **Redelivery is absorbed, not prevented.** A redelivered `RunReviewArtifact` emits a second `PostComments`; the
   worker's run-token check posts it once, and the charge deduplicates on `UNIQUE (call_ref, token_type)`. A
   redelivered `ContextAssembled` funds the run once more before admission answers `AlreadyQueued`, so a seat token can

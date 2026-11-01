@@ -146,7 +146,10 @@ public class ResultSaga {
      * {@code ReviewRunCharges} charged the run under the review's call slot.
      *
      * <p>It arrives from the run-results consumer, not this saga's per-review ordered one, so both outcomes pass the
-     * stale-run guard here, a failure included (docs/UNVERIFIED.md, first reviews on a harness).
+     * stale-run guard here, a failure included (docs/UNVERIFIED.md, first reviews on a harness). The caller holds the
+     * review's {@code ReviewRoundLock} and has checked the round: the commit guard cannot tell a forced re-run's round
+     * from the one before it, and the round lock does (review of PR #368, code-quality/H-1). Nothing reached from here
+     * may take that lock.
      */
     public void acceptHarnessOutcome(IntegrationEvent outcome) {
         if (!(outcome instanceof ReviewGenerated) && !(outcome instanceof ReviewFailed)) {
