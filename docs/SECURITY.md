@@ -328,12 +328,23 @@ reaches all three containers — until it was written, nothing anywhere did.
 
 The agent container holds the model credential and runs model output with a shell, so it is the one
 container whose network is closed. With `spire.run.egress.mode` at `report` (the default) or `enforce`,
-each unit gets its own `--internal` Docker network, which has no gateway. The agent joins that network
-and nothing else: no default bridge, so no route to the host, its published ports (a developer's
-Postgres and Redpanda) or any other container. Its one way out is a per-run tinyproxy container
+each unit gets its own `--internal` Docker network, created with the bridge option
+`com.docker.network.bridge.gateway_mode_ipv4=isolated`. `--internal` alone removes the route to other
+networks but still gives the bridge an address on the host, so an agent that ignored its proxy could
+reach any host service listening there or on `0.0.0.0`. The isolated gateway mode removes that address
+too. It needs **Docker Engine 28.0 or later**. On an older engine the worker refuses to start a unit
+behind the proxy, naming the version, rather than run it without the barrier. A leftover network under
+a unit's name is reused only when it is internal and gateway-isolated. The agent joins that network and
+nothing else: no default bridge, so no route to the host, its published ports (a developer's Postgres
+and Redpanda) or any other container. Its one way out is a per-run tinyproxy container
 (`deploy/egress`, `cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MiB), which sits on
 the default bridge and on the internal network as `spire-egress`, accepts clients from the internal
-subnet only, and chains to the corporate proxy when one is configured. The agent's `HTTP(S)_PROXY`
+subnet only, and chains to the corporate proxy when one is configured. tinyproxy reaches its upstream
+over plain HTTP only. So an `https://` corporate proxy is refused before the unit is created, naming
+`SPIRE_RUN_HTTPS_PROXY`, and is never downgraded to `http`: that would send the proxy credential in
+clear text. A percent-encoded credential is decoded first, as the corporate transport decodes it. One
+that tinyproxy's directive cannot carry (a `:` in the user name, an `@`, whitespace, a quote) is
+refused, and the refusal does not quote it. The agent's `HTTP(S)_PROXY`
 name it and its `NO_PROXY` is empty. It still gets the CA bundle, because the corporate proxy re-signs
 what it forwards.
 

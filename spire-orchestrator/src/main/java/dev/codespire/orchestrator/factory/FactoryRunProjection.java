@@ -873,7 +873,8 @@ public class FactoryRunProjection {
             case RunResult.RunFinished finished -> finished.egress();
             case RunResult.RunFailed failed -> failed.egress();
             case RunResult.RunWorkReady ready -> ready.egress();
-            default -> List.of();
+            case RunWorkArtifact artifact -> artifact.egress();
+            case RunResult.RunStarted started -> List.of();
         };
         if (egress.isEmpty()) {
             return;

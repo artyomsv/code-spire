@@ -259,6 +259,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
     }
 
     private RunHandle create(RunUnitSpec spec, PublicationKey binding) {
+        if (spec.egress().proxiesTheAgent()) {
+            // Before anything exists: a corporate proxy the egress proxy cannot chain to (an https:// one, or a
+            // credential its directive cannot hold) refuses the run here, naming the setting, rather than after a clone.
+            TinyproxyConfig.upstreamLines(spec.enterprise());
+        }
         Map<String, String> volumeLabels = new LinkedHashMap<>();
         volumeLabels.put(RUN_ID_LABEL, spec.runId());
         if (binding != null) volumeLabels.put(PUBLICATION_HOLD_LABEL, binding.value());
@@ -878,6 +883,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
     @Override
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);
+        if (agent.isEmpty() && containersOf(handle.runId()).isEmpty()) {
+            // Only volumes or a network are left, from a teardown interrupted after its containers went. There is no
+            // process to observe and nothing to keep, and saying so is what lets the watchdog finish the teardown.
+            return Finalization.salvaged(0, "no container of run " + handle.runId() + " remains; nothing to salvage");
+        }
         if (agent.isEmpty()) {
             return Finalization.faulted("no agent container for run " + handle.runId());
         }
@@ -1135,6 +1145,10 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 handles.add(new RunHandle(runId, container.getId()));
             }
         }
+        // A network outlives its containers when a teardown is interrupted between the two; found by its label too.
+        networks.runsHoldingNetworks().forEach((runId, networkId) -> {
+            if (seen.add(runId)) handles.add(new RunHandle(runId, networkId));
+        });
         return handles;
     }
 

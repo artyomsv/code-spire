@@ -56,8 +56,12 @@ not declare.
   may name any port, because tinyproxy restricts ports for CONNECT only.
 - **Enforce is global.** It has no per-repository extra hosts, so a factory build that needs a package
   registry is refused it.
-- **An orphaned unit's network is reached by the watchdog through destroy.** Only destroy and held
-  teardown are driven by a test.
+- **The watchdog's own sweep is not driven against a real daemon.** A network left by an interrupted
+  teardown is discovered, salvaged as nothing left, and destroyed in `DockerRunRuntimeIT`. The
+  `OrphanWatchdog` loop that calls those steps is proven against a fake runtime only.
+- **The isolated gateway mode is proven on CI's engine only.** Docker Engine 28.0 is taken as the first
+  release with it. An engine that reports an older version is refused; one that reports 28 and lacks the
+  mode rejects the network at creation, which fails the run without the barrier being assumed.
 
 **What evidence would settle it.** One factory run on a seat and one on an API key on `spire-test` in
 report mode, their `run_egress` rows recorded in `docs/factory/RUN-TOPOLOGY.md`, Codex's declaration set

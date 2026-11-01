@@ -73,7 +73,8 @@ final class EgressResults {
             case RunResult.RunFinished finished -> finished.withEgress(egress);
             case RunResult.RunFailed failed -> failed.withEgress(egress);
             case RunResult.RunWorkReady ready -> ready.withEgress(egress);
-            default -> result;
+            case dev.codespire.contract.event.RunWorkArtifact artifact -> artifact.withEgress(egress);
+            case RunResult.RunStarted started -> started;
         };
     }
 }

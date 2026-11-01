@@ -316,7 +316,8 @@ Egress is deny-by-default with an allowlist for the model endpoint, the git host
 registries the repository needs.
 
 **What the Docker arm enforces today (harness reviews PR 2, 2026-11-01).** The agent container of a
-build, held or read-only unit joins only the unit's own `--internal` network, and its one way out is a
+build, held or read-only unit joins only the unit's own `--internal` network, gateway-isolated so the host
+is unreachable through it too (Docker Engine 28.0 or later; an older engine refuses such units), and its one way out is a
 per-run tinyproxy (`deploy/egress`) reached as `spire-egress:8888`, which chains to the corporate proxy
 when one is set. `spire.run.egress.mode` picks the behaviour. `report`, the default, records every host
 the agent asks for. `enforce` refuses every host the harness does not declare
