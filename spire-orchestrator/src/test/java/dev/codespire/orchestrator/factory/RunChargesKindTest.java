@@ -90,7 +90,7 @@ class RunChargesKindTest {
 
     private static RunResult.RunFinished finished(String runId) {
         return new RunResult.RunFinished(runId, "refs/heads/spire/TEST-branch", List.of(), List.of(),
-                Map.of("INPUT", 10L), false);
+                Map.of("INPUT", 10L), false, List.of());
     }
 
     /** kind and capability of the run's charge rows, which must agree across every token type. */

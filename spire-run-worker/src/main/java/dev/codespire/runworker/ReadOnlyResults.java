@@ -47,7 +47,7 @@ final class ReadOnlyResults {
             return missing("the artifact is over its cap once credentials are redacted", outcome, finished.tokenUsage());
         }
         return new RunWorkArtifact(draft.runId(), draft.draft(), text, outcome.repositoryChanged() > 0,
-                finished.tokenUsage(), activeWallSeconds);
+                finished.tokenUsage(), activeWallSeconds, List.of());
     }
 
     private RunResult.RunFailed missing(String why, PublisherOutcome outcome, Map<String, Long> usage) {

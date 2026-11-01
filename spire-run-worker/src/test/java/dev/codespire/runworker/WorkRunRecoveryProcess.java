@@ -37,7 +37,7 @@ public final class WorkRunRecoveryProcess {
             @Override public List<dev.codespire.secrets.SecretScrub.Credential> proxyCredentials(){return List.of();}
         };
         RunUnitBuilder builder=new RunUnitBuilder();builder.credentials=credentials;builder.enterprise=environment;
-        builder.publisherImage="spire-publisher:latest";builder.maxWallClockSeconds=60;
+        builder.publisherImage="spire-publisher:latest";builder.maxWallClockSeconds=60;builder.egressMode=dev.codespire.runtime.EgressPolicy.Mode.OFF;
         RunFailures failures=new RunFailures();failures.credentials=credentials;failures.enterprise=environment;
         AtomicInteger builds=new AtomicInteger();HarnessAdapter harness=WorkItemRunFixture.testHarness(builds);
         DockerRunRuntime docker=new DockerRunRuntime();

@@ -96,6 +96,14 @@ spire:
     # The other half of the run unit. Required: a registry prefix and a digest are the deployment's,
     # and a latest tag cannot say which publisher gated a run. Dev and test use the locally built tag.
     publisher-image: ${SPIRE_PUBLISHER_IMAGE}
+    # The agent's way out (docs/SECURITY.md, the egress section). off keeps the agent on the default bridge
+    # as before and is the kill switch; report puts it on the unit's internal network behind a per-run proxy
+    # that lets every host through and records it; enforce refuses every host the harness did not declare.
+    # Report is the default because the hosts a harness really calls are measured from it before enforce is
+    # switched on. The image is built from deploy/egress (./deploy/egress/build.sh).
+    egress:
+      mode: ${SPIRE_RUN_EGRESS_MODE:report}
+      image: ${SPIRE_RUN_EGRESS_IMAGE:spire-egress-proxy:latest}
     # Declared HERE and nowhere else. The scheduler that advances the heartbeat and the startup
     # guard that checks it against the staleness window both resolve this key, so a change moves
     # both. Inline defaults on each meant two literals for one decision -- the exact fault the

@@ -64,8 +64,12 @@ public class RunLauncher {
     @Inject
     RunFailures failures;
 
-    /** Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit. */
-    private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization) {
+    /**
+     * Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit, and what the
+     * unit's egress proxy saw.
+     */
+    private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization,
+                            List<RunResult.EgressAttempt> egress) {
     }
 
     /**
@@ -224,13 +228,14 @@ public class RunLauncher {
             // follow stream on a container that is still running would otherwise never end.
             awaitBriefly(agentStream, publisherStream);
             LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
+            List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
             // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
             // exit, so a push the publisher already reported is still a push. This used to build a
             // bare failure that carried the ref in its detail TEXT only, so the run's record had no
             // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
             // also gives a gate refusal and a forge rejection their own outcomes on this path.
-            return unobserved(command, adapter, new Observed(seen, outcome,
-                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage())));
+            return EgressResults.attach(unobserved(command, adapter, new Observed(seen, outcome,
+                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), egress)), egress);
         }
         // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
         // whatever was read still decide the result, and the unit is still destroyed.
@@ -244,7 +249,9 @@ public class RunLauncher {
             }
         }
 
-        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization), work != null);
+        // After salvage, when the proxy has seen everything the agent asked for, and before destroy removes it.
+        List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
+        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, egress), work != null);
         if (work != null && result instanceof RunResult.RunFinished finished && !finished.refused()
                 && !finished.agentUnobserved()) {
             if (finished.pushedRef() != null) {
@@ -268,6 +275,7 @@ public class RunLauncher {
             // through the same unobserved ranking as any run, and preserves the unit for inspection.
             result = new ReadOnlyResults(failures, draft).of(result, outcome, wallSecondsSince(activeStarted));
         }
+        result = EgressResults.attach(result, egress);
 
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
         // can read what the agent was doing — throwing that away is the loss salvage prevents.
@@ -304,6 +312,20 @@ public class RunLauncher {
             LOG.warnf("run %s preserved for inspection: %s", command.runId(), finalization.detail());
         }
         return result;
+    }
+
+    /**
+     * A run the AGENT failed: when the egress proxy refused a host, that refusal is the likely reason and the cause
+     * says so, naming the host. Only here: a publisher failure, a gate refusal or a push keeps its own outcome, with
+     * the refused hosts beside it on the result.
+     */
+    private RunResult.RunFailed agentFailure(RunCommand.ExecuteRun command, String cause, String detail,
+                                             Observed observed) {
+        List<String> refused = EgressResults.refusedHosts(observed.egress());
+        if (refused.isEmpty()) {
+            return failure(command, cause, detail);
+        }
+        return failure(command, RunFailureCause.BLOCKED_EGRESS.name(), EgressResults.blockedDetail(refused, detail));
     }
 
     /** Delegated so the dispatcher's failures get the same scrub and the same retry answer. */
@@ -355,7 +377,7 @@ public class RunLauncher {
             // the overrun it hid the one row RUN_PUSH_GATE_REFUSED exists to raise.
             return new RunResult.RunFinished(command.runId(), null,
                     outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
-                    true);
+                    true, List.of());
         }
         if (outcome.pushedRef().isPresent()) {
             // The work is on the branch, so this is finished — but NOT complete, and the result says
@@ -364,7 +386,7 @@ public class RunLauncher {
             // lose the largest charge there is.
             return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElseThrow(),
                     outcome.changedPaths(), outcome.blocked(), usageOf(adapter, observed.seen().summary()),
-                    true);
+                    true, List.of());
         }
         Map<String, Long> spent = usageOf(adapter, observed.seen().summary());
         if (outcome.failureCause().isPresent()) {
@@ -373,13 +395,18 @@ public class RunLauncher {
             return failure(command, outcome.failureCause().orElseThrow(),
                     outcome.failureDetail() + "; " + finalization.detail()).withUsage(spent);
         }
+        if (finalization.vanished()) {
+            // The unit was gone when salvage looked: no container, no volume. Nothing exited where anybody saw it, so
+            // no exit and no agent failure is claimed (and no refused host is blamed); the sandbox was lost.
+            return failure(command, RunFailureCause.SANDBOX_LOST.name(), finalization.detail()).withUsage(spent);
+        }
         RunFailureCause cause = finalization.overran()
                 ? RunFailureCause.AGENT_TIMEOUT
                 : RunFailureCause.SALVAGE_FAILED;
         // A run that spent its whole wall clock and then failed is the most expensive outcome
         // the system produces. Reporting it without its usage leaves the spend cap blind to
         // exactly the runs most likely to be run again.
-        return failure(command, cause.name(), finalization.detail()).withUsage(spent);
+        return agentFailure(command, cause.name(), finalization.detail(), observed).withUsage(spent);
     }
 
     private static void warnOmittedPaths(RunCommand.ExecuteRun command, PublisherOutcome outcome) {
@@ -423,11 +450,11 @@ public class RunLauncher {
             // Its usage rides along regardless: an agent that ran and then failed spent exactly
             // as much as one that ran and succeeded, and this failure is the only record of it
             // the orchestrator will ever see.
-            return failure(command, terminal.cause().orElseThrow().name(), terminal.detail())
+            return agentFailure(command, terminal.cause().orElseThrow().name(), terminal.detail(), observed)
                     .withUsage(usageOf(adapter, summary));
         }
         return new RunResult.RunFinished(command.runId(), outcome.pushedRef().orElse(null),
-                outcome.changedPaths(), outcome.blocked(), usageOf(adapter, summary), false);
+                outcome.changedPaths(), outcome.blocked(), usageOf(adapter, summary), false, List.of());
     }
 
     private static void awaitBriefly(Future<?> agentStream, Future<?> publisherStream) {

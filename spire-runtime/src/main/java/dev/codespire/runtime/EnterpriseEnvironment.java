@@ -1,8 +1,13 @@
 package dev.codespire.runtime;
 
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * What a corporate deployment must add to EVERY container of a run unit (FR-F14).
@@ -32,9 +37,48 @@ public record EnterpriseEnvironment(List<HostMount> mounts, Map<String, String> 
     /** The ordinary deployment: no corporate CA, no proxy. */
     public static final EnterpriseEnvironment NONE = new EnterpriseEnvironment(List.of(), Map.of());
 
+    /**
+     * The proxy half of the environment, both spellings. Everything else on this record is the TRUST half: the CA
+     * bundle and the variables that point at it.
+     *
+     * <p>The two halves reach different containers once a unit's agent is behind its egress proxy: trust reaches every
+     * container, because the corporate proxy re-signs what it forwards and the agent's calls still pass through it;
+     * the proxy variables reach every container but the agent, whose only way out is the egress proxy, which chains
+     * to the corporate proxy itself.
+     */
+    public static final Set<String> PROXY_VARIABLES = Set.of(
+            "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy");
+
     public EnterpriseEnvironment {
         mounts = List.copyOf(Objects.requireNonNull(mounts, "mounts"));
         environment = Map.copyOf(Objects.requireNonNull(environment, "environment"));
+    }
+
+    /** The variables that point at the CA bundle: every container gets these. */
+    public Map<String, String> trustEnvironment() {
+        Map<String, String> trust = new LinkedHashMap<>(environment);
+        trust.keySet().removeAll(PROXY_VARIABLES);
+        return Map.copyOf(trust);
+    }
+
+    /**
+     * The corporate proxy a request should leave through, or empty: the https one, else the http one. Read by the
+     * egress proxy to chain to it.
+     */
+    public Optional<String> upstreamProxy() {
+        return Stream.of("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+                .map(environment::get)
+                .filter(value -> value != null && !value.isBlank())
+                .findFirst();
+    }
+
+    /** The hosts the corporate proxy is not used for, as the operator listed them. */
+    public List<String> noProxy() {
+        String value = environment.getOrDefault("NO_PROXY", environment.getOrDefault("no_proxy", ""));
+        return Arrays.stream(value.split(","))
+                .map(String::strip)
+                .filter(entry -> !entry.isEmpty())
+                .toList();
     }
 
     /**

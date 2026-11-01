@@ -30,7 +30,7 @@ class RunResultReporterTest {
 
     private static final RunResult FAILED = new RunResult.RunFailed(
             "run::github:TEST-acme/app:s:1", RunFailureCause.SANDBOX_LOST.name(),
-            "its sandbox outlived the control plane", true, null);
+            "its sandbox outlived the control plane", true, null, List.of());
 
     /** An emitter whose completion the test decides. */
     private static final class FakeEmitter implements Emitter<Record<String, RunResult>> {

@@ -50,7 +50,7 @@ class RunDispatcherTest {
             "fix the typo", "codex", "gpt-5.6", "img", List.of(), 60, "enc-scm", "enc-harness");
 
     private static final RunResult.RunFinished FINISHED = new RunResult.RunFinished(
-            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false);
+            EXECUTE.runId(), "refs/heads/spire/finding-1", List.of("a.txt"), List.of(), null, false, List.of());
 
     /**
      * In-memory claims: the first claim of a slot wins, exactly as the unique key does.
@@ -163,7 +163,7 @@ class RunDispatcherTest {
             readOnlyLaunches++;
             observer.unitCreated(unitId, RunNotes.IGNORING);
             observer.unitReleased();
-            return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1);
+            return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1, List.of());
         }
     }
 
@@ -575,7 +575,7 @@ class RunDispatcherTest {
         // The other half of the inversion. A wire result cannot carry a worker-internal fact, so
         // the observer is the only thing that can say the sandbox is gone.
         launcher.result = new RunResult.RunFinished(EXECUTE.runId(), "refs/heads/spire/x",
-                List.of(), List.of(), null, true);
+                List.of(), List.of(), null, true, List.of());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
@@ -590,7 +590,7 @@ class RunDispatcherTest {
         launcher.unitId = null;
         launcher.releasesTheUnit = false;
         launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "RUNTIME_UNAVAILABLE", "daemon down",
-                true, null);
+                true, null, List.of());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
@@ -616,7 +616,7 @@ class RunDispatcherTest {
     void anOrdinaryFailureReleasesItsLease() {
         // The other half. A lease nobody releases becomes an orphan the watchdog will act on, so
         // keeping every failure's lease would make the watchdog chase units that are already gone.
-        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 2", false, null);
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 2", false, null, List.of());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
@@ -631,7 +631,7 @@ class RunDispatcherTest {
         // their containers were still running. The cause is now irrelevant; only the report counts.
         launcher.releasesTheUnit = false;
         launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "PUSH_REJECTED", "forge said no",
-                false, null);
+                false, null, List.of());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
 
@@ -667,7 +667,7 @@ class RunDispatcherTest {
         // ordinary agent failure. That is true of what it observed and wrong about what happened:
         // an operator who stopped a run must not be told it broke, and CANCELLED is not retryable
         // while the causes it would otherwise be given are.
-        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false, null);
+        launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false, null, List.of());
         launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();
@@ -693,7 +693,7 @@ class RunDispatcherTest {
         // The tokens were bought before the operator stopped it, and this failure is the only
         // record of them that reaches the orchestrator.
         launcher.result = new RunResult.RunFailed(EXECUTE.runId(), "AGENT_FAILED", "exit 137", false,
-                java.util.Map.of("INPUT", 1200L));
+                java.util.Map.of("INPUT", 1200L), List.of());
         launcher.onLaunch = () -> registry.cancel(EXECUTE.runId());
 
         dispatcher.onCommand(new Delivery(order).of(EXECUTE)).toCompletableFuture().join();

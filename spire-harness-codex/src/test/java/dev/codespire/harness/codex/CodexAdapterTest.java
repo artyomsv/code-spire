@@ -80,6 +80,41 @@ class CodexAdapterTest {
         assertTrue(script(adapter.command(invocation())).startsWith("printenv OPENAI_API_KEY | codex login --with-api-key"));
     }
 
+    // ---- egress ----------------------------------------------------------------------------
+
+    /**
+     * A run paid by an API key talks to the model API and nothing else, so in enforce mode that is the one host its
+     * egress proxy lets through.
+     */
+    @Test
+    void aRunPaidByAKeyDeclaresTheModelApiAsItsOnlyEgressHost() {
+        assertEquals(Set.of("api.openai.com"), adapter.egressHosts(invocation()));
+    }
+
+    /** A run paid by a seat talks to the ChatGPT backend instead of the model API. */
+    @Test
+    void aRunPaidByASeatDeclaresTheChatGptBackendAsItsOnlyEgressHost() {
+        assertEquals(Set.of("chatgpt.com"), adapter.egressHosts(signedIn()));
+    }
+
+    /**
+     * The sign-in host is never declared. The orchestrator empties the seat's refresh token, so a run has nothing to
+     * renew there; an agent that could reach it could only try to mint a credential the run was never given.
+     */
+    @Test
+    void theSignInHostIsNeverAnEgressHost() {
+        for (HarnessInvocation paid : List.of(invocation(), signedIn())) {
+            Set<String> hosts = adapter.egressHosts(paid);
+            assertFalse(hosts.isEmpty(), "an arm that declares nothing refuses its own model in enforce mode");
+            assertFalse(hosts.contains("auth.openai.com"), hosts.toString());
+        }
+    }
+
+    private static HarnessInvocation signedIn() {
+        return new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
+                Map.of(HarnessInvocation.SIGN_IN, "{\"auth_mode\":\"TEST\"}"), Duration.ofMinutes(30));
+    }
+
     @Test
     void theTypeIsCodex() {
         assertEquals(HarnessType.CODEX, adapter.type());

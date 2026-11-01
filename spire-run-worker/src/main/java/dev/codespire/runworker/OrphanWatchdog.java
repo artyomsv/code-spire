@@ -241,6 +241,20 @@ public class OrphanWatchdog {
      */
     private void reap(RunHandle unit, boolean alreadyReported) {
         Finalization finalization = salvage(unit);
+        if (finalization.vanished()) {
+            // Nothing of the unit is left but a remnant (its network): no process to observe, no volume holding work.
+            // Removing it loses nothing, and leaving it leaks a network and its subnet on every sweep. No exit is
+            // reported, because none was observed.
+            if (!alreadyReported) {
+                report(unit, "its sandbox outlived the control plane and nothing of it remained but a remnant ("
+                        + finalization.detail() + "); the remnant was removed");
+            }
+            if (destroy(unit)) {
+                leases.release(unit.runId());
+                LiveSecrets.forget(unit.runId());
+            }
+            return;
+        }
         if (!finalization.salvaged()) {
             // Decided on the VALUE, not on a throw. The shipped runtime reports "could not observe
             // the agent" as Finalization.faulted or .overran and raises nothing, so branching on the
@@ -318,7 +332,7 @@ public class OrphanWatchdog {
                 RunFailureCause.SANDBOX_LOST.isRetryable(),
                 // Unknown, and it stays unknown: nothing here measured what the agent spent, and a
                 // zero would price a reclaimed run as free.
-                null));
+                null, List.of()));
         if (!published) {
             // The claim is taken BEFORE the publish so a duplicate report cannot land a second
             // unpriceable charge line on a run whose spend is already recorded. That ordering is

@@ -31,6 +31,23 @@ class DockerRunRuntimeTest {
         assertTrue(name.endsWith("-work"), "the volume's role stays readable at the end: " + name);
     }
 
+    /**
+     * The same rule for the unit's internal network and its egress proxy: named after the run id verbatim, every real
+     * run would fail at create, exactly as the volumes once did.
+     */
+    @Test
+    void theNetworkAndProxyNamesAreLegalForTheDaemonWhateverTheRunIdContains() {
+        String network = DockerRunNetworks.agentNetworkName(RUN_ID);
+        String proxy = DockerRunNetworks.proxyName(RUN_ID);
+
+        assertTrue(DAEMON_LEGAL.matcher(network).matches(), network);
+        assertTrue(DAEMON_LEGAL.matcher(proxy).matches(), proxy);
+        assertTrue(network.endsWith("-agent"), network);
+        assertTrue(proxy.endsWith("-proxy"), proxy);
+        assertNotEquals(network, DockerRunNetworks.agentNetworkName("run::github:acme/app:finding-1:2"),
+                "two units sharing a network would reach each other's agents");
+    }
+
     @Test
     void theNameIsStableForOneRunAndDistinctAcrossRuns() {
         // Stable, because destroy and orphan discovery find the volume by its label, but a retry

@@ -30,13 +30,14 @@ package dev.codespire.runtime;
  * <p>Six positional booleans, so each is documented: a swapped pair compiles and reads plausibly,
  * and only a test asserting the whole record by value catches it.
  *
- * @param networkPolicy     the runtime can restrict a unit's egress. Absent, the agent reaches
- *                          whatever the host can, and the model-provider allowlist is advisory.
- *                          No production caller branches on it; the Docker arm asserts its own
- *                          {@code false} in {@code DockerRunRuntimeIT}. So nothing is advisory on
- *                          that basis today — the real exposure is tracked in
- *                          {@code techdebt/spire-runtime-docker/4-3-the-agent-container-on-the-}
- *                          {@code default-bridge-reaches-host-published-ports.md}.
+ * @param networkPolicy     the runtime can restrict a unit's egress with a policy the platform
+ *                          applies (a Kubernetes NetworkPolicy). No production caller branches on
+ *                          it; the Docker arm asserts its own {@code false} in
+ *                          {@code DockerRunRuntimeIT}. That arm restricts the agent another way:
+ *                          the agent sits on the unit's internal network behind its own egress
+ *                          proxy ({@code RunUnitSpec#egress}). What it still leaves open is tracked
+ *                          in {@code techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-}
+ *                          {@code so-it-is-neither-isolated-nor-reachable.md}.
  * @param resourceLimits    memory, CPU and disk ceilings are enforced rather than requested. Read
  *                          by the Docker arm's own test as a declaration about itself; no
  *                          production caller branches on it, because a unit spec that cannot be

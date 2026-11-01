@@ -5,6 +5,7 @@ import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
 import dev.codespire.runtime.ContainerSpec;
+import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.EnterpriseEnvironment;
 import dev.codespire.runtime.Mount;
 import dev.codespire.runtime.RunUnitSpec;
@@ -65,6 +66,13 @@ public class RunUnitBuilder {
     @ConfigProperty(name = "spire.run.max-wall-clock-seconds")
     long maxWallClockSeconds;
 
+    /**
+     * Whether a unit's agent reaches the network only through its egress proxy, and whether that proxy refuses. The
+     * hosts it may reach come from the harness, never from the command: a repository or a ticket cannot widen them.
+     */
+    @ConfigProperty(name = "spire.run.egress.mode")
+    EgressPolicy.Mode egressMode;
+
     /** An agent can write an object bomb; the publisher refuses one larger than this. */
     static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
 
@@ -123,8 +131,7 @@ public class RunUnitBuilder {
      */
     public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter adapter) {
         RunUnitSpec unit = build(draft.execution(), adapter, Topology.READ_ONLY);
-        return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), PublisherEnvironments.readOnly(unit.publisher()),
-                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+        return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher()));
     }
 
     /** Where a retried build's init reads the previous run's handoff. */
@@ -169,16 +176,14 @@ public class RunUnitBuilder {
         RunUnitSpec unit = build(command.execution(), adapter, Topology.HELD);
         ContainerSpec publisher = PublisherEnvironments.held(unit.publisher(), command);
         if (!command.execution().pushesToAnExistingBranch())
-            return new RunUnitSpec(unit.runId(), unit.init(), unit.agent(), publisher,
-                    unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+            return unit.withPublisher(publisher);
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
         Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
         initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
         ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
-        return new RunUnitSpec(unit.runId(), init, unit.agent(), publisher,
-                unit.enterprise(), unit.memoryBytes(), unit.nanoCpus(), unit.diskBytes(), unit.wallClock());
+        return unit.withInit(init).withPublisher(publisher);
     }
 
     /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */
@@ -258,8 +263,10 @@ public class RunUnitBuilder {
                 // Read-only, and the ONLY volume it sees. Not the workspace.
                 List.of(Mount.readOnly(HANDOFF, "/handoff")));
 
+        EgressPolicy egress = egressMode == EgressPolicy.Mode.OFF ? EgressPolicy.OFF
+                : new EgressPolicy(egressMode, adapter.egressHosts(invocation));
         return new RunUnitSpec(command.runId(), init, agent, publisher,
-                enterprise.environment(),
+                enterprise.environment(), egress,
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
     }
 
@@ -282,7 +289,6 @@ public class RunUnitBuilder {
         env.put("SPIRE_PERMIT_EXPIRES_AT", request.permit().expiresAt().toString());
         ContainerSpec publisher = new ContainerSpec(held.publisher().image(), List.of("spire-publish-permitted"),
                 env, held.publisher().mounts());
-        return new RunUnitSpec(held.runId(), held.init(), held.agent(), publisher, held.enterprise(),
-                held.memoryBytes(), held.nanoCpus(), held.diskBytes(), held.wallClock());
+        return held.withPublisher(publisher);
     }
 }

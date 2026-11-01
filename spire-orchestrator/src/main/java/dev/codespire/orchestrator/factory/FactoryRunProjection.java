@@ -851,7 +851,47 @@ public class FactoryRunProjection {
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
+        recordEgress(result);
         push(result.runId());
+    }
+
+    private static final String EGRESS = """
+            INSERT INTO run_egress (run_id, host, port, allowed)
+            SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM factory_run WHERE run_id = ?)
+            ON CONFLICT (run_id, host, port) DO NOTHING
+            """;
+
+    /**
+     * The hosts the run's agent asked its egress proxy for, one row per host and port (V106).
+     *
+     * <p>A redelivered result writes nothing new: the first sighting stands, so first_seen_at is when the result
+     * first arrived. A result for a run this deployment has no row for writes nothing either, rather than failing the
+     * handler on the foreign key: the status updates above already decline such a run.
+     */
+    private void recordEgress(RunResult result) {
+        List<RunResult.EgressAttempt> egress = switch (result) {
+            case RunResult.RunFinished finished -> finished.egress();
+            case RunResult.RunFailed failed -> failed.egress();
+            case RunResult.RunWorkReady ready -> ready.egress();
+            case RunWorkArtifact artifact -> artifact.egress();
+            case RunResult.RunStarted started -> List.of();
+        };
+        if (egress.isEmpty()) {
+            return;
+        }
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(EGRESS)) {
+            for (RunResult.EgressAttempt attempt : egress) {
+                ps.setString(1, result.runId());
+                ps.setString(2, attempt.host());
+                ps.setInt(3, attempt.port());
+                ps.setBoolean(4, attempt.allowed());
+                ps.setString(5, result.runId());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record the egress of " + result.runId(), e);
+        }
     }
 
     private void workReady(RunResult.RunWorkReady ready) {

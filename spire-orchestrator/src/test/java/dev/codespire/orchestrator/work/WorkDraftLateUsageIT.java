@@ -31,7 +31,7 @@ class WorkDraftLateUsageIT extends WorkSpecRunFixture {
     @Inject FactoryRunProjection runs;
 
     private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command) {
-        return new RunWorkArtifact(command.runId(), command.draft(), WorkSpecRunIT.SPEC, false, Map.of("INPUT", 10L), WALL_SECONDS);
+        return new RunWorkArtifact(command.runId(), command.draft(), WorkSpecRunIT.SPEC, false, Map.of("INPUT", 10L), WALL_SECONDS, java.util.List.of());
     }
 
     /** The item's specification run dispatched, then the item taken over by a person while the run is out. */

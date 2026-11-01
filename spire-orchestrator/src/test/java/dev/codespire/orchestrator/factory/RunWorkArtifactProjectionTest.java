@@ -72,7 +72,7 @@ class RunWorkArtifactProjectionTest {
 
     private static RunResult artifact(String runId) {
         return new RunWorkArtifact(runId, new WorkDraftBinding("TEST-item", 1, UUID.randomUUID(),
-                WorkDraftBinding.Kind.SPEC, "d".repeat(64)), "TEST-specification", false, Map.of("INPUT", 10L), 4);
+                WorkDraftBinding.Kind.SPEC, "d".repeat(64)), "TEST-specification", false, Map.of("INPUT", 10L), 4, List.of());
     }
 
     private List<String> row(String runId) {

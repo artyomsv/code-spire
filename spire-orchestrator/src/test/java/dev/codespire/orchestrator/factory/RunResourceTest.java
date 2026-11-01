@@ -433,7 +433,7 @@ class RunResourceTest {
     void aFinishedRunRefusesControlRatherThanAcceptingItSilently() {
         String runId = registeredRun();
         projection.apply(new dev.codespire.contract.event.RunResult.RunFinished(
-                runId, "refs/heads/spire/x", List.of("a.txt"), List.of(), null, false));
+                runId, "refs/heads/spire/x", List.of("a.txt"), List.of(), null, false, List.of()));
 
         given().contentType("application/json").body("{\"reason\":\"TEST-cancel\"}")
                 .when().post("/api/runs/" + runId + "/cancel")

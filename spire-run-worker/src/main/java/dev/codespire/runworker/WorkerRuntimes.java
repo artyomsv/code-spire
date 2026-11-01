@@ -6,6 +6,7 @@ import jakarta.inject.Inject;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Singleton;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * Where run units are placed.
@@ -32,9 +33,13 @@ public class WorkerRuntimes {
     @Inject
     EnterpriseEnvironmentConfig enterprise;
 
+    /** The image a unit's egress proxy runs (deploy/egress). Named here like the publisher image is. */
+    @ConfigProperty(name = "spire.run.egress.image")
+    String egressImage;
+
     @Produces
     @Singleton
     public RunRuntime dockerRuntime() {
-        return new DockerRunRuntime(enterprise.registryCredential().orElse(null));
+        return new DockerRunRuntime(enterprise.registryCredential().orElse(null), egressImage);
     }
 }

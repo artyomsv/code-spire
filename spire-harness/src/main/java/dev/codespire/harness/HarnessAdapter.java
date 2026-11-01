@@ -3,6 +3,7 @@ package dev.codespire.harness;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Drives one agent harness. Two contract rules that are not obvious:
@@ -40,6 +41,18 @@ public interface HarnessAdapter {
      *         reported nothing this adapter recognises — never a zeroed report.
      */
     UsageReport usage(RunEventSummary seen);
+
+    /**
+     * The bare host names this arm's agent needs to reach for this invocation, and no others: in enforce mode the
+     * run's egress proxy refuses every host not named here.
+     *
+     * <p>The vendor's knowledge, like {@link #command}: which endpoint a payment kind talks to is this arm's to say,
+     * never the reviewed repository's or the ticket's. Empty declares nothing, which in enforce mode refuses
+     * everything; that is the safe direction for an arm that has not measured its hosts.
+     */
+    default Set<String> egressHosts(HarnessInvocation invocation) {
+        return Set.of();
+    }
 
     /**
      * How an OPERATOR signs this arm in, for a run paid by a subscription rather than a key

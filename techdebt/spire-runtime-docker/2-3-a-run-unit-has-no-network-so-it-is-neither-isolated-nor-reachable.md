@@ -6,7 +6,27 @@
 | Complexity | Medium |
 | Location | `spire-runtime-docker/.../DockerRunRuntime.java` (`createContainer` / `hostConfigFor`: no network is specified, so every container of a run unit lands on the daemon's default bridge); `spire-runtime/.../RunUnitSpec.java` (no network field to specify one with) |
 | Found during | PR #95 four-lens review, round 1 (security L-2), carried to round 2. **Raised to High and merged with the M2 finding on 2026-09-04** — see the update below |
-| Date | 2026-09-02 (updated 2026-09-04) |
+| Date | 2026-09-02 (updated 2026-09-04, 2026-11-01) |
+
+## Update 2026-11-01: the agent is isolated; the rest remains
+
+Harness reviews PR 2 closed symptom one for the container that matters most. With
+`spire.run.egress.mode` at `report` (the default) or `enforce`, the agent of a build, held or read-only
+unit joins only the unit's own `--internal` network (`DockerRunNetworks`). Its one way out is a per-run
+egress proxy (`deploy/egress`), which records or refuses each host and chains to the corporate proxy.
+`RunUnitSpec` carries the field (`EgressPolicy`), and the network and the proxy are labelled and removed
+with the unit. Suggested solution 2, the egress policy, is built in its first form. Its allowlist is the
+harness's declaration and is still global, not per repository. See `docs/SECURITY.md` and
+`docs/UNVERIFIED.md` (the run egress proxy entry).
+
+What remains open:
+
+- **The verify check containers and the operator's sign-in container** are still on the default bridge.
+  Neither holds the model credential, but a check runs the repository's code with the host's reach.
+- **init and the publisher** stay on the default bridge on purpose. They run our code with the forge
+  credential and need the forge, so they still reach the host's neighbours.
+- **Symptom two is unchanged.** No unit joins a named stack network, so an e2e run unit still cannot
+  resolve `gitlab`. The spec now has a network decision to extend for that.
 
 ## Issue
 

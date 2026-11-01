@@ -53,7 +53,7 @@ class RunDetailReadTest {
         String runId = queue();
         String subject = runId.substring(runId.lastIndexOf("app:") + 4, runId.lastIndexOf(':'));
         runs.apply(new RunResult.RunStarted(runId, "TEST-unit"));
-        runs.apply(new RunResult.RunFinished(runId, "refs/heads/feature/test", List.of(), List.of(), null, false));
+        runs.apply(new RunResult.RunFinished(runId, "refs/heads/feature/test", List.of(), List.of(), null, false, List.of()));
         sql("UPDATE factory_run SET started_at = TIMESTAMPTZ '2026-01-01 00:00:00Z', "
                 + "agent_started_at = TIMESTAMPTZ '2026-01-01 00:01:00Z', "
                 + "ended_at = TIMESTAMPTZ '2026-01-01 00:05:00Z' WHERE run_id = ?", runId);

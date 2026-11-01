@@ -400,7 +400,7 @@ public class RunDispatcher {
         }
         return failures.of(execute, RunFailureCause.CANCELLED.name(),
                 "cancelled while running; the agent reported " + failed.cause())
-                .withUsage(failed.tokenUsage());
+                .withUsage(failed.tokenUsage()).withEgress(failed.egress());
     }
 
     private static void ack(Message<RunCommand> message) {
@@ -430,7 +430,8 @@ public class RunDispatcher {
                     // The agent's spend survives the result being too large to publish. Dropping
                     // it here would lose the charge for a run that definitely ran, and this
                     // failure is the ONLY record of it that reaches the orchestrator.
-                    finished.tokenUsage());
+                    // The hosts the agent asked for survive too: capped at the arm, so they are not what made it large.
+                    finished.tokenUsage(), finished.egress());
             if (publish(compact)) {
                 return;
             }

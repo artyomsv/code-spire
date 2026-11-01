@@ -81,7 +81,7 @@ class RunAgentStartedTest {
             if (started) projection.apply(new RunResult.RunStarted(runId, "TEST-unit"));
             Instant first = projection.find(runId).orElseThrow().agentStartedAt();
             projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/test",
-                    List.of(), List.of(), null, false));
+                    List.of(), List.of(), null, false, List.of()));
             Instant ended = listed(runId).endedAt();
 
             projection.apply(new RunResult.RunStarted(runId, "TEST-unit"));

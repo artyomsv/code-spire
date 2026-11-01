@@ -19,7 +19,7 @@ class RunWorkArtifactTest {
             UUID.fromString("00000000-0000-4000-8000-000000000001"), WorkDraftBinding.Kind.PLAN, "d".repeat(64));
 
     private static RunWorkArtifact artifact(String text, Map<String, Long> usage) {
-        return new RunWorkArtifact(RUN_ID, DRAFT, text, false, usage, 3);
+        return new RunWorkArtifact(RUN_ID, DRAFT, text, false, usage, 3, java.util.List.of());
     }
 
     @Test
@@ -44,19 +44,19 @@ class RunWorkArtifactTest {
     @Test
     void anArtifactNamesItsRunAndDraftAndANonNegativeWall() {
         assertThrows(IllegalArgumentException.class,
-                () -> new RunWorkArtifact(" ", DRAFT, "TEST-spec", false, null, 3));
+                () -> new RunWorkArtifact(" ", DRAFT, "TEST-spec", false, null, 3, java.util.List.of()));
         assertThrows(NullPointerException.class,
-                () -> new RunWorkArtifact(RUN_ID, null, "TEST-spec", false, null, 3));
+                () -> new RunWorkArtifact(RUN_ID, null, "TEST-spec", false, null, 3, java.util.List.of()));
         assertThrows(IllegalArgumentException.class,
-                () -> new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", false, null, -1));
+                () -> new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", false, null, -1, java.util.List.of()));
     }
 
     @Test
     void withUsageEnumeratesEveryComponent() {
-        RunWorkArtifact original = new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, null, 7);
+        RunWorkArtifact original = new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, null, 7, java.util.List.of());
 
         RunWorkArtifact measured = original.withUsage(Map.of("INPUT", 11L));
 
-        assertEquals(new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, Map.of("INPUT", 11L), 7), measured);
+        assertEquals(new RunWorkArtifact(RUN_ID, DRAFT, "TEST-spec", true, Map.of("INPUT", 11L), 7, java.util.List.of()), measured);
     }
 }

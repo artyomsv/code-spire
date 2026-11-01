@@ -62,7 +62,7 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
     }
 
     private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3, java.util.List.of());
     }
 
     /**
@@ -80,7 +80,7 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
         saga.on(artifact(dispatched(), planSteps(steps)));
         assertState(store.load(id), "build", "active", "phase_started");
         dispatcher.drain();
-        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(), "BAD_COMMAND", "TEST BAD_COMMAND", false, null));
+        saga.on(new RunResult.RunFailed(heldCommands.getLast().runId(), "BAD_COMMAND", "TEST BAD_COMMAND", false, null, java.util.List.of()));
         assertState(store.load(id), "build", "failed", "phase_failed");
         return id;
     }

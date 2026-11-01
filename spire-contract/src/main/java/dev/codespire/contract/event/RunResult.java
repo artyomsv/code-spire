@@ -51,8 +51,9 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
     record RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                         List<String> changedPaths, Map<String, Long> tokenUsage,
                         long activeWallSeconds, dev.codespire.contract.work.StepSummary stepSummary,
-                        String startFromHead, boolean empty) implements RunResult {
+                        String startFromHead, boolean empty, List<EgressAttempt> egress) implements RunResult {
         public RunWorkReady {
+            egress = egressOrNone(egress);
             if (runId == null || runId.isBlank()) throw new IllegalArgumentException("A ready run needs its identity");
             Objects.requireNonNull(work, "A ready run needs its work binding");
             if (head == null || !head.matches("[0-9a-f]{40}"))
@@ -72,22 +73,27 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
 
         public RunWorkReady(String runId, dev.codespire.contract.work.WorkRunBinding work, String head,
                             List<String> changedPaths, Map<String, Long> tokenUsage, long activeWallSeconds) {
-            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null, null, false);
+            this(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, null, null, false, List.of());
         }
 
         /** Rebuild carrying the agent's step summary, enumerating the components once. */
         public RunWorkReady withStepSummary(dev.codespire.contract.work.StepSummary summary) {
-            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary, startFromHead, empty);
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, summary, startFromHead, empty, egress);
         }
 
         /** Rebuild carrying the head the build started from, enumerating the components once. */
         public RunWorkReady withStartFromHead(String start) {
-            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, start, empty);
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, start, empty, egress);
         }
 
         /** Rebuild saying whether the build committed nothing, enumerating the components once. */
         public RunWorkReady withEmpty(boolean nothingCommitted) {
-            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, startFromHead, nothingCommitted);
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, startFromHead, nothingCommitted, egress);
+        }
+
+        /** Rebuild carrying what the agent asked its egress proxy for, enumerating the components once. */
+        public RunWorkReady withEgress(List<EgressAttempt> attempts) {
+            return new RunWorkReady(runId, work, head, changedPaths, tokenUsage, activeWallSeconds, stepSummary, startFromHead, empty, attempts);
         }
     }
 
@@ -114,6 +120,28 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
         public BlockedChange {
             Objects.requireNonNull(path, "path");
         }
+    }
+
+    /**
+     * One host the agent asked its egress proxy for, and whether the proxy let it through.
+     *
+     * <p>Hosts and ports only: the proxy's log is agent-controlled text, and a corporate proxy's credentials must
+     * never ride a result. {@code allowed} is false only where the proxy refused, which happens in enforce mode for a
+     * host the harness did not declare.
+     *
+     * <p>Every result carries the list, empty when the unit had no proxy or the agent asked for nothing. A result
+     * written before the field existed reads as empty, not as a failure: an old worker had no proxy to report on.
+     */
+    record EgressAttempt(String host, int port, boolean allowed) {
+
+        public EgressAttempt {
+            if (host == null || host.isBlank()) throw new IllegalArgumentException("An egress attempt names its host");
+            if (port < 1 || port > 65535) throw new IllegalArgumentException("Not a port: " + port);
+        }
+    }
+
+    private static List<EgressAttempt> egressOrNone(List<EgressAttempt> egress) {
+        return egress == null ? List.of() : List.copyOf(egress);
     }
 
     /**
@@ -177,10 +205,11 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
      */
     record RunFinished(String runId, String pushedRef, List<String> changedPaths,
                        List<BlockedChange> blocked, Map<String, Long> tokenUsage,
-                       boolean agentUnobserved) implements RunResult {
+                       boolean agentUnobserved, List<EgressAttempt> egress) implements RunResult {
 
         public RunFinished {
             Objects.requireNonNull(runId, "runId");
+            egress = egressOrNone(egress);
             changedPaths = List.copyOf(Objects.requireNonNull(changedPaths, "changedPaths"));
             blocked = List.copyOf(Objects.requireNonNull(blocked, "blocked"));
             if (tokenUsage != null) {
@@ -216,7 +245,12 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
 
         /** Rebuild carrying a different observation flag, enumerating the components once. */
         public RunFinished withAgentUnobserved(boolean unobserved) {
-            return new RunFinished(runId, pushedRef, changedPaths, blocked, tokenUsage, unobserved);
+            return new RunFinished(runId, pushedRef, changedPaths, blocked, tokenUsage, unobserved, egress);
+        }
+
+        /** Rebuild carrying what the agent asked its egress proxy for, enumerating the components once. */
+        public RunFinished withEgress(List<EgressAttempt> attempts) {
+            return new RunFinished(runId, pushedRef, changedPaths, blocked, tokenUsage, agentUnobserved, attempts);
         }
     }
 
@@ -241,10 +275,11 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
      * convenience constructor stays valid.
      */
     record RunFailed(String runId, String cause, String detail, boolean retryable,
-                     Map<String, Long> tokenUsage) implements RunResult {
+                     Map<String, Long> tokenUsage, List<EgressAttempt> egress) implements RunResult {
 
         public RunFailed {
             Objects.requireNonNull(runId, "runId");
+            egress = egressOrNone(egress);
             if (tokenUsage != null) {
                 if (tokenUsage.isEmpty()) {
                     // Same rule as RunFinished: an empty map is not a measurement, and allowing
@@ -269,7 +304,12 @@ public sealed interface RunResult permits RunResult.RunStarted, RunResult.RunWor
 
         /** Rebuild carrying measured usage, enumerating the components once. */
         public RunFailed withUsage(Map<String, Long> usage) {
-            return new RunFailed(runId, cause, detail, retryable, usage);
+            return new RunFailed(runId, cause, detail, retryable, usage, egress);
+        }
+
+        /** Rebuild carrying what the agent asked its egress proxy for, enumerating the components once. */
+        public RunFailed withEgress(List<EgressAttempt> attempts) {
+            return new RunFailed(runId, cause, detail, retryable, tokenUsage, attempts);
         }
     }
 }

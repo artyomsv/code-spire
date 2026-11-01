@@ -123,7 +123,7 @@ class RunChargesTest {
     }
 
     private static RunResult.RunFinished finished(String runId, Map<String, Long> usage) {
-        return new RunResult.RunFinished(runId, "refs/heads/spire/s", List.of(), List.of(), usage, false);
+        return new RunResult.RunFinished(runId, "refs/heads/spire/s", List.of(), List.of(), usage, false, List.of());
     }
 
     /**
@@ -212,7 +212,7 @@ class RunChargesTest {
         // Losing that spend leaves the cap blind to exactly the runs most likely to be run again,
         // so the deployment is under-counted precisely where it is about to be charged twice.
         charges.record(new RunResult.RunFailed(RUN_ID, "PUSH_TRANSPORT_FAILED", "remote hung up",
-                true, Map.of("INPUT", 900L)));
+                true, Map.of("INPUT", 900L), List.of()));
 
         assertEquals(1, ledger.calls.size());
         assertEquals(ChargeSubject.RUN, ledger.calls.getFirst().subjectKind());
@@ -223,7 +223,7 @@ class RunChargesTest {
         // The agent ran; only the measurement is missing. A call that vanishes takes the
         // unpriced-call count down with it, so the deployment reads as cheaper than it is with
         // nothing on any surface to notice.
-        charges.record(new RunResult.RunFailed(RUN_ID, "AGENT_TIMEOUT", "clock", false, null));
+        charges.record(new RunResult.RunFailed(RUN_ID, "AGENT_TIMEOUT", "clock", false, null, List.of()));
 
         assertEquals(1, ledger.calls.size());
         assertTrue(ledger.calls.getFirst().lines().stream().allMatch(l -> l.tokens() == 0));
@@ -237,9 +237,9 @@ class RunChargesTest {
         // dispatch in seconds would spend the whole call budget on runs that bought nothing --
         // and that budget refuses REVIEWS too. A control firing for the wrong reason, which is
         // the same defect as one that never fires.
-        charges.record(new RunResult.RunFailed(RUN_ID, "RUNTIME_UNAVAILABLE", "daemon down", true, null));
-        charges.record(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "no such harness", false, null));
-        charges.record(new RunResult.RunFailed(RUN_ID, "CLONE_FAILED", "remote refused", true, null));
+        charges.record(new RunResult.RunFailed(RUN_ID, "RUNTIME_UNAVAILABLE", "daemon down", true, null, List.of()));
+        charges.record(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "no such harness", false, null, List.of()));
+        charges.record(new RunResult.RunFailed(RUN_ID, "CLONE_FAILED", "remote refused", true, null, List.of()));
 
         assertTrue(ledger.calls.isEmpty(),
                 "a run that never reached its agent has no spend to record and must not consume"
@@ -252,7 +252,7 @@ class RunChargesTest {
         // if something reported spend, something was bought, and refusing to record it is the
         // under-count this whole task exists to remove.
         charges.record(new RunResult.RunFailed(RUN_ID, "RUNTIME_UNAVAILABLE", "daemon down", true,
-                Map.of("INPUT", 40L)));
+                Map.of("INPUT", 40L), List.of()));
 
         assertEquals(1, ledger.calls.size());
     }
@@ -262,7 +262,7 @@ class RunChargesTest {
         // A cause the taxonomy does not know resolves to UNCLASSIFIED, which answers "may have
         // spent". Defaulting the other way would let a producer silently opt every one of its
         // runs out of the ledger by spelling its cause differently.
-        charges.record(new RunResult.RunFailed(RUN_ID, "SOMETHING_NEW", "?", false, null));
+        charges.record(new RunResult.RunFailed(RUN_ID, "SOMETHING_NEW", "?", false, null, List.of()));
 
         assertEquals(1, ledger.calls.size());
     }

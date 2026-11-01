@@ -33,6 +33,45 @@ evidence would settle it**.
 
 ---
 
+## Run egress proxy (harness reviews PR 2, 2026-11-01)
+
+**The claim.** On the Docker arm, a run unit's agent reaches the network only through its per-run egress
+proxy. Report mode records every host it asks for, and enforce mode refuses every host its harness does
+not declare.
+
+**Why nothing catches it today.**
+- **Real-daemon tests use a local target only.** `DockerRunRuntimeIT` uses a busybox HTTP server on the
+  default bridge. It proves the agent is off the bridge, that a direct request fails, that a proxied
+  request is recorded, and that enforce refuses an undeclared name. No test has chained to a real
+  corporate proxy, and no test has driven a real CONNECT to a TLS host.
+- **The log format is read from tinyproxy, not pinned.** The parse reads tinyproxy 1.11's `Request
+  (file descriptor N): ...` and `Proxying refused on filtered domain "..."` lines. A tinyproxy upgrade
+  that rewords them would empty the record without failing a run. Only the IT would notice.
+- **Codex's hosts are not measured.** It declares `api.openai.com` for an API key and `chatgpt.com` for a
+  seat, from the CLI's documented and observed behaviour. No report-mode run on a live stack has
+  recorded what it really calls. Until one has, enforce may refuse a host Codex needs (a telemetry or
+  update endpoint, say), and that run would fail as `BLOCKED_EGRESS`.
+- **Not every container is isolated.** Verify check containers and the operator's sign-in container
+  are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request
+  may name any port, because tinyproxy restricts ports for CONNECT only.
+- **Enforce is global.** It has no per-repository extra hosts, so a factory build that needs a package
+  registry is refused it.
+- **The watchdog's own sweep is not driven against a real daemon.** In `DockerRunRuntimeIT`, a network
+  left with no container and no volume is discovered, salvaged as `VANISHED` (nothing to observe or keep,
+  no exit claimed) and destroyed. A run whose containers were pruned but whose volumes remain is salvaged
+  as faulted, with its volumes untouched, so it is preserved. The `OrphanWatchdog` loop that acts on
+  those answers (remove a vanished unit, keep a faulted one) is proven against a fake runtime only.
+- **The isolated gateway mode is proven on CI's engine only.** Docker Engine 28.0 is taken as the first
+  release with it. An engine that reports an older version is refused; one that reports 28 and lacks the
+  mode rejects the network at creation, which fails the run without the barrier being assumed.
+
+**What evidence would settle it.** One factory run on a seat and one on an API key on `spire-test` in
+report mode, their `run_egress` rows recorded in `docs/factory/RUN-TOPOLOGY.md`, Codex's declaration set
+to exactly those hosts, then one enforce run that delivers. Plus one run behind a real corporate proxy
+whose egress proxy log shows the upstream used.
+
+---
+
 ## Work-item change feed (live-data step 4, 2026-10-29)
 
 **The claim.** Every committed change a work-item screen can show reaches every open `/api/ws/work-items` socket
@@ -267,8 +306,9 @@ land entry below); no live tracker-artifact journey follows from these local pro
   (2026-10-08, [M4 verify acceptance](factory/M4-VERIFY-ACCEPTANCE.md)). The checks were `test -f`,
   `grep -q` and `cargo --version`: no real test suite has run as a check. GitLab and Bitbucket items
   have no live verify, and marking a draft ready is refused there (`ready_for_review_unsupported`).
-- **No egress limit for checks.** The Docker arm gives check containers the agent's network, which it
-  does not restrict.
+- **No egress limit for checks.** Check containers stay on the daemon's default bridge with no egress
+  proxy. Since harness reviews PR 2, the build's agent is behind one (see the run egress proxy entry
+  above). A check holds no credential, but it runs the repository's own code with the host's reach.
 - **`tool_missing` is inferred.** It is read from exit codes 126 and 127, which a test suite could
   also use on purpose.
 - **The new image clauses are Mode S.** The `shell` and `uid-1001` clauses are verified against fake

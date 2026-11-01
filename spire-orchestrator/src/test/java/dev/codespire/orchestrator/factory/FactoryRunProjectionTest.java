@@ -51,10 +51,10 @@ class FactoryRunProjectionTest {
         // V43, so the migration drops it by the name Postgres gives it; if that guess were wrong the
         // old constraint would survive and this insert would be refused.
         String delivered = queuedRun();
-        projection.apply(new RunResult.RunFinished(delivered, "refs/heads/spire/x", List.of(), List.of(), null, false));
+        projection.apply(new RunResult.RunFinished(delivered, "refs/heads/spire/x", List.of(), List.of(), null, false, List.of()));
 
         String empty = queuedRun();
-        projection.apply(new RunResult.RunFinished(empty, null, List.of(), List.of(), null, false));
+        projection.apply(new RunResult.RunFinished(empty, null, List.of(), List.of(), null, false, List.of()));
 
         assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(delivered).orElseThrow().status());
         assertEquals(FactoryRunProjection.DELIVERED_NOTHING, projection.find(empty).orElseThrow().status());
@@ -72,7 +72,7 @@ class FactoryRunProjectionTest {
         // folded into a neighbouring status once and could not be told apart afterwards.
         String runId = queuedRun();
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("a.txt"),
-                List.of(), null, true));
+                List.of(), null, true, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.DELIVERED_UNFINISHED, view.status());
@@ -97,7 +97,7 @@ class FactoryRunProjectionTest {
     void aCancelledRunIsNotReportedAsAFailure() {
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "CANCELLED", "stopped by an operator", false, null));
+        projection.apply(new RunResult.RunFailed(runId, "CANCELLED", "stopped by an operator", false, null, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.CANCELLED, view.status());
@@ -110,7 +110,7 @@ class FactoryRunProjectionTest {
         // The other half: the cancelled branch must not swallow everything that reaches failed().
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "AGENT_FAILED", "exit 1", true, null));
+        projection.apply(new RunResult.RunFailed(runId, "AGENT_FAILED", "exit 1", true, null, List.of()));
 
         assertEquals(FactoryRunProjection.FAILED, projection.find(runId).orElseThrow().status());
     }
@@ -235,7 +235,7 @@ class FactoryRunProjectionTest {
         assertTrue(projection.resolveAsStarted(runId));
 
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of("a.txt"),
-                List.of(), null, false));
+                List.of(), null, false, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
@@ -332,13 +332,13 @@ class FactoryRunProjectionTest {
         // column to the wire set. Translating on the way in is what lets both keep their own words
         // without the read model growing a third spelling for one thing.
         String harnessWord = queuedRun();
-        projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false, null));
+        projection.apply(new RunResult.RunFailed(harnessWord, "PUSH_GATE_REFUSED", "protected path", false, null, List.of()));
 
         // PUSH_FAILED is the publisher's OLD ambiguous word, and it aliases to the transport
         // reading rather than to a refusal: told a network fault is the forge answering no, a blip
         // is never retried. "remote hung up" is exactly that case.
         String publisherWord = queuedRun();
-        projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true, null));
+        projection.apply(new RunResult.RunFailed(publisherWord, "PUSH_FAILED", "remote hung up", true, null, List.of()));
 
         assertEquals(List.of("GATE_REFUSED"), column(harnessWord, "failure_cause"));
         assertEquals(List.of("PUSH_TRANSPORT_FAILED"), column(publisherWord, "failure_cause"));
@@ -351,7 +351,7 @@ class FactoryRunProjectionTest {
         // instead, with the producer's spelling carried in the detail so it is still diagnosable.
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "SOMETHING_NEW", "a newer worker said this", false, null));
+        projection.apply(new RunResult.RunFailed(runId, "SOMETHING_NEW", "a newer worker said this", false, null, List.of()));
 
         assertEquals(List.of("UNCLASSIFIED"), column(runId, "failure_cause"));
         assertTrue(column(runId, "failure_detail").getFirst().contains("SOMETHING_NEW"),
@@ -546,7 +546,7 @@ class FactoryRunProjectionTest {
         assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
 
         projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x",
-                List.of("src/Foo.java"), List.of(), Map.of("INPUT", 12L), false));
+                List.of("src/Foo.java"), List.of(), Map.of("INPUT", 12L), false, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
@@ -563,7 +563,7 @@ class FactoryRunProjectionTest {
 
         projection.apply(new RunResult.RunFinished(runId, null, List.of(".github/workflows/ci.yml"),
                 List.of(new RunResult.BlockedChange(".github/workflows/ci.yml", "DELETED")),
-                null, false));
+                null, false, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.PUSH_GATE_REFUSED, view.status());
@@ -589,7 +589,7 @@ class FactoryRunProjectionTest {
         String runId = queuedRun();
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
         projection.apply(new RunResult.RunFinished(runId, null, List.of("Jenkinsfile"),
-                List.of(new RunResult.BlockedChange("Jenkinsfile", null)), null, false));
+                List.of(new RunResult.BlockedChange("Jenkinsfile", null)), null, false, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(List.of(new RunResult.BlockedChange("Jenkinsfile", null)), view.blocked());
@@ -599,7 +599,7 @@ class FactoryRunProjectionTest {
     void aFailureNamesItsCause() {
         String runId = queuedRun();
 
-        projection.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "daemon down", true, null));
+        projection.apply(new RunResult.RunFailed(runId, "SANDBOX_UNREACHABLE", "daemon down", true, null, List.of()));
 
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.FAILED, view.status());
@@ -614,7 +614,7 @@ class FactoryRunProjectionTest {
         // row back to running.
         String runId = queuedRun();
         RunResult.RunFinished finished = new RunResult.RunFinished(runId, "refs/heads/spire/x",
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
 
         projection.apply(finished);
         projection.apply(finished);
@@ -639,12 +639,12 @@ class FactoryRunProjectionTest {
         // that finished — succeeded, refused, or failed for any other cause — is history, and a
         // repeated request must not quietly reopen it.
         String finished = queuedRun();
-        projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of(), List.of(), null, false));
+        projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of(), List.of(), null, false, List.of()));
         projection.queued(new FactoryRunProjection.QueuedRun(finished, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         assertEquals(FactoryRunProjection.SUCCEEDED, projection.find(finished).orElseThrow().status());
 
         String crashed = queuedRun();
-        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null));
+        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null, List.of()));
         projection.queued(new FactoryRunProjection.QueuedRun(crashed, "codex", "gpt-5.6", "main", "abc1234", "spire/x", "spire-bot", null), null, null);
         assertEquals("SANDBOX_LOST", projection.find(crashed).orElseThrow().failureCause());
 
@@ -719,7 +719,7 @@ class FactoryRunProjectionTest {
         projection.apply(new RunResult.RunStarted(runId, "container-1"));
         projection.dispatchFailed(runId, "No broker ack within 10s");
         assertEquals(FactoryRunProjection.RUNNING, projection.find(runId).orElseThrow().status());
-        projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of(), List.of(), null, false));
+        projection.apply(new RunResult.RunFinished(runId, "refs/heads/spire/x", List.of(), List.of(), null, false, List.of()));
         FactoryRunProjection.RunView view = projection.find(runId).orElseThrow();
         assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
         assertNull(view.failureCause());
@@ -740,14 +740,14 @@ class FactoryRunProjectionTest {
         // And a terminal result straight onto the marked row, when RunStarted itself was lost.
         String finished = queuedRun();
         projection.dispatchFailed(finished, "No broker ack within 10s");
-        projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of("a"), List.of(), null, false));
+        projection.apply(new RunResult.RunFinished(finished, "refs/heads/spire/x", List.of("a"), List.of(), null, false, List.of()));
         view = projection.find(finished).orElseThrow();
         assertEquals(FactoryRunProjection.SUCCEEDED, view.status());
         assertNull(view.failureCause());
 
         // But a row that failed for any OTHER cause stays failed: that failure is the run's real end.
         String crashed = queuedRun();
-        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null));
+        projection.apply(new RunResult.RunFailed(crashed, "SANDBOX_UNREACHABLE", "daemon down", true, null, List.of()));
         projection.apply(new RunResult.RunStarted(crashed, "container-1"));
         assertEquals(FactoryRunProjection.FAILED, projection.find(crashed).orElseThrow().status());
     }

@@ -324,24 +324,71 @@ Every container of every unit runs with `cap-drop ALL`, `no-new-privileges`,
 a pids limit, and memory and CPU bounds. `SandboxControlsTest` asserts each of them
 reaches all three containers — until it was written, nothing anywhere did.
 
+### The agent's egress goes through a per-run proxy (Docker arm)
+
+The agent container holds the model credential and runs model output with a shell, so it is the one
+container whose network is closed. With `spire.run.egress.mode` at `report` (the default) or `enforce`,
+each unit gets its own `--internal` Docker network, created with the bridge option
+`com.docker.network.bridge.gateway_mode_ipv4=isolated`. `--internal` alone removes the route to other
+networks but still gives the bridge an address on the host, so an agent that ignored its proxy could
+reach any host service listening there or on `0.0.0.0`. The isolated gateway mode removes that address
+too. It needs **Docker Engine 28.0 or later**. On an older engine the worker refuses to start a unit
+behind the proxy, naming the version, rather than run it without the barrier. A leftover network under
+a unit's name is reused only when it is internal and gateway-isolated. The agent joins that network and
+nothing else: no default bridge, so no route to the host, its published ports (a developer's Postgres
+and Redpanda) or any other container. Its one way out is a per-run tinyproxy container
+(`deploy/egress`, `cap-drop ALL`, `no-new-privileges`, read-only root filesystem, 64 MiB), which sits on
+the default bridge and on the internal network as `spire-egress`, accepts clients from the internal
+subnet only, and chains to the corporate proxy when one is configured. tinyproxy reaches its upstream
+over plain HTTP only. So an `https://` corporate proxy is refused before the unit is created, naming
+`SPIRE_RUN_HTTPS_PROXY`, and is never downgraded to `http`: that would send the proxy credential in
+clear text. A percent-encoded credential is decoded first, as the corporate transport decodes it. One
+that tinyproxy's directive cannot carry (a `:` in the user name, an `@`, whitespace, a quote) is
+refused, and the refusal does not quote it. The agent's `HTTP(S)_PROXY`
+name it and its `NO_PROXY` is empty. It still gets the CA bundle, because the corporate proxy re-signs
+what it forwards.
+
+- **`report`** lets every host through and records it. The worker reads the proxy log once the agent
+  has gone and puts `(host, port, allowed)` on the run result; the orchestrator stores it in
+  `run_egress`. This is how a harness's real hosts are measured.
+- **`enforce`** refuses every host the harness does not declare (`HarnessAdapter.egressHosts`: code,
+  never the repository or the ticket). A refusal is always on the result. It becomes the failure cause,
+  `BLOCKED_EGRESS` naming the host, only when the run failed anyway. A run that finished or pushed
+  keeps its outcome, with the refused host beside it.
+- **`off`** is the kill switch: the agent goes back on the default bridge.
+
+init and the publisher stay on the default bridge. They run our own code with the forge credential,
+which the agent never sees, and they never join the agent's network. The proxy log is agent-chosen
+text, so it is parsed strictly, capped at 256 distinct attempts, and a host the secret scrub would
+change is dropped. Only hosts and ports are kept, never a URL's path or user information. The
+network and the proxy carry the run's label, and destroy, held teardown and the orphan watchdog
+remove them with the unit.
+
 ### What is NOT mitigated, stated rather than implied
 
 - **Docker socket access is root-equivalent on the host.** The run worker drives the daemon
   directly, so a compromised worker is a compromised host. The Kubernetes arm removes this; the
   Docker arm cannot.
-- **Egress is not restricted on the Docker arm.** `docs/factory/PRD.md` says egress
-  defaults to deny; that is the Kubernetes arm's NetworkPolicy. On Docker the agent container sits
-  on the default bridge and reaches whatever the host reaches. Tracked in
-  `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`.
+- **Egress is only partly restricted on the Docker arm.** The agent is behind its proxy (above), but
+  `report` is the default and lets every host through until enforce is switched on. Enforce is global,
+  with no per-repository extra hosts yet, so it is meant first for review runs and not for factory
+  builds that need package registries. Codex's declared hosts are not yet measured. The verify check
+  containers and the operator's sign-in container are still on the default bridge. In report mode a
+  plain-HTTP request may name any port, because tinyproxy restricts ports for CONNECT only. Tracked in
+  `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`
+  and `docs/UNVERIFIED.md`.
 - **One SCM token serves the clone and the push.** The design calls for a read-scoped clone token
   and a separate write token; the code packs one machine-account secret into both slots. The agent
   still cannot reach either — JGit persists no credential under `/workspace` and the
   remote is removed after clone — but the init container holds a token that can write. See
   `docs/UNVERIFIED.md` §E.
-- **The agent can read the corporate proxy credential.** Every container must route through the
-  proxy, so its URL — basic auth included — is in the agent's environment. Give the proxy a scoped
-  service account. What IS guaranteed is that it never reaches anything stored: the transcript and
-  every failure detail are scrubbed of it in all three forms it takes.
+- **The corporate proxy credential is in the unit's other containers.** With egress on, the agent no
+  longer receives the corporate proxy URL: its proxy variables name the egress proxy, which holds the
+  upstream itself. init, the publisher, the verify containers and the egress proxy still carry the
+  URL, basic auth included, in their environment, where `docker inspect` prints it. With egress `off`
+  the agent carries it too. Give the proxy a scoped service account. What IS guaranteed is that it
+  never reaches anything stored: the transcript and every failure detail are scrubbed of it in all
+  three forms it takes.
 - **There is no disk bound on a run unit.** Memory, CPU and pids are bounded; disk is not, so one
   run can fill the daemon's disk and take every other run with it.
 - **Self-reported token usage is trusted.** Nothing inside a run unit can tell an honest small usage

@@ -47,6 +47,19 @@ public interface RunRuntime {
     void destroy(RunHandle handle);
 
     /**
+     * Every host the unit's agent asked its egress proxy for, and whether the proxy let it through.
+     *
+     * <p>Read once, after {@link #salvage} and before the caller decides the result, and never followed: the proxy's
+     * log is agent-controlled text, so the read is bounded and only well-formed host and port pairs come back.
+     *
+     * <p>Empty for a unit that ran with {@link EgressPolicy#OFF}, which has no proxy, and from an arm that places no
+     * proxy at all.
+     */
+    default List<EgressAttempt> egressOf(RunHandle handle) {
+        return List.of();
+    }
+
+    /**
      * Every run unit this runtime currently holds, alive or exited, identified by its run id.
      *
      * <p><b>Named for what it returns, not for a judgement it cannot make.</b> It was

@@ -185,7 +185,7 @@ its ticket told. M5 is next.
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
-- **The two factory images are still not on GHCR.**
+- **The three factory images (agent, publisher, egress proxy) are still not on GHCR.**
 - Per-forge identity and permission limits remain separate UNVERIFIED entries. Native external
   gate answers and operator resume have no live proof. GitLab/Bitbucket native PR approvals and
   Jira Data Center comment polling remain unavailable. Publication already in progress cannot
@@ -206,15 +206,17 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
-**The factory's two images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q):
+**The factory's three images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
 
 ```bash
 ./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
+./deploy/egress/build.sh               # the agent's per-run egress proxy (spire.run.egress.mode, default report)
 ```
 
-`M0WalkingSkeletonTest` (`spire-run-worker`, `testServices`) builds the publisher image itself, plus
-a test agent image and a smart-HTTP git origin, so it needs Docker and nothing else; leftover units
+`M0WalkingSkeletonTest` (`spire-run-worker`, `testServices`) builds the publisher and egress proxy images
+itself, plus a test agent image and a smart-HTTP git origin, so it needs Docker and nothing else; `DockerRunRuntimeIT`
+builds the egress proxy image too; leftover units
 from a crashed run are `docker ps -a --filter label=dev.codespire.runId`.
 
 **Fast local verification** — the same two tiers CI runs, so this is the pre-commit loop:

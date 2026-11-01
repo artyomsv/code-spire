@@ -140,7 +140,7 @@ class RepositoryResolverCutoverTest extends RepositoryFixture {
         assertTrue(runs.queued(new FactoryRunProjection.QueuedRun(runId, "codex", "TEST-model", "main",
                 "abc1234", "TEST-feature", "TEST-factory", null), "TEST proposal", selected.id()));
         observed(ProviderRole.FACTORY, () -> proposals.propose(new RunResult.RunFinished(runId,
-                "refs/heads/TEST-feature", List.of("TEST.txt"), List.of(), null, false)));
+                "refs/heads/TEST-feature", List.of("TEST.txt"), List.of(), null, false, List.of())));
     }
 
     @Test void unmappedLegacyReviewCannotDispatch() throws Exception {

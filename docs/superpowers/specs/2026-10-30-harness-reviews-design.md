@@ -197,7 +197,9 @@ reviewed on that harness and payment (attention warning names why).
 - *Hosts are measured, never declared from memory.* A seat run calls `chatgpt.com/backend-api/…`, not only
   `api.openai.com`; `auth.openai.com` is not needed (refresh tokens never reach the agent) and must not be allowed.
   The egress proxy runs in the "report" mode `EXECUTION-LAYER.md` §5.2 specifies first, then enforces. An internal
-  Docker network has no DNS: the agent reaches the proxy by address. The proxy chains to the corporate
+  Docker network still has Docker's embedded DNS for container names, so the agent reaches the proxy by its
+  alias, `spire-egress` (corrected 2026-11-01; an earlier version said it has no DNS). An external name may
+  even resolve there, which is harmless: there is no route. The proxy chains to the corporate
   `HTTPS_PROXY`/`NO_PROXY` the unit already injects.
 - *A forge credential does enter the unit.* Init clones with the reviewer account's token, which can post (write).
   This crosses ADR-038's two-authority split and is recorded as such (`docs/UNVERIFIED.md` §E); the agent never sees it.
