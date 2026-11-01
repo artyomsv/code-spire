@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.event.IntegrationEvent;
+import dev.codespire.contract.llm.PromptCatalog;
 import dev.codespire.contract.llm.PromptKind;
 import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.review.ReviewRunBinding;
@@ -15,6 +16,7 @@ import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -37,6 +39,11 @@ public class HarnessReviewStart {
 
     /** The review's round could not be read, so no run is bound to one; a re-run asks again. */
     static final String ROUND_UNKNOWN = "review_round_unknown";
+
+    /** Composing the prompt or dispatching the run threw; the log has the cause. */
+    static final String START_FAILED = "harness_review_start_failed";
+
+    private static final Logger LOG = Logger.getLogger(HarnessReviewStart.class);
 
     @Inject
     RepositoryRegistry repositories;
@@ -116,7 +123,21 @@ public class HarnessReviewStart {
         if (round == ReviewRuns.UNKNOWN_RUN) {
             return new Refused(harness, ROUND_UNKNOWN);
         }
-        return dispatched(new Prepared(onHarness.orElseThrow(), target.orElseThrow(), round), event);
+        return startedOrRefused(new Prepared(onHarness.orElseThrow(), target.orElseThrow(), round), event);
+    }
+
+    /**
+     * Any failure while composing or dispatching refuses the review: thrown, it failed the saga's message and left the
+     * review in "reviewing" with no run and no attention row (live on spire-test #93). The decisions above are reads
+     * the API path makes too, so they keep their own failure handling.
+     */
+    private Decision startedOrRefused(Prepared prepared, IntegrationEvent.ContextAssembled event) {
+        try {
+            return dispatched(prepared, event);
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "Harness review start failed for %s; the review is refused", event.reviewId());
+            return new Refused(prepared.onHarness().harness().harness(), START_FAILED);
+        }
     }
 
     private Optional<OnHarness> onHarness(String reviewId) {
@@ -146,7 +167,10 @@ public class HarnessReviewStart {
     }
 
     private String prompt(IntegrationEvent.ContextAssembled event, FixTargets.PushTarget target) {
-        PromptTemplate review = promptTemplates.forKind(PromptKind.REVIEW, new RepoRef(target.workspace(), target.slug()));
+        // Null means no customized prompt: the API path leaves the default to the worker, a run gets it here.
+        PromptTemplate review = Optional.ofNullable(
+                        promptTemplates.forKind(PromptKind.REVIEW, new RepoRef(target.workspace(), target.slug())))
+                .orElseGet(() -> PromptCatalog.defaultTemplate(PromptKind.REVIEW));
         return HarnessReviewPrompt.compose(review, new HarnessReviewPrompt.ReviewTarget(target.workspace(),
                 target.slug(), event.prId(), event.commit(), target.destBranch()));
     }

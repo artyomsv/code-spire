@@ -51,6 +51,9 @@ class HarnessReviewStartTest {
     private Boolean fromFork = false;
     private ReviewRunDispatch.Outcome dispatchOutcome = new ReviewRunDispatch.Dispatched("TEST-run-1");
     private int round = CURRENT_RUN;
+    /** Null, as the real resolver answers for a repository with no customized prompt (the common case). */
+    private PromptTemplate customReviewPrompt;
+    private RuntimeException dispatchFailure;
 
     private final List<ReviewRunRequest> dispatched = new ArrayList<>();
 
@@ -146,6 +149,39 @@ class HarnessReviewStartTest {
         assertEquals(new HarnessReviewStart.Started("TEST-run-1", "TEST-harness"), decision);
     }
 
+    /**
+     * No customized prompt resolves to null, and the run still gets the built-in review prompt: found live on
+     * spire-test #93, where the null reached the prompt and the review stayed in "reviewing" with no run.
+     */
+    @Test
+    void aRepositoryWithoutACustomPromptIsSentTheDefaultReviewPrompt() {
+        start().start(EVENT);
+
+        assertEquals(1, dispatched.size());
+        String prompt = dispatched.getFirst().prompt();
+        assertTrue(prompt.startsWith(PromptCatalog.defaultTemplate(PromptKind.REVIEW).system()),
+                "the default review system text opens the prompt: " + prompt);
+    }
+
+    @Test
+    void aCustomizedPromptOpensTheRunsPrompt() {
+        customReviewPrompt = new PromptTemplate(PromptKind.REVIEW, "TEST-custom-system", "TEST-body");
+
+        start().start(EVENT);
+
+        assertTrue(dispatched.getFirst().prompt().startsWith("TEST-custom-system"));
+    }
+
+    /** A failure while starting refuses the review with attention; a thrown exception left it in "reviewing". */
+    @Test
+    void aStartThatFailsIsRefusedNotLeftReviewing() {
+        dispatchFailure = new IllegalStateException("TEST-failure");
+
+        HarnessReviewStart.Decision decision = start().start(EVENT);
+
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "harness_review_start_failed"), decision);
+    }
+
     private HarnessReviewStart start() {
         HarnessReviewStart start = new HarnessReviewStart();
         start.repositories = repositories();
@@ -194,6 +230,9 @@ class HarnessReviewStartTest {
         return new ReviewRunDispatch() {
             @Override
             public Outcome dispatch(ReviewRunRequest request) {
+                if (dispatchFailure != null) {
+                    throw dispatchFailure;
+                }
                 dispatched.add(request);
                 return dispatchOutcome;
             }
@@ -215,11 +254,11 @@ class HarnessReviewStartTest {
         };
     }
 
-    private static WorkerPromptTemplates prompts() {
+    private WorkerPromptTemplates prompts() {
         return new WorkerPromptTemplates() {
             @Override
             public PromptTemplate forKind(PromptKind kind, RepoRef repo) {
-                return PromptCatalog.defaultTemplate(kind);
+                return customReviewPrompt;
             }
         };
     }
