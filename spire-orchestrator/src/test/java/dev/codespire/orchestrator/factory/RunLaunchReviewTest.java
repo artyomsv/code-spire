@@ -43,6 +43,6 @@ class RunLaunchReviewTest {
                 "https://forge.example.test/TEST-WS/TEST-REPO.git", "TEST-source", head, "TEST-source", "TEST-prompt",
                 "TEST-harness", "TEST-model", "TEST-image", List.of(), 600, "TEST-scm", "TEST-key");
         return new RunCommand.ExecuteReviewRun(RUN_ID, execution,
-                new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, head, "TEST-slot"));
+                new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, head, "TEST-slot", 1));
     }
 }

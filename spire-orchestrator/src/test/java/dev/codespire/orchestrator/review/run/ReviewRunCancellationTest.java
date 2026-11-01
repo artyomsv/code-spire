@@ -52,10 +52,10 @@ class ReviewRunCancellationTest {
     }
 
     @Test
-    void aSupersededHeadCancelsTheOlderLiveRun() {
-        String older = reviewRun("REVIEW", "running", OLD);
+    void aSupersededRoundCancelsItsLiveRun() {
+        String older = reviewRun("REVIEW", "running", OLD, 1);
 
-        cancellation.supersede(reviewId, OLD);
+        cancellation.supersede(reviewId, 1);
 
         assertEquals(Set.of(older), runIds());
         assertTrue(cancelled.getFirst().reason().contains("supersed"), cancelled.getFirst().reason());
@@ -63,28 +63,42 @@ class ReviewRunCancellationTest {
 
     @Test
     void aSupersedeAfterTheRunFinishedSendsNothing() {
-        reviewRun("REVIEW", "succeeded", OLD);
+        reviewRun("REVIEW", "succeeded", OLD, 1);
 
-        cancellation.supersede(reviewId, OLD);
+        cancellation.supersede(reviewId, 1);
 
         assertEquals(List.of(), cancelled);
     }
 
     @Test
     void theNewHeadsOwnRunIsNotCancelled() {
-        String older = reviewRun("REVIEW", "running", OLD);
-        reviewRun("RECONCILE", "queued", NEW);
+        String older = reviewRun("REVIEW", "running", OLD, 1);
+        reviewRun("RECONCILE", "queued", NEW, 2);
 
-        cancellation.supersede(reviewId, OLD);
+        cancellation.supersede(reviewId, 1);
+
+        assertEquals(Set.of(older), runIds());
+    }
+
+    /**
+     * A forced re-run supersedes round 1 and requests round 2 on the SAME head (ReviewLifecycle.decideRequestReview),
+     * so the cancel is keyed by the round, never the commit: round 2's run on that head keeps running (review of PR #367).
+     */
+    @Test
+    void aForcedRerunsRunOnTheSameHeadIsNotCancelled() {
+        String older = reviewRun("REVIEW", "running", OLD, 1);
+        reviewRun("REVIEW", "queued", OLD, 2);
+
+        cancellation.supersede(reviewId, 1);
 
         assertEquals(Set.of(older), runIds());
     }
 
     @Test
     void aClosedPullRequestCancelsEveryLiveReviewRun() {
-        String review = reviewRun("REVIEW", "running", OLD);
-        String reply = reviewRun("FOLLOWUP", "queued", NEW);
-        reviewRun("RECONCILE", "succeeded", NEW);
+        String review = reviewRun("REVIEW", "running", OLD, 1);
+        String reply = reviewRun("FOLLOWUP", "queued", NEW, 2);
+        reviewRun("RECONCILE", "succeeded", NEW, 2);
 
         cancellation.close(reviewId);
 
@@ -96,7 +110,7 @@ class ReviewRunCancellationTest {
     void aFactoryRunOfTheSameReviewIsNeverCancelledHere() {
         fixRun(OLD);
 
-        cancellation.supersede(reviewId, OLD);
+        cancellation.supersede(reviewId, 1);
         cancellation.close(reviewId);
 
         assertEquals(List.of(), cancelled);
@@ -110,16 +124,16 @@ class ReviewRunCancellationTest {
      * A review run's row. A finished one carries its end: V70's CHECK ties a null {@code ended_at} to exactly the
      * statuses still going, so a terminal row without one is refused.
      */
-    private String reviewRun(String kind, String status, String commit) {
+    private String reviewRun(String kind, String status, String commit, int round) {
         String runId = runId(kind);
         exec("""
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt, status, harness, model,
                                          base_branch, base_commit, branch, kind, review_id, review_call_slot, review_pr_id,
-                                         ended_at)
+                                         review_round, ended_at)
                 VALUES (?, 'github', 'TEST-V107C', 'TEST-REPO', 'TEST-SUBJECT', 1, ?, 'TEST-harness', 'TEST-MODEL',
-                        'TEST-source', ?, 'TEST-source', ?, ?, 'TEST-slot', 7,
+                        'TEST-source', ?, 'TEST-source', ?, ?, 'TEST-slot', 7, CAST(? AS INT),
                         CASE WHEN CAST(? AS TEXT) IN ('queued', 'running') THEN NULL ELSE now() END)
-                """, runId, status, commit, kind, reviewId, status);
+                """, runId, status, commit, kind, reviewId, Integer.toString(round), status);
         return runId;
     }
 

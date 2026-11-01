@@ -38,7 +38,7 @@ class ReviewRunDispatchTest {
     private static final RepoRef REPO = new RepoRef("TEST-WS", "TEST-REPO");
     private static final String HEAD = "0123456789abcdef0123456789abcdef01234567";
     private static final ReviewRunBinding CALL =
-            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot");
+            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot", 1);
     private static final ReviewRunRequest REQUEST = new ReviewRunRequest(REPOSITORY, CALL,
             new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt");
 

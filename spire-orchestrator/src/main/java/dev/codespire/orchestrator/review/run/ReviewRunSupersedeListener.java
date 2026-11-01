@@ -21,6 +21,9 @@ public class ReviewRunSupersedeListener {
     @Inject
     ReviewRunCancellation cancellation;
 
+    @Inject
+    dev.codespire.orchestrator.llm.ReviewRuns rounds;
+
     @Incoming("review-run-supersede-in")
     @Blocking
     public void on(EventEnvelope envelope) {
@@ -28,7 +31,7 @@ public class ReviewRunSupersedeListener {
             return; // undeserializable envelope already logged by the deserializer
         }
         if (envelope.payload() instanceof DomainEvent.ReviewSuperseded superseded) {
-            cancellation.supersede(envelope.streamId(), superseded.commit());
+            cancellation.supersede(envelope.streamId(), dev.codespire.orchestrator.llm.ReviewRuns.UNKNOWN_RUN);
         }
     }
 }

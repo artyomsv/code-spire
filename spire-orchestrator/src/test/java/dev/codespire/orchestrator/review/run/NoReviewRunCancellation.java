@@ -7,7 +7,7 @@ package dev.codespire.orchestrator.review.run;
 public final class NoReviewRunCancellation extends ReviewRunCancellation {
 
     @Override
-    public void supersede(String reviewId, String supersededCommit) {
+    public void supersede(String reviewId, int supersededRound) {
         // nothing: these fixtures dispatch no review run
     }
 

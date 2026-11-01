@@ -118,4 +118,4 @@ WorkSteps(total: int, index: int, completed: java.util.List<dev.codespire.contra
 StepResult(index: int, execution: dev.codespire.contract.work.WorkExecution, empty: boolean, holdsBundle: boolean)
 
 # ReviewRunBinding
-ReviewRunBinding(reviewId: java.lang.String, kind: dev.codespire.contract.review.ReviewRunBinding$Kind, prId: long, commit: java.lang.String, callSlot: java.lang.String)
+ReviewRunBinding(reviewId: java.lang.String, kind: dev.codespire.contract.review.ReviewRunBinding$Kind, prId: long, commit: java.lang.String, callSlot: java.lang.String, round: int)

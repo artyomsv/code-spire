@@ -38,7 +38,7 @@ class ReviewRunChargesTest {
     private static final UUID SEAT = UUID.fromString("00000000-0000-4000-8000-0000000000a1");
 
     private static final ReviewRunBinding CALL =
-            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot");
+            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1);
 
     private final List<ChargeCall> recorded = new ArrayList<>();
     private final List<String> pricedAs = new ArrayList<>();
@@ -122,7 +122,7 @@ class ReviewRunChargesTest {
 
     @Test
     void aFailedReviewRunWithTokensIsStillCharged() {
-        ReviewRunBinding reconcile = new ReviewRunBinding(CALL.reviewId(), ReviewRunBinding.Kind.RECONCILE, 7, CALL.commit(), "TEST-slot");
+        ReviewRunBinding reconcile = new ReviewRunBinding(CALL.reviewId(), ReviewRunBinding.Kind.RECONCILE, 7, CALL.commit(), "TEST-slot", 1);
 
         charges().record(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 90L), List.of()),
                 reconcile);

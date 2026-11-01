@@ -274,7 +274,7 @@ class RunResultSagaTest {
     }
 
     private static final ReviewRunBinding REVIEW_CALL =
-            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot");
+            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1);
 
     /**
      * A review run's result (harness reviews, step 4) goes to the review-run port and no further: it pushed nothing to

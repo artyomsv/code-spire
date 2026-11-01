@@ -45,10 +45,9 @@ public class ReviewRunCancellation {
     @Inject
     RunCommandEmitter emitter;
 
-    /** Cancel every live review run of {@code reviewId} that reads {@code supersededCommit}, the head now replaced. */
-    public void supersede(String reviewId, String supersededCommit) {
-        String head = supersededCommit.substring(0, Math.min(COMMIT_CHARS, supersededCommit.length()));
-        cancel(underLock(reviewId, supersededCommit), "superseded: head " + head + " was replaced");
+    /** Cancel every live review run of {@code reviewId} in {@code supersededRound} or earlier: that round has ended. */
+    public void supersede(String reviewId, int supersededRound) {
+        throw new UnsupportedOperationException("a supersede is not keyed by round yet: " + reviewId);
     }
 
     /**

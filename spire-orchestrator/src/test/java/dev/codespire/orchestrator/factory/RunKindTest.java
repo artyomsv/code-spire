@@ -38,7 +38,7 @@ class RunKindTest {
                 "TEST-harness", "TEST-MODEL", "main", "TESTSHA0", "spire/TEST-s", "TEST-bot", null);
         dev.codespire.contract.review.ReviewRunBinding call = new dev.codespire.contract.review.ReviewRunBinding(
                 "review::TEST-WS/TEST-REPO#7", dev.codespire.contract.review.ReviewRunBinding.Kind.RECONCILE, 7,
-                "a".repeat(40), "TEST-slot");
+                "a".repeat(40), "TEST-slot", 1);
 
         for (RunKind review : EnumSet.of(RunKind.REVIEW, RunKind.RECONCILE, RunKind.FOLLOWUP)) {
             assertThrows(IllegalArgumentException.class, () -> row.ofKind(review), review.name());

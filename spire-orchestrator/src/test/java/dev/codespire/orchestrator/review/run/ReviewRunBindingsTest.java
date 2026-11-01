@@ -19,7 +19,7 @@ class ReviewRunBindingsTest {
     private static final String RUN_ID = "run::github:TEST-WS/TEST-REPO:review-7-aaaaaaaaaaaa-0123abcd:1";
 
     private static final ReviewRunBinding STORED =
-            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot");
+            new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1);
 
     private ReviewRunBinding stored = STORED;
 
@@ -50,8 +50,8 @@ class ReviewRunBindingsTest {
 
     @Test
     void anArtifactWhoseBindingIsNotTheRowsIsRefused() {
-        ReviewRunBinding otherHead = new ReviewRunBinding(STORED.reviewId(), STORED.kind(), 7, "b".repeat(40), "TEST-slot");
-        ReviewRunBinding otherSlot = new ReviewRunBinding(STORED.reviewId(), STORED.kind(), 7, "a".repeat(40), "TEST-other");
+        ReviewRunBinding otherHead = new ReviewRunBinding(STORED.reviewId(), STORED.kind(), 7, "b".repeat(40), "TEST-slot", 1);
+        ReviewRunBinding otherSlot = new ReviewRunBinding(STORED.reviewId(), STORED.kind(), 7, "a".repeat(40), "TEST-other", 1);
 
         assertFalse(guard().acceptsBinding(artifact(otherHead)));
         assertFalse(guard().acceptsBinding(artifact(otherSlot)));

@@ -18,7 +18,7 @@ class ExecuteReviewRunTest {
     private static final String RUN_ID = "run::github:TEST-work/app:review-7-aaaaaaaaaaaa-0123abcd:1";
 
     private static final ReviewRunBinding REVIEW =
-            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot");
+            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1);
 
     private static RunCommand.ExecuteRun execution() {
         return new RunCommand.ExecuteRun(RUN_ID, new RepoRef("TEST-work", "app"),

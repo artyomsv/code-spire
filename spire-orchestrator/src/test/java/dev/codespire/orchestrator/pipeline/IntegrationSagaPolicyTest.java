@@ -77,7 +77,7 @@ class IntegrationSagaPolicyTest {
         // The real one reads factory_run and sends on the run-control topic; this records which review a close named.
         saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.ReviewRunCancellation() {
             @Override public void close(String reviewId) { closedReviewRuns.add(reviewId); }
-            @Override public void supersede(String reviewId, String supersededCommit) {
+            @Override public void supersede(String reviewId, int supersededRound) {
                 throw new AssertionError("a supersede is heard on cs.events, not here");
             }
         };

@@ -57,7 +57,7 @@ class RunUnitBuilderReviewTest {
 
     private RunUnitSpec reviewUnit() throws Exception {
         RunCommand.ExecuteReviewRun review = new RunCommand.ExecuteReviewRun(RUN_ID, execution(RUN_ID, "TEST-source"),
-                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot"));
+                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1));
         return builder.buildReview(review, new CodexAdapter());
     }
 

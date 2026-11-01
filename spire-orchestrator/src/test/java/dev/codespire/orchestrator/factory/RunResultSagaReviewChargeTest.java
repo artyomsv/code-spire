@@ -42,7 +42,7 @@ class RunResultSagaReviewChargeTest {
     @Test
     void aReviewResultIsChargedByTheReviewChargerOnly() {
         String reviewId = "review::TEST-V107L/TEST-REPO#" + Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000);
-        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot");
+        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot", 1);
         String runId = "run::github:TEST-V107L/TEST-REPO:review-" + UUID.randomUUID() + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "TEST-harness", "TEST-MODEL", "TEST-source",
                 HEAD, "TEST-source", "TEST-bot", null).asReviewFor(call), null, null));
@@ -66,7 +66,7 @@ class RunResultSagaReviewChargeTest {
     @Test
     void anOverCapReviewAnswerStillFinishesTheRun() {
         String reviewId = "review::TEST-V107L/TEST-REPO#" + Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000);
-        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.RECONCILE, 7, HEAD, "TEST-slot");
+        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.RECONCILE, 7, HEAD, "TEST-slot", 1);
         String runId = "run::github:TEST-V107L/TEST-REPO:review-" + UUID.randomUUID() + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(runId, "TEST-harness", "TEST-MODEL", "TEST-source",
                 HEAD, "TEST-source", "TEST-bot", null).asReviewFor(call), null, null));
@@ -80,7 +80,7 @@ class RunResultSagaReviewChargeTest {
     @Test
     void aReviewRowReadsBackItsBinding() {
         String reviewId = "review::TEST-V107L/TEST-REPO#" + Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000);
-        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.FOLLOWUP, 7, HEAD, "TEST-slot");
+        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.FOLLOWUP, 7, HEAD, "TEST-slot", 2);
         String review = "run::github:TEST-V107L/TEST-REPO:review-" + UUID.randomUUID() + ":1";
         String build = "run::github:TEST-V107L/TEST-REPO:build-" + UUID.randomUUID() + ":1";
         assertTrue(projection.queued(new FactoryRunProjection.QueuedRun(review, "TEST-harness", "TEST-MODEL", "TEST-source",
@@ -97,8 +97,8 @@ class RunResultSagaReviewChargeTest {
     @Test
     void aRetryAnsweringAnotherCallIsNotReArmed() {
         String reviewId = "review::TEST-V107L/TEST-REPO#" + Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000);
-        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot");
-        ReviewRunBinding otherSlot = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot-2");
+        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot", 1);
+        ReviewRunBinding otherSlot = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot-2", 1);
         String runId = "run::github:TEST-V107L/TEST-REPO:review-" + UUID.randomUUID() + ":1";
         FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(runId, "TEST-harness", "TEST-MODEL",
                 "TEST-source", HEAD, "TEST-source", "TEST-bot", null);

@@ -198,7 +198,7 @@ public class FactoryRunProjection {
                 if (!rs.next() || !RunKind.valueOf(rs.getString("kind")).isReview()) return Optional.empty();
                 return Optional.of(new dev.codespire.contract.review.ReviewRunBinding(rs.getString("review_id"),
                         dev.codespire.contract.review.ReviewRunBinding.Kind.valueOf(rs.getString("kind")),
-                        rs.getLong("review_pr_id"), rs.getString("base_commit"), rs.getString("review_call_slot")));
+                        rs.getLong("review_pr_id"), rs.getString("base_commit"), rs.getString("review_call_slot"), 1));
             }
         } catch (SQLException e) {
             // A throw, as kindOf: an unreadable review row read as "not a review run" would charge it as a run.

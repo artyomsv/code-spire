@@ -17,7 +17,7 @@ class RunReviewArtifactTest {
     private static final String RUN_ID = "run::github:TEST-work/app:review-7-aaaaaaaaaaaa-0123abcd:1";
 
     private static final ReviewRunBinding REVIEW =
-            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.RECONCILE, 7, "a".repeat(40), "TEST-slot");
+            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.RECONCILE, 7, "a".repeat(40), "TEST-slot", 1);
 
     private static RunReviewArtifact artifact(String text, boolean overCap) {
         return new RunReviewArtifact(RUN_ID, REVIEW, text, overCap, Map.of("INPUT", 11L), 3, List.of());

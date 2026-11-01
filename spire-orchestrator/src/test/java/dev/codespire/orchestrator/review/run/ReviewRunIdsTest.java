@@ -22,7 +22,7 @@ class ReviewRunIdsTest {
     private static final String HEAD = "0123456789abcdef0123456789abcdef01234567";
 
     private static ReviewRunBinding call(ReviewRunBinding.Kind kind, String slot) {
-        return new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", kind, 7, HEAD, slot);
+        return new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", kind, 7, HEAD, slot, 1);
     }
 
     @Test

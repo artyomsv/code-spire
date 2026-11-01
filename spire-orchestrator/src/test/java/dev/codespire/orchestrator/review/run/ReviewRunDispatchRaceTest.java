@@ -91,28 +91,66 @@ class ReviewRunDispatchRaceTest {
 
     @Test
     void aSupersedeDuringFundingAdmitsNoRun() {
-        duringFunding = () -> cancellation.supersede(reviewId, HEAD);
+        duringFunding = () -> cancellation.supersede(reviewId, 1);
 
-        ReviewRunDispatch.Outcome outcome = dispatch.dispatch(request());
+        ReviewRunDispatch.Outcome outcome = dispatch.dispatch(request(HEAD, 1));
 
         assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), outcome);
         assertEquals(0, rows());
-        assertTrue(reviewLane.isEmpty(), "nothing sent for a superseded head");
+        assertTrue(reviewLane.isEmpty(), "nothing sent for a superseded round");
     }
 
-    /** Only the superseded head is refused: a supersede of another head leaves this one admissible. */
+    /** Only the superseded round is refused: the next round, dispatched while the supersede lands, is admitted. */
     @Test
-    void aSupersedeOfAnotherHeadStillAdmits() {
-        duringFunding = () -> cancellation.supersede(reviewId, OTHER_HEAD);
+    void aSupersedeOfAnEarlierRoundStillAdmits() {
+        duringFunding = () -> cancellation.supersede(reviewId, 1);
 
-        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(request()));
+        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(request(OTHER_HEAD, 2)));
+        assertEquals(1, reviewLane.size());
+    }
+
+    /**
+     * A forced re-run supersedes round 1 and requests round 2 on the SAME head (review of PR #367, code-quality/M-3).
+     * Round 1's call, in flight when the supersede landed, stays refused; round 2's call on that head is admitted.
+     */
+    @Test
+    void aForcedRerunAdmitsTheNewRoundAndStillRefusesTheOld() {
+        List<ReviewRunDispatch.Outcome> newRound = new ArrayList<>();
+        duringFunding = () -> {
+            duringFunding = () -> { };
+            cancellation.supersede(reviewId, 1);
+            newRound.add(dispatch.dispatch(request(HEAD, 2)));
+        };
+
+        ReviewRunDispatch.Outcome oldRound = dispatch.dispatch(request(HEAD, 1));
+
+        assertInstanceOf(ReviewRunDispatch.Dispatched.class, newRound.getFirst(), "the re-run's own call is admitted");
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), oldRound, "the ended round stays refused");
+        assertEquals(1, rows());
+        assertEquals(1, reviewLane.size());
+    }
+
+    /** H, then J, then H again: rounds 1 and 2 ended, and round 3 on the first head is a new round, admitted. */
+    @Test
+    void aReturnToAnEarlierHeadIsANewRound() {
+        cancellation.supersede(reviewId, 1);
+        cancellation.supersede(reviewId, 2);
+
+        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(request(HEAD, 3)));
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(request(HEAD, 1)));
         assertEquals(1, reviewLane.size());
     }
 
     private ReviewRunRequest request() {
+        return request(HEAD, 1);
+    }
+
+    /** A review call on {@code head} in {@code round}; its slot is the one CallRefs.reviewSlot gives that round. */
+    private ReviewRunRequest request(String head, int round) {
         long prId = Long.parseLong(reviewId.substring(reviewId.indexOf('#') + 1));
-        return new ReviewRunRequest(null, new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, prId, HEAD,
-                "TEST-slot"), new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt");
+        String slot = round == 1 ? head : head + "#run" + round;
+        return new ReviewRunRequest(null, new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, prId, head,
+                slot, round), new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt");
     }
 
     private void installFakes(long prId) {

@@ -27,18 +27,18 @@ class FactoryRunReviewKindsTest {
     @Inject
     DataSource dataSource;
 
-    /** Every NOT NULL column, plus the three a review row must carry. */
+    /** Every NOT NULL column, plus the four a review row must carry. */
     @Test
     void aReviewRunRowIsAdmitted() {
         for (String kind : new String[] {"REVIEW", "RECONCILE", "FOLLOWUP"}) {
-            assertDoesNotThrow(() -> insert(new Row(runId(kind), kind, REVIEW, "TEST-slot", 7L)), kind);
+            assertDoesNotThrow(() -> insert(new Row(runId(kind), kind, REVIEW, "TEST-slot", 7L, 1)), kind);
         }
     }
 
     @Test
     void anUnknownKindIsStillRefused() {
         IllegalStateException refused = assertThrows(IllegalStateException.class,
-                () -> insert(new Row(runId("unknown"), "TEST-UNKNOWN", null, null, null)));
+                () -> insert(new Row(runId("unknown"), "TEST-UNKNOWN", null, null, null, null)));
 
         assertTrue(rootCause(refused).contains("factory_run_kind_closed"), rootCause(refused));
     }
@@ -47,7 +47,7 @@ class FactoryRunReviewKindsTest {
     void aReviewRowWithoutItsReviewIsRefused() {
         for (String review : new String[] {null, " "}) {
             IllegalStateException refused = assertThrows(IllegalStateException.class,
-                    () -> insert(new Row(runId("no-review"), "REVIEW", review, "TEST-slot", 7L)), String.valueOf(review));
+                    () -> insert(new Row(runId("no-review"), "REVIEW", review, "TEST-slot", 7L, 1)), String.valueOf(review));
 
             assertTrue(rootCause(refused).contains("factory_run_fix_names_its_target"), rootCause(refused));
         }
@@ -56,9 +56,9 @@ class FactoryRunReviewKindsTest {
     @Test
     void aReviewRowWithoutItsSlotIsRefused() {
         IllegalStateException noSlot = assertThrows(IllegalStateException.class,
-                () -> insert(new Row(runId("no-slot"), "RECONCILE", REVIEW, null, 7L)));
+                () -> insert(new Row(runId("no-slot"), "RECONCILE", REVIEW, null, 7L, 1)));
         IllegalStateException noPullRequest = assertThrows(IllegalStateException.class,
-                () -> insert(new Row(runId("no-pr"), "RECONCILE", REVIEW, "TEST-slot", null)));
+                () -> insert(new Row(runId("no-pr"), "RECONCILE", REVIEW, "TEST-slot", null, 1)));
 
         assertTrue(rootCause(noSlot).contains("factory_run_review_names_its_call"), rootCause(noSlot));
         assertTrue(rootCause(noPullRequest).contains("factory_run_review_names_its_call"), rootCause(noPullRequest));
@@ -68,13 +68,31 @@ class FactoryRunReviewKindsTest {
     @Test
     void aBuildRowCarriesNoReviewCall() {
         IllegalStateException refused = assertThrows(IllegalStateException.class,
-                () -> insert(new Row(runId("build"), "BUILD", null, "TEST-slot", 7L)));
+                () -> insert(new Row(runId("build"), "BUILD", null, "TEST-slot", 7L, null)));
 
         assertTrue(rootCause(refused).contains("factory_run_review_names_its_call"), rootCause(refused));
-        assertDoesNotThrow(() -> insert(new Row(runId("build-plain"), "BUILD", null, null, null)));
+        assertDoesNotThrow(() -> insert(new Row(runId("build-plain"), "BUILD", null, null, null, null)));
     }
 
-    private record Row(String runId, String kind, String reviewId, String callSlot, Long prId) {
+    /**
+     * A review row names the round it belongs to (review of PR #367): a supersede ends a round, and the admission and the
+     * cancel compare it. A round below 1 is no round, and any other kind carries none.
+     */
+    @Test
+    void aReviewRowWithoutItsRoundIsRefused() {
+        IllegalStateException noRound = assertThrows(IllegalStateException.class,
+                () -> insert(new Row(runId("no-round"), "FOLLOWUP", REVIEW, "TEST-slot", 7L, null)));
+        IllegalStateException zeroRound = assertThrows(IllegalStateException.class,
+                () -> insert(new Row(runId("zero-round"), "REVIEW", REVIEW, "TEST-slot", 7L, 0)));
+        IllegalStateException buildRound = assertThrows(IllegalStateException.class,
+                () -> insert(new Row(runId("build-round"), "BUILD", null, null, null, 1)));
+
+        assertTrue(rootCause(noRound).contains("factory_run_review_names_its_call"), rootCause(noRound));
+        assertTrue(rootCause(zeroRound).contains("factory_run_review_names_its_call"), rootCause(zeroRound));
+        assertTrue(rootCause(buildRound).contains("factory_run_review_names_its_call"), rootCause(buildRound));
+    }
+
+    private record Row(String runId, String kind, String reviewId, String callSlot, Long prId, Integer round) {
     }
 
     private static String runId(String what) {
@@ -85,10 +103,10 @@ class FactoryRunReviewKindsTest {
         String sql = """
                 INSERT INTO factory_run (run_id, provider_type, workspace, slug, subject, attempt,
                                          status, harness, model, base_branch, base_commit, branch,
-                                         kind, review_id, review_call_slot, review_pr_id)
+                                         kind, review_id, review_call_slot, review_pr_id, review_round)
                 VALUES (?, 'github', 'TEST-V107', 'TEST-REPO', 'TEST-SUBJECT', 1,
                         'queued', 'codex', 'TEST-MODEL', 'main', 'TESTSHA0', 'spire/TEST-SUBJECT',
-                        ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?)
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, row.runId());
@@ -96,6 +114,7 @@ class FactoryRunReviewKindsTest {
             ps.setString(3, row.reviewId());
             ps.setString(4, row.callSlot());
             ps.setObject(5, row.prId(), Types.BIGINT);
+            ps.setObject(6, row.round(), Types.INTEGER);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException(sql, e);
