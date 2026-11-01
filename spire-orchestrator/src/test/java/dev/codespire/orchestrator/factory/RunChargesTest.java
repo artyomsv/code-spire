@@ -101,20 +101,17 @@ class RunChargesTest {
 
     /** Prices everything at a flat metered rate, so a line's presence is the thing under test. */
     private static final class StubPricer extends LlmModelPricer {
+        int calls;
+
         @Override
         public List<ChargeLine> priceCall(String model, ModelUsage usage) {
+            calls++;
             if (usage == null || usage.counts().isEmpty()) {
                 return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
             }
             return usage.counts().stream()
                     .map(count -> ChargeLine.metered(count.type(), count.tokens(), 1L))
                     .toList();
-        }
-
-        /** Answered for the same reason as the fakes above: the parent reads the catalogue. */
-        @Override
-        public List<ChargeLine> priceUnmetered(ModelUsage usage) {
-            return priceCall("TEST-model", usage);
         }
     }
 
@@ -337,6 +334,9 @@ class RunChargesTest {
                     Map.of("INPUT", 10L), List.of()));
         }
         assertEquals(List.of(), ledger.calls, "a review run's spend is the review's charge, not the run's");
+        // RunSpend also refuses a review kind, inside the same swallowing catch, so the writer alone cannot tell the
+        // skip from that refusal. Pricing comes before both: only the skip leaves the pricer untouched.
+        assertEquals(0, pricer.calls, "a review run is not priced by the run plane at all");
 
         runs.kind = RunKind.BUILD;
         charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));

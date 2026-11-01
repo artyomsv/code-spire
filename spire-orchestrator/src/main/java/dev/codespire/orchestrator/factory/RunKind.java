@@ -12,12 +12,11 @@ import dev.codespire.orchestrator.llm.ChargeKind;
  * prevent.
  *
  * <p><b>Not the same enum as {@link dev.codespire.orchestrator.llm.ChargeKind}, and the difference is
- * the point.</b> That one names a KIND OF CALL against the ledger and includes {@code REVIEW},
- * {@code RECONCILE} and {@code FOLLOWUP}, which no factory run can be; this one names a kind of RUN
- * and nothing else. Every run kind is also a charge kind ({@link #chargeKind}), but not the reverse,
- * and merging them would force this one to carry members V54's column refuses.
+ * the point.</b> That one names a KIND OF CALL against the ledger; this one names a kind of RUN. Since
+ * harness reviews (V107) every review call is also a run kind, because a review may run on a harness;
+ * such a run is charged under its review, not as a run ({@link #isReview}).
  *
- * <p>The values match V54's CHECK exactly. Nothing enforces that they stay matched — that is stated
+ * <p>The values match V107's CHECK exactly. Nothing enforces that they stay matched — that is stated
  * in the migration too, honestly, rather than claimed as a guarantee no mechanism provides.
  */
 public enum RunKind {
@@ -50,12 +49,14 @@ public enum RunKind {
             case FIX -> ChargeKind.FIX;
             case SPEC -> ChargeKind.SPEC;
             case PLAN -> ChargeKind.PLAN;
-            case REVIEW, RECONCILE, FOLLOWUP -> ChargeKind.BUILD;
+            case REVIEW -> ChargeKind.REVIEW;
+            case RECONCILE -> ChargeKind.RECONCILE;
+            case FOLLOWUP -> ChargeKind.FOLLOWUP;
         };
     }
 
     /** Whether this run answers a review call, and is charged under the review rather than as a run. */
     public boolean isReview() {
-        return false;
+        return this == REVIEW || this == RECONCILE || this == FOLLOWUP;
     }
 }

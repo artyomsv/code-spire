@@ -64,6 +64,28 @@ export function runStatusPill(status: string): string {
   return STATUS[status as RunStatus]?.pill ?? 'refused';
 }
 
+/**
+ * The harness review kinds, named for the review call each answers. The other kinds keep their wire name, and so
+ * does a kind this build has never heard of: the value arrives as runtime JSON.
+ */
+const REVIEW_KIND_LABEL: Partial<Record<string, string>> = {
+  REVIEW: 'Review',
+  RECONCILE: 'Re-review',
+  FOLLOWUP: 'Reply',
+};
+
+export function runKindLabel(kind: string): string {
+  return REVIEW_KIND_LABEL[kind] ?? kind;
+}
+
+/**
+ * Whether a run's charge is recorded under its review rather than under the run. Such a row shows a dash for its
+ * cost, so a review call's spend never reads as the run's own.
+ */
+function isChargedUnderItsReview(kind: string): boolean {
+  return REVIEW_KIND_LABEL[kind] !== undefined;
+}
+
 /** Whether a run is still going. An unknown status counts as finished — it is not claimed as busy. */
 export function isRunUnfinished(status: string): boolean {
   return status === 'queued' || status === 'running';
@@ -158,6 +180,11 @@ export default function Runs() {
               <option value="">All kinds</option>
               <option value="FIX">Fix</option>
               <option value="BUILD">Build</option>
+              {Object.entries(REVIEW_KIND_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
             </select>
             <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
               <option value="">All statuses</option>
@@ -213,7 +240,7 @@ export default function Runs() {
                       {shortRunId(run.runId)}
                     </Link>
                   </td>
-                  <td>{run.kind}</td>
+                  <td>{runKindLabel(run.kind)}</td>
                   <td>
                     <span className={`pill ${runStatusPill(run.status)}`}>
                       <span className="glyph" />
@@ -236,7 +263,9 @@ export default function Runs() {
                     formatCost renders null as an em dash, which is the whole point: unknown is not
                     zero, and a run still going has no charge yet. ADR-023 reaching the screen.
                   */}
-                  <td className="cell-r">{formatCost(run.cost?.millicents ?? null)}</td>
+                  <td className="cell-r">
+                    {formatCost(isChargedUnderItsReview(run.kind) ? null : (run.cost?.millicents ?? null))}
+                  </td>
                 </tr>
               ))}
             </tbody>
