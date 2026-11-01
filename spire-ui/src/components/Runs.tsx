@@ -82,7 +82,7 @@ export function runKindLabel(kind: string): string {
  * Whether a run's charge is recorded under its review rather than under the run. Such a row shows a dash for its
  * cost, so a review call's spend never reads as the run's own.
  */
-function isChargedUnderItsReview(kind: string): boolean {
+export function isChargedUnderItsReview(kind: string): boolean {
   return REVIEW_KIND_LABEL[kind] !== undefined;
 }
 
