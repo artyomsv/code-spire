@@ -154,6 +154,24 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
      * directly: a developer's database, the orchestrator, another unit. It is reached by address, since the default
      * bridge has no DNS, and from the proxy it is an ordinary outbound host, so no test depends on the internet.
      */
+    /** A port nothing else in these tests uses, for the host-side listener. */
+    private static final int HOST_LISTENER_PORT = 18765;
+
+    /**
+     * A small HTTP server in the daemon host's own network namespace, standing in for a host service (a developer's
+     * Postgres, the orchestrator): it listens on every host address, the bridges' gateway addresses included.
+     */
+    private void startHostListener() {
+        runtime.ensureImage(TARGET_IMAGE);
+        String id = runtime.client().createContainerCmd(TARGET_IMAGE)
+                .withCmd("sh", "-c", "mkdir -p /www && echo TEST-EGRESS-TARGET > /www/index.html"
+                        + " && exec httpd -f -p " + HOST_LISTENER_PORT + " -h /www")
+                .withHostConfig(com.github.dockerjava.api.model.HostConfig.newHostConfig().withNetworkMode("host"))
+                .exec().getId();
+        targets.add(id);
+        runtime.client().startContainerCmd(id).exec();
+    }
+
     private String startTarget() {
         runtime.ensureImage(TARGET_IMAGE);
         String id = runtime.client().createContainerCmd(TARGET_IMAGE)
@@ -743,6 +761,88 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         assertEquals(1, proxy.size(), "the unit must have exactly one egress proxy: " + proxy);
         assertEquals(Boolean.FALSE, runtime.client().inspectContainerCmd(proxy.getFirst().getId()).exec()
                 .getState().getRunning(), "the proxy is still running after cancel");
+    }
+
+    /**
+     * An internal network still gives its bridge an address on the host, so an agent that ignores its proxy could
+     * reach a host service through its own gateway: no allowlist, no record (Docker's gateway modes). Behind the proxy
+     * the network's gateway must lead nowhere.
+     *
+     * <p>The control is an agent on the default bridge reaching the same listener through its gateway, which proves
+     * the listener was up and that the address scheme is right, so the failure below is the barrier and not a typo.
+     */
+    @Test
+    void anAgentBehindTheProxyCannotReachAHostServiceThroughItsGateway() {
+        startHostListener();
+        String port = ":" + HOST_LISTENER_PORT + "/";
+        RunHandle control = start(unit("run_egress_gw_control",
+                "GW=$(ip route | awk '/default/ {print $3}'); " + direct("CONTROL", "http://$GW" + port), "true"));
+        List<String> controlLog = agentLog(control);
+        runtime.salvage(control);
+
+        RunHandle proxied = start(egressUnit("run_egress_gw",
+                "SRC=$(hostname -i | awk '{print $1}'); GW=${SRC%.*}.1; echo gateway=$GW; "
+                        + direct("GATEWAY", "http://$GW" + port), REPORT));
+        List<String> proxiedLog = agentLog(proxied);
+        runtime.salvage(proxied);
+
+        assertTrue(controlLog.contains("CONTROL-REACHED"),
+                "the host listener must be reachable from the default bridge, or the check below proves nothing: "
+                        + controlLog);
+        assertTrue(proxiedLog.contains("GATEWAY-FAILED"),
+                "an agent behind the proxy reached a host service through its network's gateway: " + proxiedLog);
+    }
+
+    /**
+     * A network left under the unit's name is reused only when it is the barrier the unit needs. One with the run's
+     * label that is internal but not gateway-isolated would put the agent where it can reach the host.
+     */
+    @Test
+    void aLeftoverNetworkWithoutTheIsolatedGatewayIsNotReused() {
+        String runId = "run_egress_not_isolated";
+        runtime.client().createNetworkCmd()
+                .withName(DockerRunNetworks.agentNetworkName(runId))
+                .withDriver("bridge")
+                .withInternal(true)
+                .withLabels(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId))
+                .exec();
+        started.add(new RunHandle(runId, "unknown"));
+
+        assertThrows(IllegalStateException.class, () -> runtime.create(egressUnit(runId, "true", REPORT)),
+                "an internal network without an isolated gateway must not be reused for an agent");
+    }
+
+    /**
+     * A teardown interrupted after the containers and volumes went, and before the network did, leaves a network
+     * alone. A restarted worker must still find it, by its label, and the watchdog's salvage-then-destroy must remove
+     * it, or each such run leaks a network and its subnet until no unit can get one.
+     */
+    @Test
+    void aNetworkLeftByAnInterruptedTeardownIsFoundAndRemoved() {
+        String runId = "run_egress_remnant";
+        RunHandle handle = start(egressUnit(runId, "true", REPORT));
+        runtime.salvage(handle);
+        for (Container container : runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId)).exec()) {
+            runtime.client().removeContainerCmd(container.getId()).withForce(true).exec();
+        }
+        for (var volume : runtime.client().listVolumesCmd()
+                .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=" + runId)).exec().getVolumes()) {
+            runtime.client().removeVolumeCmd(volume.getName()).exec();
+        }
+        assertFalse(labelledNetworks(runId).isEmpty(), "the remnant this test is about must exist");
+
+        DockerRunRuntime afterRestart = new DockerRunRuntime();
+        RunHandle found = afterRestart.discoverUnits().stream()
+                .filter(unit -> unit.runId().equals(runId))
+                .findFirst()
+                .orElse(null);
+        assertTrue(found != null, "a network-only remnant must be discoverable by its label");
+        assertTrue(afterRestart.salvage(found).salvaged(),
+                "nothing is left to salvage, and saying otherwise keeps the watchdog from ever destroying it");
+        afterRestart.destroy(found);
+
+        assertTrue(labelledNetworks(runId).isEmpty(), "the remnant network must be removed");
     }
 
     /** A held unit's networks and proxy go with destroyHeld, which is a teardown of its own. */

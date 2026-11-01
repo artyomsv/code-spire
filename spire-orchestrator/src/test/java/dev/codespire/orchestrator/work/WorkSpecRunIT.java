@@ -63,7 +63,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
     @Inject WorkDraftResource draftResource;
 
     private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3, List.of());
     }
 
     private byte[] bytes(String sql, Object value) throws SQLException {
@@ -194,7 +194,7 @@ class WorkSpecRunIT extends WorkSpecRunFixture {
         WorkDraftBinding foreign = new WorkDraftBinding(bound.workItemId(), bound.generation(), bound.attemptId(), bound.kind(), "e".repeat(64));
         long history = store.history(id).size();
 
-        saga.on(new RunWorkArtifact(command.runId(), foreign, SPEC, false, Map.of("INPUT", 10L), 3));
+        saga.on(new RunWorkArtifact(command.runId(), foreign, SPEC, false, Map.of("INPUT", 10L), 3, List.of()));
 
         assertEquals(history, store.history(id).size());
         assertState(store.load(id), "spec", "active", "phase_started");

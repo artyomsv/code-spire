@@ -62,7 +62,7 @@ class WorkDraftReadmitIT extends WorkSpecRunFixture {
     }
 
     private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3, java.util.List.of());
     }
 
     /**

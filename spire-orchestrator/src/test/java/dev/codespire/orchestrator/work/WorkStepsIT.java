@@ -94,7 +94,7 @@ class WorkStepsIT extends WorkSpecRunFixture {
     }
 
     private static RunWorkArtifact artifact(RunCommand.ExecuteWorkDraftRun command, String text) {
-        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3);
+        return new RunWorkArtifact(command.runId(), command.draft(), text, false, Map.of("INPUT", 10L), 3, List.of());
     }
 
     /** A generated item of {@code steps} steps, written, approved, registered, and its first step dispatched. */

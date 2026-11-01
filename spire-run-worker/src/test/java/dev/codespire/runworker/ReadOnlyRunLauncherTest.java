@@ -108,6 +108,23 @@ class ReadOnlyRunLauncherTest {
         assertTrue(artifact.activeWallSeconds() > 0);
     }
 
+    /**
+     * A specification or plan run's agent is behind the proxy like a build's, and its artifact carries what the proxy
+     * saw: the read-only units are measured too, and a refusal beside a successful draft is still shown.
+     */
+    @Test
+    void aReadOnlyRunsArtifactCarriesItsEgress() {
+        runtime.egress = List.of(new dev.codespire.runtime.EgressAttempt("api.openai.com", 443, true),
+                new dev.codespire.runtime.EgressAttempt("test-undeclared.example.test", 443, false));
+        runtime.publisherLines = List.of(artifactLine("TEST-specification"));
+
+        RunWorkArtifact artifact = assertInstanceOf(RunWorkArtifact.class, launcher.launchReadOnly(DRAFT, observer));
+
+        assertEquals(List.of(new dev.codespire.contract.event.RunResult.EgressAttempt("api.openai.com", 443, true),
+                new dev.codespire.contract.event.RunResult.EgressAttempt("test-undeclared.example.test", 443, false)),
+                artifact.egress());
+    }
+
     @Test
     void theArtifactIsScrubbedOfTheRunsSecrets() {
         runtime.publisherLines = List.of(artifactLine("TEST-spec quoting " + RunLauncherTest.MODEL_KEY + " and "

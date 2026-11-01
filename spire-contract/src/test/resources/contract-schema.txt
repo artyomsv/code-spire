@@ -55,7 +55,7 @@ VerifyWork(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBin
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
-RunWorkArtifact(runId: java.lang.String, draft: dev.codespire.contract.work.WorkDraftBinding, text: java.lang.String, repositoryChanged: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long)
+RunWorkArtifact(runId: java.lang.String, draft: dev.codespire.contract.work.WorkDraftBinding, text: java.lang.String, repositoryChanged: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, stepSummary: dev.codespire.contract.work.StepSummary, startFromHead: java.lang.String, empty: boolean, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 
 # RunVerification

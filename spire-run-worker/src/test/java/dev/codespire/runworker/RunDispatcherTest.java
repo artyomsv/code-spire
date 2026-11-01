@@ -163,7 +163,7 @@ class RunDispatcherTest {
             readOnlyLaunches++;
             observer.unitCreated(unitId, RunNotes.IGNORING);
             observer.unitReleased();
-            return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1);
+            return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1, List.of());
         }
     }
 

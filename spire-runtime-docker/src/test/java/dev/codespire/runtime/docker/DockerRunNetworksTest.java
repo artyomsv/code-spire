@@ -128,6 +128,56 @@ class DockerRunNetworksTest {
         assertTrue(config.contains("Upstream none \".corp.example.test\""), config);
     }
 
+    /**
+     * tinyproxy has no TLS to its upstream, so an https:// corporate proxy cannot be chained. Writing it as
+     * {@code Upstream http} would send CONNECT and the proxy credential in clear text to a port that expects TLS:
+     * refused, naming the setting, and without quoting the credential.
+     */
+    @Test
+    void anHttpsCorporateProxyIsRefusedNeverDowngradedToPlainHttp() {
+        EnterpriseEnvironment corporate = new EnterpriseEnvironment(List.of(), Map.of(
+                "HTTPS_PROXY", "https://TEST-user:TEST-pass@TEST-proxy.example.test:8443"));
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> DockerRunNetworks.configFor(EgressPolicy.OFF, corporate, "172.30.0.0/16"));
+
+        assertTrue(refused.getMessage().contains("SPIRE_RUN_HTTPS_PROXY"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("https"), refused.getMessage());
+        assertFalse(refused.getMessage().contains("TEST-pass"), "the refusal must not quote the credential");
+    }
+
+    /**
+     * tinyproxy builds Basic authentication from the Upstream directive as written, so a percent-encoded password
+     * must reach it decoded, as the corporate transport already decodes it. '+' is a plus, not a space.
+     */
+    @Test
+    void anEncodedProxyCredentialIsDecodedForTheUpstream() {
+        EnterpriseEnvironment corporate = new EnterpriseEnvironment(List.of(), Map.of(
+                "HTTPS_PROXY", "http://TEST-user:TEST-p%25ss+word@TEST-proxy:3128"));
+
+        String config = DockerRunNetworks.configFor(EgressPolicy.OFF, corporate, "172.30.0.0/16");
+
+        assertTrue(config.contains("Upstream http TEST-user:TEST-p%ss+word@TEST-proxy:3128"), config);
+    }
+
+    /**
+     * What tinyproxy's directive cannot hold is refused rather than rendered into a line it would parse differently:
+     * a ':' in the user name, an '@' in the password, whitespace or a quote anywhere.
+     */
+    @Test
+    void aCredentialTheUpstreamDirectiveCannotHoldIsRefused() {
+        for (String url : List.of("http://TEST%3Auser:TEST-pass@TEST-proxy:3128",
+                "http://TEST-user:TEST-p%40ss@TEST-proxy:3128",
+                "http://TEST-user:TEST-p%20ss@TEST-proxy:3128",
+                "http://TEST-user:TEST-p%22ss@TEST-proxy:3128")) {
+            EnterpriseEnvironment corporate = new EnterpriseEnvironment(List.of(), Map.of("HTTPS_PROXY", url));
+
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> DockerRunNetworks.configFor(EgressPolicy.OFF, corporate, "172.30.0.0/16"), url);
+            assertFalse(refused.getMessage().contains("TEST-p"), "the refusal must not quote the credential: " + url);
+        }
+    }
+
     @Test
     void aCorporateProxyThatCannotBeChainedIsRefusedRatherThanIgnored() {
         EnterpriseEnvironment corporate = new EnterpriseEnvironment(List.of(), Map.of("HTTPS_PROXY", "http://TEST-proxy"));

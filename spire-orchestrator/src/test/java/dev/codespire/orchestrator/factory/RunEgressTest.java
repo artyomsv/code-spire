@@ -2,6 +2,8 @@ package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunWorkArtifact;
+import dev.codespire.contract.work.WorkDraftBinding;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -78,6 +80,18 @@ class RunEgressTest {
 
         assertEquals(2, rows(runId).size());
         assertEquals(first, firstSeen(runId));
+    }
+
+    /** A successful specification or plan run is measured like a build: its artifact's egress is stored. */
+    @Test
+    void anArtifactsEgressIsStored() throws SQLException {
+        String runId = queuedRun();
+
+        projection.apply(new RunWorkArtifact(runId,
+                new WorkDraftBinding("TEST-item", 1, UUID.randomUUID(), WorkDraftBinding.Kind.SPEC, "d".repeat(64)),
+                "TEST-specification", false, null, 1, SEEN));
+
+        assertEquals(List.of(new Row("api.openai.com", 443, true), new Row(REFUSED_HOST, 443, false)), rows(runId));
     }
 
     /** A result with no egress (no proxy, or an old worker) stores nothing, and is not an error. */

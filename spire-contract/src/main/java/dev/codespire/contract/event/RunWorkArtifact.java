@@ -13,13 +13,15 @@ import java.util.Objects;
  */
 public record RunWorkArtifact(String runId, dev.codespire.contract.work.WorkDraftBinding draft, String text,
                               boolean repositoryChanged, Map<String, Long> tokenUsage,
-                              long activeWallSeconds) implements RunResult {
+                              long activeWallSeconds, java.util.List<RunResult.EgressAttempt> egress) implements RunResult {
 
     /** The transport cap in UTF-8 bytes, the publisher's own cap on the handoff file. */
     public static final int MAX_TEXT_BYTES = 32 * 1024;
 
     public RunWorkArtifact {
         if (runId == null || runId.isBlank()) throw new IllegalArgumentException("An artifact needs its run");
+        // An artifact written before the field existed reads as none: that worker had no proxy to report on.
+        egress = egress == null ? java.util.List.of() : java.util.List.copyOf(egress);
         Objects.requireNonNull(draft, "An artifact needs its draft binding");
         if (text == null || text.isBlank()) throw new IllegalArgumentException("An artifact needs its text");
         int bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
@@ -34,6 +36,11 @@ public record RunWorkArtifact(String runId, dev.codespire.contract.work.WorkDraf
 
     /** Rebuild carrying measured usage, enumerating the components once. */
     public RunWorkArtifact withUsage(Map<String, Long> usage) {
-        return new RunWorkArtifact(runId, draft, text, repositoryChanged, usage, activeWallSeconds);
+        return new RunWorkArtifact(runId, draft, text, repositoryChanged, usage, activeWallSeconds, egress);
+    }
+
+    /** Rebuild carrying what the agent asked its egress proxy for, enumerating the components once. */
+    public RunWorkArtifact withEgress(java.util.List<RunResult.EgressAttempt> attempts) {
+        return new RunWorkArtifact(runId, draft, text, repositoryChanged, tokenUsage, activeWallSeconds, attempts);
     }
 }
