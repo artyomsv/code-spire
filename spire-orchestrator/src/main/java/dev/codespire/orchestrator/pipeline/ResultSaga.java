@@ -131,7 +131,10 @@ public class ResultSaga {
     dev.codespire.orchestrator.review.run.HarnessReviewStart harnessStart;
 
     /** The phase a harness review's refusal and failure are recorded under. */
-    static final String HARNESS_PHASE = "harness-review";
+    public static final String HARNESS_PHASE = "harness-review";
+
+    /** What a dropped harness outcome is called on the timeline. */
+    private static final String HARNESS_OUTCOME = "HarnessReview";
 
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
@@ -139,12 +142,27 @@ public class ResultSaga {
 
     /**
      * A harness review run's outcome (harness reviews, step 5): a {@code ReviewGenerated} or a {@code ReviewFailed}
-     * built from the run's result, taken through the same outcome path as a worker's, never charged again.
+     * built from the run's result, taken through the same outcome path as a worker's, never charged again:
+     * {@code ReviewRunCharges} charged the run under the review's call slot.
      *
-     * <p>Not built yet: the red phase of step 5 declares the entry point so the tests compile.
+     * <p>It arrives from the run-results consumer, not this saga's per-review ordered one, so both outcomes pass the
+     * stale-run guard here, a failure included (docs/UNVERIFIED.md, first reviews on a harness).
      */
     public void acceptHarnessOutcome(IntegrationEvent outcome) {
-        throw new UnsupportedOperationException("not built yet");
+        if (!(outcome instanceof ReviewGenerated) && !(outcome instanceof ReviewFailed)) {
+            throw new IllegalArgumentException("A harness review outcome is a ReviewGenerated or a ReviewFailed, not "
+                    + outcome.getClass().getSimpleName());
+        }
+        MDC.put("reviewId", reviewIdOf(outcome));
+        try {
+            switch (outcome) {
+                case ReviewGenerated e -> ifCurrentRun(e.reviewId(), e.commit(), HARNESS_OUTCOME, () -> onReviewGenerated(e));
+                case ReviewFailed e -> ifCurrentRun(e.reviewId(), e.commit(), HARNESS_OUTCOME, () -> onReviewFailed(e));
+                default -> LOG.debugf("No harness outcome for %s", outcome.getClass().getSimpleName());
+            }
+        } finally {
+            MDC.remove("reviewId");
+        }
     }
 
     @Incoming("results-in")

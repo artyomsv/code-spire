@@ -87,6 +87,18 @@ change under review, and its findings are posted through the API review's own ou
   `refs/spire-base/<target>`, but Codex loads `AGENTS.md` from its working directory before it reads the prompt, and
   the working directory is the head commit. So a change that edits `AGENTS.md` may steer its own review. This is
   inferred from Codex's documented behaviour, not measured on a run.
+- **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
+  and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
+  hands it to `ResultSaga.acceptHarnessOutcome` from there. So a push, a re-run or a close for the same review may be
+  processed at the same moment as the answer. The mitigations: the round check drops an ended round's answer,
+  `ifCurrentRun` drops one for a commit that is no longer current, `RecordReviewOutcome` is commit-guarded in the
+  aggregate, and the worker re-checks the pull request's head before it posts. No test races the two consumers, so a
+  window between the round read and the post is argued, not measured. Routing the answer through `cs.results` would
+  close it and needs an orchestrator producer for that topic.
+- **Redelivery is absorbed, not prevented.** A redelivered `RunReviewArtifact` emits a second `PostComments`; the
+  worker's run-token check posts it once, and the charge deduplicates on `UNIQUE (call_ref, token_type)`. A
+  redelivered `ContextAssembled` funds the run once more before admission answers `AlreadyQueued`, so a seat token can
+  be handed over for nothing. Neither is driven by a test.
 
 **What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
 harness, its findings posted with a verdict; and one pull request whose change edits `AGENTS.md` with an instruction

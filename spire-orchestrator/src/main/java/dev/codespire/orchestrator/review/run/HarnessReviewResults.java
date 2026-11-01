@@ -1,32 +1,122 @@
 package dev.codespire.orchestrator.review.run;
 
+import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunReviewArtifact;
+import dev.codespire.contract.llm.Completion;
+import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewRunBinding;
+import dev.codespire.llm.FindingsParser;
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
+import dev.codespire.orchestrator.factory.RunTokenUsage;
 import dev.codespire.orchestrator.llm.ReviewRuns;
 import dev.codespire.orchestrator.pipeline.ResultSaga;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 /**
  * A harness review run's answer becomes the review's outcome (harness reviews, step 5): the artifact is parsed into
- * findings and handed to {@link ResultSaga#acceptHarnessOutcome}, a failed run fails the review, and a result of an
- * ended round is dropped.
+ * findings with the API review's own parser and handed to {@link ResultSaga#acceptHarnessOutcome}, a failed run fails
+ * the review once, and a result of an ended round is dropped.
  *
- * <p>Not built yet: the red phase of step 5 declares the class and its collaborators so the tests compile. It is not a
- * bean until it is built, because {@link RecordingReviewRunResults} still answers the port and two beans would be
- * ambiguous; building it makes this the bean and deletes that one.
+ * <p>Never charged here: {@code ReviewRunCharges} already charged the run under the review's call slot. Reconcile and
+ * follow-up answers are only logged until steps 6 and 7. The artifact's text is never logged: it is model output about
+ * the reviewed code and may quote it (SECURITY.md).
  */
+@ApplicationScoped
 public class HarnessReviewResults implements ReviewRunResults {
 
+    private static final Logger LOG = Logger.getLogger(HarnessReviewResults.class);
+
+    /** How the run plane names a cancel; one that arrives before the run started is a failure with this cause. */
+    static final String CANCELLED = "CANCELLED";
+
+    static final String CANCELLED_ERROR = "Harness review run cancelled";
+
+    static final String OVER_CAP_SUMMARY = "The harness answer was larger than 256 KiB and was not read.";
+
+    /** The model named when the run's row cannot be read, as {@code ReviewRunCharges} names it. */
+    private static final String UNRECORDED_MODEL = "UNRECORDED";
+
+    @Inject
     ResultSaga saga;
 
+    @Inject
     ReviewRuns runs;
 
+    @Inject
     FactoryRunProjection runRows;
 
-    long maxReportedTokens = -1;
+    /** The ceiling {@code ReviewRunCharges} reads usage under, so the review's usage and its charge agree. */
+    @ConfigProperty(name = "spire.run.max-reported-tokens", defaultValue = "-1")
+    long maxReportedTokens;
 
     @Override
     public void accept(RunResult result, ReviewRunBinding binding) {
-        throw new UnsupportedOperationException("not built yet");
+        log(result, binding);
+        if (binding.kind() != ReviewRunBinding.Kind.REVIEW) {
+            return;
+        }
+        if (!(result instanceof RunReviewArtifact) && !(result instanceof RunResult.RunFailed)) {
+            return;
+        }
+        int current = runs.currentRun(binding.reviewId());
+        if (binding.round() != current) {
+            // A supersede, a close or a re-run ended this round: its answer or its cancel is never said to the review.
+            LOG.infof("review run %s answered round %d of %s, whose current round is %d: dropped", result.runId(),
+                    binding.round(), binding.reviewId(), current);
+            return;
+        }
+        saga.acceptHarnessOutcome(outcome(result, binding));
+    }
+
+    private IntegrationEvent outcome(RunResult result, ReviewRunBinding binding) {
+        return switch (result) {
+            case RunReviewArtifact answer -> new IntegrationEvent.ReviewGenerated(binding.reviewId(), binding.prId(),
+                    binding.commit(), resultOf(answer));
+            case RunResult.RunFailed failed -> failure(failed, binding);
+            default -> throw new IllegalStateException("A review run's outcome is an answer or a failure, not "
+                    + result.getClass().getSimpleName());
+        };
+    }
+
+    /** An unparsable answer is degraded inside the parser; one over the cap is degraded here, never a lost paid run. */
+    private ReviewResult resultOf(RunReviewArtifact answer) {
+        String model = runRows.modelOf(answer.runId()).orElse(UNRECORDED_MODEL);
+        ModelUsage usage = RunTokenUsage.of(answer, model, maxReportedTokens);
+        if (answer.overCap()) {
+            return ReviewResult.degraded(OVER_CAP_SUMMARY, usage);
+        }
+        return FindingsParser.parse(new Completion(answer.text(), usage, false));
+    }
+
+    /**
+     * Retry budget 1: the operator re-runs the review. Never credential-rejected: that flag marks the REVIEWER's forge
+     * account, and a refused seat is already marked by the run plane's credential feedback.
+     */
+    private static IntegrationEvent failure(RunResult.RunFailed failed, ReviewRunBinding binding) {
+        String error = CANCELLED.equals(failed.cause()) ? CANCELLED_ERROR
+                : "Harness review run failed: " + failed.cause();
+        return new IntegrationEvent.ReviewFailed(binding.reviewId(), binding.commit(), ResultSaga.HARNESS_PHASE, error,
+                false, 1, false);
+    }
+
+    private static void log(RunResult result, ReviewRunBinding binding) {
+        switch (result) {
+            case RunReviewArtifact answer -> LOG.infof("review run %s answered %s %s on %s: %s",
+                    answer.runId(), binding.kind(), binding.reviewId(), binding.commit(), describe(answer));
+            case RunResult.RunFailed failed -> LOG.infof("review run %s for %s %s failed: %s",
+                    failed.runId(), binding.kind(), binding.reviewId(), failed.cause());
+            default -> LOG.debugf("review run %s for %s: %s", result.runId(), binding.reviewId(),
+                    result.getClass().getSimpleName());
+        }
+    }
+
+    private static String describe(RunReviewArtifact answer) {
+        return answer.overCap() ? "over the " + RunReviewArtifact.MAX_TEXT_BYTES + " byte cap, no text"
+                : answer.text().length() + " characters";
     }
 }
