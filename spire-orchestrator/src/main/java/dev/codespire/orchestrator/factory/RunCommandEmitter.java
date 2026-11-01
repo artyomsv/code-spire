@@ -37,6 +37,15 @@ public class RunCommandEmitter {
     @Channel("run-control-out")
     Emitter<RunCommand> control;
 
+    /**
+     * Harness review runs, onto {@code cs.review-runs}: the run-worker's review lane (harness reviews, step 4). A
+     * different topic for the reason control has one: the build lane's consumer holds each record for its whole run,
+     * so a review published there would wait behind an hour-long build.
+     */
+    @Inject
+    @Channel("review-runs-out")
+    Emitter<RunCommand> reviews;
+
     public void dispatch(RunCommand command) {
         KafkaSends.sendAndAwait(commands, command.runId(), command,
                 "run command " + command.getClass().getSimpleName() + " for " + command.runId());
@@ -44,7 +53,8 @@ public class RunCommandEmitter {
 
     /** A harness review run, onto {@code cs.review-runs}: the run-worker's review lane, never the build lane. */
     public void dispatchReview(RunCommand command) {
-        throw new UnsupportedOperationException("the review lane is not wired yet: " + command.runId());
+        KafkaSends.sendAndAwait(reviews, command.runId(), command,
+                "review run " + command.getClass().getSimpleName() + " for " + command.runId());
     }
 
     public void control(RunCommand command) {

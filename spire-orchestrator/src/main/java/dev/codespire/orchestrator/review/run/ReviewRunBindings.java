@@ -1,9 +1,13 @@
 package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunReviewArtifact;
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
+
+import java.util.Optional;
 
 /**
  * The run-result guard for harness review runs (harness reviews, step 4): a {@code RunReviewArtifact} whose binding is
@@ -12,11 +16,22 @@ import jakarta.inject.Inject;
 @ApplicationScoped
 public class ReviewRunBindings {
 
+    private static final Logger LOG = Logger.getLogger(ReviewRunBindings.class);
+
     @Inject
     FactoryRunProjection runs;
 
     /** Whether this result may be projected: true for every result but a review artifact naming another call. */
     public boolean acceptsBinding(RunResult result) {
-        return true;
+        if (!(result instanceof RunReviewArtifact answer)) {
+            return true;
+        }
+        Optional<dev.codespire.contract.review.ReviewRunBinding> stored = runs.reviewBindingOf(answer.runId());
+        if (stored.isPresent() && stored.get().equals(answer.review())) {
+            return true;
+        }
+        LOG.warnf("review run %s: its answer names %s, which is not the call its row stores; neither projected nor "
+                + "charged", answer.runId(), answer.review().reviewId());
+        return false;
     }
 }

@@ -93,6 +93,22 @@ class RunResultSagaReviewChargeTest {
         assertEquals(java.util.Optional.empty(), projection.reviewBindingOf(build));
     }
 
+    /** A re-arm takes only the identical request: a retry answering another call would charge this answer under it. */
+    @Test
+    void aRetryAnsweringAnotherCallIsNotReArmed() {
+        String reviewId = "review::TEST-V107L/TEST-REPO#" + Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000);
+        ReviewRunBinding call = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot");
+        ReviewRunBinding otherSlot = new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot-2");
+        String runId = "run::github:TEST-V107L/TEST-REPO:review-" + UUID.randomUUID() + ":1";
+        FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(runId, "TEST-harness", "TEST-MODEL",
+                "TEST-source", HEAD, "TEST-source", "TEST-bot", null);
+        assertTrue(projection.queued(row.asReviewFor(call), null, null));
+        projection.dispatchFailed(runId, "TEST-no-ack");
+
+        assertEquals(false, projection.queued(row.asReviewFor(otherSlot), null, null), "another call is another request");
+        assertTrue(projection.queued(row.asReviewFor(call), null, null), "the identical request re-arms");
+    }
+
     private String status(String runId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("SELECT status FROM factory_run WHERE run_id = ?")) {

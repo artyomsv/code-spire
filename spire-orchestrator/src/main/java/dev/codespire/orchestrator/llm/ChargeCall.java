@@ -52,9 +52,13 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
                 callRef, kind, model, lines, null);
     }
 
-    /** A harness review run's spend: the reviewer capability, against the review, naming the key or seat that paid. */
+    /**
+     * A harness review run's spend (harness reviews, step 4): the reviewer capability, against the review, naming the
+     * key or seat that paid. The run made the call, but the review is what the call was for and what its cap counts.
+     */
     public static ChargeCall forReview(ReviewSpend spend, String model, List<ChargeLine> lines) {
-        throw new UnsupportedOperationException("review run charges are not recorded yet: " + spend.reviewId());
+        return new ChargeCall(spend.reviewId(), ChargeSubject.REVIEW, ChargeCapability.REVIEW,
+                spend.callRef(), spend.kind(), model, lines, spend.credentialRef());
     }
 
     /**

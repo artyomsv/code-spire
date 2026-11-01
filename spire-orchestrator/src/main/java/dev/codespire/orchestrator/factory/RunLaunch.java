@@ -86,27 +86,27 @@ public class RunLaunch {
      * us nothing about whether the record left — which is the whole rule here.
      */
     public Outcome launch(RunCommand.ExecuteRun command) {
-        return dispatch(command);
+        return dispatch(command, emitter::dispatch);
     }
 
     public Outcome launch(RunCommand.ExecuteWorkRun command) {
-        return dispatch(command);
+        return dispatch(command, emitter::dispatch);
     }
 
     /** A specification or plan run (M4 slice 3): the same three outcomes, the same row updates. */
     public Outcome launch(RunCommand.ExecuteWorkDraftRun command) {
-        return dispatch(command);
+        return dispatch(command, emitter::dispatch);
     }
 
     /** A harness review run: the same three outcomes, the same row updates, on the review lane. */
     public Outcome launch(RunCommand.ExecuteReviewRun command) {
-        throw new UnsupportedOperationException("review runs are not launched yet: " + command.runId());
+        return dispatch(command, emitter::dispatchReview);
     }
 
-    private Outcome dispatch(RunCommand command) {
+    private Outcome dispatch(RunCommand command, java.util.function.Consumer<RunCommand> lane) {
         String runId = command.runId();
         try {
-            emitter.dispatch(command);
+            lane.accept(command);
             return new Dispatched();
         } catch (IllegalStateException e) {
             if (e instanceof BrokerAckFailure ack && !ack.mayHaveLanded()) {

@@ -22,6 +22,11 @@ public class ReviewRunWallClock {
 
     /** @throws IllegalStateException when {@code reviewSeconds} is above {@code buildSeconds} */
     static void check(long reviewSeconds, long buildSeconds) {
-        // Not yet: step 4 refuses here.
+        if (reviewSeconds > buildSeconds) {
+            throw new IllegalStateException("spire.factory.review-wall-clock-seconds (" + reviewSeconds
+                    + ") is above spire.factory.wall-clock-seconds (" + buildSeconds + "); lower the review bound "
+                    + "(SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS) or raise the build bound, or every review run is "
+                    + "refused by the run-worker after it was paid for");
+        }
     }
 }
