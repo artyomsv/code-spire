@@ -655,6 +655,22 @@ public class FactoryRunProjection {
 
     public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
         boolean changed;
+        try (Connection c = dataSource.getConnection()) {
+            changed = queued(c, row, taskSummary, repositoryId);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to record run " + row.runId(), e);
+        }
+        if (changed) push(row.runId());
+        return changed;
+    }
+
+    /**
+     * The same write on the caller's connection, inside its transaction: a harness review run is admitted under a lock
+     * its cancellation shares, so the row and the check that allowed it commit together (ADR-050). The caller announces
+     * the row with {@link #queuedCommitted} once its transaction has committed; a push before the commit would show a
+     * row that may yet be rolled back.
+     */
+    public boolean queued(Connection c, QueuedRun row, String taskSummary, UUID repositoryId) throws SQLException {
         String runId = row.runId();
         String harness = row.harness();
         String model = row.model();
@@ -724,7 +740,7 @@ public class FactoryRunProjection {
                    AND factory_run.review_call_slot IS NOT DISTINCT FROM EXCLUDED.review_call_slot
                    AND factory_run.review_pr_id IS NOT DISTINCT FROM EXCLUDED.review_pr_id
                 """;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, runId);
             ps.setString(2, parsed.scmType().providerType());
             ps.setString(3, parsed.workspace());
@@ -757,12 +773,13 @@ public class FactoryRunProjection {
             ps.setString(26, DISPATCH_FAILED);
             // 1 on insert and on a re-arm; 0 when ON CONFLICT matched a row the WHERE declined to
             // touch. That 0 used to be discarded, and the dispatch went ahead anyway.
-            changed = ps.executeUpdate() == 1;
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to record run " + runId, e);
+            return ps.executeUpdate() == 1;
         }
-        if (changed) push(runId);
-        return changed;
+    }
+
+    /** Announce a row written through {@link #queued(Connection, QueuedRun, String, UUID)} after its commit. */
+    public void queuedCommitted(String runId) {
+        push(runId);
     }
 
     /**

@@ -391,7 +391,9 @@ waits behind a build. The run worker reads two command topics:
 | review | `cs.review-runs` | `spire-run-worker-reviews` | `SPIRE_RUN_REVIEW_CONCURRENCY` (default 2), its own pool |
 
 The review lane takes the same `execute` and `cancel` claims as the build lane, so a redelivered command
-starts no second unit and a cancel that arrives before the start stops it ever starting. Its ack budget follows
+starts no second unit and a cancel that arrives before the start stops it ever starting. It reads from `earliest`,
+so a command sent before the group's first assignment, or onto a new partition, is still run; the claims make that
+replay safe. Its ack budget follows
 the build lane's rule (wall clock + drain + 300 s, one record per poll). The concurrency is **per instance**: with
 replicas the total multiplies, and `cs.review-runs` needs at least as many partitions as replicas for the extra
 instances to receive any. Nothing creates the topic with a partition count today; Kafka auto-creates it with the
@@ -403,6 +405,11 @@ the review's artifact cap (`SPIRE_ARTIFACT_MAX_BYTES=262144`; a draft keeps 32 K
 ordered parts on separate outcome lines, each small enough that its JSON-escaped line stays under the 64 KiB line
 cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
 answer with no text, which is charged, never a lost run.
+
+A superseded head or a closed pull request cancels the review's live review runs with `CancelRun`. A run still being
+funded has no row yet, so the orchestrator admits a review run's row under an advisory lock per review that the
+cancellation also takes: the admission refuses the run when the pull request is no longer `OPEN` or its head is
+recorded as superseded (V108, `review_run_cancel`), and sends only after its row commits.
 
 ## 7. What leaves the pod, and how
 

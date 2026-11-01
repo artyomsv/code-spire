@@ -101,7 +101,7 @@ its charge is recorded under; every component is required and `prId` is positive
 start and an existing branch, and its credentials are the execution's, sealed with the run's AAD and redacted from
 `toString`. The run ID is deterministic: subject `review-<prId>-<commit12>-<slotDigest>` (8 hex of SHA-256 over
 `kind|callSlot`), attempt 1, so a redelivered dispatch is dropped by the worker's execute claim. The run-worker's
-review lane (`review-runs-in`, group `spire-run-worker-reviews`, a bounded pool of its own) takes the execute and
+review lane (`review-runs-in`, group `spire-run-worker-reviews`, offset reset `earliest`, a bounded pool of its own) takes the execute and
 cancel claims and launches the read-only unit; its publisher receives `SPIRE_ARTIFACT_MAX_BYTES=262144` and writes
 the artifact as ordered parts of at most 8 KiB each, so an escaped line stays under the 64 KiB outcome line cap.
 The result is `RunReviewArtifact(runId, review, text, overCap, tokenUsage, activeWallSeconds, egress)` on
@@ -113,7 +113,9 @@ and charges the run once, under `CallRefs.of(reviewId, callSlot, kind)` with the
 `credential_ref` (unmetered on a seat); `RunCharges` skips the three review kinds. The result then goes to the
 review-run port and no further: no draft inbox, no work-run inbox, no pull request proposal. A superseded head
 (`ReviewSuperseded` names the old commit) or a closed pull request sends `CancelRun` on `cs.run-control` for the
-review's live review runs, never `CancelReview` (ADR-013).
+review's live review runs, never `CancelReview` (ADR-013). The row is admitted under an advisory lock per review that
+the cancellation shares, and refused as `review_run_cancelled` when `review_status.pr_state` is not `OPEN` or V108's
+`review_run_cancel` records its head as superseded, so a cancellation during funding is never lost.
 
 `WorkItemEvent` gains the component `draft` (`WorkDraft`, M4 slice 3, A4), carried by every wither:
 `mode` (`generated`), the stored `specification` and `plan` references (`STORED` only), the revision counts (at most

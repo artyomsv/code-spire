@@ -54,7 +54,7 @@ class ReviewRunDispatchTest {
     private ReviewRunDispatch dispatch() {
         ReviewRunDispatch dispatch = new ReviewRunDispatch();
         dispatch.funding = funding();
-        dispatch.runs = runs();
+        dispatch.admission = admission();
         dispatch.launch = launch();
         dispatch.accounts = accounts();
         dispatch.targets = targets();
@@ -131,17 +131,13 @@ class ReviewRunDispatchTest {
         };
     }
 
-    private FactoryRunProjection runs() {
-        return new FactoryRunProjection() {
+    /** The real one admits under the review's lock in a transaction; ReviewRunDispatchRaceTest drives that one. */
+    private ReviewRunAdmission admission() {
+        return new ReviewRunAdmission() {
             @Override
-            public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
+            public Admission admit(FactoryRunProjection.QueuedRun row, UUID repositoryId) {
                 rows.add(row);
-                return rowAccepted;
-            }
-
-            @Override
-            protected void push(String runId) {
-                throw new AssertionError("unexpected live broadcast");
+                return rowAccepted ? Admission.ADMITTED : Admission.ALREADY_QUEUED;
             }
         };
     }

@@ -35,7 +35,7 @@ public class ReviewRunDispatch {
     RunFunding funding;
 
     @Inject
-    FactoryRunProjection runs;
+    ReviewRunAdmission admission;
 
     @Inject
     RunLaunch launch;
@@ -77,21 +77,28 @@ public class ReviewRunDispatch {
     }
 
     public Outcome dispatch(ReviewRunRequest request) {
-        Optional<Target> target = target(request);
-        if (target.isEmpty()) {
-            return new Refused("review_run_target_unavailable");
-        }
+        return target(request).map(target -> fundAndAdmit(request, target))
+                .orElseGet(() -> new Refused("review_run_target_unavailable"));
+    }
+
+    private Outcome fundAndAdmit(ReviewRunRequest request, Target target) {
         RunFunding.Funded funded;
         try {
             funded = funding.fund(request.choice());
         } catch (IllegalStateException refusal) {
             return new Refused(refusal.getMessage());
         }
-        String runId = ReviewRunIds.of(target.get().repo(), target.get().type(), request.binding());
-        RunCommand.ExecuteReviewRun command = command(runId, request, target.get(), funded);
-        if (!runs.queued(row(command, request, target.get(), funded), null, request.repositoryId())) {
-            return new AlreadyQueued(runId);
-        }
+        String runId = ReviewRunIds.of(target.repo(), target.type(), request.binding());
+        RunCommand.ExecuteReviewRun command = command(runId, request, target, funded);
+        // Admitted under the lock a close or supersede takes, so a cancellation during funding refuses this row.
+        return switch (admission.admit(row(command, request, target, funded), request.repositoryId())) {
+            case CANCELLED -> new Refused("review_run_cancelled");
+            case ALREADY_QUEUED -> new AlreadyQueued(runId);
+            case ADMITTED -> launched(runId, command);
+        };
+    }
+
+    private Outcome launched(String runId, RunCommand.ExecuteReviewRun command) {
         return switch (launch.launch(command)) {
             case RunLaunch.Dispatched ignored -> new Dispatched(runId);
             // Both are recorded on the row by the launch; a definite miss is re-armable by the identical retry.
@@ -105,15 +112,11 @@ public class ReviewRunDispatch {
      * the reviewer has no login a clone credential could carry.
      */
     private Optional<Target> target(ReviewRunRequest request) {
-        Optional<FixTargets.PushTarget> pullRequest = targets.forReview(request.binding().reviewId());
-        Optional<ScmProvider> reviewer = accounts.resolve(request.repositoryId(), ProviderRole.REVIEWER)
-                .filter(account -> login(account) != null);
-        if (pullRequest.isEmpty() || reviewer.isEmpty()) {
-            return Optional.empty();
-        }
-        FixTargets.PushTarget found = pullRequest.get();
-        return ScmType.fromProviderType(found.providerType()).map(type -> new Target(
-                new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(), reviewer.get()));
+        return targets.forReview(request.binding().reviewId()).flatMap(found -> accounts
+                .resolve(request.repositoryId(), ProviderRole.REVIEWER)
+                .filter(account -> login(account) != null)
+                .flatMap(reviewer -> ScmType.fromProviderType(found.providerType()).map(type -> new Target(
+                        new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(), reviewer))));
     }
 
     private RunCommand.ExecuteReviewRun command(String runId, ReviewRunRequest request, Target target,

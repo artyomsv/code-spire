@@ -25,7 +25,9 @@ review behind an hour-long build would wait an hour.
 - **Its own lane.** `ExecuteReviewRun` rides `cs.review-runs`, read by a second consumer in the run-worker (group
   `spire-run-worker-reviews`) on a bounded pool of its own, `SPIRE_RUN_REVIEW_CONCURRENCY` (default 2) per
   run-worker instance. Across replicas the cap scales with them and needs `cs.review-runs` partitions at least the
-  replica count. A long build never delays a review.
+  replica count. A long build never delays a review. The lane reads from `earliest`: a command sent before the
+  group's first assignment, or onto a new partition, is still run, and the execute and cancel claims make the replay
+  safe.
 - **Read-only.** The unit is ADR-049's read-only topology: no write credential, `spire-publish-none`. The clone
   credential is the REVIEWER account's, never the factory's; init clones, the agent never holds it.
 - **A bigger answer, never a lost one.** A review's artifact cap is 256 KiB (a draft's stays 32 KiB), carried to the
@@ -37,7 +39,10 @@ review behind an hour-long build would wait an hour.
 - **Deterministic, cancellable.** The run id derives from the pull request, the head, the kind and the slot, so a
   redelivered dispatch is dropped by the worker's execute claim. A superseded head (from `cs.events` on its own
   group, offset latest) or a closed pull request sends `CancelRun` for the review's live review runs; never
-  `CancelReview` (ADR-013).
+  `CancelReview` (ADR-013). A run still being funded has no row to cancel, so dispatch and cancellation share one
+  advisory lock per review: `ReviewRunAdmission` refuses the run (`review_run_cancelled`) when `review_status.pr_state`
+  is not `OPEN` or V108's `review_run_cancel` names its head, and inserts the row in the same transaction; the send
+  follows the commit. A close writes no intent row, because a reopened pull request keeps its review id.
 - **A review's wall clock** (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`, default 900) may not exceed a build's;
   startup refuses otherwise, since the run-worker would refuse the unit after it was paid for.
 
@@ -50,6 +55,9 @@ review behind an hour-long build would wait an hour.
   two-authority split, recorded in docs/UNVERIFIED.md until a read-scoped clone token exists.
 - A supersede missed while the orchestrator was down leaves a run that finishes and is charged: a cost, never a
   wrong review.
+- `review_run_cancel` keeps one small row per superseded head and is never swept. A row matters only while a dispatch
+  for that head could still be in flight, which is seconds, so a sweep would be safe; it is not built because the rows
+  are tens of bytes and grow with pushes, not with time. Sweep them with the review archive if that ever matters.
 
 **Rejected.**
 - **Running the harness in the review worker.** ADR-029: the review worker holds forge clients and no sandbox.
