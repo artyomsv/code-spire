@@ -37,7 +37,7 @@ import java.util.Map;
  *       double-count the whole run. This is that consumer.</li>
  * </ul>
  */
-final class RunTokenUsage {
+public final class RunTokenUsage {
 
     private RunTokenUsage() {
     }
@@ -87,8 +87,11 @@ final class RunTokenUsage {
      * <p><b>Unset means unlimited</b>, matching every other cap in ADR-025. A plausible default
      * would be a number this code invented about somebody else's models, and the wrong one would
      * silently unprice honest runs.
+     *
+     * <p>Public for one more reader: a harness review run's charge (ReviewRunCharges, harness reviews step 4) is priced
+     * from the same report under the same ceiling, so the two charges can never read one result differently.
      */
-    static ModelUsage of(RunResult result, String model, long ceiling) {
+    public static ModelUsage of(RunResult result, String model, long ceiling) {
         Map<String, Long> reported = usageOf(result);
         if (reported == null || reported.isEmpty()) {
             // Null IS unknown on the wire, and it stays unknown here. Building zero-valued counts
@@ -196,6 +199,7 @@ final class RunTokenUsage {
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
             case RunWorkArtifact artifact -> artifact.tokenUsage();
+            case dev.codespire.contract.event.RunReviewArtifact review -> review.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
         };

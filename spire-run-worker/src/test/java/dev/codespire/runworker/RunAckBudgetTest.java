@@ -115,6 +115,52 @@ class RunAckBudgetTest {
                 () -> RunAckBudget.verifyControl(Duration.ofHours(2), 1, RunAckBudget.DEFAULT_QUEUE_FACTOR));
     }
 
+    /**
+     * The review lane holds its record for a review's whole run like the build lane does (harness reviews, step 4), so
+     * the same wall clock + drain + allowance rule applies to {@code review-runs-in}. Every other setting here is valid,
+     * so only the review lane's threshold can be what is refused.
+     */
+    @Test
+    void theReviewLaneMustOutliveItsLongestRun() {
+        RunAckBudget budget = budgetWithValidBuildAndControlLanes();
+        budget.reviewMaxAgeMs = WALL_CLOCK.toMillis();
+        budget.reviewPollRecords = 1;
+        budget.reviewQueueSizeFactor = 1;
+
+        IllegalStateException refusal = assertThrows(IllegalStateException.class, () -> budget.check(null));
+        assertTrue(refusal.getMessage().contains("review-runs-in"), refusal.getMessage());
+
+        budget.reviewMaxAgeMs = Duration.ofMinutes(41).toMillis();
+        assertDoesNotThrow(() -> budget.check(null), "a threshold that outlives a run, its drain and its ack is enough");
+    }
+
+    /** A prefetched review ages behind the one in hand exactly as a build does. */
+    @Test
+    void theReviewLaneMayNotPrefetch() {
+        RunAckBudget budget = budgetWithValidBuildAndControlLanes();
+        budget.reviewMaxAgeMs = Duration.ofMinutes(41).toMillis();
+        budget.reviewPollRecords = RunAckBudget.DEFAULT_POLL_RECORDS;
+        budget.reviewQueueSizeFactor = 1;
+
+        IllegalStateException refusal = assertThrows(IllegalStateException.class, () -> budget.check(null));
+        assertTrue(refusal.getMessage().contains("review-runs-in"), refusal.getMessage());
+    }
+
+    private static RunAckBudget budgetWithValidBuildAndControlLanes() {
+        RunLauncherTest.FakeRuntime arm = new RunLauncherTest.FakeRuntime();
+        arm.drainWindow = DRAIN;
+        RunAckBudget budget = new RunAckBudget();
+        budget.runtime = arm;
+        budget.maxWallClockSeconds = WALL_CLOCK.toSeconds();
+        budget.maxAgeMs = Duration.ofMinutes(41).toMillis();
+        budget.pollRecords = 1;
+        budget.queueSizeFactor = 1;
+        budget.controlMaxAgeMs = Duration.ofMinutes(15).toMillis();
+        budget.controlPollRecords = 1;
+        budget.controlQueueSizeFactor = 1;
+        return budget;
+    }
+
     @Test
     void acceptsTheShippedControlSettings() {
         // The half that keeps the guard from being unconditional.

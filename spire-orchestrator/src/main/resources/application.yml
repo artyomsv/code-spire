@@ -174,6 +174,18 @@ mp:
         value:
           serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
         waitForWriteCompletion: true
+      # Harness review runs ride their own topic, the run-worker's review lane (harness reviews, step 4): the build
+      # lane's consumer holds each record for its whole run, so a review there would wait behind a build.
+      review-runs-out:
+        connector: smallrye-kafka
+        # acks=all for the reason given on run-commands-out above: a leader-only ack can be lost.
+        acks: all
+        topic: cs.review-runs
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+        value:
+          serializer: dev.codespire.orchestrator.factory.RunCommandSerializer
+        waitForWriteCompletion: true
       # Control rides its own topic, read by a listener beside the worker's executor rather than
       # behind it. Published here so an operator has a way to reach it: the consumer shipped first
       # and nothing produced to this topic, which made cancel reachable only by hand.
@@ -375,6 +387,21 @@ mp:
           # name — reuse the envelope serializer events-out publishes with
           value:
             serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      # The superseded head's review run is cancelled from cs.events, on a group of its own (harness reviews, step 4).
+      # Not events-in: that projector is rebuildable and replays from the start, and a replay must never send a
+      # cancel. Latest, so a new group starts at the present; a supersede missed while the orchestrator was down
+      # leaves a run that finishes and is charged, which is a cost, never a wrong review.
+      review-run-supersede-in:
+        connector: smallrye-kafka
+        topic: cs.events
+        group:
+          id: spire-orchestrator-review-run-cancel
+        value:
+          deserializer: dev.codespire.orchestrator.eventstore.EnvelopeDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: ignore
       dlq-in:
         connector: smallrye-kafka
         topic: cs.dlq
@@ -415,6 +442,9 @@ spire:
     agent-image:
       codex: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:spire-agent-codex:latest}
     wall-clock-seconds: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:1800}
+    # A harness review run's wall clock (harness reviews, step 4). A tuning knob with a default; startup refuses
+    # one above wall-clock-seconds, because the run-worker would refuse the unit after it was paid for.
+    review-wall-clock-seconds: ${SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS:900}
     # What a /fix run uses, since nobody types it. NO DEFAULTS on purpose: an operator who has
     # not named both has not turned /fix on, and the command says which key is missing rather
     # than picking a harness and a price on their behalf. Both are refused at dispatch, before a

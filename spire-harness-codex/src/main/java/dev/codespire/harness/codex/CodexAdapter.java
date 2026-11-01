@@ -68,6 +68,21 @@ public final class CodexAdapter implements HarnessAdapter {
      */
     private static final int LOGIN_FAILED = 120;
 
+    /**
+     * Codex's calls a run never needs, switched off for every run. Measured live on the dev stack on 2026-11-01 (design
+     * "After step 2"): plugins call {@code github.com}, {@code api.github.com} and {@code chatgpt.com}, and analytics
+     * calls {@code ab.chatgpt.com}. Off, the hosts a run declares are only the ones its model needs.
+     */
+    private static final String NO_EXTRA_CALLS = " -c features.plugins=false -c analytics.enabled=false";
+
+    /** A seat also calls the apps endpoints (measured the same day); a key run was never seen to. */
+    private static final String NO_APPS = " -c features.apps=false";
+
+    /** The content hosts a seat run was measured calling on 2026-11-01, beside the ChatGPT backend. */
+    private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com",
+            "sdmntprcentralus.oaiusercontent.com", "sdmntprsouthcentralus.oaiusercontent.com",
+            "sdmntprwestus.oaiusercontent.com");
+
     @Override
     public HarnessType type() {
         return HarnessType.CODEX;
@@ -132,6 +147,7 @@ public final class CodexAdapter implements HarnessAdapter {
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
+                + extraCallsOff(invocation)
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
                 + " -";
         return List.of("sh", "-c", script);
@@ -156,6 +172,11 @@ public final class CodexAdapter implements HarnessAdapter {
         }
         return "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
                 + " || exit " + LOGIN_FAILED + "; ";
+    }
+
+    /** The flags that switch off what a run never needs; a seat run also switches off apps. */
+    private static String extraCallsOff(HarnessInvocation invocation) {
+        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
     }
 
     /**
@@ -423,13 +444,14 @@ public final class CodexAdapter implements HarnessAdapter {
      * run. The orchestrator empties a seat's refresh token before it reaches a run, so a run has nothing to renew there,
      * and an agent that could reach it could only try to mint a credential it was never given.
      *
-     * <p>Not yet measured: these are the hosts the CLI is documented and observed to call, and report mode records
-     * what it really calls before enforce is recommended (docs/UNVERIFIED.md).
+     * <p>Measured in report mode on 2026-11-01 (design "After step 2"): with plugins and analytics off, a key run needs
+     * only the model API, and a seat run the ChatGPT backend and three content hosts. Where a seat's content-host calls
+     * come from is not settled yet (docs/UNVERIFIED.md).
      */
     @Override
     public java.util.Set<String> egressHosts(HarnessInvocation invocation) {
         return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)
-                ? java.util.Set.of("chatgpt.com")
+                ? SEAT_HOSTS
                 : java.util.Set.of("api.openai.com");
     }
 

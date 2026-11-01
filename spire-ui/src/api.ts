@@ -1148,7 +1148,7 @@ export type RunStatus =
   | 'delivered_unfinished';
 
 /** What a run was dispatched to do. `SPEC` and `PLAN` are M4 and are not produced yet. */
-export type RunKind = 'BUILD' | 'FIX' | 'SPEC' | 'PLAN';
+export type RunKind = 'BUILD' | 'FIX' | 'SPEC' | 'PLAN' | 'REVIEW' | 'RECONCILE' | 'FOLLOWUP';
 
 /**
  * What a run cost, or the honest statement that nobody knows.

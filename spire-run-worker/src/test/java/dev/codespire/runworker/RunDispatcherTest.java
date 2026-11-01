@@ -165,6 +165,25 @@ class RunDispatcherTest {
             observer.unitReleased();
             return new RunWorkArtifact(draft.runId(), draft.draft(), "TEST-specification", false, null, 1, List.of());
         }
+
+        /** Harness review runs (harness reviews, step 4), counted apart so a test sees which lane launched. */
+        int reviewLaunches;
+
+        /** What a review run reports; null means an answer built from the command. */
+        RunResult reviewResult;
+
+        @Override
+        public RunResult launchReview(RunCommand.ExecuteReviewRun review, RunObserver observer) {
+            order.add("launch-review");
+            reviewLaunches++;
+            observer.unitCreated(unitId, RunNotes.IGNORING);
+            if (onLaunch != null) {
+                onLaunch.run();
+            }
+            observer.unitReleased();
+            return reviewResult != null ? reviewResult : new dev.codespire.contract.event.RunReviewArtifact(
+                    review.runId(), review.review(), "TEST-findings", false, null, 1, List.of());
+        }
     }
 
     static final class FakeEmitter implements Emitter<Record<String, RunResult>> {
@@ -444,6 +463,22 @@ class RunDispatcherTest {
 
         assertEquals(0, heldExecutions[0]);
         assertEquals(1, launcher.readOnlyLaunches);
+    }
+
+    /**
+     * A review run read on the build lane is acked and launched nowhere (harness reviews, step 4): it rides
+     * cs.review-runs, and running it here would queue a review behind an hour-long build.
+     */
+    @Test
+    void aReviewRunOnTheBuildLaneLaunchesNothing() {
+        Delivery delivery = new Delivery(order);
+
+        dispatcher.onCommand(delivery.of(ReviewRunDispatcherTest.REVIEW)).toCompletableFuture().join();
+
+        assertTrue(delivery.acked, "the record is settled, not redelivered forever");
+        assertEquals(0, launcher.launches + launcher.readOnlyLaunches + launcher.reviewLaunches);
+        assertTrue(claims.taken.isEmpty(), "and its execute slot stays free for the review lane: " + claims.taken);
+        assertTrue(results.sent.isEmpty());
     }
 
     @Test

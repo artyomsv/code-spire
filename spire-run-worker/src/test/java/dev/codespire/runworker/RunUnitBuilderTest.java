@@ -488,7 +488,9 @@ class RunUnitBuilderTest {
 
         assertEquals(new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of("api.openai.com")),
                 builder.build(command(), new CodexAdapter()).egress());
-        assertEquals(new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of("chatgpt.com")),
+        assertEquals(new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of("chatgpt.com",
+                        "sdmntprcentralus.oaiusercontent.com", "sdmntprsouthcentralus.oaiusercontent.com",
+                        "sdmntprwestus.oaiusercontent.com")),
                 builder.build(command().paidBySignIn(), new CodexAdapter()).egress());
     }
 

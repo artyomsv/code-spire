@@ -220,6 +220,7 @@ class RepositoryResolverCutoverTest extends RepositoryFixture {
         set(fix, "config", new FactoryConfig() {
             public Map<String, String> agentImage() { return Map.of("codex", "TEST-image"); }
             public long wallClockSeconds() { return 1; }
+            public long reviewWallClockSeconds() { return 1; }
             public Fix fix() { return new Fix() {
                 public Optional<String> harness() { return Optional.of("codex"); }
                 public Optional<String> model() { return Optional.of("TEST-model"); }

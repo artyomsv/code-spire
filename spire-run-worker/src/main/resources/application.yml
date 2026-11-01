@@ -147,6 +147,15 @@ spire:
     registry-username: ${SPIRE_RUN_REGISTRY_USERNAME:}
     registry-secret: ${SPIRE_RUN_REGISTRY_SECRET:}
 
+# The review lane's worker pool (harness reviews, step 4): ReviewRunDispatcher's @Blocking names it. Each review run
+# holds one of its threads for the run's whole wall clock, so this is how many reviews run at once on ONE run-worker
+# instance. Across replicas the deployment runs this many per replica, as far as cs.review-runs has partitions for them.
+smallrye:
+  messaging:
+    worker:
+      review-runs:
+        max-concurrency: ${SPIRE_RUN_REVIEW_CONCURRENCY:2}
+
 mp:
   messaging:
     incoming:
@@ -219,6 +228,34 @@ mp:
         #  - a threshold with room for one run's wall clock anyway, as the second line: the manual
         #    ack lands within milliseconds, but a claim-store outage delays it by however long the
         #    database takes to answer, and that must not become a dead consumer.
+        max:
+          poll:
+            records: 1
+        max-queue-size-factor: 1
+        throttled:
+          unprocessed-record-max-age:
+            ms: 3900000
+      # The review lane (harness reviews, step 4): its own topic and group, so a review never waits behind an hour-long
+      # build on the ordered work channel above. Read exactly as that channel is -- acked on receipt by
+      # ReviewRunDispatcher once the claim row is written, one record per poll, no prefetch, and a threshold RunAckBudget
+      # holds to the same wall clock + drain + allowance rule -- because each record is held for a review's whole run.
+      review-runs-in:
+        connector: smallrye-kafka
+        topic: cs.review-runs
+        group:
+          id: spire-run-worker-reviews
+        value:
+          deserializer: dev.codespire.runworker.RunCommandDeserializer
+        # Earliest (review of PR #367). Under latest a review command sent before this group's first assignment, or
+        # onto a partition added to scale, was skipped for ever while its row stayed queued and a retry answered
+        # AlreadyQueued. Replaying from the start is safe: the execute claim drops a command already run, and a cancel
+        # claim refuses one that was cancelled, so only a command never run and never cancelled runs now.
+        auto:
+          offset:
+            reset: earliest
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: cs.dlq
         max:
           poll:
             records: 1

@@ -75,10 +75,35 @@ public class RunAckBudget {
             defaultValue = "" + DEFAULT_QUEUE_FACTOR)
     int controlQueueSizeFactor;
 
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.throttled.unprocessed-record-max-age.ms",
+            defaultValue = "" + DEFAULT_MAX_AGE_MS)
+    long reviewMaxAgeMs;
+
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.max.poll.records",
+            defaultValue = "" + DEFAULT_POLL_RECORDS)
+    int reviewPollRecords;
+
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.max-queue-size-factor",
+            defaultValue = "" + DEFAULT_QUEUE_FACTOR)
+    int reviewQueueSizeFactor;
+
     void check(@Observes StartupEvent event) {
-        verify(Duration.ofSeconds(maxWallClockSeconds), runtime.drainWindow(), Duration.ofMillis(maxAgeMs),
-                pollRecords, queueSizeFactor);
+        Duration wallClock = Duration.ofSeconds(maxWallClockSeconds);
+        Duration drain = runtime.drainWindow();
+        verify(wallClock, drain, Duration.ofMillis(maxAgeMs), pollRecords, queueSizeFactor);
+        // The review lane (harness reviews, step 4) under the same rule: a review run holds its pool thread for the
+        // run's wall clock, and a record polled while every thread is busy ages behind them.
+        verifyLane(wallClock, drain, new LaneSettings(REVIEW_CHANNEL, Duration.ofMillis(reviewMaxAgeMs),
+                reviewPollRecords, reviewQueueSizeFactor));
         verifyControl(Duration.ofMillis(controlMaxAgeMs), controlPollRecords, controlQueueSizeFactor);
+    }
+
+    static final String WORK_CHANNEL = "run-commands-in";
+
+    static final String REVIEW_CHANNEL = "review-runs-in";
+
+    /** One run-holding lane's three settings, named by its channel so a refusal says which lane it is. */
+    record LaneSettings(String channel, Duration maxAge, int pollRecords, int queueSizeFactor) {
     }
 
     /**
@@ -116,10 +141,16 @@ public class RunAckBudget {
      *              after the wall clock, which is part of the budget rather than head-room
      */
     static void verify(Duration wallClock, Duration drain, Duration maxAge, int pollRecords, int queueSizeFactor) {
-        if (pollRecords != 1 || queueSizeFactor != 1) {
-            throw new IllegalStateException("run-commands-in must poll one record with no prefetch "
-                    + "(max.poll.records=1, max-queue-size-factor=1); found " + pollRecords + " and "
-                    + queueSizeFactor + ". A prefetched record ages behind the running unit for its whole "
+        verifyLane(wallClock, drain, new LaneSettings(WORK_CHANNEL, maxAge, pollRecords, queueSizeFactor));
+    }
+
+    /** The rule for any lane whose handler holds its record's turn for a run's wall clock and drain. */
+    static void verifyLane(Duration wallClock, Duration drain, LaneSettings lane) {
+        Duration maxAge = lane.maxAge();
+        if (lane.pollRecords() != 1 || lane.queueSizeFactor() != 1) {
+            throw new IllegalStateException(lane.channel() + " must poll one record with no prefetch "
+                    + "(max.poll.records=1, max-queue-size-factor=1); found " + lane.pollRecords() + " and "
+                    + lane.queueSizeFactor() + ". A prefetched record ages behind the running unit for its whole "
                     + "wall clock and fails the channel however promptly the handler acks.");
         }
         // The handler holds the ordered channel for the wall clock, then the publisher's drain
@@ -127,7 +158,7 @@ public class RunAckBudget {
         // from 30s to 300s once and the guard did not notice.
         Duration needed = wallClock.plus(drain).plus(ACK_ALLOWANCE);
         if (maxAge.compareTo(needed) < 0) {
-            throw new IllegalStateException("run-commands-in throttled.unprocessed-record-max-age.ms is "
+            throw new IllegalStateException(lane.channel() + " throttled.unprocessed-record-max-age.ms is "
                     + maxAge.toMillis() + " but a run may take " + wallClock.toSeconds() + "s plus the "
                     + "publisher's " + drain.toSeconds() + "s drain plus " + ACK_ALLOWANCE.toSeconds()
                     + "s for the ack to land; the consumer would die on the first run that outlives it "

@@ -134,6 +134,16 @@ public class RunUnitBuilder {
         return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher()));
     }
 
+    /**
+     * A harness review run's unit (harness reviews, step 4): the read-only topology, with the review answer's artifact
+     * cap handed to the publisher.
+     */
+    public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter adapter) {
+        RunUnitSpec unit = build(review.execution(), adapter, Topology.READ_ONLY);
+        return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
+                dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
+    }
+
     /** Where a retried build's init reads the previous run's handoff. */
     static final String CHECKPOINT_PATH = "/checkpoint";
 

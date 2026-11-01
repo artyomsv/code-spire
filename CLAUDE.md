@@ -56,7 +56,7 @@ the live proof of land, and the [specification, plan and steps acceptance record
 the live proof of M4's exit criterion. **M3, M3.5, M4 and GitHub reviews are on master.** On GitHub a
 one-line ticket now becomes a specification and a plan, builds step by step with each step verified,
 delivers one PR, gets a review with a verdict, and on an approved land is merged, its branch deleted and
-its ticket told. M5 is next.
+its ticket told. M5 is next; harness reviews are being built alongside it.
 
 - **The reviewer (P0–P4) is delivered.** Gateway, orchestrator and review worker communicate over
   Kafka, with the React dashboard. Bitbucket Cloud, GitHub and GitLab have measured live reviewer
@@ -164,6 +164,15 @@ its ticket told. M5 is next.
   Live on `spire-test`: #70 ran the whole chain, #71 proved Regenerate, Revise and an empty step, #75 met
   M4's exit criterion (three verified steps on one chain, step 1's decision in step 3's prompt), and #77
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
+
+- **Harness reviews, step 4: the review-run plumbing** (PR #367, ADR-050, design
+  docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review may run as a read-only factory run of kind
+  `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane, `cs.review-runs` (offset `earliest`, its own
+  pool, `SPIRE_RUN_REVIEW_CONCURRENCY` runs per run-worker instance), so it never waits behind a build. Its answer,
+  `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts; one over the cap is still charged. It is charged once under the
+  review's call slot, never as a run; its wall clock (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`) may not exceed a build's;
+  a supersede cancels its review round's runs (rounds, not commits, so a forced re-run on the same head is admitted)
+  and a closed pull request cancels all of them, a dispatch in flight included (V108, one advisory lock per review). **Nothing dispatches a review run until step 5.** The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

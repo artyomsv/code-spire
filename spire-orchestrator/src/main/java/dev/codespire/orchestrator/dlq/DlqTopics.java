@@ -45,12 +45,15 @@ final class DlqTopics {
 
     private static final Set<String> RUN_COMMAND_TYPES = Set.of("ExecuteRun", "VerifyWork");
 
+    /** The run-worker's review lane (harness reviews, step 4): a review run never replays onto the build lane. */
+    static final String REVIEW_RUNS = "cs.review-runs";
+
     /** What a verify unit found (M4): its own topic, never cs.run-results, where the item bridge reads results. */
     static final String RUN_VERIFICATIONS = "cs.run-verifications";
 
     private static final Set<String> RUN_CONTROL_TYPES = Set.of("CancelRun", "SteerRun");
 
-    private static final Set<String> RUN_RESULT_TYPES = Set.of("RunStarted", "RunFinished", "RunFailed");
+    private static final Set<String> RUN_RESULT_TYPES = Set.of("RunStarted", "RunFinished", "RunFailed", "RunReviewArtifact");
 
     /**
      * The harness side channels (M3.5 parts F and M). Without these a dead-lettered model-list or
@@ -84,6 +87,7 @@ final class DlqTopics {
         if (RUN_COMMAND_TYPES.contains(type)) {
             return RUN_COMMANDS;
         }
+        if ("ExecuteReviewRun".equals(type)) return REVIEW_RUNS;
         if (RUN_CONTROL_TYPES.contains(type)) {
             return RUN_CONTROL;
         }

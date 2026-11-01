@@ -239,3 +239,41 @@ reviewed on that harness and payment (attention warning names why).
 6. Re-reviews (reconcile) on a harness.
 7. Replies on a harness.
 8. Fork pull requests on a harness, once steps 2 and 3 are accepted for that harness and payment.
+
+## After step 2 (2026-11-01; overrides the delivery order above)
+
+**The operator deferred step 3.** The credential-injecting proxy protects fork pull requests, whose code is written by
+anyone and whose findings are posted in public. A same-repository pull request is opened by someone who already has
+write access to the repository, so for steps 4 to 7 the agent holds the model credential as the factory's agent does,
+behind the step 2 network. Step 3 is built right before step 8, and step 8 still waits for it. Until then a fork pull
+request on a repository that reviews with a harness is not reviewed on the harness, and an attention warning names
+why.
+
+**Measured in step 2, live, report mode** (dev stack, `spire-test` #85 on a seat and #87 on an API key, every host on
+port 443, none refused):
+
+| Host | Seat | API key |
+|---|---|---|
+| `chatgpt.com` | yes | yes |
+| `ab.chatgpt.com` | yes | yes |
+| `api.openai.com` | no | yes |
+| `github.com` | no | yes |
+| `sdmntprcentralus`, `sdmntprsouthcentralus`, `sdmntprwestus` `.oaiusercontent.com` | yes | no |
+
+**Measured for step 3 with the real agent image (codex-cli 0.156.1), fake credentials, a capture server on an internal
+network.** Injection works for both payments over plain HTTP inside the unit, with no TLS termination:
+
+- *API key:* a custom provider (`model_provider=spire`, `model_providers.spire.base_url=http://<proxy>/v1`,
+  `env_key` naming a placeholder variable, `wire_api=responses`) sends `POST /v1/responses` with
+  `Authorization: Bearer <placeholder>`; no `codex login` and no `auth.json` are needed. `OPENAI_BASE_URL` is ignored
+  and the built-in `openai` provider cannot be overridden.
+- *Seat:* a custom provider with `requires_openai_auth=true` plus `chatgpt_base_url`, both at the proxy, sends
+  `/backend-api/codex/{models,responses}` and `/backend-api/wham/{accounts/check,settings/user}` with the bearer token
+  and `chatgpt-account-id`. The `auth.json` may hold unsigned placeholder JWTs with an empty refresh token; the
+  access token needs a far-future `exp`, or Codex tries `auth.openai.com`. The built-in provider fails on workspace
+  routing discovery and cannot be used.
+- *Extra hosts:* `features.plugins=false` stops `github.com`, `api.github.com` and `chatgpt.com` (plugins);
+  `analytics.enabled=false` stops `ab.chatgpt.com` (metrics); a seat also needs `features.apps=false`.
+- *Not settled without real credentials:* whether the real routing answer redirects Codex to another origin, whether
+  chatgpt.com accepts the requests unchanged, where the `oaiusercontent.com` calls come from, and which paths long runs
+  (remote compaction) add. Step 3 settles these live before it is accepted.

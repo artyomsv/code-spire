@@ -96,6 +96,30 @@ public class ReviewRuns {
         }
     }
 
+    /**
+     * The round a {@code ReviewSuperseded} at {@code sequence} ended: the requests before it in the review's stream
+     * (harness reviews, step 4, review of PR #367). Read from the append-only log by position, so it is the same
+     * whenever it is asked, and never counts the request the supersede was emitted with. {@link #UNKNOWN_RUN} when it
+     * could not be read: a cancel keyed by round must skip rather than guess.
+     */
+    public int roundSupersededAt(String reviewId, long sequence) {
+        String sql = "SELECT count(*) FROM event_log WHERE stream_id = ? AND event_type = ? AND sequence < ?";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, REQUEST_EVENT);
+            ps.setLong(3, sequence);
+            try (ResultSet rs = ps.executeQuery()) {
+                int requests = rs.next() ? rs.getInt(1) : 0;
+                // A supersede follows the request of the round it ends; none before it is no round to end.
+                return requests >= FIRST_RUN ? requests : UNKNOWN_RUN;
+            }
+        } catch (SQLException e) {
+            LOG.errorf(e, "Could not read the round the supersede of %s ended -- cancelling no review run rather "
+                    + "than guessing one", reviewId);
+            return UNKNOWN_RUN;
+        }
+    }
+
     public int currentRun(String reviewId) {
         String sql = "SELECT count(*) FROM event_log WHERE stream_id = ? AND event_type = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

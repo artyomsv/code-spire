@@ -97,6 +97,12 @@ public class RunCharges {
         String runId = result.runId();
         String model = runs.modelOf(runId).orElse(UNRECORDED_MODEL);
         try {
+            // A review run's spend is charged once, under its review's call slot (ReviewRunCharges). Charging it here
+            // too would count one call twice against the cap. Inside the guard: the kind is a database read.
+            Optional<RunKind> runKind = runs.kindOf(runId);
+            if (runKind.filter(RunKind::isReview).isPresent()) {
+                return;
+            }
             // Pricing sits INSIDE the guard, not one line above it. LlmModelPricer defends its own
             // SQL and arithmetic, but a stored pricing_mode the enum does not recognise throws
             // IllegalArgumentException out of valueOf — which would reach the messaging layer and
@@ -114,7 +120,7 @@ public class RunCharges {
             String credentialRef = credential.map(UUID::toString).orElse(null);
             // The run's own kind, from its row: a fix run is FIX and a specification run SPEC. A run with
             // no row is charged as a build, as every run was before the ledger read the kind.
-            ChargeKind kind = runs.kindOf(runId).map(RunKind::chargeKind).orElse(ChargeKind.BUILD);
+            ChargeKind kind = runKind.map(RunKind::chargeKind).orElse(ChargeKind.BUILD);
             ledger.recordCharges(ChargeCall.forRun(new RunSpend(runId, CallRefs.forRun(runId, AGENT_CALL),
                     kind, credentialRef), model, lines));
             // The terminal-status push precedes charging. FIX runs and runs that delivered nothing

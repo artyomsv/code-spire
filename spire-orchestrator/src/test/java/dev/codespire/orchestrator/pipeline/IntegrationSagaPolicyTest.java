@@ -55,6 +55,8 @@ class IntegrationSagaPolicyTest {
     private final List<String> fromForkCalls = new ArrayList<>();
     /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
     private final List<String> appendedEvents = new ArrayList<>();
+    /** Reviews whose live harness runs a close asked to stop. */
+    private final List<String> closedReviewRuns = new ArrayList<>();
     private boolean reviewRegistered;
     /** The repository's factory account, when a test names one; otherwise every role answers the reviewer. */
     private Optional<ScmProvider> factory;
@@ -72,6 +74,13 @@ class IntegrationSagaPolicyTest {
     private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider,
                                      List<DomainEvent> lifecycleResult) {
         IntegrationSaga saga = new IntegrationSaga();
+        // The real one reads factory_run and sends on the run-control topic; this records which review a close named.
+        saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.ReviewRunCancellation() {
+            @Override public void close(String reviewId) { closedReviewRuns.add(reviewId); }
+            @Override public void supersede(String reviewId, int supersededRound) {
+                throw new AssertionError("a supersede is heard on cs.events, not here");
+            }
+        };
         saga.lifecycle = new ReviewLifecycleService() {
             @Override
             public List<DomainEvent> handle(String reviewId, RecordCommand command) {
@@ -742,6 +751,7 @@ class IntegrationSagaPolicyTest {
                 new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
 
         IntegrationSaga saga = new IntegrationSaga();
+        saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.NoReviewRunCancellation();
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
@@ -848,6 +858,19 @@ class IntegrationSagaPolicyTest {
         var saga = sagaWith(policyMode(false), provider(List.of()));
         saga.onRepository(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.MERGED), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(appendedEvents.contains("PullRequestClosed:merged"), appendedEvents.toString());
+    }
+
+    /**
+     * A closed pull request stops its review's live harness runs (harness reviews, step 4), a reply run on a completed
+     * review included, and still issues the lifecycle's own CancelReview.
+     */
+    @Test
+    void aClosedPullRequestCancelsItsLiveReviewRuns() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.onRepository(new PullRequestClosed(new RepoRef("acme", "web"), 412L, CloseReason.DECLINED), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+
+        assertEquals(List.of("review::acme/web#412"), closedReviewRuns);
+        assertInstanceOf(RecordCommand.CancelReview.class, handledCommands.get(0));
     }
 
     /** Declined says so, rather than reading as a merge that lost its badge. */

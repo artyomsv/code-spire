@@ -53,6 +53,15 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
     }
 
     /**
+     * A harness review run's spend (harness reviews, step 4): the reviewer capability, against the review, naming the
+     * key or seat that paid. The run made the call, but the review is what the call was for and what its cap counts.
+     */
+    public static ChargeCall forReview(ReviewSpend spend, String model, List<ChargeLine> lines) {
+        return new ChargeCall(spend.reviewId(), ChargeSubject.REVIEW, ChargeCapability.REVIEW,
+                spend.callRef(), spend.kind(), model, lines, spend.credentialRef());
+    }
+
+    /**
      * A factory run's spend against a runId, under the run's own kind and always the Build capability.
      * Spec and plan are how a work item becomes a pull request, so they are in the Build pack with
      * build, verify and deliver ({@code docs/factory/PACKAGING.md} section 2, ADR-035). Autonomy is the

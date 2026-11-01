@@ -135,6 +135,28 @@ class HandoffFilesTest {
                 HandoffFiles.read(dir, HandoffFiles.STEP_SUMMARY, HandoffFiles.STEP_SUMMARY_MAX_BYTES));
     }
 
+    /** A review answer's unit hands the publisher a larger cap (harness reviews, step 4); it is read from the unit. */
+    @Test
+    void theArtifactCapIsReadFromTheUnit() {
+        assertEquals(256 * 1024, HandoffFiles.artifactMaxBytes(java.util.Map.of("SPIRE_ARTIFACT_MAX_BYTES", "262144")));
+    }
+
+    /** A unit that names no cap is a draft's, or one from before the cap existed: it keeps 32 KiB. */
+    @Test
+    void anUnsetCapKeepsThirtyTwoKibibytes() {
+        assertEquals(HandoffFiles.ARTIFACT_MAX_BYTES, HandoffFiles.artifactMaxBytes(java.util.Map.of()));
+        assertEquals(32 * 1024, HandoffFiles.ARTIFACT_MAX_BYTES);
+    }
+
+    /** A cap that is not a positive byte count is refused by name, never read as 32 KiB or as no cap at all. */
+    @Test
+    void aMalformedCapIsRefused() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> HandoffFiles.artifactMaxBytes(java.util.Map.of("SPIRE_ARTIFACT_MAX_BYTES", "TEST")));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> HandoffFiles.artifactMaxBytes(java.util.Map.of("SPIRE_ARTIFACT_MAX_BYTES", "0")));
+    }
+
     private static void makeUnreadable(Path target) throws java.io.IOException {
         try {
             Files.setPosixFilePermissions(target, PosixFilePermissions.fromString("---------"));

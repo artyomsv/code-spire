@@ -17,6 +17,7 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunCommand.ExecuteRun.class, name = "ExecuteRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkDraftRun.class, name = "ExecuteWorkDraftRun"),
+        @JsonSubTypes.Type(value = RunCommand.ExecuteReviewRun.class, name = "ExecuteReviewRun"),
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
@@ -349,6 +350,26 @@ public sealed interface RunCommand {
             if (!execution.branch().equals(DRAFT_BRANCH_PREFIX + draft.attemptId()))
                 throw new IllegalArgumentException("A draft run clones onto " + DRAFT_BRANCH_PREFIX + draft.attemptId()
                         + ", not " + execution.branch());
+        }
+        @Override public String scmCredential(){return execution.scmCredential();}
+        @Override public String harnessCredential(){return execution.harnessCredential();}
+    }
+
+    /**
+     * A harness review run (harness reviews, step 4): a read-only clone of the pull request's head, read by the agent,
+     * and its answer handed back as {@code RunReviewArtifact}. Nothing is pushed. It rides {@code cs.review-runs}, the
+     * run-worker's review lane, so a review never waits behind a build.
+     */
+    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review)
+            implements RunCommand {
+        public ExecuteReviewRun {
+            Objects.requireNonNull(execution, "A review execution is required");
+            Objects.requireNonNull(review, "A review binding is required");
+            if (!execution.runId().equals(runId)) throw new IllegalArgumentException("The review command must name its execution run");
+            // Refused here for the reason a draft run refuses them: a review reads the head it was asked about and
+            // pushes nothing, so a checkpoint start or a push target is a command that should never have been built.
+            if (execution.startFromRunId() != null) throw new IllegalArgumentException("A review run reads its head, never a checkpoint");
+            if (execution.existingBranch()) throw new IllegalArgumentException("A review run pushes nothing, so it names no existing branch");
         }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}

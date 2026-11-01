@@ -380,6 +380,38 @@ hold or a cancel stops it with the build, `destroyHeld` removes it, and discover
 verify container for the unit. Each check's output is kept as its last 200 lines, each clipped to
 2000 characters, at most 64 KiB. The result rides `cs.run-verifications`.
 
+## 6B. The review lane (harness reviews, ADR-050)
+
+A review that runs on a harness is a factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP`, and it never
+waits behind a build. The run worker reads two command topics:
+
+| Lane | Topic | Group | Concurrency |
+|---|---|---|---|
+| build | `cs.run-commands` | `spire-run-worker` | one run at a time, ordered |
+| review | `cs.review-runs` | `spire-run-worker-reviews` | `SPIRE_RUN_REVIEW_CONCURRENCY` (default 2), its own pool |
+
+The review lane takes the same `execute` and `cancel` claims as the build lane, so a redelivered command
+starts no second unit and a cancel that arrives before the start stops it ever starting. It reads from `earliest`,
+so a command sent before the group's first assignment, or onto a new partition, is still run; the claims make that
+replay safe. Its ack budget follows
+the build lane's rule (wall clock + drain + 300 s, one record per poll). The concurrency is **per instance**: with
+replicas the total multiplies, and `cs.review-runs` needs at least as many partitions as replicas for the extra
+instances to receive any. Nothing creates the topic with a partition count today; Kafka auto-creates it with the
+broker default.
+
+The unit is the read-only topology of §4.4: init clones the pull request with the REVIEWER account's token, the
+agent never holds it, and the publisher runs `spire-publish-none` with no write credential. The publisher is told
+the review's artifact cap (`SPIRE_ARTIFACT_MAX_BYTES=262144`; a draft keeps 32 KiB) and writes the artifact as
+ordered parts on separate outcome lines, each small enough that its JSON-escaped line stays under the 64 KiB line
+cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
+answer with no text, which is charged, never a lost run.
+
+A supersede cancels the live review runs of the review round it ended (rounds, not commits: a forced re-run keeps the
+head), and a closed pull request cancels every live review run, with `CancelRun`. A run still being funded has no row
+yet, so the orchestrator admits a review run's row under an advisory lock per review that the cancellation also takes:
+the admission refuses the run when the pull request is no longer `OPEN` or its round has ended (V108,
+`review_run_superseded`), and sends only after its row commits.
+
 ## 7. What leaves the pod, and how
 
 **Nothing is extracted.** Every output leaves as a log stream, which Docker and Kubernetes both
@@ -396,6 +428,32 @@ provide natively — no `exec`, no file copy, no shared storage between pod and 
 
 This is what keeps the worker **stateless**: it holds no run state and no filesystem, so any replica
 can observe or salvage any run.
+
+### 7.1 The agent's egress hosts (measured 2026-11-01)
+
+The agent reaches the network only through its unit's egress proxy, which allows the hosts the harness
+declares (`HarnessAdapter.egressHosts`). Codex's hosts were measured live in report mode on the dev stack
+(`spire-test` #85 on a seat and #87 on an API key, every host on port 443, none refused):
+
+| Host | Seat | API key |
+|---|---|---|
+| `chatgpt.com` | yes | yes |
+| `ab.chatgpt.com` | yes | yes |
+| `api.openai.com` | no | yes |
+| `github.com` | no | yes |
+| `sdmntprcentralus`, `sdmntprsouthcentralus`, `sdmntprwestus` `.oaiusercontent.com` | yes | no |
+
+Some of these calls are features a run never needs. Every `codex exec` now carries
+`-c features.plugins=false -c analytics.enabled=false`: plugins call `github.com`, `api.github.com` and
+`chatgpt.com`, and analytics calls `ab.chatgpt.com`. A seat run also carries `-c features.apps=false`.
+With them off, Codex declares:
+
+- **API key:** `api.openai.com`.
+- **Seat:** `chatgpt.com` and the three `sdmntpr*.oaiusercontent.com` content hosts.
+
+`auth.openai.com` is never declared: the orchestrator empties a seat's refresh token, so a run has nothing
+to renew. Where a seat's content-host calls come from, and which paths a long run adds, is not settled
+(docs/UNVERIFIED.md).
 
 ---
 

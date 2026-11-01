@@ -39,6 +39,15 @@ public class RunResultSaga {
     @Inject
     dev.codespire.orchestrator.work.WorkDraftResults drafts;
 
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunBindings reviewRuns;
+
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunCharges reviewCharges;
+
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunResults reviewResults;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {
@@ -52,14 +61,21 @@ public class RunResultSaga {
         MDC.put(MDC_RUN_ID, result.runId());
         try {
             LOG.infof("run result %s", result.getClass().getSimpleName());
-            // A draft artifact bound to another attempt is refused here too, before it can be projected or charged (M4 slice 3).
-            if(!workItems.acceptsBinding(result) || !drafts.acceptsBinding(result))return;
+            // A draft artifact bound to another attempt is refused here too, before it can be projected or charged (M4 slice 3),
+            // and so is a review answer naming a call its row does not store (harness reviews, step 4).
+            if(!workItems.acceptsBinding(result) || !drafts.acceptsBinding(result) || !reviewRuns.acceptsBinding(result))return;
             projection.apply(result);
             // AFTER the projection, deliberately. The run's outcome is the fact an operator is
             // waiting on; the ledger write is best-effort and says so if it fails, so ordering it
             // first would let a ledger outage delay a terminal status that is already known.
             charges.record(result);
             credentials.reactTo(result);
+            // A review run's result is the review's (harness reviews, step 4): charged once under its call slot, handed to
+            // the review-run port, and no further. It has no draft or work-run row and pushed nothing to propose.
+            if (projection.kindOf(result.runId()).filter(RunKind::isReview).isPresent()) {
+                toReview(result);
+                return;
+            }
             // A specification or plan run pushed nothing to propose, and the work-run inbox holds no row for it: its own
             // inbox claims every result it has, a failure included, so none falls through to the proposal below.
             if (drafts.accept(result)) return;
@@ -72,5 +88,17 @@ public class RunResultSaga {
         } finally {
             MDC.remove(MDC_RUN_ID);
         }
+    }
+
+    /** The call a review result answers: its own binding, or for a result that carries none (a failure), its row's. */
+    private void toReview(RunResult result) {
+        java.util.Optional<dev.codespire.contract.review.ReviewRunBinding> binding =
+                result instanceof dev.codespire.contract.event.RunReviewArtifact answer
+                        ? java.util.Optional.of(answer.review()) : projection.reviewBindingOf(result.runId());
+        binding.ifPresentOrElse(call -> {
+            reviewCharges.record(result, call);
+            reviewResults.accept(result, call);
+        }, () -> LOG.errorf("review run %s has no review call on its row, so its result is neither charged nor recorded",
+                result.runId()));
     }
 }

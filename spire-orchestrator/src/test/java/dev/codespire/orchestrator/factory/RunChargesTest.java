@@ -91,12 +91,21 @@ class RunChargesTest {
         public Optional<String> paidByOf(String runId) {
             return Optional.ofNullable(paidBy);
         }
+
+        /** A review run's call, answered here for the same reason: nothing on this path may open a database. */
+        @Override
+        public Optional<dev.codespire.contract.review.ReviewRunBinding> reviewBindingOf(String runId) {
+            return Optional.empty();
+        }
     }
 
     /** Prices everything at a flat metered rate, so a line's presence is the thing under test. */
     private static final class StubPricer extends LlmModelPricer {
+        int calls;
+
         @Override
         public List<ChargeLine> priceCall(String model, ModelUsage usage) {
+            calls++;
             if (usage == null || usage.counts().isEmpty()) {
                 return List.of(ChargeLine.unknown(TokenType.TOTAL, 0));
             }
@@ -309,6 +318,29 @@ class RunChargesTest {
                 "the swallow must be EXERCISED, not skipped -- without this the test stays green"
                         + " if record() is later changed to not attempt the write at all");
         assertTrue(runs.pushed.isEmpty(), "a failed ledger write must not announce new spend");
+    }
+
+    /**
+     * A review run is charged once, under the review's call slot (harness reviews, step 4), so the run plane writes
+     * nothing for it. The catch in RunCharges swallows every RuntimeException, so the assertion is on the writer never
+     * being reached, and a build in the same fixture proves the fixture can charge at all.
+     */
+    @Test
+    void aReviewRunIsNotChargedByTheRunPlane() {
+        for (RunKind review : List.of(RunKind.REVIEW, RunKind.RECONCILE, RunKind.FOLLOWUP)) {
+            runs.kind = review;
+            charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+            charges.record(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false,
+                    Map.of("INPUT", 10L), List.of()));
+        }
+        assertEquals(List.of(), ledger.calls, "a review run's spend is the review's charge, not the run's");
+        // RunSpend also refuses a review kind, inside the same swallowing catch, so the writer alone cannot tell the
+        // skip from that refusal. Pricing comes before both: only the skip leaves the pricer untouched.
+        assertEquals(0, pricer.calls, "a review run is not priced by the run plane at all");
+
+        runs.kind = RunKind.BUILD;
+        charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+        assertEquals(1, ledger.calls.size(), "the control: a build in the same fixture is charged");
     }
 
     @Test
