@@ -32,6 +32,7 @@ class RunUnitBuilderVerifyTest {
         builder.enterprise = RunLauncherTest.noCorporateEnvironment();
         builder.publisherImage = "TEST-publisher";
         builder.maxWallClockSeconds = 1800;
+        builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.OFF;
     }
 
     String scm(String id) throws Exception {
