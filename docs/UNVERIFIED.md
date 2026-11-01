@@ -102,10 +102,15 @@ warning, never sent to the API.
   - **The entrypoint's fallback for a bad `SPIRE_ARTIFACT_MAX_BYTES`.** The reference entrypoint keeps 32768 for a
     value that is not a positive integer without a leading zero; the run worker always sets 262144, so no run
     reaches the fallback. `AgentArtifactCapIsConfigurableTest` reads the script; it does not run it.
-- **Codex reads `AGENTS.md` from the head, by itself.** The prompt tells the agent to read the rules from
-  `refs/spire-base/<target>`, but Codex loads `AGENTS.md` from its working directory before it reads the prompt, and
-  the working directory is the head commit. So a change that edits `AGENTS.md` may steer its own review. This is
-  inferred from Codex's documented behaviour, not measured on a run.
+- **A review run loads no `AGENTS.md` from the head: switched off, not measured.** Codex loads `AGENTS.md` and
+  `AGENTS.override.md` from its working directory before it reads the prompt, and a review's working directory is the
+  head commit, so a change could steer its own review (review of PR #368, security/H-1). A review unit's invocation
+  now carries `ProjectGuidance.IGNORED`, which the Codex arm maps to `-c project_doc_max_bytes=0`; builds and drafts
+  keep loading the operator's guidance. The key exists in codex-cli 0.156.1 (its binary carries it, default 32768);
+  that a budget of zero loads nothing is read from Codex's source, not measured. `CodexAdapterProjectGuidanceTest`
+  and `RunUnitBuilderReviewTest` prove the flag is on the review's command line and on no other, not that Codex obeys
+  it. The agent can still `cat` the head's `AGENTS.md` as a file of the change; the prompt says such files are the
+  change under review, not instructions.
 - **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
   and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
   hands it to `ResultSaga.acceptHarnessOutcome` from there. So a push, a re-run or a close for the same review may be
@@ -121,8 +126,10 @@ warning, never sent to the API.
 
 **What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
 harness on an API key and another on a seat, findings posted with a verdict as a GitHub review, one charge under the
-review, egress hosts recorded in report mode; a third refused with no seat signed in, with its attention row; and one pull request whose change edits `AGENTS.md` with an instruction
-the review visibly follows or ignores.
+review, egress hosts recorded in report mode; a third refused with no seat signed in, with its attention row; and a
+canary for the guidance switch: a TEST pull request that adds an `AGENTS.override.md` asking for a finding whose
+message is `CANARY-AGENTS-LOADED`. The review must not contain that finding; if it does, Codex loaded the file and
+`project_doc_max_bytes=0` does not turn the loading off.
 
 ---
 

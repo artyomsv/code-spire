@@ -15,12 +15,33 @@ import java.util.Objects;
  */
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
-                                Duration wallClock, String reasoningEffort) {
+                                Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance) {
 
     /** A run at the model's own thinking level: every caller written before levels existed (M3.5 part M). */
     public HarnessInvocation(String runId, String prompt, String workspacePath,
                              String model, Map<String, String> credentials, Duration wallClock) {
         this(runId, prompt, workspacePath, model, credentials, wallClock, null);
+    }
+
+    /** A run that loads the repository's own guidance: every caller written before {@link ProjectGuidance} existed. */
+    public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
+                             Map<String, String> credentials, Duration wallClock, String reasoningEffort) {
+        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED);
+    }
+
+    /**
+     * Whether the harness may load the guidance files a repository keeps for agents (Codex reads {@code AGENTS.md} and
+     * {@code AGENTS.override.md} from its working directory at startup). Each arm maps it to its own setting; core
+     * never spells a vendor's file name or flag.
+     */
+    public enum ProjectGuidance {
+        /** A build or a draft works in the operator's own repository, whose guidance it should follow. */
+        LOADED,
+        /**
+         * A review works in the pull request's head: a guidance file the change adds or edits is part of the change
+         * under review, never the reviewer's instructions (docs/REPO-RULES.md, review of PR #368).
+         */
+        IGNORED
     }
 
     /**
@@ -43,6 +64,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(prompt, "prompt");
         Objects.requireNonNull(wallClock, "wallClock");
+        Objects.requireNonNull(projectGuidance, "projectGuidance");
         credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
 
         // model and workspacePath both become argv elements, so their shape is checked here once
@@ -89,6 +111,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         return "HarnessInvocation[runId=" + runId
                 + ", model=" + model
                 + ", reasoningEffort=" + reasoningEffort
+                + ", projectGuidance=" + projectGuidance
                 + ", workspacePath=" + workspacePath
                 + ", wallClock=" + wallClock
                 + ", credentials=" + credentials.keySet() + " (values redacted)"
