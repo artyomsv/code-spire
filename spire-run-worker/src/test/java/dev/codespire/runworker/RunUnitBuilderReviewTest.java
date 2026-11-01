@@ -18,6 +18,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A harness review run's unit (harness reviews, step 4): the read-only topology a draft has, with the review answer's
@@ -97,6 +98,28 @@ class RunUnitBuilderReviewTest {
 
         assertEquals("TEST-main", unit.init().environment().get("SPIRE_FETCH_BRANCH"));
         assertFalse(unit.agent().environment().containsKey("SPIRE_FETCH_BRANCH"));
+    }
+
+    /**
+     * The agent works in the pull request's head, so a change could add an AGENTS.override.md that instructs its own
+     * reviewer (review of PR #368, security/H-1): a review unit's agent loads no project guidance by itself.
+     */
+    @Test
+    void aReviewRunsAgentLoadsNoProjectGuidance() throws Exception {
+        String agent = String.join(" ", reviewUnit().agent().argv());
+
+        assertTrue(agent.contains("project_doc_max_bytes=0"), agent);
+    }
+
+    /** A draft and a build work in the operator's own repository: their agents keep loading its guidance. */
+    @Test
+    void aDraftAndABuildStillLoadProjectGuidance() throws Exception {
+        String draft = String.join(" ", draftUnit().agent().argv());
+        String build = String.join(" ", builder.build(execution(DRAFT_RUN_ID, "spire/TEST-build"), new CodexAdapter())
+                .agent().argv());
+
+        assertFalse(draft.contains("project_doc"), draft);
+        assertFalse(build.contains("project_doc"), build);
     }
 
     private RunUnitSpec draftUnit() throws Exception {

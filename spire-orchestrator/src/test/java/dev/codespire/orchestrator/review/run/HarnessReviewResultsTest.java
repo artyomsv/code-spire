@@ -18,10 +18,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
+import static dev.codespire.orchestrator.llm.ReviewRuns.FIRST_RUN;
+import static dev.codespire.orchestrator.llm.ReviewRuns.UNKNOWN_RUN;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -45,7 +49,15 @@ class HarnessReviewResultsTest {
              "severity": "MAJOR", "category": "CORRECTNESS", "message": "TEST-message", "suggestion": null}]}
             """;
 
+    private static final ReviewRunBinding ROUND_TWO =
+            new ReviewRunBinding(REVIEW_ID, ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot-2", 2);
+
     private int currentRun = 1;
+
+    /** A forced re-run that held the review's round lock first: it ends the round before the outcome reads it. */
+    private boolean rerunWhileWaiting;
+
+    private final List<String> steps = new ArrayList<>();
 
     private final List<IntegrationEvent> outcomes = new ArrayList<>();
 
@@ -89,6 +101,43 @@ class HarnessReviewResultsTest {
     @Test
     void aResultOfAnEndedRoundIsDropped() {
         currentRun = 2;
+
+        results().accept(answer(ONE_FINDING), ROUND_ONE);
+
+        assertTrue(outcomes.isEmpty(), outcomes.toString());
+    }
+
+    /**
+     * A failed read of the round is not a stale round (review of PR #368, code-quality/M-1). The ledger's read would
+     * answer run 1 and drop this paid round-2 answer as stale; the outcome is thrown instead, neither applied nor
+     * dropped, so the run-results consumer dead-letters it for a replay.
+     */
+    @Test
+    void anUnreadableRoundIsNeitherAppliedNorDropped() {
+        currentRun = UNKNOWN_RUN;
+
+        assertThrows(IllegalStateException.class, () -> results().accept(answer(ONE_FINDING), ROUND_TWO));
+        assertTrue(outcomes.isEmpty(), outcomes.toString());
+    }
+
+    /**
+     * The round is read and the outcome applied under the review's round lock, which a forced re-run holds while it
+     * appends its round and replaces the run token (review of PR #368, code-quality/H-1).
+     */
+    @Test
+    void theRoundIsReadAndTheOutcomeAppliedUnderTheRoundLock() {
+        results().accept(answer(ONE_FINDING), ROUND_ONE);
+
+        assertEquals(List.of("lock " + REVIEW_ID, "round", "outcome", "unlock"), steps);
+    }
+
+    /**
+     * A forced re-run on the same head lands while round 1's answer waits for the lock: round 1 was current when the
+     * answer arrived, round 2 is current when it may act, so it is dropped rather than posted as round 2.
+     */
+    @Test
+    void anAnswerWhoseRoundARerunEndedWhileItWaitedIsDropped() {
+        rerunWhileWaiting = true;
 
         results().accept(answer(ONE_FINDING), ROUND_ONE);
 
@@ -168,23 +217,9 @@ class HarnessReviewResultsTest {
 
     private HarnessReviewResults results() {
         HarnessReviewResults results = new HarnessReviewResults();
-        results.saga = new ResultSaga() {
-            @Override
-            public void acceptHarnessOutcome(IntegrationEvent outcome) {
-                outcomes.add(outcome);
-            }
-        };
-        results.runs = new ReviewRuns() {
-            @Override
-            public int currentRun(String reviewId) {
-                return currentRun;
-            }
-
-            @Override
-            public int roundOrUnknown(String reviewId) {
-                return currentRun;
-            }
-        };
+        results.saga = saga();
+        results.runs = runs();
+        results.rounds = roundLock();
         results.runRows = new FactoryRunProjection() {
             @Override public Optional<String> modelOf(String runId) { return Optional.of("TEST-model"); }
             @Override public Optional<String> paidByOf(String runId) { return Optional.of("API_KEY"); }
@@ -192,5 +227,47 @@ class HarnessReviewResultsTest {
         };
         results.maxReportedTokens = -1;
         return results;
+    }
+
+    private ResultSaga saga() {
+        return new ResultSaga() {
+            @Override
+            public void acceptHarnessOutcome(IntegrationEvent outcome) {
+                steps.add("outcome");
+                outcomes.add(outcome);
+            }
+        };
+    }
+
+    /** The real ones read the event log; the ledger's read answers run 1 when the log cannot be read. */
+    private ReviewRuns runs() {
+        return new ReviewRuns() {
+            @Override
+            public int currentRun(String reviewId) {
+                return currentRun == UNKNOWN_RUN ? FIRST_RUN : currentRun;
+            }
+
+            @Override
+            public int roundOrUnknown(String reviewId) {
+                steps.add("round");
+                return currentRun;
+            }
+        };
+    }
+
+    /** The real lock is a Postgres advisory lock (ReviewRoundLockTest); this one records what ran inside it. */
+    private ReviewRoundLock roundLock() {
+        return new ReviewRoundLock() {
+            @Override
+            public <T> T holding(String reviewId, Supplier<T> work) {
+                steps.add("lock " + reviewId);
+                if (rerunWhileWaiting) {
+                    currentRun++;
+                }
+                T done = work.get();
+                steps.add("unlock");
+                return done;
+            }
+        };
     }
 }

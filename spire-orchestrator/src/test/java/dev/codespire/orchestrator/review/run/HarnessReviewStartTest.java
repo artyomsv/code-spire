@@ -50,6 +50,7 @@ class HarnessReviewStartTest {
     private Optional<PriorRun> prior = Optional.empty();
     private Boolean fromFork = false;
     private ReviewRunDispatch.Outcome dispatchOutcome = new ReviewRunDispatch.Dispatched("TEST-run-1");
+    private int round = CURRENT_RUN;
 
     private final List<ReviewRunRequest> dispatched = new ArrayList<>();
 
@@ -121,6 +122,20 @@ class HarnessReviewStartTest {
         assertEquals(new HarnessReviewStart.Refused("TEST-harness", "subscription_unavailable"), decision);
     }
 
+    /**
+     * A round that cannot be read is refused, never guessed (review of PR #368, code-quality/M-1): the ledger's read
+     * would answer run 1, and a run bound to round 1 during round 2 is refused at admission or dropped as stale.
+     */
+    @Test
+    void anUnreadableRoundIsRefusedAndNeverDispatched() {
+        round = ReviewRuns.UNKNOWN_RUN;
+
+        HarnessReviewStart.Decision decision = start().start(EVENT);
+
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "review_round_unknown"), decision);
+        assertTrue(dispatched.isEmpty(), "no run is bound to a guessed round: " + dispatched);
+    }
+
     /** An uncertain launch has its queued row; a lost one surfaces as REVIEW_STUCK, so it is not refused here. */
     @Test
     void anUncertainLaunchCountsAsStarted() {
@@ -185,16 +200,17 @@ class HarnessReviewStartTest {
         };
     }
 
-    private static ReviewRuns runs() {
+    /** The real ones read the event log; the ledger's read answers run 1 when the log cannot be read. */
+    private ReviewRuns runs() {
         return new ReviewRuns() {
             @Override
             public int currentRun(String reviewId) {
-                return CURRENT_RUN;
+                return round == ReviewRuns.UNKNOWN_RUN ? ReviewRuns.FIRST_RUN : round;
             }
 
             @Override
             public int roundOrUnknown(String reviewId) {
-                return CURRENT_RUN;
+                return round;
             }
         };
     }
