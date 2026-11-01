@@ -138,6 +138,16 @@ repository's reviews and replies use, null meaning the global default. Deleting 
 repository names is refused (409); a switched-off one refuses the repository's reviews rather than
 falling back to the default.
 
+V109 adds the harness half of that choice (harness reviews, step 5): nullable `review_harness`,
+`review_harness_model`, `review_harness_effort` and `review_harness_pay_with` (`API_KEY` or
+`SUBSCRIPTION`). The CHECK `repository_review_harness_whole` keeps them whole or absent: all four null
+(review on the API), or a non-blank harness, model and payment with the effort optional, and then
+`review_llm_provider_id` must be null, so a repository reviews with an API provider or a harness,
+never both. Saving the repository with no harness clears all four. The harness is checked against the
+deployment's agent images (`spire.factory.agent-image.<harness>`) before the write, which the schema
+cannot see. V109 also adds nullable `review_status.harness_refusal`: why a review's harness start was
+refused, in words, for its attention row; null means none.
+
 `repository_legacy_account` is immutable migration evidence: account UUID, kind, base URL,
 workspace and role, without credentials or an FK that would erase evidence on deletion.
 `repository_registration_bridge` stores the latest registration revision, metadata, selected

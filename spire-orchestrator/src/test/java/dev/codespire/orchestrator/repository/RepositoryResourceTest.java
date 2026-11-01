@@ -131,6 +131,20 @@ class RepositoryResourceTest extends RepositoryFixture {
                 .then().statusCode(400);
     }
 
+    /** A harness review needs a model; refused before the write, so it is the caller's mistake and not V109's CHECK. */
+    @Test void aHarnessWithoutAModelIsRefused() {
+        RepositoryInput noModel = repositoryReviewingOn(new ReviewHarness("codex", " ", null, "API_KEY"));
+        given().contentType("application/json").body(noModel).post("/api/repositories")
+                .then().statusCode(400);
+    }
+
+    /** A payment other than an API key or a seat is refused before the write, not by V109's CHECK. */
+    @Test void anUnknownHarnessPaymentIsRefused() {
+        RepositoryInput unknown = repositoryReviewingOn(new ReviewHarness("codex", "TEST-model", null, "TEST-CREDIT-CARD"));
+        given().contentType("application/json").body(unknown).post("/api/repositories")
+                .then().statusCode(400);
+    }
+
     /** normalize rebuilds the input component by component; the harness must survive it. */
     @Test void normalizeKeepsTheHarness() {
         ReviewHarness seat = new ReviewHarness("codex", "TEST-model", "high", "SUBSCRIPTION");
