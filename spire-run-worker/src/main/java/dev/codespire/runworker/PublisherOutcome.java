@@ -7,10 +7,8 @@ import dev.codespire.contract.event.RunResult;
 import org.jboss.logging.Logger;
 
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -31,7 +29,7 @@ import java.util.Set;
 public final class PublisherOutcome {
 
     /** Well past any reviewable change; enough to keep the result under the broker's record size. */
-    static final int MAX_PATHS = 1000;
+    static final int MAX_PATHS = PublisherPaths.MAX_PATHS;
 
     /** Causes after which the publisher keeps reading — an earlier push is not undone by them. */
     private static final Set<String> NON_TERMINAL_CAUSES = Set.of("BUNDLE_UNREADABLE");
@@ -40,47 +38,44 @@ public final class PublisherOutcome {
 
     private static final Logger LOG = Logger.getLogger(PublisherOutcome.class);
 
-    /** Longer than any real path, short enough that a thousand of them stay readable. */
-    private static final int MAX_PATH_CHARS = 512;
-
-    /** The longest real value is RENAMED_FROM; anything longer is not a kind. */
-    private static final int MAX_KIND_CHARS = 32;
-
     /** The publisher's refusal for a file over its cap; the same word whichever side measured it. */
     private static final String TOO_LARGE = "TOO_LARGE";
 
     /** The publisher reports at most one refusal per handoff file; anything past this is not a real publisher. */
     private static final int MAX_REFUSALS = 8;
 
-    /** The two handoff texts (M4 slice 3), with the publisher's caps re-checked here in UTF-8 bytes. */
+    /** The step summary (M4 slice 3), with the publisher's cap re-checked here in UTF-8 bytes. */
     private record HandoffText(String field, String file, int maxBytes) {
-        static final HandoffText ARTIFACT = new HandoffText("text", "artifact.md", 32 * 1024);
-
         static final HandoffText STEP_SUMMARY = new HandoffText("json", "step-summary.json", 8 * 1024);
+    }
+
+    private static final String ARTIFACT_FILE = "artifact.md";
+
+    /** A draft's artifact cap, and every unit's that names none: the publisher's own default. */
+    static final int DEFAULT_ARTIFACT_MAX_BYTES = 32 * 1024;
+
+    public PublisherOutcome() {
+        this(DEFAULT_ARTIFACT_MAX_BYTES);
+    }
+
+    private PublisherOutcome(int artifactMaxBytes) {
+        this.artifact = new HandoffArtifact(artifactMaxBytes, why -> refuse(ARTIFACT_FILE, why));
     }
 
     /** An outcome whose artifact may be as large as its unit's cap (harness reviews, step 4). */
     static PublisherOutcome withArtifactCap(int maxBytes) {
-        return new PublisherOutcome();
+        return new PublisherOutcome(maxBytes);
     }
 
-    private final Set<String> changedPaths = new LinkedHashSet<>();
+    private final PublisherPaths paths = new PublisherPaths();
 
     private final Set<String> handoffRefusals = new LinkedHashSet<>();
 
-    private String artifact;
+    private final HandoffArtifact artifact;
 
     private String stepSummary;
 
     private int repositoryChanged;
-
-    /**
-     * Keyed by path, so a path refused twice is listed once — the deduplication the set gave
-     * before, kept now that the value carries the kind alongside it.
-     */
-    private final Map<String, RunResult.BlockedChange> blocked = new LinkedHashMap<>();
-
-    private int omittedPaths;
 
     private String pushedRef;
 
@@ -126,17 +121,17 @@ public final class PublisherOutcome {
                 }
                 checkpointHead = head;
                 checkpointEmpty = node.path("empty").asBoolean(false);
-                collect(node.path("changed"), changedPaths);
+                paths.changed(node.path("changed"));
                 failedAfterCheckpoint = false;
             }
             case "pushed" -> {
                 pushedRef = node.path("ref").asText(null);
-                collect(node.path("changed"), changedPaths);
+                paths.changed(node.path("changed"));
                 failedAfterPush = false;
             }
             case "gate_refused" -> {
-                collectBlocked(node.path("blocked"));
-                collect(node.path("changed"), changedPaths);
+                paths.blocked(node.path("blocked"));
+                paths.changed(node.path("changed"));
             }
             case "failed" -> {
                 failureCause = node.path("cause").asText("PUBLISHER_FAILED");
@@ -144,7 +139,8 @@ public final class PublisherOutcome {
                 failedAfterPush = pushedRef != null && !NON_TERMINAL_CAUSES.contains(failureCause);
                 failedAfterCheckpoint = checkpointHead != null && !NON_TERMINAL_CAUSES.contains(failureCause);
             }
-            case "artifact" -> artifact = capped(node, HandoffText.ARTIFACT);
+            case "artifact" -> artifact.single(node);
+            case "artifact_part" -> artifact.part(node);
             case "step_summary" -> stepSummary = capped(node, HandoffText.STEP_SUMMARY);
             case "repository_changed" -> repositoryChanged = Math.max(0, node.path("bundles").asInt(0));
             case "handoff_file_refused" -> refuse(node.path("file").asText(""), node.path("why").asText(""));
@@ -153,70 +149,8 @@ public final class PublisherOutcome {
         }
     }
 
-    /**
-     * The refused paths, each WITH what the run did to it.
-     *
-     * <p>Separate from {@link #collect} because this is the operator-facing list and the other is
-     * not. The kind used to be read out of this JSON on the very next line and dropped, while
-     * OutcomeWriter, PushDecision and PushGate each carried a javadoc arguing for it: "ci.yml was
-     * blocked" does not say whether the factory edited that workflow or deleted it.
-     *
-     * <p>A legacy publisher wrote a bare string per entry rather than an object. That reads back as
-     * a path with a null kind, which is what it is — the alternative is inventing one.
-     */
-    private void collectBlocked(JsonNode array) {
-        if (!array.isArray()) {
-            return;
-        }
-        for (JsonNode entry : array) {
-            String path = entry.isObject() ? entry.path("path").asText(null) : entry.asText(null);
-            if (path == null || blocked.containsKey(path)) {
-                continue;
-            }
-            if (blocked.size() >= MAX_PATHS) {
-                omittedPaths++;
-                continue;
-            }
-            String kind = entry.isObject() ? entry.path("kind").asText(null) : null;
-            blocked.put(path, new RunResult.BlockedChange(clip(path, MAX_PATH_CHARS),
-                    clip(kind, MAX_KIND_CHARS)));
-        }
-    }
-
-    /**
-     * Bounds one entry, because the count cap alone does not bound the TEXT.
-     *
-     * <p>These reach an operator's attention row as one joined sentence, and both values come from
-     * a branch an agent authored. A thousand paths was already capped; a thousand paths each a
-     * megabyte long was not. Clipped rather than rejected: a truncated path still tells an operator
-     * which file tripped the gate, and dropping the entry would lose that.
-     */
-    private static String clip(String value, int max) {
-        if (value == null || value.length() <= max) {
-            return value;
-        }
-        return value.substring(0, max) + "…";
-    }
-
-    private void collect(JsonNode array, Set<String> into) {
-        if (!array.isArray()) {
-            return;
-        }
-        for (JsonNode entry : array) {
-            String path = entry.isObject() ? entry.path("path").asText(null) : entry.asText(null);
-            if (path == null || into.contains(path)) {
-                continue;
-            }
-            if (into.size() >= MAX_PATHS) {
-                omittedPaths++;
-                continue;
-            }
-            into.add(path);
-        }
-    }
-
     public boolean refused() {
-        return !blocked.isEmpty();
+        return paths.anyBlocked();
     }
 
     public Optional<String> pushedRef() {
@@ -233,16 +167,16 @@ public final class PublisherOutcome {
     }
 
     public List<String> changedPaths() {
-        return List.copyOf(changedPaths);
+        return paths.changedPaths();
     }
 
     public List<RunResult.BlockedChange> blocked() {
-        return List.copyOf(blocked.values());
+        return paths.blockedChanges();
     }
 
     /** Paths beyond {@link #MAX_PATHS} that the lists do not carry; logged by the launcher, never lost silently. */
     public int omittedPaths() {
-        return omittedPaths;
+        return paths.omittedPaths();
     }
 
     public Optional<String> failureCause() {
@@ -255,7 +189,7 @@ public final class PublisherOutcome {
 
     /** The specification or plan a read-only run handed over; empty when none arrived or it was over the cap. */
     public Optional<String> artifact() {
-        return Optional.ofNullable(artifact);
+        return artifact.text();
     }
 
     /** The step summary's JSON text, unparsed; empty when none arrived or it was over the cap. */
@@ -265,7 +199,7 @@ public final class PublisherOutcome {
 
     /** Whether the artifact was over its unit's cap: a paid answer that came back without its text, never a lost run. */
     public boolean artifactOverCap() {
-        return false;
+        return artifact.overCap();
     }
 
     /** Bundles a read-only run left on the handoff: a warning, never a failure, and never published. */
@@ -275,7 +209,9 @@ public final class PublisherOutcome {
 
     /** Each handoff file the publisher refused, or this parse dropped, as {@code file:why}. */
     public List<String> handoffRefusals() {
-        return List.copyOf(handoffRefusals);
+        List<String> all = new java.util.ArrayList<>(handoffRefusals);
+        artifact.missing().ifPresent(why -> all.add(ARTIFACT_FILE + ":" + why));
+        return List.copyOf(all);
     }
 
     /**
@@ -295,8 +231,13 @@ public final class PublisherOutcome {
     }
 
     private void refuse(String file, String why) {
+        // The publisher refusing the artifact for its size is the same fact as a total over the cap here: over cap.
+        if (ARTIFACT_FILE.equals(file) && TOO_LARGE.equals(why)) {
+            artifact.markOverCap();
+        }
         if (handoffRefusals.size() < MAX_REFUSALS) {
-            handoffRefusals.add(clip(file, MAX_PATH_CHARS) + ":" + clip(why, MAX_KIND_CHARS));
+            handoffRefusals.add(PublisherPaths.clip(file, PublisherPaths.MAX_PATH_CHARS) + ":"
+                    + PublisherPaths.clip(why, PublisherPaths.MAX_KIND_CHARS));
         }
     }
 }

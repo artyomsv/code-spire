@@ -22,10 +22,18 @@ final class ReadOnlyPublisher {
 
     private final long pollMillis;
 
+    /** The unit's artifact cap; a draft's 32 KiB unless the unit names another (harness reviews, step 4). */
+    private int artifactMaxBytes = HandoffFiles.ARTIFACT_MAX_BYTES;
+
     ReadOnlyPublisher(Path handoff, OutcomeWriter outcome, long pollMillis) {
         this.handoff = handoff;
         this.outcome = outcome;
         this.pollMillis = pollMillis;
+    }
+
+    ReadOnlyPublisher artifactMaxBytes(int maxBytes) {
+        this.artifactMaxBytes = maxBytes;
+        return this;
     }
 
     /** @return the exit code: always 0 once DONE was seen, since no handoff file can fail the run here */
@@ -37,7 +45,7 @@ final class ReadOnlyPublisher {
         if (bundles > 0) {
             outcome.repositoryChanged((int) Math.min(bundles, Integer.MAX_VALUE));
         }
-        HandoffReport.artifact(handoff, outcome);
+        HandoffReport.artifact(handoff, outcome, artifactMaxBytes);
         HandoffReport.stepSummary(handoff, outcome);
         return 0;
     }

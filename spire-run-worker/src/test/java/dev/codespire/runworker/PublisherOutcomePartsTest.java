@@ -113,6 +113,21 @@ class PublisherOutcomePartsTest {
                 outcome.handoffRefusals().toString());
     }
 
+    /** A part outside its own count, or one naming a different count, cannot belong to the text the others make. */
+    @Test
+    void aPartThatContradictsTheCountIsRefused() {
+        List<String> outside = new ArrayList<>(parts(text(40 * 1024)));
+        outside.add(part(9, 2, "TEST-extra"));
+        List<String> recounted = new ArrayList<>(parts(text(40 * 1024)));
+        recounted.set(1, part(1, recounted.size() + 1, "TEST-recounted"));
+
+        for (List<String> lines : List.of(outside, recounted)) {
+            PublisherOutcome outcome = read(REVIEW_CAP, lines);
+            assertTrue(outcome.artifact().isEmpty());
+            assertTrue(outcome.handoffRefusals().contains("artifact.md:PART_INVALID"), outcome.handoffRefusals().toString());
+        }
+    }
+
     /** Review Focus 4: a total over the unit's cap is over cap, so the paid run comes back marked, never lost. */
     @Test
     void aTotalOverTheUnitsCapIsOverCapNotLost() {

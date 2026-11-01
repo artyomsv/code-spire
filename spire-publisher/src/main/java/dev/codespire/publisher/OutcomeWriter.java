@@ -106,18 +106,29 @@ public final class OutcomeWriter {
     }
 
     /**
-     * The agent's specification or plan, read from the handoff (M4 slice 3), without its control characters. Text that
-     * would still pass {@link #MAX_LINE_CHARS} once escaped is refused as {@code TOO_LARGE} rather than lost in transport.
+     * The agent's artifact, read from the handoff (M4 slice 3), without its control characters. Text that would pass
+     * {@link #MAX_LINE_CHARS} once escaped goes out as ordered {@code artifact_part} lines instead (harness reviews,
+     * step 4), each well under the cap: a review answer of 256 KiB cannot travel as one line, and refusing it would lose
+     * a paid answer.
      */
     public void artifact(String text) {
         // Controls go first: a credential split by an escape byte would otherwise pass the scrub and close up after it.
+        // And the whole text is scrubbed before it is cut, so no part boundary can split a credential past the scrub.
         String cleaned = scrub.clean(CONTROL_CHARACTERS.matcher(text).replaceAll(""));
         String line = serialise(entry("event", "artifact", "text", cleaned));
-        if (line.length() > MAX_LINE_CHARS) {
-            handoffFileRefused(HandoffFiles.ARTIFACT, HandoffFiles.Refusal.TOO_LARGE.name());
+        if (line.length() <= MAX_LINE_CHARS) {
+            emit(line);
             return;
         }
-        emit(line);
+        List<String> parts = ArtifactPartition.split(cleaned);
+        for (int index = 0; index < parts.size(); index++) {
+            emit(partLine(index, parts.size(), parts.get(index)));
+        }
+    }
+
+    /** One part of an artifact, numbered from 0 and naming the count, so the run worker can refuse a gap or a repeat. */
+    static String partLine(int index, int count, String text) {
+        return serialise(entry("event", "artifact_part", "index", index, "count", count, "text", text));
     }
 
     /** The agent's step summary, as the JSON text it wrote; parsed and capped by the run worker. */

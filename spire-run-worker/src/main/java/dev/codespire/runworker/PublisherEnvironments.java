@@ -33,6 +33,19 @@ final class PublisherEnvironments {
     }
 
     /**
+     * A harness review run's publisher (harness reviews, step 4): the read-only publisher, told the review answer's
+     * artifact cap. A draft's unit names none, so its publisher keeps its own 32 KiB.
+     */
+    static ContainerSpec readOnly(ContainerSpec publisher, int artifactMaxBytes) {
+        return new ContainerSpec(publisher.image(), List.of(READ_ONLY_COMMAND),
+                Map.of("SPIRE_HANDOFF_DIR", "/handoff", ARTIFACT_MAX_BYTES, Integer.toString(artifactMaxBytes)),
+                publisher.mounts());
+    }
+
+    /** The variable a read-only publisher reads its artifact cap from. */
+    static final String ARTIFACT_MAX_BYTES = "SPIRE_ARTIFACT_MAX_BYTES";
+
+    /**
      * What the publisher is told, including where ADR-040 lets it push.
      *
      * <p>A {@code HashMap} rather than {@code Map.of}, because the two branch-mode variables are

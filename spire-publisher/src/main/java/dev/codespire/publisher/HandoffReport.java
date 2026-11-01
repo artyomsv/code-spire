@@ -20,9 +20,9 @@ final class HandoffReport {
     private HandoffReport() {
     }
 
-    static void artifact(Path handoff, OutcomeWriter outcome) {
-        report(new HandoffFile(handoff, HandoffFiles.ARTIFACT, HandoffFiles.ARTIFACT_MAX_BYTES), outcome,
-                outcome::artifact);
+    /** @param maxBytes the unit's artifact cap: a review answer's is larger than a draft's (harness reviews, step 4) */
+    static void artifact(Path handoff, OutcomeWriter outcome, int maxBytes) {
+        report(new HandoffFile(handoff, HandoffFiles.ARTIFACT, maxBytes), outcome, outcome::artifact);
     }
 
     static void stepSummary(Path handoff, OutcomeWriter outcome) {

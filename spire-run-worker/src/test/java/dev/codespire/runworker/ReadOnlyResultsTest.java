@@ -80,4 +80,48 @@ class ReadOnlyResultsTest {
         assertEquals(RunFailureCause.ARTIFACT_MISSING.name(), failed.cause());
         assertEquals(USAGE, failed.tokenUsage());
     }
+
+    /** A key shorter than the redaction marker, so redacting it lengthens the text. */
+    private static final String SHORT_KEY = "TEST-k";
+
+    /**
+     * An answer exactly at the cap arrives whole, and redacting a key shorter than the marker pushes it past the cap:
+     * that is still a paid answer, marked over cap, never a lost run and never a draft's ARTIFACT_MISSING.
+     */
+    @Test
+    void anAnswerPushedOverTheCapByRedactionIsOverCap() {
+        ReadOnlyResults shortKey = new ReadOnlyResults(RunLauncherTest.failuresWith(new Credentials() {
+            @Override
+            public Scm scm(String runId, String packed) {
+                return new Scm(RunLauncherTest.SCM_USERNAME, RunLauncherTest.READ_SECRET,
+                        RunLauncherTest.SCM_USERNAME, RunLauncherTest.WRITE_SECRET);
+            }
+
+            @Override
+            public Map<String, String> harnessEnv(String runId, String packed) {
+                return Map.of("OPENAI_API_KEY", SHORT_KEY);
+            }
+        }), ReviewRunDispatcherTest.REVIEW);
+        String atTheCap = SHORT_KEY + "x".repeat(RunReviewArtifact.MAX_TEXT_BYTES - SHORT_KEY.length());
+
+        RunReviewArtifact answer = assertInstanceOf(RunReviewArtifact.class,
+                shortKey.of(finished(), outcome(parts(atTheCap)), 5));
+
+        assertTrue(answer.overCap(), "the redacted text is four bytes over the cap");
+        assertNull(answer.text());
+        assertEquals(USAGE, answer.tokenUsage());
+    }
+
+    /** ASCII text in 8 KiB parts, as the publisher sends an answer longer than one line. */
+    private static String[] parts(String text) {
+        int size = 8 * 1024;
+        int count = (text.length() + size - 1) / size;
+        String[] lines = new String[count];
+        for (int index = 0; index < count; index++) {
+            String piece = text.substring(index * size, Math.min(text.length(), (index + 1) * size));
+            lines[index] = "{\"event\":\"artifact_part\",\"index\":" + index + ",\"count\":" + count
+                    + ",\"text\":\"" + piece + "\"}";
+        }
+        return lines;
+    }
 }

@@ -9,8 +9,9 @@ import java.util.Map;
  * Distinct executable, like {@link HeldPublisherMain}: an older publisher image has no {@code spire-publish-none}, so
  * a read-only unit on it fails to start rather than falling back to a pushing publisher.
  *
- * <p>It reads {@code SPIRE_HANDOFF_DIR} and nothing else. No remote, branch or credential is read, so a unit that
- * hands it none is not misconfigured, and one that hands it a credential by mistake still cannot push.
+ * <p>It reads {@code SPIRE_HANDOFF_DIR} and the artifact cap {@code SPIRE_ARTIFACT_MAX_BYTES}, and nothing else. No
+ * remote, branch or credential is read, so a unit that hands it none is not misconfigured, and one that hands it a
+ * credential by mistake still cannot push.
  */
 public final class ReadOnlyPublisherMain {
 
@@ -33,7 +34,9 @@ public final class ReadOnlyPublisherMain {
         OutcomeWriter outcome = new OutcomeWriter(out);
         Path handoff = Path.of(env.getOrDefault("SPIRE_HANDOFF_DIR", DEFAULT_HANDOFF_DIR));
         try {
-            return new ReadOnlyPublisher(handoff, outcome, POLL_MILLIS).run();
+            // Read inside the guard: a malformed cap is a named publisher failure, never a silent 32 KiB.
+            int artifactMaxBytes = HandoffFiles.artifactMaxBytes(env);
+            return new ReadOnlyPublisher(handoff, outcome, POLL_MILLIS).artifactMaxBytes(artifactMaxBytes).run();
         } catch (IOException | RuntimeException e) {
             outcome.failed("PUBLISHER_FAILED", e.getClass().getSimpleName() + ": " + e.getMessage());
             return 1;

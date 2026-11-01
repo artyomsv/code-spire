@@ -139,7 +139,9 @@ public class RunUnitBuilder {
      * cap handed to the publisher.
      */
     public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter adapter) {
-        throw new UnsupportedOperationException("review units are not built yet: " + review.runId());
+        RunUnitSpec unit = build(review.execution(), adapter, Topology.READ_ONLY);
+        return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
+                dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
     }
 
     /** Where a retried build's init reads the previous run's handoff. */

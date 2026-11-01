@@ -91,16 +91,51 @@ class OutcomeWriterTest {
         assertFalse(lines[0].toLowerCase(Locale.ROOT).contains("\\u001b"), "control characters are dropped");
     }
 
-    /** Text that escapes past one line without any control character is refused by name, not lost in transport. */
+    /**
+     * Text that escapes past one line without any control character goes out in parts (harness reviews, step 4). It was
+     * refused as TOO_LARGE before parts existed, which lost an artifact inside its file cap to JSON escaping alone.
+     */
     @Test
-    void anArtifactThatEscapesPastOneLineIsRefusedAsTooLarge() {
+    void anArtifactThatEscapesPastOneLineGoesOutInParts() {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
         OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));
+        String text = "\"".repeat(HandoffFiles.ARTIFACT_MAX_BYTES);
 
-        writer.artifact("\"".repeat(HandoffFiles.ARTIFACT_MAX_BYTES));
+        writer.artifact(text);
 
-        assertEquals("{\"event\":\"handoff_file_refused\",\"file\":\"artifact.md\",\"why\":\"TOO_LARGE\"}",
-                captured.toString(StandardCharsets.UTF_8).strip());
+        String output = captured.toString(StandardCharsets.UTF_8);
+        assertFalse(output.contains("handoff_file_refused"), output.substring(0, 200));
+        assertEquals(text, ArtifactParts.join(output));
+    }
+
+    /**
+     * The part size is chosen against the worst escaping JSON does: six characters for one control character. The
+     * writer strips most of them before a part is cut, so this drives the part line directly with a part made of
+     * nothing else, at the largest size the partition makes.
+     */
+    @Test
+    void aPartOfOnlyControlCharactersStillFitsOneLine() {
+        java.util.List<String> parts = ArtifactPartition.split("\u0001".repeat(3 * ArtifactPartition.MAX_PART_BYTES));
+
+        assertEquals(3, parts.size());
+        for (String part : parts) {
+            String line = OutcomeWriter.partLine(999, 1000, part);
+            assertTrue(line.length() <= MAX_LINE_CHARS, "a part line of " + line.length() + " characters");
+        }
+    }
+
+    /** Parts are cut on code points: a four-byte character is never split across two parts. */
+    @Test
+    void aPartNeverSplitsACharacter() {
+        String text = "a" + "\uD83D\uDE00".repeat(ArtifactPartition.MAX_PART_BYTES);
+
+        java.util.List<String> parts = ArtifactPartition.split(text);
+
+        assertEquals(text, String.join("", parts));
+        for (String part : parts) {
+            assertTrue(part.getBytes(StandardCharsets.UTF_8).length <= ArtifactPartition.MAX_PART_BYTES);
+            assertFalse(Character.isHighSurrogate(part.charAt(part.length() - 1)), "a part ends mid-character");
+        }
     }
 
     /**

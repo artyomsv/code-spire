@@ -106,11 +106,12 @@ public class RunLauncher {
      * {@code RunReviewArtifact}, or {@code ARTIFACT_MISSING} when the agent handed over nothing.
      */
     public RunResult launchReview(RunCommand.ExecuteReviewRun review, RunObserver observer) {
-        throw new UnsupportedOperationException("review runs are not launched yet: " + review.runId());
+        return launch(review.execution(), review, observer, unit -> {});
     }
 
     /**
-     * {@code wrapper} says which unit this is: null for an ordinary run, the held build, or the read-only draft.
+     * {@code wrapper} says which unit this is: null for an ordinary run, the held build, the read-only draft, or the
+     * read-only review run.
      * One parameter rather than one per kind, because at most one of them is ever present.
      */
     private RunResult launch(RunCommand.ExecuteRun command, RunCommand wrapper,
@@ -161,6 +162,7 @@ public class RunLauncher {
     private RunUnitSpec topology(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter) {
         if (wrapper instanceof RunCommand.ExecuteWorkRun held) return builder.buildHeld(held, adapter);
         if (wrapper instanceof RunCommand.ExecuteWorkDraftRun draft) return builder.buildReadOnly(draft, adapter);
+        if (wrapper instanceof RunCommand.ExecuteReviewRun review) return builder.buildReview(review, adapter);
         return builder.build(command, adapter);
     }
 
@@ -205,7 +207,10 @@ public class RunLauncher {
         RunCommand.ExecuteWorkRun work = wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
         RunEventStream transcript = watchers.transcript();
         RunEventFold seen = new RunEventFold();
-        PublisherOutcome outcome = new PublisherOutcome();
+        // A review's answer may be as large as the review cap its unit hands the publisher; every other unit keeps 32 KiB.
+        PublisherOutcome outcome = wrapper instanceof RunCommand.ExecuteReviewRun
+                ? PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
+                : new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
         AtomicBoolean refusalStops = new AtomicBoolean();
         // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
@@ -282,6 +287,9 @@ public class RunLauncher {
             // The named read-only branch (A1), decided before the destroy below. A failed salvage returned earlier,
             // through the same unobserved ranking as any run, and preserves the unit for inspection.
             result = new ReadOnlyResults(failures, draft).of(result, outcome, wallSecondsSince(activeStarted));
+        } else if (wrapper instanceof RunCommand.ExecuteReviewRun review) {
+            // The same branch for a review's answer (harness reviews, step 4): its unit is destroyed below like a draft's.
+            result = new ReadOnlyResults(failures, review).of(result, outcome, wallSecondsSince(activeStarted));
         }
         result = EgressResults.attach(result, egress);
 

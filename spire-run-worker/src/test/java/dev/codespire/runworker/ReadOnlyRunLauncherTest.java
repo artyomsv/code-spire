@@ -117,6 +117,30 @@ class ReadOnlyRunLauncherTest {
         assertEquals(List.of("created", "released"), observed, "the unit is destroyed, never retained");
     }
 
+    /**
+     * A review's answer is read against the review cap, not a draft's: 40 KiB in parts arrives whole. Reading it with a
+     * draft's 32 KiB would mark a valid answer over its cap.
+     */
+    @Test
+    void aReviewAnswerOverADraftsCapArrivesWhole() throws Exception {
+        String answer = "TEST-finding\n".repeat(40 * 1024 / 13);
+        List<String> lines = new ArrayList<>();
+        int count = (answer.length() + 8191) / 8192;
+        for (int index = 0; index < count; index++) {
+            String part = answer.substring(index * 8192, Math.min(answer.length(), (index + 1) * 8192));
+            lines.add(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
+                    "event", "artifact_part", "index", index, "count", count, "text", part)));
+        }
+        runtime.publisherLines = lines;
+
+        dev.codespire.contract.event.RunReviewArtifact read = assertInstanceOf(
+                dev.codespire.contract.event.RunReviewArtifact.class,
+                launcher.launchReview(ReviewRunDispatcherTest.REVIEW, observer));
+
+        assertFalse(read.overCap());
+        assertEquals(answer, read.text());
+    }
+
     @Test
     void aReadOnlyRunReturnsItsArtifact() {
         runtime.publisherLines = List.of(artifactLine("TEST-specification"));

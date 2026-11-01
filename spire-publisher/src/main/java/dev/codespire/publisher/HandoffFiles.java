@@ -35,8 +35,23 @@ final class HandoffFiles {
 
     /** The artifact cap the unit hands this publisher (harness reviews, step 4); 32 KiB when it hands none. */
     static int artifactMaxBytes(java.util.Map<String, String> env) {
-        throw new UnsupportedOperationException("the unit's artifact cap is not read yet");
+        String declared = env.get(ARTIFACT_MAX_BYTES_ENV);
+        if (declared == null || declared.isBlank()) {
+            return ARTIFACT_MAX_BYTES;
+        }
+        int cap;
+        try {
+            cap = Integer.parseInt(declared.strip());
+        } catch (NumberFormatException notANumber) {
+            throw new IllegalArgumentException(ARTIFACT_MAX_BYTES_ENV + " is not a byte count: " + declared, notANumber);
+        }
+        if (cap < 1) {
+            throw new IllegalArgumentException(ARTIFACT_MAX_BYTES_ENV + " must be positive, not " + cap);
+        }
+        return cap;
     }
+
+    static final String ARTIFACT_MAX_BYTES_ENV = "SPIRE_ARTIFACT_MAX_BYTES";
 
     enum Refusal { SYMLINK, NOT_REGULAR, TOO_LARGE, NOT_UTF8 }
 
