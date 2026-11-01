@@ -100,7 +100,9 @@ topic `cs.review-runs`, keyed by run ID. `review` is a `ReviewRunBinding(reviewI
 its charge is recorded under, and `round` the review round the call was decided in (`ReviewRuns.currentRun`, the count
 of `ReviewRequested` in the review's stream; a reply carries the current round); every component is required, and `prId`
 and `round` are positive. The command refuses a checkpoint
-start and an existing branch, and its credentials are the execution's, sealed with the run's AAD and redacted from
+start and an existing branch. The execution's `protectedBranch` is the pull request's target branch (step 5): the run
+worker's init keeps it under `refs/spire-base/<target>` for the agent to diff against, and a review whose row names no
+target branch is refused before funding (`review_run_target_unavailable`). Its credentials are the execution's, sealed with the run's AAD and redacted from
 `toString`. The run ID is deterministic: subject `review-<prId>-<commit12>-<slotDigest>` (8 hex of SHA-256 over
 `kind|callSlot`), attempt 1, so a redelivered dispatch is dropped by the worker's execute claim. The run-worker's
 review lane (`review-runs-in`, group `spire-run-worker-reviews`, offset reset `earliest`, a bounded pool of its own) takes the execute and

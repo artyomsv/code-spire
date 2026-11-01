@@ -137,15 +137,21 @@ public class RunUnitBuilder {
     /**
      * A harness review run's unit (harness reviews, step 4): the read-only topology, with the review answer's artifact
      * cap handed to the publisher and to the agent's entrypoint, which would otherwise cut the answer at its own 32 KiB
-     * (step 5).
+     * (step 5). Init keeps the pull request's target branch under refs/spire-base, as a land fix's init does, so the
+     * agent can diff the change against it; the agent itself is given no remote.
      */
     public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter adapter) {
         RunUnitSpec unit = build(review.execution(), adapter, Topology.READ_ONLY);
         String cap = Integer.toString(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES);
-        return unit.withAgent(withVariable(unit.agent(), PublisherEnvironments.ARTIFACT_MAX_BYTES, cap))
+        // The dispatch refuses a review with no target branch; a blank one would reach CloneMain, which ignores it.
+        return unit.withInit(withVariable(unit.init(), FETCH_BRANCH, review.execution().protectedBranch()))
+                .withAgent(withVariable(unit.agent(), PublisherEnvironments.ARTIFACT_MAX_BYTES, cap))
                 .withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
                         dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
     }
+
+    /** The variable a trusted init reads the branch to keep under refs/spire-base from (spire-publisher's CloneMain). */
+    static final String FETCH_BRANCH = "SPIRE_FETCH_BRANCH";
 
     /** The same container with one more environment variable. */
     private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
@@ -200,9 +206,7 @@ public class RunUnitBuilder {
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
-        Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
-        initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
-        ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
+        ContainerSpec init = withVariable(unit.init(), FETCH_BRANCH, command.execution().protectedBranch());
         return unit.withInit(init).withPublisher(publisher);
     }
 
