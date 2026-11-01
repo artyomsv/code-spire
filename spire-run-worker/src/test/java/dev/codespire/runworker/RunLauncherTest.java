@@ -1061,6 +1061,22 @@ class RunLauncherTest {
         assertEquals(List.of(new RunResult.EgressAttempt("api.openai.com", 443, true)), failed.egress());
     }
 
+    /**
+     * A unit that was gone when salvage looked is a lost sandbox: no agent failure, no exit, and a refused host is not
+     * blamed for it. It is not destroyed here either; nothing observed it end.
+     */
+    @Test
+    void aUnitThatVanishedIsALostSandboxNotAnAgentFailure() {
+        runtime.egress = List.of(REFUSED);
+        runtime.finalization = Finalization.vanished("no container or volume of the unit remains");
+
+        RunResult.RunFailed failed =
+                assertInstanceOf(RunResult.RunFailed.class, launcher.launch(COMMAND, RunObserver.IGNORING));
+
+        assertEquals(RunFailureCause.SANDBOX_LOST.name(), failed.cause());
+        assertEquals(List.of(), runtime.destroyed);
+    }
+
     /** An overrun after a refusal is the same story: the agent waited on a host it could not reach. */
     @Test
     void anOverrunWithARefusedHostIsBlockedEgress() {

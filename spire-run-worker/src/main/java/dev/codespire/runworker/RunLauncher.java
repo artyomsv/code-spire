@@ -395,6 +395,11 @@ public class RunLauncher {
             return failure(command, outcome.failureCause().orElseThrow(),
                     outcome.failureDetail() + "; " + finalization.detail()).withUsage(spent);
         }
+        if (finalization.vanished()) {
+            // The unit was gone when salvage looked: no container, no volume. Nothing exited where anybody saw it, so
+            // no exit and no agent failure is claimed (and no refused host is blamed); the sandbox was lost.
+            return failure(command, RunFailureCause.SANDBOX_LOST.name(), finalization.detail()).withUsage(spent);
+        }
         RunFailureCause cause = finalization.overran()
                 ? RunFailureCause.AGENT_TIMEOUT
                 : RunFailureCause.SALVAGE_FAILED;

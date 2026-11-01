@@ -56,9 +56,11 @@ not declare.
   may name any port, because tinyproxy restricts ports for CONNECT only.
 - **Enforce is global.** It has no per-repository extra hosts, so a factory build that needs a package
   registry is refused it.
-- **The watchdog's own sweep is not driven against a real daemon.** A network left by an interrupted
-  teardown is discovered, salvaged as nothing left, and destroyed in `DockerRunRuntimeIT`. The
-  `OrphanWatchdog` loop that calls those steps is proven against a fake runtime only.
+- **The watchdog's own sweep is not driven against a real daemon.** In `DockerRunRuntimeIT`, a network
+  left with no container and no volume is discovered, salvaged as `VANISHED` (nothing to observe or keep,
+  no exit claimed) and destroyed. A run whose containers were pruned but whose volumes remain is salvaged
+  as faulted, with its volumes untouched, so it is preserved. The `OrphanWatchdog` loop that acts on
+  those answers (remove a vanished unit, keep a faulted one) is proven against a fake runtime only.
 - **The isolated gateway mode is proven on CI's engine only.** Docker Engine 28.0 is taken as the first
   release with it. An engine that reports an older version is refused; one that reports 28 and lacks the
   mode rejects the network at creation, which fails the run without the barrier being assumed.

@@ -883,10 +883,12 @@ public final class DockerRunRuntime implements PublicationRuntime {
     @Override
     public Finalization salvage(RunHandle handle) {
         Optional<String> agent = containerOf(handle.runId(), AGENT);
-        if (agent.isEmpty() && containersOf(handle.runId()).isEmpty()) {
-            // Only volumes or a network are left, from a teardown interrupted after its containers went. There is no
-            // process to observe and nothing to keep, and saying so is what lets the watchdog finish the teardown.
-            return Finalization.salvaged(0, "no container of run " + handle.runId() + " remains; nothing to salvage");
+        if (agent.isEmpty() && containersOf(handle.runId()).isEmpty() && volumesOf(handle.runId()).isEmpty()) {
+            // Only a remnant is left (its network), from a teardown interrupted after the containers and volumes went.
+            // Nothing to observe and nothing to keep: VANISHED, which lets the watchdog finish the teardown without
+            // claiming an exit nobody saw. A unit whose volumes remain is NOT this: its work may be in them, so it
+            // falls through to faulted below and is preserved.
+            return Finalization.vanished("no container or volume of run " + handle.runId() + " remains");
         }
         if (agent.isEmpty()) {
             return Finalization.faulted("no agent container for run " + handle.runId());
@@ -1196,6 +1198,14 @@ public final class DockerRunRuntime implements PublicationRuntime {
                 .exec()
                 .stream()
                 .findFirst();
+    }
+
+    private List<com.github.dockerjava.api.command.InspectVolumeResponse> volumesOf(String runId) {
+        var volumes = client.listVolumesCmd()
+                .withFilter("label", List.of(RUN_ID_LABEL + "=" + runId))
+                .exec()
+                .getVolumes();
+        return volumes == null ? List.of() : volumes;
     }
 
     private List<Container> containersOf(String runId) {
