@@ -118,7 +118,7 @@ class MessagingChannelsAreDeclaredTest {
     /**
      * The review lane (harness reviews, step 4) is a different topic and a different group from the build lane, so a
      * review never waits behind an hour-long build; and it is read like the build lane: one record, no prefetch, a
-     * dead-letter queue, and only records sent after the group joined.
+     * dead-letter queue, and every record still on the topic when a fresh group joins.
      */
     @Test
     void theReviewLaneIsNotTheBuildLane() {
@@ -133,7 +133,9 @@ class MessagingChannelsAreDeclaredTest {
         assertTrue(review.contains("max-queue-size-factor: 1"), "no prefetch queue");
         assertTrue(review.contains("unprocessed-record-max-age"), "an explicit threshold, checked by RunAckBudget");
         assertTrue(review.contains("failure-strategy: dead-letter-queue"), review);
-        assertTrue(review.contains("reset: latest"), review);
+        // Earliest (review of PR #367): under latest a command sent before the group's first assignment, or onto a new
+        // partition, was skipped for ever while its row stayed queued. The execute claim makes the replay safe.
+        assertTrue(review.contains("reset: earliest"), review);
         assertTrue(review.contains("deserializer: dev.codespire.runworker.RunCommandDeserializer"), review);
 
         Incoming incoming = onReviewCommand().getAnnotation(Incoming.class);
