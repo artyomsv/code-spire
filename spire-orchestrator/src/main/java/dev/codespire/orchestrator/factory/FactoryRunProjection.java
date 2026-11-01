@@ -186,6 +186,14 @@ public class FactoryRunProjection {
         }
     }
 
+    /**
+     * Which review call a review run answers, read from its row (harness reviews, step 4): a {@code RunFailed} carries
+     * no binding, and a {@code RunReviewArtifact}'s must equal this one. Empty for a run that is not a review run.
+     */
+    public Optional<dev.codespire.contract.review.ReviewRunBinding> reviewBindingOf(String runId) {
+        throw new UnsupportedOperationException("review run rows are not read yet: " + runId);
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
@@ -467,6 +475,11 @@ public class FactoryRunProjection {
             }
             return new QueuedRun(runId, harness, model, baseBranch, baseCommit, branch, pushedAs,
                     harnessCredentialId, runKind.name(), reviewId, findingRef, commentId, paidBy, stepIndex);
+        }
+
+        /** The same row, recorded as a review run answering {@code binding} (harness reviews, step 4). */
+        public QueuedRun asReviewFor(dev.codespire.contract.review.ReviewRunBinding binding) {
+            throw new UnsupportedOperationException("review run rows are not written yet: " + runId);
         }
 
         /** The same row, recorded as building plan step {@code step} (0-based). */
@@ -848,6 +861,8 @@ public class FactoryRunProjection {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
             case RunWorkArtifact artifact -> artifactWritten(artifact);
+            case dev.codespire.contract.event.RunReviewArtifact review ->
+                    throw new UnsupportedOperationException("review run results are not projected yet: " + review.runId());
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
@@ -874,6 +889,7 @@ public class FactoryRunProjection {
             case RunResult.RunFailed failed -> failed.egress();
             case RunResult.RunWorkReady ready -> ready.egress();
             case RunWorkArtifact artifact -> artifact.egress();
+            case dev.codespire.contract.event.RunReviewArtifact review -> review.egress();
             case RunResult.RunStarted started -> List.of();
         };
         if (egress.isEmpty()) {

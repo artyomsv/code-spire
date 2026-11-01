@@ -74,6 +74,8 @@ final class EgressResults {
             case RunResult.RunFailed failed -> failed.withEgress(egress);
             case RunResult.RunWorkReady ready -> ready.withEgress(egress);
             case dev.codespire.contract.event.RunWorkArtifact artifact -> artifact.withEgress(egress);
+            case dev.codespire.contract.event.RunReviewArtifact review ->
+                    throw new UnsupportedOperationException("review run results carry no egress yet: " + review.runId());
             case RunResult.RunStarted started -> started;
         };
     }

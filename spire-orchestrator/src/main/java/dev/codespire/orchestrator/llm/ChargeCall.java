@@ -52,6 +52,11 @@ public record ChargeCall(String subjectId, ChargeSubject subjectKind, ChargeCapa
                 callRef, kind, model, lines, null);
     }
 
+    /** A harness review run's spend: the reviewer capability, against the review, naming the key or seat that paid. */
+    public static ChargeCall forReview(ReviewSpend spend, String model, List<ChargeLine> lines) {
+        throw new UnsupportedOperationException("review run charges are not recorded yet: " + spend.reviewId());
+    }
+
     /**
      * A factory run's spend against a runId, under the run's own kind and always the Build capability.
      * Spec and plan are how a work item becomes a pull request, so they are in the Build pack with

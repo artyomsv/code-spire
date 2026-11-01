@@ -307,6 +307,41 @@ describe('the runs screen', () => {
     await waitFor(() => expect(screen.queryByText(/No runs yet/)).toBeNull());
   });
 
+  /** A harness review run is named for the review call it answers, not by its wire name. */
+  it('labels the review run kinds', async () => {
+    show([
+      run({ runId: 'TEST-review-run', kind: 'REVIEW', reviewId: 'review::acme/app#7' }),
+      run({ runId: 'TEST-reconcile-run', kind: 'RECONCILE', reviewId: 'review::acme/app#7' }),
+      run({ runId: 'TEST-followup-run', kind: 'FOLLOWUP', reviewId: 'review::acme/app#7' }),
+    ]);
+
+    const rowOf = async (runId: string) => (await screen.findByTitle(runId)).closest('tr') as HTMLElement;
+    expect(within(await rowOf('TEST-review-run')).getByText('Review')).toBeInTheDocument();
+    expect(within(await rowOf('TEST-reconcile-run')).getByText('Re-review')).toBeInTheDocument();
+    expect(within(await rowOf('TEST-followup-run')).getByText('Reply')).toBeInTheDocument();
+  });
+
+  /**
+   * A review run's charge is recorded under its review, not under the run, so its row shows a dash rather than a cost
+   * that would read as the run's own (step 5 links the two).
+   */
+  it('shows a dash as the cost of a review run', async () => {
+    show([run({ runId: 'TEST-review-run', kind: 'REVIEW', reviewId: 'review::acme/app#7', cost: { millicents: 0 } })]);
+
+    const row = (await screen.findByTitle('TEST-review-run')).closest('tr') as HTMLElement;
+    const cells = within(row).getAllByRole('cell');
+    expect(cells[cells.length - 1]).toHaveTextContent('—');
+  });
+
+  it('offers the review run kinds as filters', async () => {
+    show([run()]);
+    await screen.findByText('Succeeded');
+
+    const options = Array.from((screen.getByLabelText('Kind') as HTMLSelectElement).options).map((o) => o.value);
+
+    expect(options).toEqual(expect.arrayContaining(['REVIEW', 'RECONCILE', 'FOLLOWUP']));
+  });
+
   /**
    * Every status in the union is offered as a filter.
    *

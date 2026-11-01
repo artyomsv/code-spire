@@ -25,12 +25,25 @@ final class ReadOnlyResults {
 
     private final RunCommand.ExecuteWorkDraftRun draft;
 
+    private final RunCommand.ExecuteReviewRun review;
+
     ReadOnlyResults(RunFailures failures, RunCommand.ExecuteWorkDraftRun draft) {
         this.failures = failures;
         this.draft = draft;
+        this.review = null;
+    }
+
+    /** A harness review run's answer (harness reviews, step 4). */
+    ReadOnlyResults(RunFailures failures, RunCommand.ExecuteReviewRun review) {
+        this.failures = failures;
+        this.draft = null;
+        this.review = review;
     }
 
     RunResult of(RunResult interpreted, PublisherOutcome outcome, long activeWallSeconds) {
+        if (review != null) {
+            throw new UnsupportedOperationException("review answers are not shaped yet: " + review.runId());
+        }
         if (!(interpreted instanceof RunResult.RunFinished finished)) {
             return interpreted;
         }

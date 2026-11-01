@@ -86,12 +86,35 @@ class ReadOnlyRunLauncherTest {
             public RunUnitSpec buildReadOnly(RunCommand.ExecuteWorkDraftRun draft, HarnessAdapter harness) {
                 return null; // the fake runtime never reads it; the real topology is ReadOnlyRunUnitBuilderTest's
             }
+
+            @Override
+            public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter harness) {
+                return null; // the real topology is RunUnitBuilderReviewTest's
+            }
         };
     }
 
     @AfterEach
     void threads() {
         launcher.stopStreams();
+    }
+
+    /**
+     * A harness review run (harness reviews, step 4) comes back as its review's answer, with the tokens it bought, and its
+     * unit is destroyed like a draft's.
+     */
+    @Test
+    void aReviewRunReturnsItsAnswer() {
+        runtime.publisherLines = List.of(artifactLine("TEST-findings"));
+
+        dev.codespire.contract.event.RunReviewArtifact answer = assertInstanceOf(
+                dev.codespire.contract.event.RunReviewArtifact.class,
+                launcher.launchReview(ReviewRunDispatcherTest.REVIEW, observer));
+
+        assertEquals("TEST-findings", answer.text());
+        assertEquals(ReviewRunDispatcherTest.REVIEW.review(), answer.review());
+        assertEquals(Map.of("INPUT", 7L), answer.tokenUsage());
+        assertEquals(List.of("created", "released"), observed, "the unit is destroyed, never retained");
     }
 
     @Test

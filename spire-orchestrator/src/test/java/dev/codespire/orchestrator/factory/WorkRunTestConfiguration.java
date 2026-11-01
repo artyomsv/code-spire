@@ -12,6 +12,7 @@ public final class WorkRunTestConfiguration {
         target.config=new FactoryConfig() {
             public Map<String,String> agentImage(){return Map.of();}
             public long wallClockSeconds(){return original.wallClockSeconds();}
+            public long reviewWallClockSeconds(){return original.reviewWallClockSeconds();}
             public Fix fix(){return original.fix();}
         };
         return ()->target.config=original;

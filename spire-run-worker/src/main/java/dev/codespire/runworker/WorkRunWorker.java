@@ -291,6 +291,8 @@ public class WorkRunWorker {
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
             // Never stored here: a draft run is launched read-only by the dispatcher, outside this worker.
             case RunWorkArtifact artifact -> artifact.tokenUsage();
+            // Never stored here either: a review run is launched on the review lane, outside this worker.
+            case dev.codespire.contract.event.RunReviewArtifact review -> review.tokenUsage();
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;

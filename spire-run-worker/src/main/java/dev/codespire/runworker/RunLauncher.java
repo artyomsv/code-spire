@@ -102,6 +102,14 @@ public class RunLauncher {
     }
 
     /**
+     * A harness review run (harness reviews, step 4): a read-only unit whose answer comes back as
+     * {@code RunReviewArtifact}, or {@code ARTIFACT_MISSING} when the agent handed over nothing.
+     */
+    public RunResult launchReview(RunCommand.ExecuteReviewRun review, RunObserver observer) {
+        throw new UnsupportedOperationException("review runs are not launched yet: " + review.runId());
+    }
+
+    /**
      * {@code wrapper} says which unit this is: null for an ordinary run, the held build, or the read-only draft.
      * One parameter rather than one per kind, because at most one of them is ever present.
      */

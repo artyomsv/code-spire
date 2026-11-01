@@ -205,6 +205,11 @@ class FixRunDispatcherTest {
             }
 
             @Override
+            public long reviewWallClockSeconds() {
+                return 900;
+            }
+
+            @Override
             public Fix fix() {
                 return new Fix() {
                     @Override

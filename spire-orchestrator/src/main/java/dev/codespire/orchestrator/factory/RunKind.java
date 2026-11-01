@@ -32,7 +32,16 @@ public enum RunKind {
     SPEC,
 
     /** M4: a read-only run that decomposes the approved specification into ordered steps. */
-    PLAN;
+    PLAN,
+
+    /** Harness reviews: a read-only run that reviews a pull request's head. Names the review it answers. */
+    REVIEW,
+
+    /** Harness reviews: a read-only run that re-reviews a new head against the review's prior findings. */
+    RECONCILE,
+
+    /** Harness reviews: a read-only run that answers a reply on one of the review's threads. */
+    FOLLOWUP;
 
     /** The ledger's name for this run's spend, so a run's charge row carries the run's own kind. */
     public ChargeKind chargeKind() {
@@ -41,6 +50,12 @@ public enum RunKind {
             case FIX -> ChargeKind.FIX;
             case SPEC -> ChargeKind.SPEC;
             case PLAN -> ChargeKind.PLAN;
+            case REVIEW, RECONCILE, FOLLOWUP -> ChargeKind.BUILD;
         };
+    }
+
+    /** Whether this run answers a review call, and is charged under the review rather than as a run. */
+    public boolean isReview() {
+        return false;
     }
 }

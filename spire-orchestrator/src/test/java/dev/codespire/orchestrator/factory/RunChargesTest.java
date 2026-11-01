@@ -91,6 +91,12 @@ class RunChargesTest {
         public Optional<String> paidByOf(String runId) {
             return Optional.ofNullable(paidBy);
         }
+
+        /** A review run's call, answered here for the same reason: nothing on this path may open a database. */
+        @Override
+        public Optional<dev.codespire.contract.review.ReviewRunBinding> reviewBindingOf(String runId) {
+            return Optional.empty();
+        }
     }
 
     /** Prices everything at a flat metered rate, so a line's presence is the thing under test. */
@@ -103,6 +109,12 @@ class RunChargesTest {
             return usage.counts().stream()
                     .map(count -> ChargeLine.metered(count.type(), count.tokens(), 1L))
                     .toList();
+        }
+
+        /** Answered for the same reason as the fakes above: the parent reads the catalogue. */
+        @Override
+        public List<ChargeLine> priceUnmetered(ModelUsage usage) {
+            return priceCall("TEST-model", usage);
         }
     }
 
@@ -309,6 +321,26 @@ class RunChargesTest {
                 "the swallow must be EXERCISED, not skipped -- without this the test stays green"
                         + " if record() is later changed to not attempt the write at all");
         assertTrue(runs.pushed.isEmpty(), "a failed ledger write must not announce new spend");
+    }
+
+    /**
+     * A review run is charged once, under the review's call slot (harness reviews, step 4), so the run plane writes
+     * nothing for it. The catch in RunCharges swallows every RuntimeException, so the assertion is on the writer never
+     * being reached, and a build in the same fixture proves the fixture can charge at all.
+     */
+    @Test
+    void aReviewRunIsNotChargedByTheRunPlane() {
+        for (RunKind review : List.of(RunKind.REVIEW, RunKind.RECONCILE, RunKind.FOLLOWUP)) {
+            runs.kind = review;
+            charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+            charges.record(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false,
+                    Map.of("INPUT", 10L), List.of()));
+        }
+        assertEquals(List.of(), ledger.calls, "a review run's spend is the review's charge, not the run's");
+
+        runs.kind = RunKind.BUILD;
+        charges.record(finished(RUN_ID, Map.of("INPUT", 10L)));
+        assertEquals(1, ledger.calls.size(), "the control: a build in the same fixture is charged");
     }
 
     @Test

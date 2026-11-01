@@ -354,6 +354,15 @@ public sealed interface RunCommand {
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }
 
+    /**
+     * A harness review run (harness reviews, step 4): a read-only clone of the pull request's head, read by the agent,
+     * and its answer handed back as {@code RunReviewArtifact}. Nothing is pushed. It rides {@code cs.review-runs}, the
+     * run-worker's review lane, so a review never waits behind a build.
+     */
+    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review)
+            implements RunCommand {
+    }
+
     /** Resume only the trusted publisher, with the currently selected FACTORY credential. */
     record PublishWorkRun(String runId,dev.codespire.contract.work.WorkPublicationPermit permit,
                           String scmCredential) implements RunCommand {

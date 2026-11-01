@@ -109,6 +109,24 @@ class ReadOnlyPublisherTest {
         assertFalse(lines().contains("\"event\":\"artifact\""), lines());
     }
 
+    /**
+     * A review run's unit names a 256 KiB cap (harness reviews, step 4): a 200 KiB answer is read under it and reported
+     * whole, in parts, where a draft's 32 KiB cap would have refused it.
+     */
+    @Test
+    void aReviewArtifactUnderItsUnitsCapIsReportedWhole() throws Exception {
+        Path handoff = Files.createDirectory(root.resolve("handoff"));
+        String answer = "TEST-finding line\n".repeat(200 * 1024 / 18);
+        Files.writeString(handoff.resolve(HandoffFiles.ARTIFACT), answer);
+        Files.writeString(handoff.resolve(PublisherMain.DONE_SENTINEL), "");
+
+        assertEquals(0, ReadOnlyPublisherMain.run(Map.of("SPIRE_HANDOFF_DIR", handoff.toString(),
+                "SPIRE_ARTIFACT_MAX_BYTES", "262144"), out), lines());
+
+        assertFalse(lines().contains("handoff_file_refused"), lines().substring(0, Math.min(200, lines().length())));
+        assertEquals(answer, ArtifactParts.join(lines()));
+    }
+
     /** DONE means "everything I produced is here": a file read before it may still be written to. */
     @Test
     void itWaitsForDone() throws Exception {

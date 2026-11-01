@@ -196,6 +196,7 @@ final class RunTokenUsage {
             case RunResult.RunFinished finished -> finished.tokenUsage();
             case RunResult.RunWorkReady ready -> ready.tokenUsage();
             case RunWorkArtifact artifact -> artifact.tokenUsage();
+            case dev.codespire.contract.event.RunReviewArtifact review -> review.tokenUsage();
             case RunResult.RunFailed failed -> failed.tokenUsage();
             case RunResult.RunStarted ignored -> null;
         };

@@ -91,6 +91,9 @@ public class IntegrationSaga {
     @Inject
     ReviewRerunService rerunService;
 
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunCancellation reviewRunCancellation;
+
     @Incoming("integration-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {

@@ -98,6 +98,11 @@ public class RunLaunch {
         return dispatch(command);
     }
 
+    /** A harness review run: the same three outcomes, the same row updates, on the review lane. */
+    public Outcome launch(RunCommand.ExecuteReviewRun command) {
+        throw new UnsupportedOperationException("review runs are not launched yet: " + command.runId());
+    }
+
     private Outcome dispatch(RunCommand command) {
         String runId = command.runId();
         try {

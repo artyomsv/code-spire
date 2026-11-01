@@ -39,6 +39,13 @@ class DlqTopicsTest {
         assertEquals("cs.run-verifications", DlqTopics.forType("RunWorkVerified"));
     }
 
+    /** A review run replays onto the review lane, never the build lane, and its answer onto the run results. */
+    @Test
+    void aReviewRunRecordReplaysOntoTheReviewLane() {
+        assertEquals("cs.review-runs", DlqTopics.forType("ExecuteReviewRun"));
+        assertEquals("cs.run-results", DlqTopics.forType("RunReviewArtifact"));
+    }
+
     /**
      * Control replays where a listener is reading, which is no longer the work topic.
      *

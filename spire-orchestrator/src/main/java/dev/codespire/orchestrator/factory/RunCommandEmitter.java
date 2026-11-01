@@ -42,6 +42,11 @@ public class RunCommandEmitter {
                 "run command " + command.getClass().getSimpleName() + " for " + command.runId());
     }
 
+    /** A harness review run, onto {@code cs.review-runs}: the run-worker's review lane, never the build lane. */
+    public void dispatchReview(RunCommand command) {
+        throw new UnsupportedOperationException("the review lane is not wired yet: " + command.runId());
+    }
+
     public void control(RunCommand command) {
         KafkaSends.sendAndAwait(control, command.runId(), command,
                 "run control " + command.getClass().getSimpleName() + " for " + command.runId());

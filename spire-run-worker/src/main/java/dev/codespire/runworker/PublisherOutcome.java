@@ -59,6 +59,11 @@ public final class PublisherOutcome {
         static final HandoffText STEP_SUMMARY = new HandoffText("json", "step-summary.json", 8 * 1024);
     }
 
+    /** An outcome whose artifact may be as large as its unit's cap (harness reviews, step 4). */
+    static PublisherOutcome withArtifactCap(int maxBytes) {
+        return new PublisherOutcome();
+    }
+
     private final Set<String> changedPaths = new LinkedHashSet<>();
 
     private final Set<String> handoffRefusals = new LinkedHashSet<>();
@@ -256,6 +261,11 @@ public final class PublisherOutcome {
     /** The step summary's JSON text, unparsed; empty when none arrived or it was over the cap. */
     public Optional<String> stepSummary() {
         return Optional.ofNullable(stepSummary);
+    }
+
+    /** Whether the artifact was over its unit's cap: a paid answer that came back without its text, never a lost run. */
+    public boolean artifactOverCap() {
+        return false;
     }
 
     /** Bundles a read-only run left on the handoff: a warning, never a failure, and never published. */

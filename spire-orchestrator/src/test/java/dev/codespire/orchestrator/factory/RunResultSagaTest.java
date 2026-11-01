@@ -1,12 +1,18 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.event.RunResult;
+import dev.codespire.contract.event.RunReviewArtifact;
 import dev.codespire.contract.event.RunWorkArtifact;
+import dev.codespire.contract.review.ReviewRunBinding;
+import dev.codespire.orchestrator.review.run.ReviewRunBindings;
+import dev.codespire.orchestrator.review.run.ReviewRunCharges;
+import dev.codespire.orchestrator.review.run.ReviewRunResults;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,6 +33,44 @@ class RunResultSagaTest {
         @Override
         public void apply(RunResult result) {
             applied.add(result);
+        }
+
+        RunKind kind = RunKind.BUILD;
+
+        ReviewRunBinding binding;
+
+        /** The saga reads the run's kind to route a review result; the real method reads factory_run. */
+        @Override
+        public Optional<RunKind> kindOf(String runId) {
+            return Optional.of(kind);
+        }
+
+        /** Overridden for the same reason: a review result's binding is read from the row. */
+        @Override
+        public Optional<ReviewRunBinding> reviewBindingOf(String runId) {
+            return Optional.ofNullable(binding);
+        }
+    }
+
+    /** Records what the review charger was handed; the real one reads the run's row and writes the ledger. */
+    private static class RecordingReviewCharges extends ReviewRunCharges {
+        final List<RunResult> charged = new ArrayList<>();
+        final List<ReviewRunBinding> bindings = new ArrayList<>();
+
+        @Override
+        public void record(RunResult result, ReviewRunBinding binding) {
+            charged.add(result);
+            bindings.add(binding);
+        }
+    }
+
+    /** Records what reached the review-run port. */
+    private static class RecordingReviewResults implements ReviewRunResults {
+        final List<RunResult> accepted = new ArrayList<>();
+
+        @Override
+        public void accept(RunResult result, ReviewRunBinding binding) {
+            accepted.add(result);
         }
     }
 
@@ -51,6 +95,12 @@ class RunResultSagaTest {
         // fake opens a real database connection from a plain unit test -- a trap this repository
         // has hit four times in one milestone.
         saga.charges = charges;
+        // The review-run collaborators, overridden for the same reason: each real one reads factory_run.
+        saga.reviewRuns = new ReviewRunBindings() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
+        };
+        saga.reviewCharges = new RecordingReviewCharges();
+        saga.reviewResults = new RecordingReviewResults();
         // This fixture represents standalone runs; item lookup is asserted by the work bridge service tests.
         saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
             @Override public boolean accept(RunResult result) { return false; }
@@ -221,6 +271,95 @@ class RunResultSagaTest {
         assertTrue(projection.applied.isEmpty());
         assertTrue(charges.charged.isEmpty());
         assertTrue(drafted.isEmpty());
+    }
+
+    private static final ReviewRunBinding REVIEW_CALL =
+            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot");
+
+    /**
+     * A review run's result (harness reviews, step 4) goes to the review-run port and no further: it pushed nothing to
+     * propose and has no work-run or draft row. A review-kind FAILURE is the discriminating case, because a review
+     * artifact could also be stopped by its type alone.
+     */
+    @Test
+    void aReviewArtifactNeverReachesThePullRequestStep() {
+        RecordingProjection projection = new RecordingProjection();
+        projection.kind = RunKind.REVIEW;
+        projection.binding = REVIEW_CALL;
+        RunResultSaga saga = saga(projection);
+        List<RunResult> continued = new ArrayList<>();
+        List<RunResult> proposed = new ArrayList<>();
+        saga.drafts = new dev.codespire.orchestrator.work.WorkDraftResults() {
+            @Override public boolean acceptsBinding(RunResult result) { return true; }
+            @Override public boolean accept(RunResult result) { continued.add(result); return false; }
+        };
+        saga.workItems = new dev.codespire.orchestrator.work.WorkItemRunBridge() {
+            @Override public boolean accept(RunResult result) { continued.add(result); return false; }
+        };
+        saga.pullRequests = new FactoryPullRequests() {
+            @Override public void propose(RunResult result) { proposed.add(result); }
+        };
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L), List.of());
+        RunResult artifact = new RunReviewArtifact(RUN_ID, REVIEW_CALL, "TEST-findings", false, Map.of("INPUT", 5L), 2, List.of());
+
+        saga.on(failed);
+        saga.on(artifact);
+
+        assertEquals(List.of(failed, artifact), ((RecordingReviewResults) saga.reviewResults).accepted);
+        assertTrue(continued.isEmpty(), "a review run has no draft or work-run row");
+        assertTrue(proposed.isEmpty(), "a review run is never proposed");
+    }
+
+    /**
+     * A review result is charged by the review charger, with the binding its row stores, after the projection and the
+     * run plane (which skips review kinds) and before the review-run port.
+     */
+    @Test
+    void aReviewResultIsChargedByTheReviewChargerOnly() {
+        List<String> order = new ArrayList<>();
+        RecordingProjection projection = new RecordingProjection() {
+            @Override public void apply(RunResult result) { order.add("project"); }
+        };
+        projection.kind = RunKind.RECONCILE;
+        projection.binding = REVIEW_CALL;
+        RunResultSaga saga = saga(projection, new RecordingCharges() {
+            @Override public void record(RunResult result) { order.add("run-plane"); }
+        });
+        RecordingReviewCharges reviewCharges = new RecordingReviewCharges() {
+            @Override public void record(RunResult result, ReviewRunBinding binding) {
+                super.record(result, binding);
+                order.add("review-charge");
+            }
+        };
+        saga.reviewCharges = reviewCharges;
+        saga.reviewResults = (result, binding) -> order.add("review-result");
+        RunResult failed = new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "TEST-detail", false, Map.of("INPUT", 5L), List.of());
+
+        saga.on(failed);
+
+        assertEquals(List.of(failed), reviewCharges.charged);
+        assertEquals(List.of(REVIEW_CALL), reviewCharges.bindings, "a failure carries no binding; the row's is used");
+        assertEquals(List.of("project", "run-plane", "review-charge", "review-result"), order);
+    }
+
+    /** A review artifact answering a call its row does not store is neither projected nor charged nor accepted. */
+    @Test
+    void aReviewArtifactForAnotherCallStopsTheResult() {
+        RecordingProjection projection = new RecordingProjection();
+        projection.kind = RunKind.REVIEW;
+        projection.binding = REVIEW_CALL;
+        RecordingCharges charges = new RecordingCharges();
+        RunResultSaga saga = saga(projection, charges);
+        saga.reviewRuns = new ReviewRunBindings() {
+            @Override public boolean acceptsBinding(RunResult result) { return false; }
+        };
+
+        saga.on(new RunReviewArtifact(RUN_ID, REVIEW_CALL, "TEST-findings", false, Map.of("INPUT", 5L), 2, List.of()));
+
+        assertTrue(projection.applied.isEmpty());
+        assertTrue(charges.charged.isEmpty());
+        assertTrue(((RecordingReviewCharges) saga.reviewCharges).charged.isEmpty());
+        assertTrue(((RecordingReviewResults) saga.reviewResults).accepted.isEmpty());
     }
 
     @Test

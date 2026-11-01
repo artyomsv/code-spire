@@ -29,6 +29,14 @@ public interface FactoryConfig {
     long wallClockSeconds();
 
     /**
+     * The wall-clock cap of a harness review run (harness reviews, step 4). A review reads; it does not build, so its
+     * bound is its own, and it may never exceed {@link #wallClockSeconds()}.
+     */
+    @WithName("review-wall-clock-seconds")
+    @WithDefault("900")
+    long reviewWallClockSeconds();
+
+    /**
      * What a {@code /fix} run uses, since nobody types it.
      *
      * <p>The REST endpoint takes the harness and the model from its request body. {@code /fix} has

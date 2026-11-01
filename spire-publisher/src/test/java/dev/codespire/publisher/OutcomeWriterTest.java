@@ -103,6 +103,23 @@ class OutcomeWriterTest {
                 captured.toString(StandardCharsets.UTF_8).strip());
     }
 
+    /**
+     * An artifact too long for one line travels as ordered parts (harness reviews, step 4): a 200 KiB review answer is
+     * cut into numbered parts, each line under the run worker's line cap, and joined back it is the text as written.
+     */
+    @Test
+    void aLongArtifactIsWrittenAsOrderedParts() {
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        OutcomeWriter writer = new OutcomeWriter(new PrintStream(captured, true, StandardCharsets.UTF_8));
+        String text = "TEST-finding \"quoted\" ü\n".repeat(9_000);
+
+        writer.artifact(text);
+
+        String output = captured.toString(StandardCharsets.UTF_8);
+        assertEquals(text, ArtifactParts.join(output));
+        assertFalse(output.contains("handoff_file_refused"), output.substring(0, Math.min(200, output.length())));
+    }
+
     @Test
     void theHandoffLinesCarryTheirFields() {
         ByteArrayOutputStream captured = new ByteArrayOutputStream();

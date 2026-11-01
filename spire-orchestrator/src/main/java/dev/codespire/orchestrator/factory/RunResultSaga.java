@@ -39,6 +39,15 @@ public class RunResultSaga {
     @Inject
     dev.codespire.orchestrator.work.WorkDraftResults drafts;
 
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunBindings reviewRuns;
+
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunCharges reviewCharges;
+
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRunResults reviewResults;
+
     @Incoming("run-results-in")
     @Blocking
     public void on(RunResult result) {

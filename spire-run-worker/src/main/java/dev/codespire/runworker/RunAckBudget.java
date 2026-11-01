@@ -75,6 +75,18 @@ public class RunAckBudget {
             defaultValue = "" + DEFAULT_QUEUE_FACTOR)
     int controlQueueSizeFactor;
 
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.throttled.unprocessed-record-max-age.ms",
+            defaultValue = "" + DEFAULT_MAX_AGE_MS)
+    long reviewMaxAgeMs;
+
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.max.poll.records",
+            defaultValue = "" + DEFAULT_POLL_RECORDS)
+    int reviewPollRecords;
+
+    @ConfigProperty(name = "mp.messaging.incoming.review-runs-in.max-queue-size-factor",
+            defaultValue = "" + DEFAULT_QUEUE_FACTOR)
+    int reviewQueueSizeFactor;
+
     void check(@Observes StartupEvent event) {
         verify(Duration.ofSeconds(maxWallClockSeconds), runtime.drainWindow(), Duration.ofMillis(maxAgeMs),
                 pollRecords, queueSizeFactor);

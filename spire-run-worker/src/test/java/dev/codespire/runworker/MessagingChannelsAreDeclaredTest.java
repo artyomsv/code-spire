@@ -33,6 +33,8 @@ class MessagingChannelsAreDeclaredTest {
 
     private static final String WORK_CHANNEL = "run-commands-in";
 
+    private static final String REVIEW_CHANNEL = "review-runs-in";
+
     @Test
     void controlIsReadFromItsOwnChannelAndNotTheWorkChannel() {
         Incoming incoming = onControl().getAnnotation(Incoming.class);
@@ -113,6 +115,47 @@ class MessagingChannelsAreDeclaredTest {
         assertEquals(WORK_CHANNEL, incoming.value());
     }
 
+    /**
+     * The review lane (harness reviews, step 4) is a different topic and a different group from the build lane, so a
+     * review never waits behind an hour-long build; and it is read like the build lane: one record, no prefetch, a
+     * dead-letter queue, and only records sent after the group joined.
+     */
+    @Test
+    void theReviewLaneIsNotTheBuildLane() {
+        String yaml = applicationYaml();
+        String review = channelBlock(yaml, REVIEW_CHANNEL);
+        String work = channelBlock(yaml, WORK_CHANNEL);
+
+        assertTrue(review.contains("topic: cs.review-runs"), review);
+        assertTrue(review.contains("id: spire-run-worker-reviews"), review);
+        assertFalse(work.contains("cs.review-runs"), "the build lane must not read reviews: " + work);
+        assertTrue(review.contains("records: 1"), "max.poll.records must be 1");
+        assertTrue(review.contains("max-queue-size-factor: 1"), "no prefetch queue");
+        assertTrue(review.contains("unprocessed-record-max-age"), "an explicit threshold, checked by RunAckBudget");
+        assertTrue(review.contains("failure-strategy: dead-letter-queue"), review);
+        assertTrue(review.contains("reset: latest"), review);
+        assertTrue(review.contains("deserializer: dev.codespire.runworker.RunCommandDeserializer"), review);
+
+        Incoming incoming = onReviewCommand().getAnnotation(Incoming.class);
+        assertNotNull(incoming, "without this the review lane consumes nothing");
+        assertEquals(REVIEW_CHANNEL, incoming.value());
+    }
+
+    /**
+     * Reviews run side by side on their own named pool, bounded per run-worker instance, so a review does not wait
+     * for another review either, up to the cap, and never takes the build lane's one execution slot.
+     */
+    @Test
+    void theReviewLaneRunsOnItsOwnBoundedPool() {
+        Blocking blocking = onReviewCommand().getAnnotation(Blocking.class);
+
+        assertNotNull(blocking, "a review run holds its thread for the run's whole wall clock");
+        assertEquals("review-runs", blocking.value());
+        assertFalse(blocking.ordered(), "two reviews must not wait on each other");
+        assertTrue(applicationYaml().contains("max-concurrency: ${SPIRE_RUN_REVIEW_CONCURRENCY:2}"),
+                "the pool's bound is the operator's setting");
+    }
+
     /** A question sent while the worker's group was still being assigned must not be skipped. */
     @Test
     void anImageQuestionSentBeforeTheWorkerJoinedIsStillAnswered() {
@@ -136,6 +179,10 @@ class MessagingChannelsAreDeclaredTest {
             }
         }
         throw new IllegalStateException("RunDispatcher consumes nothing");
+    }
+
+    private static Method onReviewCommand() {
+        return method(ReviewRunDispatcher.class, "onCommand", org.eclipse.microprofile.reactive.messaging.Message.class);
     }
 
     private static Method method(Class<?> type, String name, Class<?>... parameters) {

@@ -33,6 +33,11 @@ final class HandoffFiles {
 
     static final int STEP_SUMMARY_MAX_BYTES = 8 * 1024;
 
+    /** The artifact cap the unit hands this publisher (harness reviews, step 4); 32 KiB when it hands none. */
+    static int artifactMaxBytes(java.util.Map<String, String> env) {
+        throw new UnsupportedOperationException("the unit's artifact cap is not read yet");
+    }
+
     enum Refusal { SYMLINK, NOT_REGULAR, TOO_LARGE, NOT_UTF8 }
 
     sealed interface Read {

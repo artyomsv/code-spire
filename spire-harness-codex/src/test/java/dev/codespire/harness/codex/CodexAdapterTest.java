@@ -80,6 +80,29 @@ class CodexAdapterTest {
         assertTrue(script(adapter.command(invocation())).startsWith("printenv OPENAI_API_KEY | codex login --with-api-key"));
     }
 
+    /**
+     * Plugins call github.com, api.github.com and chatgpt.com, and analytics calls ab.chatgpt.com: measured on the dev
+     * stack on 2026-11-01 (spec "After step 2"). A run needs neither, so both are off before the workspace flag.
+     */
+    @Test
+    void aKeyRunSwitchesOffPluginsAndAnalytics() {
+        String script = script(adapter.command(invocation()));
+
+        assertTrue(script.contains(" -c features.plugins=false -c analytics.enabled=false"), script);
+        assertTrue(script.indexOf("features.plugins=false") < script.indexOf(" -C "), script);
+        assertFalse(script.contains("features.apps"), script);
+    }
+
+    /** A seat also calls the apps endpoints, measured the same day; a key run never did. */
+    @Test
+    void aSeatRunAlsoSwitchesOffApps() {
+        String script = script(adapter.command(signedIn()));
+
+        assertTrue(script.contains(" -c features.plugins=false -c analytics.enabled=false"), script);
+        assertTrue(script.contains(" -c features.apps=false"), script);
+        assertTrue(script.indexOf("features.apps=false") < script.indexOf(" -C "), script);
+    }
+
     // ---- egress ----------------------------------------------------------------------------
 
     /**
@@ -87,14 +110,19 @@ class CodexAdapterTest {
      * egress proxy lets through.
      */
     @Test
-    void aRunPaidByAKeyDeclaresTheModelApiAsItsOnlyEgressHost() {
+    void aKeyDeclaresOnlyTheModelApi() {
         assertEquals(Set.of("api.openai.com"), adapter.egressHosts(invocation()));
     }
 
-    /** A run paid by a seat talks to the ChatGPT backend instead of the model API. */
+    /**
+     * A run paid by a seat talks to the ChatGPT backend and the three content hosts a seat run was measured calling on
+     * 2026-11-01 (spec "After step 2"), and to nothing else.
+     */
     @Test
-    void aRunPaidByASeatDeclaresTheChatGptBackendAsItsOnlyEgressHost() {
-        assertEquals(Set.of("chatgpt.com"), adapter.egressHosts(signedIn()));
+    void aSeatDeclaresTheHostsMeasuredOnASeat() {
+        assertEquals(Set.of("chatgpt.com", "sdmntprcentralus.oaiusercontent.com",
+                "sdmntprsouthcentralus.oaiusercontent.com", "sdmntprwestus.oaiusercontent.com"),
+                adapter.egressHosts(signedIn()));
     }
 
     /**
