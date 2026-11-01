@@ -860,9 +860,9 @@ public class FactoryRunProjection {
         switch (result) {
             case RunResult.RunStarted started -> started(started.runId(), started.providerRunId());
             case RunResult.RunWorkReady ready -> workReady(ready);
-            case RunWorkArtifact artifact -> artifactWritten(artifact);
-            case dev.codespire.contract.event.RunReviewArtifact review ->
-                    throw new UnsupportedOperationException("review run results are not projected yet: " + review.runId());
+            case RunWorkArtifact artifact -> answered(artifact.runId(), artifact.activeWallSeconds());
+            // Over the cap or not: an over-cap answer is a degraded review, never a failed paid run.
+            case dev.codespire.contract.event.RunReviewArtifact review -> answered(review.runId(), review.activeWallSeconds());
             case RunResult.RunFinished finished -> finished(finished);
             case RunResult.RunFailed failed -> failed(failed);
         }
@@ -937,10 +937,11 @@ public class FactoryRunProjection {
      * A specification or plan run handed back its artifact (M4 slice 3): it did what it was for, and pushed nothing.
      * The text itself is not stored here; the draft's own effect row holds it, encrypted (slice 6).
      */
-    private void artifactWritten(RunWorkArtifact artifact) {
+    /** A read-only run's answer (a draft or a review): it finished with nothing pushed. */
+    private void answered(String runId, long activeWallSeconds) {
         update("UPDATE factory_run SET status = ?, pushed_ref = NULL, active_wall_seconds = ?, failure_cause = NULL,"
                         + " failure_detail = NULL, ended_at = now() WHERE run_id = ? AND " + LIVE,
-                artifact.runId(), SUCCEEDED, artifact.activeWallSeconds(), artifact.runId());
+                runId, SUCCEEDED, activeWallSeconds, runId);
     }
 
     private void started(String runId, String unitId) {

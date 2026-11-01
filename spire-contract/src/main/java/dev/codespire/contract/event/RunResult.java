@@ -13,6 +13,7 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunResult.RunStarted.class, name = "RunStarted"),
         @JsonSubTypes.Type(value = RunResult.RunWorkReady.class, name = "RunWorkReady"),
         @JsonSubTypes.Type(value = RunWorkArtifact.class, name = "RunWorkArtifact"),
+        @JsonSubTypes.Type(value = RunReviewArtifact.class, name = "RunReviewArtifact"),
         @JsonSubTypes.Type(value = RunResult.RunFinished.class, name = "RunFinished"),
         @JsonSubTypes.Type(value = RunResult.RunFailed.class, name = "RunFailed")
 })

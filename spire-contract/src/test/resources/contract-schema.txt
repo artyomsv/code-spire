@@ -43,6 +43,7 @@ RefuseFinding(reviewId: java.lang.String, repo: dev.codespire.contract.scm.RepoR
 
 # RunCommand
 CancelRun(runId: java.lang.String, reason: java.lang.String)
+ExecuteReviewRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, review: dev.codespire.contract.review.ReviewRunBinding)
 ExecuteRun(runId: java.lang.String, repo: dev.codespire.contract.scm.RepoRef, remoteUri: java.lang.String, baseBranch: java.lang.String, baseCommit: java.lang.String, branch: java.lang.String, prompt: java.lang.String, harness: java.lang.String, model: java.lang.String, agentImage: java.lang.String, protectedPaths: java.util.List<java.lang.String>, maxWallClockSeconds: long, scmCredential: java.lang.String, harnessCredential: java.lang.String, existingBranch: boolean, protectedBranch: java.lang.String, reasoningEffort: java.lang.String, harnessSignIn: boolean, startFromRunId: java.lang.String, startFromHead: java.lang.String)
 ExecuteWorkDraftRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, draft: dev.codespire.contract.work.WorkDraftBinding)
 ExecuteWorkRun(runId: java.lang.String, execution: dev.codespire.contract.command.RunCommand$ExecuteRun, work: dev.codespire.contract.work.WorkRunBinding, mergedBaseTip: java.lang.String, checkpointRequired: boolean, emptyAllowed: boolean)
@@ -54,6 +55,7 @@ VerifyWork(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBin
 # RunResult
 RunFailed(runId: java.lang.String, cause: java.lang.String, detail: java.lang.String, retryable: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunFinished(runId: java.lang.String, pushedRef: java.lang.String, changedPaths: java.util.List<java.lang.String>, blocked: java.util.List<dev.codespire.contract.event.RunResult$BlockedChange>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, agentUnobserved: boolean, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
+RunReviewArtifact(runId: java.lang.String, review: dev.codespire.contract.review.ReviewRunBinding, text: java.lang.String, overCap: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunStarted(runId: java.lang.String, providerRunId: java.lang.String)
 RunWorkArtifact(runId: java.lang.String, draft: dev.codespire.contract.work.WorkDraftBinding, text: java.lang.String, repositoryChanged: boolean, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
 RunWorkReady(runId: java.lang.String, work: dev.codespire.contract.work.WorkRunBinding, head: java.lang.String, changedPaths: java.util.List<java.lang.String>, tokenUsage: java.util.Map<java.lang.String, java.lang.Long>, activeWallSeconds: long, stepSummary: dev.codespire.contract.work.StepSummary, startFromHead: java.lang.String, empty: boolean, egress: java.util.List<dev.codespire.contract.event.RunResult$EgressAttempt>)
@@ -114,3 +116,6 @@ WorkSteps(total: int, index: int, completed: java.util.List<dev.codespire.contra
 
 # StepResult
 StepResult(index: int, execution: dev.codespire.contract.work.WorkExecution, empty: boolean, holdsBundle: boolean)
+
+# ReviewRunBinding
+ReviewRunBinding(reviewId: java.lang.String, kind: dev.codespire.contract.review.ReviewRunBinding$Kind, prId: long, commit: java.lang.String, callSlot: java.lang.String)
