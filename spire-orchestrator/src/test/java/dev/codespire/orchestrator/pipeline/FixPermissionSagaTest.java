@@ -64,6 +64,7 @@ class FixPermissionSagaTest {
     }
     private void command() {
         var saga=new IntegrationSaga();
+        saga.reviewRunCancellation=new dev.codespire.orchestrator.review.run.NoReviewRunCancellation();
         saga.timeline=new TimelineBroadcaster() {
             @Override public void record(String lane,String type,String reviewId,String detail) {
                 events.add(type);

@@ -280,6 +280,7 @@ class ArchivedEventGateTest {
     /** Real read model, faked edges — so "the row is unchanged" is a real row and nothing is posted. */
     private IntegrationSaga sagaFor(Optional<ScmProvider> provider) {
         IntegrationSaga saga = new IntegrationSaga();
+        saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.NoReviewRunCancellation();
         saga.projection = projection;
         saga.threads = threads;
         saga.policy = new ReviewPolicy() {

@@ -387,6 +387,21 @@ mp:
           # name — reuse the envelope serializer events-out publishes with
           value:
             serializer: io.quarkus.kafka.client.serialization.ObjectMapperSerializer
+      # The superseded head's review run is cancelled from cs.events, on a group of its own (harness reviews, step 4).
+      # Not events-in: that projector is rebuildable and replays from the start, and a replay must never send a
+      # cancel. Latest, so a new group starts at the present; a supersede missed while the orchestrator was down
+      # leaves a run that finishes and is charged, which is a cost, never a wrong review.
+      review-run-supersede-in:
+        connector: smallrye-kafka
+        topic: cs.events
+        group:
+          id: spire-orchestrator-review-run-cancel
+        value:
+          deserializer: dev.codespire.orchestrator.eventstore.EnvelopeDeserializer
+        auto:
+          offset:
+            reset: latest
+        failure-strategy: ignore
       dlq-in:
         connector: smallrye-kafka
         topic: cs.dlq

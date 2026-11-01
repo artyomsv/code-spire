@@ -156,6 +156,9 @@ public class IntegrationSaga {
                 // in-memory timeline saw it, so a restart erased even that.
                 projection.appendEvent(reviewId, "integration", "PullRequestClosed",
                         merged ? "merged" : "closed (" + e.reason().name().toLowerCase(Locale.ROOT) + ")");
+                // Its harness review runs stop too, a reply run on a completed review included (harness reviews,
+                // step 4). A CancelRun per run, never a second CancelReview: the line above is the lifecycle's.
+                reviewRunCancellation.close(reviewId);
             }
             case ManualCommandReceived e -> onManualCommand(e);
             case AuthorReplied e -> {

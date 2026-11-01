@@ -206,6 +206,30 @@ public class FactoryRunProjection {
         }
     }
 
+    /**
+     * The live review runs of one review (harness reviews, step 4), for a cancel: every one, or only those reading
+     * {@code commit} when it is not null. Live by the same rule a result projects by, so a run whose dispatch is still
+     * unresolved is cancelled too and never starts. A factory run of the same review (a fix) is never returned.
+     */
+    public List<String> liveReviewRuns(String reviewId, String commit) {
+        String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')"
+                + " AND (CAST(? AS TEXT) IS NULL OR base_commit = ?) AND " + LIVE;
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, commit);
+            ps.setString(3, commit);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<String> runIds = new ArrayList<>();
+                while (rs.next()) {
+                    runIds.add(rs.getString(1));
+                }
+                return runIds;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The live review runs of " + reviewId + " could not be read", e);
+        }
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

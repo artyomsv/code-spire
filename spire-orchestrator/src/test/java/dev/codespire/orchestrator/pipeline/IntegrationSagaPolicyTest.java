@@ -751,6 +751,7 @@ class IntegrationSagaPolicyTest {
                 new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
 
         IntegrationSaga saga = new IntegrationSaga();
+        saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.NoReviewRunCancellation();
         saga.timeline = new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
