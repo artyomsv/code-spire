@@ -7,6 +7,8 @@ import RepositoryRegistryPage from './RepositoryRegistryPage';
 import { MemoryRouter, Link } from 'react-router';
 import { queryWrapper } from '../../test/queryWrapper';
 import * as sources from '../work-items/workSourcesApi';
+import * as build from './factory/buildDefaultsApi';
+import { buildSetup } from './factory/factoryFixtures';
 
 const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://forge.example.test/api/v4'): accounts.ProviderView => ({
   id, name: id, role, baseUrl, type: 'gitlab', enabled: true,
@@ -15,7 +17,7 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, reviewLlmProviderId: null,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, reviewLlmProviderId: null, reviewHarness: null,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
@@ -375,5 +377,95 @@ describe('Repository registry', () => {
       expect(screen.getByRole('button', { name: 'Link repository' })).toBeInTheDocument();
       page.unmount();
     }
+  });
+});
+
+/** Harness reviews, step 5: "Review with" offers a harness beside the API providers, never both at once. */
+describe('Review with a harness', () => {
+  const seat: api.ReviewHarness = { harness: 'codex', model: 'TEST-model', effort: 'high', payWith: 'SUBSCRIPTION' };
+  const catalogue: build.HarnessModels = { status: 'OK', offered: [{ slug: 'TEST-model', displayName: 'TEST-model',
+    defaultEffort: 'medium', efforts: ['low', 'medium', 'high'], visible: true, priority: 1 }] };
+
+  beforeEach(() => {
+    vi.spyOn(accounts, 'fetchWebhookRepos').mockResolvedValue([]);
+    vi.spyOn(accounts, 'fetchProviders').mockResolvedValue([provider('TEST-reviewer', 'REVIEWER'), provider('TEST-factory', 'FACTORY')]);
+    vi.spyOn(api, 'fetchRepositories').mockResolvedValue([repo]);
+    vi.spyOn(api, 'fetchRepositoryKinds').mockResolvedValue(['gitlab']);
+    vi.spyOn(api, 'fetchPendingMappings').mockResolvedValue([]);
+    vi.spyOn(api, 'saveRepository').mockResolvedValue(repo);
+    vi.spyOn(accounts, 'fetchLlmProviders').mockResolvedValue([llmProvider('TEST-default-llm', true, true),
+      llmProvider('TEST-other-llm', true)]);
+    vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
+    vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'],
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, models: { codex: catalogue } });
+    vi.spyOn(accounts, 'fetchLlmModels').mockResolvedValue([
+      { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
+        outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
+        createdAt: '2026-09-16T00:00:00Z', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
+    ]);
+  });
+
+  async function openSettings() {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    return screen.findByRole('combobox', { name: 'Review with' });
+  }
+
+  async function choose(name: string, value: string) {
+    const select = await screen.findByRole('combobox', { name });
+    await waitFor(() => expect(within(select).getAllByRole('option').some(option => (option as HTMLOptionElement).value === value)).toBe(true));
+    fireEvent.change(select, { target: { value } });
+    return select;
+  }
+
+  it('choosing Harness shows the harness, payment, model and thinking selects', async () => {
+    const reviewWith = await openSettings();
+    expect(screen.queryByRole('combobox', { name: 'Harness' })).not.toBeInTheDocument();
+    expect(await within(reviewWith).findByRole('option', { name: 'Harness' })).toBeInTheDocument();
+    fireEvent.change(reviewWith, { target: { value: 'harness' } });
+    await choose('Harness', 'codex');
+    await choose('Pay with', 'SUBSCRIPTION');
+    await choose('Model', 'TEST-model');
+    expect(await screen.findByRole('combobox', { name: 'Thinking level' })).toBeInTheDocument();
+  });
+
+  it('saving a harness review sends reviewHarness and no provider', async () => {
+    vi.mocked(api.fetchRepositories).mockResolvedValue([{ ...repo, reviewLlmProviderId: 'TEST-other-llm' }]);
+    const reviewWith = await openSettings();
+    await within(reviewWith).findByRole('option', { name: 'Harness' });
+    fireEvent.change(reviewWith, { target: { value: 'harness' } });
+    await choose('Harness', 'codex');
+    await choose('Pay with', 'SUBSCRIPTION');
+    await choose('Model', 'TEST-model');
+    await choose('Thinking level', 'high');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalled());
+    const sent = vi.mocked(api.saveRepository).mock.calls[0][0];
+    expect(sent.reviewLlmProviderId).toBeNull();
+    expect(sent.reviewHarness?.harness).toBe('codex');
+    expect(sent.reviewHarness).toEqual(seat);
+  });
+
+  it('choosing an API provider after Harness sends reviewHarness null', async () => {
+    const onHarness = { ...repo, reviewHarness: seat };
+    vi.mocked(api.fetchRepositories).mockResolvedValue([onHarness]);
+    vi.mocked(api.saveRepository).mockResolvedValue(onHarness);
+    await openSettings();
+    await choose('Review with', 'TEST-other-llm');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm', reviewHarness: null }), onHarness));
+  });
+
+  it('a saved harness review opens with its values selected', async () => {
+    vi.mocked(api.fetchRepositories).mockResolvedValue([{ ...repo, reviewHarness: seat }]);
+    const reviewWith = await openSettings();
+    await waitFor(() => expect(reviewWith).toHaveValue('harness'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Harness' })).toHaveValue('codex'));
+    expect(screen.getByRole('combobox', { name: 'Pay with' })).toHaveValue('SUBSCRIPTION');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('TEST-model'));
+    expect(await screen.findByRole('combobox', { name: 'Thinking level' })).toHaveValue('high');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 });

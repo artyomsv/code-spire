@@ -1162,7 +1162,8 @@ export interface RunCost {
 }
 
 /**
- * One row of the runs list. `reviewId`/`findingRef` are null for anything that is not a fix.
+ * One row of the runs list. `reviewId` is set for a fix and for a review run (`REVIEW`, `RECONCILE`, `FOLLOWUP`);
+ * `findingRef` only for a fix. Both are null for anything else.
  *
  * `prUrl` and `prError` are what came of proposing the branch. A run that pushed and could not be
  * proposed stays `succeeded` — the work IS on the remote — so without these two the row reads the
@@ -1249,6 +1250,9 @@ export async function getRunTranscript(runId: string): Promise<RunEvent[]> {
   if (!res.ok) return throwResponse(res, 'Failed to load transcript');
   return res.json();
 }
+
+/** The newest harness review run of one review, read by the review page. Not a `runs` key: the live runs list owns those. */
+export const runsForReviewKey = (reviewId: string) => ['review-runs', reviewId] as const;
 
 /**
  * The runs list. Filters are omitted when blank rather than sent empty — the server treats an

@@ -100,11 +100,15 @@ topic `cs.review-runs`, keyed by run ID. `review` is a `ReviewRunBinding(reviewI
 its charge is recorded under, and `round` the review round the call was decided in (`ReviewRuns.currentRun`, the count
 of `ReviewRequested` in the review's stream; a reply carries the current round); every component is required, and `prId`
 and `round` are positive. The command refuses a checkpoint
-start and an existing branch, and its credentials are the execution's, sealed with the run's AAD and redacted from
+start and an existing branch. The execution's `protectedBranch` is the pull request's target branch (step 5): the run
+worker's init receives it as `SPIRE_FETCH_BRANCH` and keeps it under `refs/spire-base/<target>` for the agent to diff
+against and to read the repository's rules from, and a review whose row names no
+target branch is refused before funding (`review_run_target_unavailable`). Its credentials are the execution's, sealed with the run's AAD and redacted from
 `toString`. The run ID is deterministic: subject `review-<prId>-<commit12>-<slotDigest>` (8 hex of SHA-256 over
 `kind|callSlot`), attempt 1, so a redelivered dispatch is dropped by the worker's execute claim. The run-worker's
 review lane (`review-runs-in`, group `spire-run-worker-reviews`, offset reset `earliest`, a bounded pool of its own) takes the execute and
-cancel claims and launches the read-only unit; its publisher receives `SPIRE_ARTIFACT_MAX_BYTES=262144` and writes
+cancel claims and launches the read-only unit; its agent and its publisher both receive `SPIRE_ARTIFACT_MAX_BYTES=262144`
+(the agent image would otherwise cut the answer at its own 32 KiB), and the publisher writes
 the artifact as ordered parts of at most 8 KiB each, so an escaped line stays under the 64 KiB outcome line cap.
 The result is `RunReviewArtifact(runId, review, text, overCap, tokenUsage, activeWallSeconds, egress)` on
 `cs.run-results`: `text` is at most 256 KiB of UTF-8 and is null exactly when `overCap` is set, so an over-cap answer
@@ -113,7 +117,12 @@ The orchestrator stores the binding on the run's row (V107: `review_id`, `kind`,
 `base_commit`), refuses an artifact whose binding is not the row's, projects it as `succeeded` with no pushed ref,
 and charges the run once, under `CallRefs.of(reviewId, callSlot, kind)` with the paying credential's
 `credential_ref` (unmetered on a seat); `RunCharges` skips the three review kinds. The result then goes to the
-review-run port and no further: no draft inbox, no work-run inbox, no pull request proposal. A supersede ends a review
+review-run port and no further: no draft inbox, no work-run inbox, no pull request proposal. Since step 5 the port
+(`HarnessReviewResults`) turns a `REVIEW` run's answer of the review's current round into a `ReviewGenerated` (parsed by
+`FindingsParser`; an over-cap answer is a degraded review) and a `RunFailed` into a `ReviewFailed` (retry budget 1,
+never `credentialRejected`), and hands either to `ResultSaga.acceptHarnessOutcome`, which takes the existing outcome
+path behind the stale-run guard without charging again. An ended round's result is dropped, and `RECONCILE` and
+`FOLLOWUP` results are only logged until steps 6 and 7. A supersede ends a review
 round, not a commit (a forced re-run keeps the commit): `ReviewSuperseded` cancels the live review runs of the round it
 ended, counted from the review's stream at the supersede's position, and a closed pull request cancels every live review
 run, both with `CancelRun` on `cs.run-control`, never `CancelReview` (ADR-013). The row is admitted under an advisory

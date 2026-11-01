@@ -83,6 +83,90 @@ class RepositoryResourceTest extends RepositoryFixture {
         assertNull(repositories.get(repo.id()).orElseThrow().reviewLlmProviderId(), "a refused save changes nothing");
     }
 
+    /** Harness reviews, step 5: the harness half of "Review with" is stored, read back and readable by the saga. */
+    @Test void aReviewHarnessRoundTripsThroughCreateAndUpdate() {
+        ReviewHarness seat = new ReviewHarness("codex", "TEST-model", "high", "SUBSCRIPTION");
+        String id = given().contentType("application/json").body(repositoryReviewingOn(seat)).post("/api/repositories")
+                .then().statusCode(201).body("reviewLlmProviderId", nullValue())
+                .body("reviewHarness.harness", equalTo("codex")).body("reviewHarness.model", equalTo("TEST-model"))
+                .body("reviewHarness.effort", equalTo("high")).body("reviewHarness.payWith", equalTo("SUBSCRIPTION"))
+                .extract().path("id");
+        ReviewHarness key = new ReviewHarness("codex", "TEST-other-model", null, "API_KEY");
+        given().contentType("application/json").body(repositoryReviewingOn(key))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200)
+                .body("reviewHarness.model", equalTo("TEST-other-model")).body("reviewHarness.payWith", equalTo("API_KEY"));
+        assertEquals(java.util.Optional.of(key), repositories.reviewHarness(UUID.fromString(id)));
+        assertEquals(key, repositories.get(UUID.fromString(id)).orElseThrow().reviewHarness());
+    }
+
+    /** Back to the API: the view's harness is null and all four columns are cleared, so V109's CHECK holds. */
+    @Test void switchingBackToTheApiClearsTheHarness() throws Exception {
+        ReviewHarness seat = new ReviewHarness("codex", "TEST-model", "high", "SUBSCRIPTION");
+        String id = given().contentType("application/json").body(repositoryReviewingOn(seat)).post("/api/repositories")
+                .then().statusCode(201).body("reviewHarness.harness", equalTo("codex")).extract().path("id");
+        given().contentType("application/json").body(repositoryReviewingOn(null))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200)
+                .body("reviewHarness", nullValue());
+        assertTrue(repositories.reviewHarness(UUID.fromString(id)).isEmpty());
+        assertEquals("null|null|null|null", harnessColumns(UUID.fromString(id)));
+    }
+
+    /** One "Review with" choice: an API provider or a harness, never both. */
+    @Test void aProviderAndAHarnessTogetherAreRefused() {
+        UUID provider = llmProvider("both");
+        RepositoryInput both = new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null,
+                provider, new ReviewHarness("codex", "TEST-model", null, "API_KEY"));
+        given().contentType("application/json").body(both).post("/api/repositories")
+                .then().statusCode(400);
+        RepositoryView repo = repositories.create(repository(null, null));
+        given().contentType("application/json").body(both)
+                .put("/api/repositories/" + repo.id() + "?revision=1").then().statusCode(400);
+        assertNull(repositories.get(repo.id()).orElseThrow().reviewHarness(), "a refused save changes nothing");
+    }
+
+    /** Validated against the deployment's agent images, the way a build setup's harness is. */
+    @Test void anUnknownHarnessIsRefused() {
+        RepositoryInput unknown = repositoryReviewingOn(new ReviewHarness("TEST-no-such-harness", "TEST-model", null, "API_KEY"));
+        given().contentType("application/json").body(unknown).post("/api/repositories")
+                .then().statusCode(400);
+    }
+
+    /** A harness review needs a model; refused before the write, so it is the caller's mistake and not V109's CHECK. */
+    @Test void aHarnessWithoutAModelIsRefused() {
+        RepositoryInput noModel = repositoryReviewingOn(new ReviewHarness("codex", " ", null, "API_KEY"));
+        given().contentType("application/json").body(noModel).post("/api/repositories")
+                .then().statusCode(400);
+    }
+
+    /** A payment other than an API key or a seat is refused before the write, not by V109's CHECK. */
+    @Test void anUnknownHarnessPaymentIsRefused() {
+        RepositoryInput unknown = repositoryReviewingOn(new ReviewHarness("codex", "TEST-model", null, "TEST-CREDIT-CARD"));
+        given().contentType("application/json").body(unknown).post("/api/repositories")
+                .then().statusCode(400);
+    }
+
+    /** normalize rebuilds the input component by component; the harness must survive it. */
+    @Test void normalizeKeepsTheHarness() {
+        ReviewHarness seat = new ReviewHarness("codex", "TEST-model", "high", "SUBSCRIPTION");
+        assertEquals(seat, repositories.normalize(repositoryReviewingOn(seat)).reviewHarness());
+    }
+
+    RepositoryInput repositoryReviewingOn(ReviewHarness harness) {
+        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, null, harness);
+    }
+
+    String harnessColumns(UUID id) throws Exception {
+        try (java.sql.Connection c = dataSource.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement("""
+                SELECT review_harness, review_harness_model, review_harness_effort, review_harness_pay_with
+                FROM repository WHERE id=?""")) {
+            ps.setObject(1, id);
+            try (java.sql.ResultSet rows = ps.executeQuery()) {
+                assertTrue(rows.next(), "the repository row exists");
+                return rows.getString(1) + "|" + rows.getString(2) + "|" + rows.getString(3) + "|" + rows.getString(4);
+            }
+        }
+    }
+
     @Test void duplicateCoordinatesCannotCreateSecondRepository() {
         repositories.create(repository(null, null));
         given().contentType("application/json").body(repository(null, null)).post("/api/repositories").then().statusCode(409);

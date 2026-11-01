@@ -260,6 +260,8 @@ port 443, none refused):
 | `github.com` | no | yes |
 | `sdmntprcentralus`, `sdmntprsouthcentralus`, `sdmntprwestus` `.oaiusercontent.com` | yes | no |
 
+Re-measured in step 4 (#91): a seat calls only `chatgpt.com`.
+
 **Measured for step 3 with the real agent image (codex-cli 0.156.1), fake credentials, a capture server on an internal
 network.** Injection works for both payments over plain HTTP inside the unit, with no TLS termination:
 

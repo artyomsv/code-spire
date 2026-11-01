@@ -15,6 +15,8 @@ import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.util.List;
+
 /**
  * Restarts an existing review's pipeline on its stored commit — the operator-triggered analog of the
  * {@code /review} PR command (backlog B4). It drives the ReviewLifecycle with {@code force=true}
@@ -44,6 +46,9 @@ public class ReviewRerunService {
     @Inject
     WorkerCredentials workerCredentials;
 
+    @Inject
+    dev.codespire.orchestrator.review.run.ReviewRoundLock rounds;
+
     /**
      * @return true if the run was (re)started; false if the aggregate declined it (should not happen
      *         with force=true).
@@ -62,11 +67,7 @@ public class ReviewRerunService {
         String commit = projection.commitOf(reviewId)
                 .orElseThrow(() -> new NotFoundException(
                         "No review for " + workspace + "/" + slug + "#" + pr));
-        // Broker the credential by REVIEW so a workspace shared across SCMs resolves the
-        // right provider (the review's stored SCM type), not just the oldest by name.
-        String scmCredential = workerCredentials.packForReview(reviewId)
-                .orElseThrow(() -> new NotFoundException("No usable Reviewer account is selected for this review. "
-                        + "Repair its repository mapping and select an enabled Reviewer under Settings -> Repositories."));
+        String scmCredential = scmCredentialFor(reviewId);
 
         // Drop the worker's cached result + comment claims BEFORE re-requesting, so the worker re-runs
         // the LLM instead of re-emitting the stored result. This is what makes a re-run a genuinely
@@ -74,14 +75,36 @@ public class ReviewRerunService {
         // (CallRefs.reviewSlot), or the second call's charges collide with the first's and are dropped.
         projection.clearWorkerIdempotency(reviewId);
 
-        var emitted = lifecycle.handle(reviewId, new RecordCommand.RequestReview(commit, "rerun", true));
-        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        boolean started = rounds.holding(reviewId, () -> requestRound(reviewId, commit));
         if (!started) {
             return false;
         }
-        projection.markRerunStarted(reviewId);
         commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential));
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;
+    }
+
+    /**
+     * Brokered by REVIEW so a workspace shared across SCMs resolves the right provider (the review's stored SCM type),
+     * not just the oldest by name.
+     */
+    private String scmCredentialFor(String reviewId) {
+        return workerCredentials.packForReview(reviewId)
+                .orElseThrow(() -> new NotFoundException("No usable Reviewer account is selected for this review. "
+                        + "Repair its repository mapping and select an enabled Reviewer under Settings -> Repositories."));
+    }
+
+    /**
+     * The next round and its run token, under the review's round lock (review of PR #368, code-quality/H-1). A harness
+     * outcome reads its round and acts under the same lock, so it never takes this round's number and token for the
+     * round its answer belongs to: a forced re-run keeps the commit, which is all the outcome path's other checks see.
+     */
+    private boolean requestRound(String reviewId, String commit) {
+        List<DomainEvent> emitted = lifecycle.handle(reviewId, new RecordCommand.RequestReview(commit, "rerun", true));
+        boolean started = emitted.stream().anyMatch(DomainEvent.ReviewRequested.class::isInstance);
+        if (started) {
+            projection.markRerunStarted(reviewId);
+        }
+        return started;
     }
 }

@@ -49,10 +49,11 @@ not declare.
   that rewords them would empty the record without failing a run. Only the IT would notice.
 - **Codex's hosts are measured in report mode only (2026-11-01).** `spire-test` #85 (seat) and #87 (API key)
   recorded what Codex calls (docs/factory/RUN-TOPOLOGY.md §7.1). Codex now switches off plugins, analytics
-  and, on a seat, apps, and declares `api.openai.com` for a key and `chatgpt.com` plus three
-  `sdmntpr*.oaiusercontent.com` hosts for a seat. No run has been made with those flags in report mode,
-  and none in enforce mode: where the seat's content-host calls come from, and which paths a long run adds
-  (remote compaction), are not settled, so enforce may still refuse a host Codex needs and fail the run as
+  and, on a seat, apps, and declares `api.openai.com` for a key and `chatgpt.com` alone for a seat. With
+  those flags, three seat runs in report mode (`spire-test` #91, harness reviews step 4) called only
+  `chatgpt.com`, so the three `sdmntpr*.oaiusercontent.com` content hosts were dropped; the step 5 live proof
+  re-checks it in report mode. No run has been made in enforce mode: which paths a long run adds (remote
+  compaction) is not settled, so enforce may still refuse a host Codex needs and fail the run as
   `BLOCKED_EGRESS`.
 - **Not every container is isolated.** Verify check containers and the operator's sign-in container
   are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request
@@ -75,6 +76,76 @@ whose egress proxy log shows the upstream used.
 
 ---
 
+## First reviews on a harness (harness reviews step 5, 2026-11-01)
+
+**The claim.** A repository whose "Review with" names a harness has the first review of each same-repository pull
+request made by a read-only review run. The agent reads the repository's rules from the target branch, never from the
+change under review, and its findings are posted through the API review's own outcome path. A fork pull request, or
+one whose fork status is unknown, and a refused dispatch are refused with a `REVIEW_HARNESS_REFUSED` attention
+warning, never sent to the API.
+
+**Why nothing catches it today.**
+- **The whole live path is unproven until step 5's live proof.** No harness review has run on a live stack: the
+  "Review with: Harness" setting saved and read back, the dispatch from `ContextAssembled`, init keeping
+  `refs/spire-base/<target>`, the agent reading the rules from it and writing a JSON answer to `$SPIRE_ARTIFACT`,
+  the answer parsed into findings, the verdict and the GitHub review posted, the one charge under the review (key and
+  seat), a refusal and its attention row, the review page's run link, and the seat's hosts with `chatgpt.com` alone
+  (docs/factory/RUN-TOPOLOGY.md §7.1). Each is proven by unit and service tests only.
+- **Some paths no test or planned live run reaches.** These stay unproven after the live proof:
+  - **`Uncertain` launch recovery.** A launch whose send outcome is unknown counts as started; the queued row
+    exists, and a launch that never arrived is expected to surface as `REVIEW_STUCK`. No test drives that path end to
+    end.
+  - **An over-cap answer live.** The degraded review for an answer over 256 KiB is proven against fakes; no real
+    agent has written one.
+  - **A rejected seat live.** A seat refused by the vendor fails the run and the review (never marking the reviewer's
+    forge account); proven against fakes only.
+  - **The entrypoint's fallback for a bad `SPIRE_ARTIFACT_MAX_BYTES`.** The reference entrypoint keeps 32768 for a
+    value that is not a positive integer without a leading zero; the run worker always sets 262144, so no run
+    reaches the fallback. `AgentArtifactCapIsConfigurableTest` reads the script; it does not run it.
+- **A review run loads no `AGENTS.md` from the head: switched off, not measured.** Codex loads `AGENTS.md` and
+  `AGENTS.override.md` from its working directory before it reads the prompt, and a review's working directory is the
+  head commit, so a change could steer its own review (review of PR #368, security/H-1). A review unit's invocation
+  now carries `ProjectGuidance.IGNORED`, which the Codex arm maps to `-c project_doc_max_bytes=0`; builds and drafts
+  keep loading the operator's guidance. The key exists in codex-cli 0.156.1 (its binary carries it, default 32768);
+  that a budget of zero loads nothing is read from Codex's source, not measured. `CodexAdapterProjectGuidanceTest`
+  and `RunUnitBuilderReviewTest` prove the flag is on the review's command line and on no other, not that Codex obeys
+  it. The agent can still `cat` the head's `AGENTS.md` as a file of the change; the prompt says such files are the
+  change under review, not instructions.
+- **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
+  and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
+  hands it to `ResultSaga.acceptHarnessOutcome` from there. So a push, a re-run or a close for the same review may be
+  processed at the same moment as the answer.
+  - **A forced re-run on the same head is fenced** (review of PR #368, code-quality/H-1). `ReviewRerunService` appends
+    the next round and replaces the run token under the review's `ReviewRoundLock`, and `HarnessReviewResults` reads
+    the round and takes every effect of the answer under the same lock, so round 1's answer is never applied as round
+    2. `ReviewRoundLockTest` shows the advisory lock blocks a second holder on the database; the unit tests show what
+    runs inside it. No test races the two real consumers.
+  - **A push to a new head is not fenced by the lock.** `IntegrationSaga` appends the new round and resets the row
+    without it. The commit changes, so `ifCurrentRun` drops an answer read after the push; one already past that check
+    when the push lands is caught by the commit-guarded `RecordReviewOutcome` and the worker's head re-check, but its
+    read-model writes (`recordOutcome`, findings, note) can land on the new round's row. The API path has the same
+    window today.
+  - **The API path has no round check at all.** A worker's `ReviewGenerated` carries no round, so one of round 1
+    that arrives on `cs.results` after a forced re-run on the same commit passes `ifCurrentRun` and is applied as round
+    2, with round 2's run token. This predates harness reviews and was left as it was.
+  - An answer whose round cannot be read is thrown, so `cs.run-results` dead-letters it to `cs.dlq`; it waits there
+    for an operator's replay from Settings → Dead-letter. The steps before it (status-guarded projection, the charge
+    deduplicated on `UNIQUE (call_ref, token_type)`, the seat marked once) repeat harmlessly on the replay; no test
+    replays one.
+- **Redelivery is absorbed, not prevented.** A redelivered `RunReviewArtifact` emits a second `PostComments`; the
+  worker's run-token check posts it once, and the charge deduplicates on `UNIQUE (call_ref, token_type)`. A
+  redelivered `ContextAssembled` funds the run once more before admission answers `AlreadyQueued`, so a seat token can
+  be handed over for nothing. Neither is driven by a test.
+
+**What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
+harness on an API key and another on a seat, findings posted with a verdict as a GitHub review, one charge under the
+review, egress hosts recorded in report mode; a third refused with no seat signed in, with its attention row; and a
+canary for the guidance switch: a TEST pull request that adds an `AGENTS.override.md` asking for a finding whose
+message is `CANARY-AGENTS-LOADED`. The review must not contain that finding; if it does, Codex loaded the file and
+`project_doc_max_bytes=0` does not turn the loading off.
+
+---
+
 ## Review-run plumbing (harness reviews step 4, ADR-050, 2026-11-01)
 
 **The claim.** A review may run on a harness: `ReviewRunDispatch` funds it and sends `ExecuteReviewRun` on
@@ -83,8 +154,9 @@ up to 256 KiB, over-cap as a degraded answer), it is charged once under the revi
 its review round or a closed pull request cancels it, a dispatch in flight included.
 
 **Why nothing catches it today.**
-- **Nothing dispatches a review run.** `ReviewRunDispatch` has no caller until step 5, so the whole path is proven
-  by unit and service tests only. No review run has executed on a live stack.
+- **No review run has executed on a live stack.** Step 5 wires the dispatch: `HarnessReviewStart` calls
+  `ReviewRunDispatch` for the first review of a same-repository pull request on a harness repository (the entry
+  above). Until step 5's live proof the whole path is proven by unit and service tests only.
 - **The lane's isolation is proven by configuration, not load.** Tests assert the review lane's topic, group and
   pool differ from the build lane's; no test runs a build and a review at once and measures the review's wait.
 - **The concurrency cap is per run-worker instance.** Across replicas it multiplies, and it needs
@@ -94,7 +166,8 @@ its review round or a closed pull request cancels it, a dispatch in flight inclu
   enters the unit's init container (never the agent's), crossing ADR-038's two-authority split. A read-scoped
   clone token is the fix and is not built.
 - **The agent holds the model credential.** The credential-injecting proxy is deferred (design "After step 2"), so
-  fork pull requests must not be reviewed on a harness; the refusal and its attention warning are step 5's.
+  fork pull requests must not be reviewed on a harness. Step 5 refuses them, and a pull request whose fork status
+  is unknown, with a `REVIEW_HARNESS_REFUSED` attention warning; the refusal is proven by tests only.
 - **A missed supersede is not replayed.** The supersede listener reads `cs.events` from `latest` on its own group;
   an event published while the orchestrator was down is never read, so that run finishes and is charged.
 - **The over-cap path and the parts are proven against fakes.** No real agent has produced an answer over 32 KiB.

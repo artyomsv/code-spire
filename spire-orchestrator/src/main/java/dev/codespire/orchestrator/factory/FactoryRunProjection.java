@@ -281,9 +281,10 @@ public class FactoryRunProjection {
      * list would change a shipped wire shape for a reader that does not want them, and would drag
      * the blocked-change list into a page that renders fifty rows.
      *
-     * @param reviewId and {@code findingRef} — null for anything that is not a fix. V54's CHECK
-     *     already refuses a non-FIX row that names either, and this read must not invent them back:
-     *     a blank here would render as a broken join rather than as "this run had no review"
+     * @param reviewId set for a fix and for a review run ({@code REVIEW}, {@code RECONCILE},
+     *     {@code FOLLOWUP}); {@code findingRef} set for a fix only. Both null for every other kind:
+     *     V107's CHECK refuses any other row that names either, and this read must not invent them
+     *     back: a blank here would render as a broken join rather than as "this run had no review"
      * @param cost unknown until the charge lands, and unknown forever if the model could not be
      *     priced. Never zero for either — see {@link RunCost}
      * @param prUrl and {@code prError} — what came of proposing the branch. A run that pushed and

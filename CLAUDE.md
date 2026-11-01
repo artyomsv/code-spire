@@ -165,14 +165,21 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   M4's exit criterion (three verified steps on one chain, step 1's decision in step 3's prompt), and #77
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
 
-- **Harness reviews, step 4: the review-run plumbing** (PR #367, ADR-050, design
-  docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review may run as a read-only factory run of kind
-  `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane, `cs.review-runs` (offset `earliest`, its own
-  pool, `SPIRE_RUN_REVIEW_CONCURRENCY` runs per run-worker instance), so it never waits behind a build. Its answer,
-  `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts; one over the cap is still charged. It is charged once under the
-  review's call slot, never as a run; its wall clock (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`) may not exceed a build's;
-  a supersede cancels its review round's runs (rounds, not commits, so a forced re-run on the same head is admitted)
-  and a closed pull request cancels all of them, a dispatch in flight included (V108, one advisory lock per review). **Nothing dispatches a review run until step 5.** The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+- **Harness reviews, steps 4 and 5: review runs and first reviews** (step 4 on master with PR #367; step 5 built on
+  PR #368, live proof pending; ADR-050, design docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
+  may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
+  `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
+  behind a build. Its answer, `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts (`SPIRE_ARTIFACT_MAX_BYTES` reaches
+  the agent and the publisher); one over the cap is a charged, degraded review. It is charged once under the review's
+  call slot, never as a run; a supersede cancels its round's runs and a closed pull request all of them, a dispatch in
+  flight included (V108). Step 5: a repository's "Review with" names an API provider or a harness, never both (V109),
+  and on a harness the FIRST review of a same-repository pull request dispatches a `REVIEW` run. Re-reviews stay on
+  the API until step 6. A fork, an unknown fork status or a refused dispatch is `refused` with a
+  `REVIEW_HARNESS_REFUSED` attention row, never sent to the API. The prompt is the repository's REVIEW system text, a
+  preamble and the locked review suffix; init keeps the target branch as `refs/spire-base/<target>`, the agent diffs
+  against it and reads the rules from it, and gets no assembled context yet (step 6). The answer takes `ResultSaga`'s
+  outcome path (findings, verdict, posting) without a second charge; a failed run is not retried. The review page
+  links its run. The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

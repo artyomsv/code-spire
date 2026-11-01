@@ -258,3 +258,21 @@ it('shows no key rather than inventing one when a run recorded none', async () =
   expect(within(card).getByText('Billed to').parentElement).toHaveTextContent('—');
   expect(within(card).queryByText(/API key/)).toBeNull();
 });
+
+// Harness reviews, step 5: a review run is named for the review call it answers, not by its wire kind.
+it('run detail labels a review run Review', async () => {
+  show(runView({ kind: 'REVIEW', reviewId: 'review::TEST-WS/app#7' }));
+  const card = await screen.findByRole('region', { name: 'Run definition' });
+  expect(within(card).getByText('Kind').nextElementSibling).toHaveTextContent(/^Review$/);
+  expect(within(card).queryByText('REVIEW')).toBeNull();
+});
+
+// Its spend is the review's: showing it as the run's own cost would count one call twice in a reader's head.
+it('run detail says a review run is charged under its review', async () => {
+  show(runView({ kind: 'REVIEW', reviewId: 'review::TEST-WS/app#7', cost: { millicents: 0 },
+    spend: { priced: 0, unpricedLines: 0, tokensByType: { INPUT: 10 } } }));
+  await loaded();
+  const spend = screen.getByRole('region', { name: 'Spend' });
+  expect(within(spend).getByText('Charged under its review')).toBeInTheDocument();
+  expect(within(spend).queryByText('$0.000')).toBeNull();
+});

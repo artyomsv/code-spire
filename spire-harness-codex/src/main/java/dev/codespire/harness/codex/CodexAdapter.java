@@ -78,10 +78,19 @@ public final class CodexAdapter implements HarnessAdapter {
     /** A seat also calls the apps endpoints (measured the same day); a key run was never seen to. */
     private static final String NO_APPS = " -c features.apps=false";
 
-    /** The content hosts a seat run was measured calling on 2026-11-01, beside the ChatGPT backend. */
-    private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com",
-            "sdmntprcentralus.oaiusercontent.com", "sdmntprsouthcentralus.oaiusercontent.com",
-            "sdmntprwestus.oaiusercontent.com");
+    /**
+     * Codex reads {@code AGENTS.md} and {@code AGENTS.override.md} from its working directory at startup, before the
+     * prompt. A review's working directory is the pull request's head, so a budget of zero bytes loads none of them
+     * (review of PR #368, security/H-1). codex-cli 0.156.1 has the key, default 32768; that zero turns the loading off
+     * is read from Codex's source, not measured: the live proof's canary decides (docs/UNVERIFIED.md, step 5).
+     */
+    private static final String NO_PROJECT_GUIDANCE = " -c project_doc_max_bytes=0";
+
+    /**
+     * The hosts a seat run calls: the ChatGPT backend only. Measured live on 2026-11-01 (spire-test #91, three runs),
+     * where no {@code oaiusercontent.com} content host was called; the step 5 live proof re-checks it in report mode.
+     */
+    private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com");
 
     @Override
     public HarnessType type() {
@@ -148,6 +157,7 @@ public final class CodexAdapter implements HarnessAdapter {
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
                 + extraCallsOff(invocation)
+                + projectGuidance(invocation)
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
                 + " -";
         return List.of("sh", "-c", script);
@@ -177,6 +187,11 @@ public final class CodexAdapter implements HarnessAdapter {
     /** The flags that switch off what a run never needs; a seat run also switches off apps. */
     private static String extraCallsOff(HarnessInvocation invocation) {
         return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
+    }
+
+    /** Nothing for a run that follows the repository's guidance; the zero budget for one that must not. */
+    private static String projectGuidance(HarnessInvocation invocation) {
+        return invocation.projectGuidance() == HarnessInvocation.ProjectGuidance.IGNORED ? NO_PROJECT_GUIDANCE : "";
     }
 
     /**

@@ -8,6 +8,7 @@ import EventStream from './EventStream';
 import ContextCard from './ContextCard';
 import ReviewActions from './ReviewActions';
 import ReviewCostCard from './ReviewCostCard';
+import HarnessRunLink from './HarnessRunLink';
 
 interface Props {
   reviews: ReviewSummary[];
@@ -122,6 +123,7 @@ export default function ReviewDetail({ reviews }: Props) {
             <span className="sha">{r.sha}</span>
           </div>
           {postedAs(r)}
+          <HarnessRunLink reviewId={r.id} updatedAt={r.updatedAt} />
         </div>
         <ReviewActions review={r} onChanged={load} />
       </div>

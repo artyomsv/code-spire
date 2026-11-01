@@ -400,8 +400,12 @@ instances to receive any. Nothing creates the topic with a partition count today
 broker default.
 
 The unit is the read-only topology of §4.4: init clones the pull request with the REVIEWER account's token, the
-agent never holds it, and the publisher runs `spire-publish-none` with no write credential. The publisher is told
-the review's artifact cap (`SPIRE_ARTIFACT_MAX_BYTES=262144`; a draft keeps 32 KiB) and writes the artifact as
+agent never holds it, and the publisher runs `spire-publish-none` with no write credential. Since step 5 the
+execution's `protectedBranch` is the pull request's target branch, and init receives it as `SPIRE_FETCH_BRANCH`, as a
+land fix's init does: it keeps that branch as `refs/spire-base/<target>`, so the agent, which has no remote, can diff
+the change against it and read the repository's rules from it rather than from the change. The agent and the publisher
+are both told the review's artifact cap (`SPIRE_ARTIFACT_MAX_BYTES=262144`; a draft keeps 32 KiB), so the agent image
+does not cut a review's answer at its own 32 KiB. The publisher writes the artifact as
 ordered parts on separate outcome lines, each small enough that its JSON-escaped line stays under the 64 KiB line
 cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
 answer with no text, which is charged, never a lost run.
@@ -449,10 +453,12 @@ Some of these calls are features a run never needs. Every `codex exec` now carri
 With them off, Codex declares:
 
 - **API key:** `api.openai.com`.
-- **Seat:** `chatgpt.com` and the three `sdmntpr*.oaiusercontent.com` content hosts.
+- **Seat:** `chatgpt.com` only. Re-measured in harness reviews step 4 (`spire-test` #91, three seat runs): with
+  apps, plugins and analytics off, a seat called no `oaiusercontent.com` content host. The step 5 live proof runs in
+  report mode and puts a content host back if one appears.
 
 `auth.openai.com` is never declared: the orchestrator empties a seat's refresh token, so a run has nothing
-to renew. Where a seat's content-host calls come from, and which paths a long run adds, is not settled
+to renew. Which paths a long run adds is not settled
 (docs/UNVERIFIED.md).
 
 ---

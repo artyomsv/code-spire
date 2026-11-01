@@ -494,6 +494,14 @@ class ResultSagaPricingTest {
                 return Decision.of(dev.codespire.orchestrator.caps.CapRefusal.allow());
             }
         };
+        // Harness reviews, step 5: every ContextAssembled asks whether the repository reviews on a harness. This
+        // suite's repositories review on the API; the real one reads the registry and the review row from a database.
+        saga.harnessStart = new dev.codespire.orchestrator.review.run.HarnessReviewStart() {
+            @Override
+            public Decision start(ContextAssembled event) {
+                return new NotHarness();
+            }
+        };
         return saga;
     }
 
@@ -556,6 +564,11 @@ class ResultSagaPricingTest {
         @Override
         public void setNote(String reviewId, String note) {
             this.note = note;
+        }
+
+        // Cleared on every ContextAssembled before the harness decision (step 5); the real one opens a database.
+        @Override
+        public void setHarnessRefusal(String reviewId, String reason) {
         }
 
         @Override

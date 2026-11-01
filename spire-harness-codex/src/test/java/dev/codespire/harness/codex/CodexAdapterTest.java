@@ -115,14 +115,12 @@ class CodexAdapterTest {
     }
 
     /**
-     * A run paid by a seat talks to the ChatGPT backend and the three content hosts a seat run was measured calling on
-     * 2026-11-01 (spec "After step 2"), and to nothing else.
+     * A run paid by a seat talks to the ChatGPT backend only: re-measured live on 2026-11-01 (spire-test #91, three
+     * runs), where no content host was called.
      */
     @Test
-    void aSeatDeclaresTheHostsMeasuredOnASeat() {
-        assertEquals(Set.of("chatgpt.com", "sdmntprcentralus.oaiusercontent.com",
-                "sdmntprsouthcentralus.oaiusercontent.com", "sdmntprwestus.oaiusercontent.com"),
-                adapter.egressHosts(signedIn()));
+    void aSeatDeclaresOnlyChatgpt() {
+        assertEquals(Set.of("chatgpt.com"), adapter.egressHosts(signedIn()));
     }
 
     /**
