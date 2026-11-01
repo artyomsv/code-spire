@@ -307,10 +307,14 @@ public class ReviewProjection {
      * Why this review's harness run was refused (harness reviews, step 5), or null for none: the attention feed raises
      * a row for a refused review that carries one.
      *
-     * <p>Not built yet: the red phase of step 5 declares the write so the saga's fakes compile.
+     * <p>No {@code updated_at} bump: the refusal is written beside the status change that bumps it, and the clear at
+     * each new round's start must not count as progress for the stuck-review check.
      */
     public void setHarnessRefusal(String reviewId, String reason) {
-        throw new UnsupportedOperationException("not built yet");
+        update("UPDATE review_status SET harness_refusal = ? WHERE review_id = ?", ps -> {
+            ps.setString(1, reason);
+            ps.setString(2, reviewId);
+        });
     }
 
     /**

@@ -126,9 +126,12 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
 
-    /** Whether a first review runs on the repository's harness (harness reviews, step 5). Not consulted yet. */
+    /** Whether a first review runs on the repository's harness (harness reviews, step 5). */
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReviewStart harnessStart;
+
+    /** The phase a harness review's refusal and failure are recorded under. */
+    static final String HARNESS_PHASE = "harness-review";
 
     int maxAttempts() {
         return reviewPolicy.maxAttempts();
@@ -197,6 +200,9 @@ public class ResultSaga {
             case ContextAssembled e -> ifCurrentRun(e.reviewId(), e.commit(), "ContextAssembled", () -> {
                 projection.appendEvent(e.reviewId(), "result", "ContextAssembled", "context assembled");
                 projection.updateStage(e.reviewId(), ReviewProjection.STAGE_REVIEW);
+                if (decidedOnHarness(e)) {
+                    return;
+                }
                 // GenerateReview also needs the LLM credential (ADR-018): resolve the provider the
                 // review's repository names, else the global default, and pack it encrypted. The resolve
                 // also answers whether the model can be priced — the pre-spend guard, which arrives with
@@ -603,6 +609,39 @@ public class ResultSaga {
         LOG.warnf("Refused %s for %s — %s", phase, reviewId, refusal.logDetail());
         // retryable=false, so the decider yields a terminal state and the run leaves REVIEWING.
         lifecycle.handle(reviewId, new RecordCommand.RecordFailure(commit, phase, false));
+    }
+
+    /**
+     * Harness reviews, step 5: true when this review's first round was decided on the repository's harness, started
+     * or refused, so no {@code GenerateReview} follows. The last refusal is cleared first, so a re-run that is no
+     * longer refused does not keep its attention row.
+     */
+    private boolean decidedOnHarness(ContextAssembled e) {
+        projection.setHarnessRefusal(e.reviewId(), null);
+        switch (harnessStart.start(e)) {
+            case dev.codespire.orchestrator.review.run.HarnessReviewStart.NotHarness ignored -> {
+                return false;
+            }
+            case dev.codespire.orchestrator.review.run.HarnessReviewStart.Started started -> {
+                timeline.record("result", HARNESS_PHASE + ":" + started.runId(), e.reviewId(), started.harness());
+                projection.setNote(e.reviewId(), started.note());
+            }
+            case dev.codespire.orchestrator.review.run.HarnessReviewStart.Refused refused ->
+                    refuseHarness(e.reviewId(), e.commit(), refused);
+        }
+        return true;
+    }
+
+    /** {@link #refuse}'s terminal shape for a harness refusal, plus the reason the attention feed shows. */
+    private void refuseHarness(String reviewId, String commit,
+                               dev.codespire.orchestrator.review.run.HarnessReviewStart.Refused refused) {
+        projection.clearScheduledRetry(reviewId);
+        timeline.record("result", "refused:" + HARNESS_PHASE, reviewId, refused.reason());
+        projection.updateStatus(reviewId, "refused", ReviewProjection.STAGE_REVIEW);
+        projection.setNote(reviewId, refused.note());
+        projection.setHarnessRefusal(reviewId, refused.attentionReason());
+        LOG.warnf("Refused the harness review of %s — %s", reviewId, refused.attentionReason());
+        lifecycle.handle(reviewId, new RecordCommand.RecordFailure(commit, HARNESS_PHASE, false));
     }
 
     /** Package-private passthrough: the gates that call {@link #refuse} arrive in later tasks, and

@@ -76,6 +76,24 @@ whose egress proxy log shows the upstream used.
 
 ---
 
+## First reviews on a harness (harness reviews step 5, 2026-11-01)
+
+**The claim.** A repository whose "Review with" names a harness has the first review of each same-repository pull
+request made by a read-only review run. The agent reads the repository's rules from the target branch, never from the
+change under review, and its findings are posted through the API review's own outcome path.
+
+**Why nothing catches it today.**
+- **Codex reads `AGENTS.md` from the head, by itself.** The prompt tells the agent to read the rules from
+  `refs/spire-base/<target>`, but Codex loads `AGENTS.md` from its working directory before it reads the prompt, and
+  the working directory is the head commit. So a change that edits `AGENTS.md` may steer its own review. This is
+  inferred from Codex's documented behaviour, not measured on a run.
+
+**What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
+harness, its findings posted with a verdict; and one pull request whose change edits `AGENTS.md` with an instruction
+the review visibly follows or ignores.
+
+---
+
 ## Review-run plumbing (harness reviews step 4, ADR-050, 2026-11-01)
 
 **The claim.** A review may run on a harness: `ReviewRunDispatch` funds it and sends `ExecuteReviewRun` on

@@ -59,6 +59,19 @@ class AttentionHarnessRefusedTest {
         assertTrue(rowsFor(pr).isEmpty());
     }
 
+    /**
+     * The reason outlives its refusal until the next round reaches ContextAssembled, so a re-run still in its diff or
+     * context stage carries the old one. Only a review that is refused now raises the row.
+     */
+    @Test
+    void aReviewNoLongerRefusedRaisesNothing() {
+        long pr = ReviewFixtures.newPr();
+        ReviewFixtures.seedReviewingReview(projection, pr);
+        setHarnessRefusal(ReviewFixtures.reviewIdFor(pr), "codex: subscription_unavailable");
+
+        assertTrue(rowsFor(pr).isEmpty());
+    }
+
     /** Archiving is the operator's resolution, as for every other review row. Raised first, so this is not vacuous. */
     @Test
     void anArchivedReviewRaisesNothing() {

@@ -65,6 +65,7 @@ class ResultSagaHarnessReviewTest {
 
     private HarnessReviewStart.Decision decision = new HarnessReviewStart.NotHarness();
     private int openBlockers;
+    private int refusalClears;
 
     private final List<ActionCommand> emitted = new ArrayList<>();
     private final List<RecordCommand> recorded = new ArrayList<>();
@@ -108,6 +109,14 @@ class ResultSagaHarnessReviewTest {
         saga().on(CONTEXT);
 
         assertInstanceOf(ActionCommand.GenerateReview.class, emitted.getLast());
+    }
+
+    /** A new round clears the last round's refusal, so a re-run that is no longer refused drops its attention row. */
+    @Test
+    void aNewRoundClearsTheLastHarnessRefusal() {
+        saga().on(CONTEXT);
+
+        assertEquals(1, refusalClears);
     }
 
     /**
@@ -302,6 +311,7 @@ class ResultSagaHarnessReviewTest {
             @Override
             public void setHarnessRefusal(String reviewId, String reason) {
                 if (reason != null) harnessRefusals.add(reason);
+                else refusalClears++;
             }
 
             @Override
