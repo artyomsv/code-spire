@@ -7,8 +7,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.util.Optional;
-
 /**
  * The run-result guard for harness review runs (harness reviews, step 4): a {@code RunReviewArtifact} whose binding is
  * not the one its row stores answers a call this deployment never made, so it is neither projected nor charged.
@@ -26,8 +24,7 @@ public class ReviewRunBindings {
         if (!(result instanceof RunReviewArtifact answer)) {
             return true;
         }
-        Optional<dev.codespire.contract.review.ReviewRunBinding> stored = runs.reviewBindingOf(answer.runId());
-        if (stored.isPresent() && stored.get().equals(answer.review())) {
+        if (runs.reviewBindingOf(answer.runId()).filter(answer.review()::equals).isPresent()) {
             return true;
         }
         LOG.warnf("review run %s: its answer names %s, which is not the call its row stores; neither projected nor "

@@ -95,12 +95,10 @@ public class RunResultSaga {
         java.util.Optional<dev.codespire.contract.review.ReviewRunBinding> binding =
                 result instanceof dev.codespire.contract.event.RunReviewArtifact answer
                         ? java.util.Optional.of(answer.review()) : projection.reviewBindingOf(result.runId());
-        if (binding.isEmpty()) {
-            LOG.errorf("review run %s has no review call on its row, so its result is neither charged nor recorded",
-                    result.runId());
-            return;
-        }
-        reviewCharges.record(result, binding.get());
-        reviewResults.accept(result, binding.get());
+        binding.ifPresentOrElse(call -> {
+            reviewCharges.record(result, call);
+            reviewResults.accept(result, call);
+        }, () -> LOG.errorf("review run %s has no review call on its row, so its result is neither charged nor recorded",
+                result.runId()));
     }
 }
