@@ -47,10 +47,13 @@ not declare.
 - **The log format is read from tinyproxy, not pinned.** The parse reads tinyproxy 1.11's `Request
   (file descriptor N): ...` and `Proxying refused on filtered domain "..."` lines. A tinyproxy upgrade
   that rewords them would empty the record without failing a run. Only the IT would notice.
-- **Codex's hosts are not measured.** It declares `api.openai.com` for an API key and `chatgpt.com` for a
-  seat, from the CLI's documented and observed behaviour. No report-mode run on a live stack has
-  recorded what it really calls. Until one has, enforce may refuse a host Codex needs (a telemetry or
-  update endpoint, say), and that run would fail as `BLOCKED_EGRESS`.
+- **Codex's hosts are measured in report mode only (2026-11-01).** `spire-test` #85 (seat) and #87 (API key)
+  recorded what Codex calls (docs/factory/RUN-TOPOLOGY.md §7.1). Codex now switches off plugins, analytics
+  and, on a seat, apps, and declares `api.openai.com` for a key and `chatgpt.com` plus three
+  `sdmntpr*.oaiusercontent.com` hosts for a seat. No run has been made with those flags in report mode,
+  and none in enforce mode: where the seat's content-host calls come from, and which paths a long run adds
+  (remote compaction), are not settled, so enforce may still refuse a host Codex needs and fail the run as
+  `BLOCKED_EGRESS`.
 - **Not every container is isolated.** Verify check containers and the operator's sign-in container
   are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request
   may name any port, because tinyproxy restricts ports for CONNECT only.
@@ -69,6 +72,37 @@ not declare.
 report mode, their `run_egress` rows recorded in `docs/factory/RUN-TOPOLOGY.md`, Codex's declaration set
 to exactly those hosts, then one enforce run that delivers. Plus one run behind a real corporate proxy
 whose egress proxy log shows the upstream used.
+
+---
+
+## Review-run plumbing (harness reviews step 4, ADR-050, 2026-11-01)
+
+**The claim.** A review may run on a harness: `ReviewRunDispatch` funds it and sends `ExecuteReviewRun` on
+`cs.review-runs`, the run-worker runs it on its own bounded lane, its `RunReviewArtifact` comes back (in parts,
+up to 256 KiB, over-cap as a degraded answer), it is charged once under the review's call slot, and a superseded
+head or a closed pull request cancels it.
+
+**Why nothing catches it today.**
+- **Nothing dispatches a review run.** `ReviewRunDispatch` has no caller until step 5, so the whole path is proven
+  by unit and service tests only. No review run has executed on a live stack.
+- **The lane's isolation is proven by configuration, not load.** Tests assert the review lane's topic, group and
+  pool differ from the build lane's; no test runs a build and a review at once and measures the review's wait.
+- **The concurrency cap is per run-worker instance.** Across replicas it multiplies, and it needs
+  `cs.review-runs` partitions at least the replica count. Nothing creates the topic with a partition count:
+  Kafka auto-creates it with the broker default on first use.
+- **The reviewer token reaches init.** The clone credential is the REVIEWER account's token, which can post. It
+  enters the unit's init container (never the agent's), crossing ADR-038's two-authority split. A read-scoped
+  clone token is the fix and is not built.
+- **The agent holds the model credential.** The credential-injecting proxy is deferred (design "After step 2"), so
+  fork pull requests must not be reviewed on a harness; the refusal and its attention warning are step 5's.
+- **A missed supersede is not replayed.** The supersede listener reads `cs.events` from `latest` on its own group;
+  an event published while the orchestrator was down is never read, so that run finishes and is charged.
+- **The over-cap path and the parts are proven against fakes.** No real agent has produced an answer over 32 KiB.
+
+**What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on
+a harness on an API key and on a seat, its run row `REVIEW` with the call slot, one ledger call under the review
+and none under the run, a review run cancelled by a push during it, and a build and a review running at once with
+the review finishing first.
 
 ---
 

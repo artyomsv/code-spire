@@ -4,6 +4,60 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-050 — Reviews may run on a harness, on the run-worker's own lane
+
+**Status:** step 4 of harness reviews, the plumbing, on `feat/harness-reviews-4-review-runs` (PR #367), 2026-11-01.
+Nothing dispatches a review run yet: step 5 sends the first reviews, so every claim below is proven by tests only
+(docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+brokered to the review worker as an `LlmCredential`; it runs as a factory run.
+
+**Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
+ChatGPT seat) instead of one API call: the agent can read the repository, and a seat costs nothing per token. The
+design is [the harness reviews specification](superpowers/specs/2026-10-30-harness-reviews-design.md) ("Final
+design review", "After step 2") and the [step 4 plan](superpowers/plans/2026-11-01-harness-reviews-4-review-runs.md).
+ADR-029 forbids harness runs inside `spire-review-worker`, and the run-worker executed one run at a time, so a
+review behind an hour-long build would wait an hour.
+
+**Decision.**
+- **A review run is a factory run of a review kind.** `RunKind` gains `REVIEW`, `RECONCILE` and `FOLLOWUP`, one
+  per review call. V107 admits them and makes such a row name its review, its call slot and its pull request, with
+  `base_commit` the head it reads; no other kind may carry a call.
+- **Its own lane.** `ExecuteReviewRun` rides `cs.review-runs`, read by a second consumer in the run-worker (group
+  `spire-run-worker-reviews`) on a bounded pool of its own, `SPIRE_RUN_REVIEW_CONCURRENCY` (default 2) per
+  run-worker instance. Across replicas the cap scales with them and needs `cs.review-runs` partitions at least the
+  replica count. A long build never delays a review.
+- **Read-only.** The unit is ADR-049's read-only topology: no write credential, `spire-publish-none`. The clone
+  credential is the REVIEWER account's, never the factory's; init clones, the agent never holds it.
+- **A bigger answer, never a lost one.** A review's artifact cap is 256 KiB (a draft's stays 32 KiB), carried to the
+  publisher as `SPIRE_ARTIFACT_MAX_BYTES` and sent in ordered parts so no outcome line exceeds 64 KiB. An answer
+  over the cap comes back as `RunReviewArtifact` with `overCap` and no text: charged, and a degraded review.
+- **Charged once, under the review.** The run plane's `RunCharges` skips review kinds. `ReviewRunCharges` records
+  one charge with `ChargeCall.forReview` under `CallRefs.of(reviewId, callSlot, kind)`, with the paying member's
+  `credential_ref`, priced unmetered on a seat; the Runs list shows a dash for a review run's cost.
+- **Deterministic, cancellable.** The run id derives from the pull request, the head, the kind and the slot, so a
+  redelivered dispatch is dropped by the worker's execute claim. A superseded head (from `cs.events` on its own
+  group, offset latest) or a closed pull request sends `CancelRun` for the review's live review runs; never
+  `CancelReview` (ADR-013).
+- **A review's wall clock** (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`, default 900) may not exceed a build's;
+  startup refuses otherwise, since the run-worker would refuse the unit after it was paid for.
+
+**Consequences.**
+- The agent of a review run holds the model credential, as a factory agent does, behind the step 2 egress network.
+  The operator deferred the credential-injecting proxy (step 3) to just before fork pull requests: a same-repository
+  pull request is opened by someone with write access already. Until then a fork pull request on a repository that
+  reviews with a harness is not reviewed on the harness.
+- The reviewer account's token, which can post, enters the unit's init container: this crosses ADR-038's
+  two-authority split, recorded in docs/UNVERIFIED.md until a read-scoped clone token exists.
+- A supersede missed while the orchestrator was down leaves a run that finishes and is charged: a cost, never a
+  wrong review.
+
+**Rejected.**
+- **Running the harness in the review worker.** ADR-029: the review worker holds forge clients and no sandbox.
+- **Review runs on the build lane.** One execute slot, ordered: a review would wait behind a build.
+- **Charging the run plane and the review both.** One call would count twice against the cap.
+
+---
+
 ## ADR-049 — Specification and plan are read-only harness runs; steps build on one chain
 
 **Status:** implemented on `feat/m4-spec-plan` (PR #287), 2026-10-26. Accepted on its live proof on `spire-test`,

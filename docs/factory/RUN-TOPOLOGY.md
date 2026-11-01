@@ -380,6 +380,30 @@ hold or a cancel stops it with the build, `destroyHeld` removes it, and discover
 verify container for the unit. Each check's output is kept as its last 200 lines, each clipped to
 2000 characters, at most 64 KiB. The result rides `cs.run-verifications`.
 
+## 6B. The review lane (harness reviews, ADR-050)
+
+A review that runs on a harness is a factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP`, and it never
+waits behind a build. The run worker reads two command topics:
+
+| Lane | Topic | Group | Concurrency |
+|---|---|---|---|
+| build | `cs.run-commands` | `spire-run-worker` | one run at a time, ordered |
+| review | `cs.review-runs` | `spire-run-worker-reviews` | `SPIRE_RUN_REVIEW_CONCURRENCY` (default 2), its own pool |
+
+The review lane takes the same `execute` and `cancel` claims as the build lane, so a redelivered command
+starts no second unit and a cancel that arrives before the start stops it ever starting. Its ack budget follows
+the build lane's rule (wall clock + drain + 300 s, one record per poll). The concurrency is **per instance**: with
+replicas the total multiplies, and `cs.review-runs` needs at least as many partitions as replicas for the extra
+instances to receive any. Nothing creates the topic with a partition count today; Kafka auto-creates it with the
+broker default.
+
+The unit is the read-only topology of §4.4: init clones the pull request with the REVIEWER account's token, the
+agent never holds it, and the publisher runs `spire-publish-none` with no write credential. The publisher is told
+the review's artifact cap (`SPIRE_ARTIFACT_MAX_BYTES=262144`; a draft keeps 32 KiB) and writes the artifact as
+ordered parts on separate outcome lines, each small enough that its JSON-escaped line stays under the 64 KiB line
+cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
+answer with no text, which is charged, never a lost run.
+
 ## 7. What leaves the pod, and how
 
 **Nothing is extracted.** Every output leaves as a log stream, which Docker and Kubernetes both
