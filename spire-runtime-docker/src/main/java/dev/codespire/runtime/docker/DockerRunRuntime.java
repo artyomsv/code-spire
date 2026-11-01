@@ -526,7 +526,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
         if (container == spec.agent() && spec.egress().proxiesTheAgent()) {
             // The unit's internal network and nothing else: no default bridge, so no route to the host, its
             // published ports or any other container. The egress proxy is the one thing on it that leads out.
-            host.withNetworkMode("bridge");
+            host.withNetworkMode(DockerRunNetworks.agentNetworkName(spec.runId()));
         }
         return host;
     }
