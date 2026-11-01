@@ -397,6 +397,32 @@ provide natively — no `exec`, no file copy, no shared storage between pod and 
 This is what keeps the worker **stateless**: it holds no run state and no filesystem, so any replica
 can observe or salvage any run.
 
+### 7.1 The agent's egress hosts (measured 2026-11-01)
+
+The agent reaches the network only through its unit's egress proxy, which allows the hosts the harness
+declares (`HarnessAdapter.egressHosts`). Codex's hosts were measured live in report mode on the dev stack
+(`spire-test` #85 on a seat and #87 on an API key, every host on port 443, none refused):
+
+| Host | Seat | API key |
+|---|---|---|
+| `chatgpt.com` | yes | yes |
+| `ab.chatgpt.com` | yes | yes |
+| `api.openai.com` | no | yes |
+| `github.com` | no | yes |
+| `sdmntprcentralus`, `sdmntprsouthcentralus`, `sdmntprwestus` `.oaiusercontent.com` | yes | no |
+
+Some of these calls are features a run never needs. Every `codex exec` now carries
+`-c features.plugins=false -c analytics.enabled=false`: plugins call `github.com`, `api.github.com` and
+`chatgpt.com`, and analytics calls `ab.chatgpt.com`. A seat run also carries `-c features.apps=false`.
+With them off, Codex declares:
+
+- **API key:** `api.openai.com`.
+- **Seat:** `chatgpt.com` and the three `sdmntpr*.oaiusercontent.com` content hosts.
+
+`auth.openai.com` is never declared: the orchestrator empties a seat's refresh token, so a run has nothing
+to renew. Where a seat's content-host calls come from, and which paths a long run adds, is not settled
+(docs/UNVERIFIED.md).
+
 ---
 
 ## 8. Credentials
