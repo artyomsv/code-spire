@@ -40,7 +40,7 @@ public class HarnessReviewStart {
     /** The review's round could not be read, so no run is bound to one; a re-run asks again. */
     static final String ROUND_UNKNOWN = "review_round_unknown";
 
-    /** Composing the prompt or dispatching the run threw; the log has the cause. */
+    /** Composing the run's prompt or request threw; the log has the cause. */
     static final String START_FAILED = "harness_review_start_failed";
 
     private static final Logger LOG = Logger.getLogger(HarnessReviewStart.class);
@@ -127,17 +127,22 @@ public class HarnessReviewStart {
     }
 
     /**
-     * Any failure while composing or dispatching refuses the review: thrown, it failed the saga's message and left the
-     * review in "reviewing" with no run and no attention row (live on spire-test #93). The decisions above are reads
-     * the API path makes too, so they keep their own failure handling.
+     * A failure while composing the run's request refuses the review: thrown, it failed the saga's message and left the
+     * review in "reviewing" with no run and no attention row (live on spire-test #93). The dispatch stays outside this
+     * guard: once it may have published the command a paid run may be executing, and a terminal refusal would make its
+     * answer arrive at a failed review and be dropped (review of PR #368, code-quality/M-2). A dispatch that throws fails
+     * the message as before, and the review stays open for the run's answer.
      */
     private Decision startedOrRefused(Prepared prepared, IntegrationEvent.ContextAssembled event) {
+        String harness = prepared.onHarness().harness().harness();
+        ReviewRunRequest request;
         try {
-            return dispatched(prepared, event);
+            request = request(prepared, event);
         } catch (RuntimeException e) {
             LOG.errorf(e, "Harness review start failed for %s; the review is refused", event.reviewId());
-            return new Refused(prepared.onHarness().harness().harness(), START_FAILED);
+            return new Refused(harness, START_FAILED);
         }
+        return dispatched(request, harness);
     }
 
     private Optional<OnHarness> onHarness(String reviewId) {
@@ -145,18 +150,20 @@ public class HarnessReviewStart {
                 .map(harness -> new OnHarness(id, harness)));
     }
 
-    private Decision dispatched(Prepared prepared, IntegrationEvent.ContextAssembled event) {
+    private ReviewRunRequest request(Prepared prepared, IntegrationEvent.ContextAssembled event) {
         ReviewHarness harness = prepared.onHarness().harness();
-        ReviewRunRequest request = new ReviewRunRequest(prepared.onHarness().repositoryId(),
-                binding(event, prepared.round()),
+        return new ReviewRunRequest(prepared.onHarness().repositoryId(), binding(event, prepared.round()),
                 new RunFunding.Choice(harness.harness(), harness.model(), harness.effort(), harness.subscription()),
                 prompt(event, prepared.target()));
+    }
+
+    private Decision dispatched(ReviewRunRequest request, String harness) {
         return switch (dispatch.dispatch(request)) {
-            case ReviewRunDispatch.Dispatched sent -> new Started(sent.runId(), harness.harness());
-            case ReviewRunDispatch.AlreadyQueued queued -> new Started(queued.runId(), harness.harness());
+            case ReviewRunDispatch.Dispatched sent -> new Started(sent.runId(), harness);
+            case ReviewRunDispatch.AlreadyQueued queued -> new Started(queued.runId(), harness);
             // The queued row exists; a launch that never arrived surfaces as REVIEW_STUCK, not as a refusal.
-            case ReviewRunDispatch.Uncertain uncertain -> new Started(uncertain.runId(), harness.harness());
-            case ReviewRunDispatch.Refused refused -> new Refused(harness.harness(), refused.reason());
+            case ReviewRunDispatch.Uncertain uncertain -> new Started(uncertain.runId(), harness);
+            case ReviewRunDispatch.Refused refused -> new Refused(harness, refused.reason());
         };
     }
 

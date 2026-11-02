@@ -25,6 +25,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -54,6 +56,7 @@ class HarnessReviewStartTest {
     /** Null, as the real resolver answers for a repository with no customized prompt (the common case). */
     private PromptTemplate customReviewPrompt;
     private RuntimeException dispatchFailure;
+    private RuntimeException promptFailure;
 
     private final List<ReviewRunRequest> dispatched = new ArrayList<>();
 
@@ -172,14 +175,30 @@ class HarnessReviewStartTest {
         assertTrue(dispatched.getFirst().prompt().startsWith("TEST-custom-system"));
     }
 
-    /** A failure while starting refuses the review with attention; a thrown exception left it in "reviewing". */
+    /** A failure composing the request refuses the review with attention; thrown, it left the review in "reviewing". */
     @Test
-    void aStartThatFailsIsRefusedNotLeftReviewing() {
-        dispatchFailure = new IllegalStateException("TEST-failure");
+    void aRequestThatCannotBeComposedIsRefusedNotLeftReviewing() {
+        promptFailure = new IllegalStateException("TEST-failure");
 
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
         assertEquals(new HarnessReviewStart.Refused("TEST-harness", "harness_review_start_failed"), decision);
+        assertTrue(dispatched.isEmpty(), "nothing was sent");
+    }
+
+    /**
+     * A dispatch that throws may already have published the command, so the review is not refused: a terminal refusal
+     * would drop the paid run's answer (review of PR #368, code-quality/M-2). The message fails and the review stays open.
+     */
+    @Test
+    void aDispatchThatThrowsIsNotRefused() {
+        IllegalStateException failure = new IllegalStateException("TEST-uncertain-status-write");
+        dispatchFailure = failure;
+
+        HarnessReviewStart start = start();
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> start.start(EVENT));
+
+        assertSame(failure, thrown);
     }
 
     private HarnessReviewStart start() {
@@ -258,6 +277,9 @@ class HarnessReviewStartTest {
         return new WorkerPromptTemplates() {
             @Override
             public PromptTemplate forKind(PromptKind kind, RepoRef repo) {
+                if (promptFailure != null) {
+                    throw promptFailure;
+                }
                 return customReviewPrompt;
             }
         };
