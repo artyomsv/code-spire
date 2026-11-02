@@ -133,9 +133,11 @@ review behind an hour-long build would wait an hour.
   reviewer's packed forge credential; with no credential the review is refused as `reviewer_credential_unavailable`
   with attention). `HarnessReviewWorker` reads the pull request (abandoning a head that moved), loads the assembled
   context and answers `HarnessReviewPrepared` with the run's inputs. `HarnessReviewLaunch` then checks the round,
-  composes the prompt and dispatches the run with those inputs: a round that ended meanwhile, or an admission that
-  answers `review_run_cancelled`, is dropped, never refused, and a repository switched off its harness is refused as
-  `review_harness_removed`. The run's answer is sent back to the worker as `FinishHarnessReview`, which parses it with
+  composes the prompt and dispatches the run with those inputs, reading the round and applying its decision under the
+  review's `ReviewRoundLock`, so a forced re-run cannot land between the check and a refusal (review of PR #370,
+  code-quality/M-1). A round that ended meanwhile, or an admission that answers `review_run_cancelled`, is dropped,
+  never refused; the ended round is dropped before any refusal that reads the repository's configuration, and a
+  repository switched off its harness is refused as `review_harness_removed`. The run's answer is sent back to the worker as `FinishHarnessReview`, which parses it with
   `FindingsParser` and `VerdictsParser` (one JSON object carries `summary`, `findings` and `verdicts`) and answers
   `HarnessReviewGenerated`. The API path and the harness path share `ReconcileSteps`: the compare, the rename remap,
   the thread transcripts, the verdict backstop that downgrades a finding the change never touched, and the
@@ -164,10 +166,15 @@ review behind an hour-long build would wait an hour.
   checks the round under `ReviewRoundLock` and hands `ResultSaga.acceptHarnessOutcome` a `ReviewGenerated` with no
   `reconcileUsage`, so the saga charges nothing. A run failure still takes step 5's path, applied from
   `cs.run-results`.
-- **Failures.** A prepare failure is a `ReviewFailed` with the worker's retry classification. A finish failure the
-  worker classifies as transient (an `IllegalStateException` caused by an `SQLException` among them) propagates, so
+- **Failures.** A prepare failure is a `HarnessReviewFailed` with the worker's retry classification. A finish failure
+  the worker classifies as transient (an `IllegalStateException` caused by an `SQLException` among them) propagates, so
   `FinishHarnessReview` dead-letters with its paid answer and a replay finishes it at no cost; a permanent one fails
-  the review terminally (`harness-finish`), since a retry would meet the same run id and never be answered.
+  the review terminally (`harness-finish`), since a retry would meet the same run id and never be answered. The
+  failure names its round, and `HarnessReviewResults.acceptFailed` applies it as a `ReviewFailed` (retry schedule
+  included) under the round lock only when that round is current, and then only for the current commit: a plain
+  `ReviewFailed` skipped both, so a late round-1 failure, or its replayed dead letter, failed round 2 on the same head
+  or scheduled a retry for it (review of PR #370, code-quality/H-1). A round that cannot be read is thrown for a
+  replay, as a finished answer's is.
 - **Charged once, as `RECONCILE`.** `ReviewRunCharges` charges the run under the review's call slot with the run's
   kind, so a harness re-review records one `RECONCILE` call and no `REVIEW` call for its round, where the API path
   records both. Anything that counts reviews by `ChargeKind.REVIEW` reads one fewer per harness re-review. Read on

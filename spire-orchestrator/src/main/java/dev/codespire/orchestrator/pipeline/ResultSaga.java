@@ -9,6 +9,7 @@ import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
@@ -422,10 +423,16 @@ public class ResultSaga {
                 // only one wired up" shape M1 was about in the first place.
                 projection.touch(e.reviewId());
             }
+            // Decided and applied under the review's round lock, so a forced re-run cannot start round N+1 between the
+            // launch's round check and a refusal that would end it (review of PR #370, code-quality/M-1).
             case HarnessReviewPrepared e -> ifCurrentRun(e.reviewId(), e.commit(), "HarnessReviewPrepared",
-                    () -> applyHarnessDecision(e.reviewId(), e.commit(), harnessLaunch.launch(e)));
+                    () -> harnessLaunch.launch(e,
+                            decision -> applyHarnessDecision(e.reviewId(), e.commit(), decision)));
             // Never charged here: ReviewRunCharges charged the run once. Round lock, round and commit checks inside.
             case HarnessReviewGenerated e -> harnessResults.acceptGenerated(e);
+            // A harness failure names its round: a plain ReviewFailed of round 1 would fail round 2 on the same head
+            // (review of PR #370, code-quality/H-1). Round lock, round and commit checks inside, as above.
+            case HarnessReviewFailed e -> harnessResults.acceptFailed(e);
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -880,6 +887,7 @@ public class ResultSaga {
             case ReviewFailed e -> e.reviewId();
             case HarnessReviewPrepared e -> e.reviewId();
             case HarnessReviewGenerated e -> e.reviewId();
+            case HarnessReviewFailed e -> e.reviewId();
             default -> "";
         };
     }

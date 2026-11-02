@@ -118,6 +118,13 @@ reports one new, and a rename that keeps the open finding) is pending (plan Task
   and the attention row are not driven by a test.
 - **A push on `cs.integration` is still not fenced.** The answer now has the API answer's windows and no others (the
   step 5 entry below): `IntegrationSaga` appends a push's new round without the round lock.
+- **A stale round is fenced by unit tests and the advisory lock's own test only** (review of PR #370, code-quality/H-1
+  and M-1). The worker's prepare and finish failures carry their round as `HarnessReviewFailed` and are applied under
+  the round lock only for the current round; the launch drops an ended round before refusing on configuration, and
+  reads the round and applies its decision under the same lock. `ResultSagaHarnessFailureTest`,
+  `HarnessReviewOutcomesTest` and `HarnessReviewLaunchTest` prove it against fakes; no test races a forced re-run
+  against a late failure or a late `HarnessReviewPrepared` on a real database, and a round that cannot be read still
+  refuses the launch (fail-closed, as at the start) rather than waiting for a replay.
 
 **What evidence would settle it.** The step 6 live proof on `spire-test`, recorded in
 `docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md`: one `REVIEW` run whose `/inputs/context.md` holds the linked issue,

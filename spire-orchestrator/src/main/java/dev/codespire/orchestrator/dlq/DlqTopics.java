@@ -19,7 +19,8 @@ final class DlqTopics {
 
     private static final Set<String> RESULT_EVENT_TYPES = Set.of(
             "DiffFetched", "ContextAssembled", "ReviewGenerated", "CommentsPosted",
-            "ReviewFailed", "FollowUpGenerated", "FollowUpPosted", "HarnessReviewPrepared", "HarnessReviewGenerated");
+            "ReviewFailed", "FollowUpGenerated", "FollowUpPosted", "HarnessReviewPrepared", "HarnessReviewGenerated",
+            "HarnessReviewFailed");
 
     private static final Set<String> INGRESS_EVENT_TYPES = Set.of(
             "PullRequestEventReceived", "PullRequestClosed", "ManualCommandReceived",

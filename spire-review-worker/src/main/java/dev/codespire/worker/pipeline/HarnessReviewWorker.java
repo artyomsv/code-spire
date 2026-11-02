@@ -7,7 +7,7 @@ import dev.codespire.contract.command.ActionCommand.PrepareHarnessReview;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
-import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.FindingVerdict;
@@ -39,6 +39,10 @@ public class HarnessReviewWorker {
     /** Every claim this worker writes starts with this, so {@code PostComments}' recovery can skip them all. */
     static final String CLAIM_PREFIX = "harness:";
 
+    static final String PREPARE_PHASE = "harness-prepare";
+
+    static final String FINISH_PHASE = "harness-finish";
+
     static final String OVER_CAP_SUMMARY = "The harness answer was larger than 256 KiB and was not read.";
 
     private static final Logger LOG = Logger.getLogger(HarnessReviewWorker.class);
@@ -66,8 +70,10 @@ public class HarnessReviewWorker {
     }
 
     /**
-     * Fails like the API path: a gone commit is abandoned, anything else is a {@code ReviewFailed} with the worker's
-     * retry classification, so a transient read is retried on the same round.
+     * Fails like the API path: a gone commit is abandoned, anything else is a {@code HarnessReviewFailed} with the
+     * worker's retry classification, so a transient read is retried on the same round. It names its round, as every
+     * harness failure does: a forced re-run keeps the commit, and only the round keeps a late failure of round 1 from
+     * failing round 2 (review of PR #370, code-quality/H-1).
      */
     public void prepare(PrepareHarnessReview command) {
         try {
@@ -80,8 +86,8 @@ public class HarnessReviewWorker {
                 return;
             }
             LOG.warnf(cause, "PrepareHarnessReview failed for %s", command.reviewId());
-            results.emit(new ReviewFailed(command.reviewId(), command.commit(), "harness-prepare",
-                    cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
+            results.emit(new HarnessReviewFailed(command.reviewId(), command.commit(), command.round(),
+                    PREPARE_PHASE, cause.getMessage(), WorkerFailures.isRetryable(cause),
                     WorkerFailures.isCredentialRejected(cause)));
         }
     }
@@ -89,7 +95,7 @@ public class HarnessReviewWorker {
     /**
      * A transient fault propagates, so the record dead-letters with its paid answer and a replay finishes it at no
      * cost. Only a permanent fault fails the review, and terminally: a retry would meet the same run id and never
-     * be answered.
+     * be answered. The failure names its round, as the prepare's does.
      */
     public void finish(FinishHarnessReview command) {
         try {
@@ -102,8 +108,8 @@ public class HarnessReviewWorker {
                 throw e;
             }
             LOG.warnf(cause, "FinishHarnessReview failed for %s", command.reviewId());
-            results.emit(new ReviewFailed(command.reviewId(), command.commit(), "harness-finish",
-                    cause.getMessage(), false, 1, false));
+            results.emit(new HarnessReviewFailed(command.reviewId(), command.commit(), command.round(),
+                    FINISH_PHASE, cause.getMessage(), false, false));
         }
     }
 

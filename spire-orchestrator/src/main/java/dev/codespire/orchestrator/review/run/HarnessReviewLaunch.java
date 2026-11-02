@@ -20,16 +20,23 @@ import org.jboss.logging.Logger;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * Dispatches a prepared harness review's run (harness reviews, step 6): the worker has written the run's inputs, and
  * the launch checks that the review's round is still the one prepared, composes the prompt and dispatches the run with
  * those inputs. A refusal never falls back to the API (operator decision 6).
  *
- * <p>Decides in this order: a repository with no harness any more is {@link HarnessReviewStart.Refused} (plan call
- * 15); a round that cannot be read is refused; a round other than the prepared one is {@link HarnessReviewStart.Dropped};
- * otherwise the run is dispatched. A cancelled admission is dropped too: a forced re-run between the round check and
- * admission cancels it, and a refusal would refuse the new round on the same commit (plan check, item 2).
+ * <p>Decides in this order: a round other than the prepared one is {@link HarnessReviewStart.Dropped}; a repository
+ * with no harness any more is {@link HarnessReviewStart.Refused} (plan call 15); a round that cannot be read is
+ * refused; otherwise the run is dispatched. The ended round is dropped first, before every refusal that reads the
+ * repository's configuration: with round 1 prepared, the repository switched to the API and round 2 forced on the same
+ * head, a refusal of round 1 refused round 2 (review of PR #370, code-quality/M-1). A cancelled admission is dropped
+ * too: a supersede or a close between the round check and admission cancels it (plan check, item 2).
+ *
+ * <p>{@link #launch(IntegrationEvent.HarnessReviewPrepared, Consumer)} reads the round and applies the decision under
+ * the review's {@link ReviewRoundLock}, which a forced re-run holds while it starts its round, so no re-run lands
+ * between the check and the refusal. Nothing inside takes that lock again; admission's lock has its own key.
  */
 @ApplicationScoped
 public class HarnessReviewLaunch {
@@ -60,36 +67,51 @@ public class HarnessReviewLaunch {
     @Inject
     WorkerPromptTemplates promptTemplates;
 
+    /** Held while the round is read and the decision applied, as a forced re-run holds it (code-quality/M-1). */
     @Inject
     ReviewRoundLock rounds;
-
-    public void launch(IntegrationEvent.HarnessReviewPrepared prepared,
-                       java.util.function.Consumer<HarnessReviewStart.Decision> apply) {
-        // Compile stub for the red tests (review of PR #370, code-quality/M-1).
-        apply.accept(launch(prepared));
-    }
 
     /** The repository a harness review runs for and the harness it runs on. */
     private record OnHarness(UUID repositoryId, ReviewHarness harness) {
     }
 
+    /**
+     * Decides and hands the decision to {@code apply}, both under the review's round lock: {@code apply} runs inside
+     * it, so it must never take that lock itself.
+     */
+    public void launch(IntegrationEvent.HarnessReviewPrepared prepared, Consumer<HarnessReviewStart.Decision> apply) {
+        rounds.holding(prepared.reviewId(), () -> {
+            apply.accept(launch(prepared));
+            return true;
+        });
+    }
+
+    /**
+     * The decision alone, outside the lock; the saga decides and applies through
+     * {@link #launch(IntegrationEvent.HarnessReviewPrepared, Consumer)}.
+     */
     public HarnessReviewStart.Decision launch(IntegrationEvent.HarnessReviewPrepared prepared) {
-        Optional<OnHarness> onHarness = projection.repositoryIdOf(prepared.reviewId())
-                .flatMap(id -> repositories.reviewHarness(id).map(harness -> new OnHarness(id, harness)));
+        // Fail-closed, as at the start: a guessed round would bind the run to a round that may not be the review's.
+        int round = runs.roundOrUnknown(prepared.reviewId());
+        // A forced re-run ended the prepared round while the worker worked: its inputs are never dispatched, and
+        // nothing about the repository's configuration may refuse the round that replaced it.
+        if (round != ReviewRuns.UNKNOWN_RUN && round != prepared.round()) {
+            return new HarnessReviewStart.Dropped("round " + prepared.round() + " ended");
+        }
+        Optional<OnHarness> onHarness = onHarness(prepared.reviewId());
         if (onHarness.isEmpty()) {
             return new HarnessReviewStart.Refused(NO_HARNESS, HARNESS_REMOVED);
         }
-        String harness = onHarness.orElseThrow().harness().harness();
-        // Fail-closed, as at the start: a guessed round would bind the run to a round that may not be the review's.
-        int round = runs.roundOrUnknown(prepared.reviewId());
         if (round == ReviewRuns.UNKNOWN_RUN) {
-            return new HarnessReviewStart.Refused(harness, HarnessReviewStart.ROUND_UNKNOWN);
-        }
-        // A forced re-run ended the prepared round while the worker worked: its inputs are never dispatched.
-        if (round != prepared.round()) {
-            return new HarnessReviewStart.Dropped("round " + prepared.round() + " ended");
+            return new HarnessReviewStart.Refused(onHarness.orElseThrow().harness().harness(),
+                    HarnessReviewStart.ROUND_UNKNOWN);
         }
         return startedOrRefused(onHarness.orElseThrow(), prepared);
+    }
+
+    private Optional<OnHarness> onHarness(String reviewId) {
+        return projection.repositoryIdOf(reviewId)
+                .flatMap(id -> repositories.reviewHarness(id).map(harness -> new OnHarness(id, harness)));
     }
 
     /**

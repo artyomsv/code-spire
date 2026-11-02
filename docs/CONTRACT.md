@@ -437,6 +437,7 @@ Every event (integration or domain) is wrapped:
 | `FindingRefused` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — same non-turn-consuming, link-back-to-root shape as `FindingConfirmed` |
 | `HarnessReviewPrepared` | `spire-review-worker` | reviewId, prId, commit, round, kind (`REVIEW` or `RECONCILE`), inputs (`HarnessReviewInputs`: `context.md` and, on a re-review, `prior-findings.md`, at most 224 KiB in total, plain text, never a diff; `toString` prints sizes) — harness reviews, step 6 |
 | `HarnessReviewGenerated` | `spire-review-worker` | reviewId, prId, commit, round, result (`ReviewResult`), verdicts[] — the harness answer parsed by the API path's own parsers; applied as a `ReviewGenerated` with no `reconcileUsage`, since the run was charged once |
+| `HarnessReviewFailed` | `spire-review-worker` | reviewId, commit, round, phase (`harness-prepare` or `harness-finish`), error, retryable, credentialRejected — the worker could not prepare or finish a harness review; applied as a `ReviewFailed` (attempt 1) under the review's round lock only for its own round, so a late failure of an ended round never fails or retries the current one (review of PR #370) |
 
 > Only the **assembled context** is offloaded to the object store (encrypted, referenced by `contextRef`)
 > so events stay small. **Diffs are never stored** (re-fetched by commit); **findings** ride inline in
@@ -638,7 +639,7 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
-| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared` and `HarnessReviewGenerated`, which carry a harness review's inputs and parsed answer). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
+| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared`, `HarnessReviewGenerated` and `HarnessReviewFailed`, which carry a harness review's inputs, parsed answer and round-tagged failure). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
 Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and

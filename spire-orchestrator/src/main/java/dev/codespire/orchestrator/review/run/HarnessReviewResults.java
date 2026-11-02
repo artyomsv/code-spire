@@ -24,9 +24,10 @@ import java.util.Optional;
  * A harness review run's answer is finished by the review worker and becomes the review's outcome (harness reviews,
  * step 6). A {@code REVIEW} or {@code RECONCILE} answer is sent to the worker as {@code FinishHarnessReview}; the
  * worker's {@code HarnessReviewGenerated} comes back on the saga's per-review ordered consumer and is handed to
- * {@link ResultSaga#acceptHarnessOutcome} by {@link #acceptGenerated}. A failed run fails the review once (plan call
- * 11). Both halves read the round and act under the review's {@link ReviewRoundLock}: a result of an ended round is
- * dropped, and a round that cannot be read is thrown, never guessed (review of PR #368).
+ * {@link ResultSaga#acceptHarnessOutcome} by {@link #acceptGenerated}; the worker's {@code HarnessReviewFailed} by
+ * {@link #acceptFailed}. A failed run fails the review once (plan call 11). Every path reads the round and acts under
+ * the review's {@link ReviewRoundLock}: a result of an ended round is dropped, and a round that cannot be read is
+ * thrown, never guessed (reviews of PR #368 and PR #370).
  *
  * <p>Never charged here: {@code ReviewRunCharges} already charged the run under the review's call slot. Follow-up
  * answers are only logged until step 7. The artifact's text is never logged: it is model output about the reviewed code
@@ -90,8 +91,21 @@ public class HarnessReviewResults implements ReviewRunResults {
         });
     }
 
+    /**
+     * The worker could not prepare or finish the review: applied as the API path's failure, retry schedule included,
+     * under the round lock and only for its own round. A plain {@code ReviewFailed} skipped both, so a late failure of
+     * round 1, or its replayed dead letter, failed round 2 on the same head or scheduled a retry for it (review of
+     * PR #370, code-quality/H-1). A round that cannot be read is thrown for a replay, as {@link #acceptGenerated}'s is.
+     */
     public void acceptFailed(IntegrationEvent.HarnessReviewFailed failed) {
-        // Compile stub for the red tests (review of PR #370, code-quality/H-1).
+        rounds.holding(failed.reviewId(), () -> {
+            if (!isCurrentRound(failed.reviewId(), failed.round(), "the harness review's " + failed.phase()
+                    + " failure")) {
+                return false;
+            }
+            saga.acceptHarnessOutcome(failed.toReviewFailed());
+            return true;
+        });
     }
 
     @Override
