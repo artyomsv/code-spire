@@ -290,6 +290,28 @@ class AttentionQueriesTest {
     }
 
     /**
+     * The cap keeps the newest stuck reviews, not the oldest: the bell is newest first, and a review that became stuck
+     * today must not hide in the remainder behind five from yesterday. Distinct stored times, r1 the newest.
+     */
+    @Test
+    void theCapKeepsTheNewestStuckReviewsAsTheirOwnRows() {
+        insertLlmProvider("TEST-llm", true, true);
+        insertScmProvider("TEST-scm", "acct-1", "test-bot");
+        for (int i = 1; i <= 7; i++) {
+            insertReview("TEST-r" + i, "reviewing", "OPEN", (60 + i) + " minutes");
+        }
+
+        Set<String> listed = queries.collect().stream()
+                .filter(v -> "REVIEW_STUCK".equals(v.code()) && v.subject() != null)
+                .map(AttentionView::subject)
+                .collect(java.util.stream.Collectors.toSet());
+
+        Set<String> newestFive = Set.of("TEST-WS/TEST-REPO#1", "TEST-WS/TEST-REPO#2", "TEST-WS/TEST-REPO#3",
+                "TEST-WS/TEST-REPO#4", "TEST-WS/TEST-REPO#5");
+        assertEquals(newestFive, listed, "the two oldest belong in the remainder row");
+    }
+
+    /**
      * Acknowledging is the only resolution a past failure has — nothing an operator fixes makes a
      * failed review un-fail — so these two row types are the panel's only dismissable ones.
      */
