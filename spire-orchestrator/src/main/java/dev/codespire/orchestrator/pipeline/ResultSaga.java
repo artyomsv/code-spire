@@ -9,6 +9,7 @@ import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
@@ -137,7 +138,7 @@ public class ResultSaga {
     dev.codespire.orchestrator.review.run.HarnessReviewLaunch harnessLaunch;
 
     /**
-     * Applies a finished harness answer (harness reviews, step 6; not wired yet). A CDI cycle with client proxies on
+     * Applies a finished harness answer (harness reviews, step 6). A CDI cycle with client proxies on
      * both sides, as {@code HarnessReviewResults}'s own injection of this saga already is.
      */
     @Inject
@@ -423,6 +424,8 @@ public class ResultSaga {
             }
             case HarnessReviewPrepared e -> ifCurrentRun(e.reviewId(), e.commit(), "HarnessReviewPrepared",
                     () -> applyHarnessDecision(e.reviewId(), e.commit(), harnessLaunch.launch(e)));
+            // Never charged here: ReviewRunCharges charged the run once. Round lock, round and commit checks inside.
+            case HarnessReviewGenerated e -> harnessResults.acceptGenerated(e);
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -876,6 +879,7 @@ public class ResultSaga {
             case FindingRefused e -> e.reviewId();
             case ReviewFailed e -> e.reviewId();
             case HarnessReviewPrepared e -> e.reviewId();
+            case HarnessReviewGenerated e -> e.reviewId();
             default -> "";
         };
     }
