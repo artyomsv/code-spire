@@ -2,7 +2,6 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.port.ScmType;
-import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FactoryCloneUrls;
@@ -31,6 +30,9 @@ import java.util.Optional;
  */
 @ApplicationScoped
 public class ReviewRunDispatch {
+
+    /** A close, a supersede or a forced re-run cancelled the review's runs before this one was admitted. */
+    static final String CANCELLED_REASON = "review_run_cancelled";
 
     @Inject
     RunFunding funding;
@@ -98,7 +100,7 @@ public class ReviewRunDispatch {
         RunCommand.ExecuteReviewRun command = command(runId, request, target, funded);
         // Admitted under the lock a close or supersede takes, so a cancellation during funding refuses this row.
         return switch (admission.admit(row(command, request, target, funded), request.repositoryId())) {
-            case CANCELLED -> new Refused("review_run_cancelled");
+            case CANCELLED -> new Refused(CANCELLED_REASON);
             case ALREADY_QUEUED -> new AlreadyQueued(runId);
             case ADMITTED -> launched(runId, command);
         };
@@ -142,7 +144,7 @@ public class ReviewRunDispatch {
                 credentials.packHarness(runId, funded.handedOver()), false, target.targetBranch())
                 .atEffort(choice.effort());
         return new RunCommand.ExecuteReviewRun(runId, choice.subscription() ? execution.paidBySignIn() : execution, binding,
-                HarnessReviewInputs.NONE);
+                request.inputs());
     }
 
     private static FactoryRunProjection.QueuedRun row(RunCommand.ExecuteReviewRun command, ReviewRunRequest request,
