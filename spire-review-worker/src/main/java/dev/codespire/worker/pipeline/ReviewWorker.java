@@ -422,13 +422,14 @@ public class ReviewWorker {
 
     /**
      * Recover inline comment ids from a previous partially-completed attempt. Skip the non-inline claims
-     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:) — none of those are posted inline comments, so
+     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:, harness:) — none of those are posted inline comments, so
      * they must never leak into the inline list.
      */
     private static void recoverPreviouslyPosted(Map<String, String> previouslyPosted, List<CommentsPosted.PostedInline> posted) {
         previouslyPosted.forEach((key, ref) -> {
             if (!SUMMARY_KEY.equals(key) && !NativeReviewPost.REVIEW_KEY.equals(key) && !LLM_KEY.equals(key)
                     && !RECONCILE_KEY.equals(key) && !key.startsWith("reply:") && !key.startsWith("resolve:")
+                    && !key.startsWith(HarnessReviewWorker.CLAIM_PREFIX)
                     && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
                 posted.add(new CommentsPosted.PostedInline(ref, key, 0));
             }
