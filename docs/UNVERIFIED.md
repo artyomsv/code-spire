@@ -85,21 +85,25 @@ definitions). The review worker prepares the inputs and finishes the answer with
 reconcile backstops; the outcome is applied on the review's ordered consumer under the round lock, charged once as
 `RECONCILE` (ADR-050, step 6).
 
-**What is proven, and how.** By unit tests over fakes only: the start, prepare, launch, finish and apply halves
+**What is proven, and how.** By unit tests over fakes: the start, prepare, launch, finish and apply halves
 (`HarnessReviewStartTest`, `HarnessReviewWorkerPrepareTest`, `HarnessReviewWorkerFinishTest`, `HarnessReviewLaunchTest`,
 `HarnessReviewResultsTest`, `HarnessReviewOutcomesTest`, `ResultSagaHarnessRunTest`, `ReconcileStepsTest`), the input
 files and their caps (`HarnessReviewInputFilesTest`), the prompt (`HarnessReviewPromptTest`), the unit's wiring
 (`RunUnitSpecInputsTest`, `RunUnitBuilderReviewTest`) and the wire messages (`HarnessReviewMessagesTest`,
 `ExecuteReviewRunTest`). The Docker copy-in is proven against a real daemon by `DockerRunRuntimeIT` only: the agent
 reads the file and cannot write it,
-and the publisher cannot see it. **No step 6 run has been made on a live stack**; the live proof (a first review that
-cites a requirement found only in its linked issue, a re-review that resolves one finding, leaves one unchanged and
-reports one new, and a rename that keeps the open finding) is pending (plan Task 8, steps 2 to 6).
+and the publisher cannot see it. **The main path is proven live** (2026-11-02, built at `4a02f003`, Codex
+`gpt-6-astra` on a seat, docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md): on `spire-test` #97 a `REVIEW` run cited a
+requirement found only in linked issue #96, read from `/inputs/context.md`; a re-review was one `RECONCILE` run that
+resolved the fixed finding's thread with a reply, kept two open and reported one new, with one charge set under
+`…#run2|RECONCILE` and none under `…#run2|REVIEW`, at cost 0; a rename kept the three open findings at the new path
+with no duplicate. Egress was `chatgpt.com` only.
 
 **Why nothing catches the rest.**
-- **Paths the planned live proof will not reach.** The compare fallback (a rewritten prior head) live; a `/finding`
-  filed while the run works; an over-cap re-review; a finish with no stored numbering (its verdicts are not read); a
-  cut `prior-findings.md` (the tail's findings carry no verdict). Each is proven against fakes, or not at all.
+- **Paths the live proof did not reach.** A re-review whose prior head is unreachable (the compare is null); a
+  `/finding` filed while the run works; a seat refused during a re-review; a re-review on an API key; an over-cap
+  answer or re-review; a finish with no stored numbering (its verdicts are not read); a cut `prior-findings.md` (the
+  tail's findings carry no verdict); forks and replies. Each is proven against fakes, or not at all.
 - **Only the Docker arm copies inputs.** Another runtime arm would have to copy them into its init container too;
   `RunUnitSpec` checks the wiring, not that an arm wrote anything.
 - **The context text rests in plain text in two places.** `HarnessReviewPrepared` (on `cs.results`) and
@@ -126,10 +130,10 @@ reports one new, and a rename that keeps the open finding) is pending (plan Task
   against a late failure or a late `HarnessReviewPrepared` on a real database, and a round that cannot be read still
   refuses the launch (fail-closed, as at the start) rather than waiting for a replay.
 
-**What evidence would settle it.** The step 6 live proof on `spire-test`, recorded in
-`docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md`: one `REVIEW` run whose `/inputs/context.md` holds the linked issue,
-one `RECONCILE` run with exactly one charge set under `…|RECONCILE` and none under `…|REVIEW`, the verdict per prior
-finding as expected, egress `chatgpt.com` only. Then a replayed `FinishHarnessReview` on a live stack.
+**What evidence would settle it.** The step 6 live proof settled the main path (above). The rest needs: a
+`FinishHarnessReview` dead-lettered and replayed on a live stack, a re-review after a force-push that drops the prior
+head, a forced re-run raced against a late failure or a late `HarnessReviewPrepared` on a real database, a re-review
+on an API key and on a refused seat, and an over-cap answer.
 
 ---
 

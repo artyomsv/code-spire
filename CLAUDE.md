@@ -166,8 +166,9 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
 
 - **Harness reviews, steps 4 to 6: review runs, first reviews and re-reviews** (steps 4 and 5 on master with PRs
-  #367 and #368, step 5 live-proven 2026-11-01 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md; step 6 built on PR
-  #370, live proof pending; ADR-050, design docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
+  #367 and #368, live-proven 2026-11-01 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md; step 6 on PR #370, not
+  merged, live-proven 2026-11-02 in docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; ADR-050, design
+  docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
   behind a build. Its answer, `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts; one over the cap is a charged,
@@ -186,13 +187,17 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   init, mounted read-only by the agent and not at all by the publisher. The prompt is the REVIEW system text (plus
   RECONCILE on a re-review), a preamble and the locked suffix; the agent diffs against `refs/spire-base/<target>` and
   reads the rules from it. A transient finish fault dead-letters the paid answer for a replay; a harness re-review
-  records one `RECONCILE` charge and no `REVIEW` one (no server read counts by call kind). Live on `spire-test` (step
-  5, Codex `gpt-6-astra`): #93 on a seat was held with 4 inline findings citing the target branch's `.codespire`, at
+  records one `RECONCILE` charge and no `REVIEW` one (no server read counts by call kind). Live on `spire-test` (Codex
+  `gpt-6-astra`): step 5's #93 on a seat was held with 4 inline findings citing the target branch's `.codespire`, at
   cost 0, calling `chatgpt.com` only; #94 on an API key was approved at 69,110 millicents, calling `api.openai.com`
-  only; #95 with the seat off was refused. Open: step 6 is proven by tests only, dead-lettered harness messages keep
-  the context in `dlq_entry.payload` in plain text, a redelivery funds twice, a stuck `reviewing` review has no
-  dashboard Re-run, and fork refusal is not live (docs/UNVERIFIED.md, the step 5 and step 6 entries). The lane is
-  docs/factory/RUN-TOPOLOGY.md §6B.
+  only; #95 with the seat off was refused. Step 6's #97 on a seat: the first review cited a requirement found only in
+  linked issue #96; a re-review was one `RECONCILE` run that resolved the fixed thread with a reply, kept two open and
+  reported one new bug, charged once under `…#run2|RECONCILE` at cost 0; a rename kept the three open findings at the
+  new path with no duplicate; `chatgpt.com` only. Open: an unreachable prior head, a replayed finish fault, a stale
+  round's late message, an API key or a refused seat on a re-review, an over-cap answer, forks and replies are proven
+  against fakes only; dead-lettered harness messages keep the context in `dlq_entry.payload` in plain text, a
+  redelivery funds twice, and a stuck `reviewing` review has no dashboard Re-run (docs/UNVERIFIED.md, the step 5 and
+  step 6 entries). The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 
