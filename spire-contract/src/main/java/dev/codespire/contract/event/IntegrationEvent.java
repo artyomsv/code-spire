@@ -419,17 +419,41 @@ public sealed interface IntegrationEvent {
             implements IntegrationEvent {
     }
 
-    /** The worker prepared a harness review's input files (harness reviews, step 6). */
+    /**
+     * The worker prepared a harness review's input files (harness reviews, step 6). It always carries its inputs,
+     * {@code NONE} when there are none, and prints their sizes, never their text.
+     */
     record HarnessReviewPrepared(String reviewId, long prId, String commit, int round, ReviewRunBinding.Kind kind,
                                  HarnessReviewInputs inputs) implements IntegrationEvent {
+        public HarnessReviewPrepared {
+            java.util.Objects.requireNonNull(inputs, "A prepared harness review carries its inputs");
+        }
     }
 
-    /** The worker finished a harness review's answer into findings and verdicts (harness reviews, step 6). */
+    /**
+     * The worker finished a harness review's answer into findings and verdicts (harness reviews, step 6). Null
+     * {@code verdicts} read as none. It prints counts, never a finding's text.
+     */
     record HarnessReviewGenerated(String reviewId, long prId, String commit, int round, ReviewResult result,
                                   List<FindingVerdict> verdicts) implements IntegrationEvent {
 
+        public HarnessReviewGenerated {
+            verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
+        }
+
+        /**
+         * The API path's event, applied the same way. Its {@code reconcileUsage} is null on purpose: the run was
+         * charged once, by {@code ReviewRunCharges}, so nothing here may charge it again.
+         */
         public ReviewGenerated toReviewGenerated() {
-            throw new UnsupportedOperationException("not built yet");
+            return new ReviewGenerated(reviewId, prId, commit, result, verdicts, null);
+        }
+
+        @Override
+        public String toString() {
+            int findings = result == null || result.findings() == null ? 0 : result.findings().size();
+            return "HarnessReviewGenerated[reviewId=" + reviewId + ", prId=" + prId + ", commit=" + commit
+                    + ", round=" + round + ", findings=" + findings + ", verdicts=" + verdicts.size() + "]";
         }
     }
 }

@@ -372,6 +372,8 @@ public sealed interface RunCommand {
             // pushes nothing, so a checkpoint start or a push target is a command that should never have been built.
             if (execution.startFromRunId() != null) throw new IllegalArgumentException("A review run reads its head, never a checkpoint");
             if (execution.existingBranch()) throw new IllegalArgumentException("A review run pushes nothing, so it names no existing branch");
+            // A step 5 command still in flight has no inputs member: it runs, and its agent finds /inputs empty.
+            if (inputs == null) inputs = dev.codespire.contract.review.HarnessReviewInputs.NONE;
         }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}

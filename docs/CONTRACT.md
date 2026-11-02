@@ -94,13 +94,14 @@ dispatch limit. `WorkDraftResults` accepts a
 so no draft result reaches the work-run inbox or a pull request proposal. A plan run (slice 7) is dispatched the same
 way, from the approved specification as stored (never the ticket read again) and at the commit the specification read.
 
-`ExecuteReviewRun(runId, execution, review)` (harness reviews, step 4, ADR-050) is a harness review run, on its own
+`ExecuteReviewRun(runId, execution, review, inputs)` (harness reviews, step 4, ADR-050) is a harness review run, on its own
 topic `cs.review-runs`, keyed by run ID. `review` is a `ReviewRunBinding(reviewId, kind, prId, commit, callSlot, round)`:
 `kind` is `REVIEW`, `RECONCILE` or `FOLLOWUP`, `commit` the head the run reads and `callSlot` the review's call slot
 its charge is recorded under, and `round` the review round the call was decided in (`ReviewRuns.currentRun`, the count
 of `ReviewRequested` in the review's stream; a reply carries the current round); every component is required, and `prId`
 and `round` are positive. The command refuses a checkpoint
-start and an existing branch. The execution's `protectedBranch` is the pull request's target branch (step 5): the run
+start and an existing branch. `inputs` (step 6) are the files the agent reads read-only at `/inputs`; a command
+sent before step 6 has none and reads as `HarnessReviewInputs.NONE`. The execution's `protectedBranch` is the pull request's target branch (step 5): the run
 worker's init receives it as `SPIRE_FETCH_BRANCH` and keeps it under `refs/spire-base/<target>` for the agent to diff
 against and to read the repository's rules from, and a review whose row names no
 target branch is refused before funding (`review_run_target_unavailable`). Its credentials are the execution's, sealed with the run's AAD and redacted from
@@ -429,6 +430,8 @@ Every event (integration or domain) is wrapped:
 | `ArchivedNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef? (null → top-level), commentId |
 | `FindingConfirmed` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`; links the confirmation back to the conversation root so a reply to it (on an SCM that threads by immediate parent) is still recognized |
 | `FindingRefused` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — same non-turn-consuming, link-back-to-root shape as `FindingConfirmed` |
+| `HarnessReviewPrepared` | `spire-review-worker` | reviewId, prId, commit, round, kind (`REVIEW` or `RECONCILE`), inputs (`HarnessReviewInputs`: `context.md` and, on a re-review, `prior-findings.md`, at most 224 KiB in total, plain text, never a diff; `toString` prints sizes) — harness reviews, step 6 |
+| `HarnessReviewGenerated` | `spire-review-worker` | reviewId, prId, commit, round, result (`ReviewResult`), verdicts[] — the harness answer parsed by the API path's own parsers; applied as a `ReviewGenerated` with no `reconcileUsage`, since the run was charged once |
 
 > Only the **assembled context** is offloaded to the object store (encrypted, referenced by `contextRef`)
 > so events stay small. **Diffs are never stored** (re-fetched by commit); **findings** ride inline in
@@ -463,6 +466,8 @@ Every event (integration or domain) is wrapped:
 | `NotifyArchived` | `spire-review-worker` | reviewId, repo, prId, threadRef? (null → top-level PR comment) — fixed-text retirement notice, no LLM credential; claimed once per review (ADR-024) |
 | `ConfirmFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, severity, path, line — fixed-text confirmation that a `/finding` was filed, no LLM credential; claimed per triggering comment, so a second finding in one thread gets its own confirmation |
 | `RefuseFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef — fixed-text refusal that a `/finding` had nowhere to anchor, no LLM credential; only emitted when there is a thread to reply into (a bare timeline note otherwise) |
+| `PrepareHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, contextRef?, scmCredential, priorRun?, round (from 1), kind — `RECONCILE` exactly when `priorRun` has findings, `REVIEW` otherwise, `FOLLOWUP` refused; `toString` prints neither the credential nor a finding |
+| `FinishHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, round, kind, answerText? (null: the answer was over the cap), usage, scmCredential — `toString` prints the answer's length and never the answer or the credential |
 
 **Record commands** (to the `ReviewLifecycle` decider — append *domain* events):
 

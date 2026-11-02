@@ -14,11 +14,12 @@ final class DlqTopics {
     static final String INTEGRATION = "cs.integration";
 
     private static final Set<String> ACTION_COMMAND_TYPES = Set.of(
-            "FetchDiff", "GatherContext", "GenerateReview", "PostComments", "AnswerFollowUp");
+            "FetchDiff", "GatherContext", "GenerateReview", "PostComments", "AnswerFollowUp",
+            "PrepareHarnessReview", "FinishHarnessReview");
 
     private static final Set<String> RESULT_EVENT_TYPES = Set.of(
             "DiffFetched", "ContextAssembled", "ReviewGenerated", "CommentsPosted",
-            "ReviewFailed", "FollowUpGenerated", "FollowUpPosted");
+            "ReviewFailed", "FollowUpGenerated", "FollowUpPosted", "HarnessReviewPrepared", "HarnessReviewGenerated");
 
     private static final Set<String> INGRESS_EVENT_TYPES = Set.of(
             "PullRequestEventReceived", "PullRequestClosed", "ManualCommandReceived",
