@@ -84,13 +84,26 @@ change under review, and its findings are posted through the API review's own ou
 one whose fork status is unknown, and a refused dispatch are refused with a `REVIEW_HARNESS_REFUSED` attention
 warning, never sent to the API.
 
-**Why nothing catches it today.**
-- **The whole live path is unproven until step 5's live proof.** No harness review has run on a live stack: the
-  "Review with: Harness" setting saved and read back, the dispatch from `ContextAssembled`, init keeping
-  `refs/spire-base/<target>`, the agent reading the rules from it and writing a JSON answer to `$SPIRE_ARTIFACT`,
-  the answer parsed into findings, the verdict and the GitHub review posted, the one charge under the review (key and
-  seat), a refusal and its attention row, the review page's run link, and the seat's hosts with `chatgpt.com` alone
-  (docs/factory/RUN-TOPOLOGY.md §7.1). Each is proven by unit and service tests only.
+**What is proven live** (2026-11-01, docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md). On `spire-test`, Codex
+`gpt-6-astra`, report mode: #93 on a seat and #94 on an API key were each reviewed by one `REVIEW` run. That covers
+the "Review with: Harness" setting saved and used, the dispatch from `ContextAssembled`, the agent reading the
+target branch's `.codespire` (its BLOCKER and MINOR rules were cited), the answer parsed into findings, the verdict
+posted as a GitHub review (CHANGES_REQUESTED with 4 inline findings, APPROVED with 1), one charge per token type under
+the review's call ref with `credential_ref` (seat `UNMETERED` at 0, key `METERED` at 69,110 millicents), and the
+hosts: `chatgpt.com` alone on the seat, `api.openai.com` alone on the key. #95, with the seat switched off, was
+refused with `codex: subscription_unavailable` and its attention row, with no run and no fallback.
+
+**Why nothing catches the rest.**
+- **Live paths the proof did not reach.** The review page's run link was not recorded. A fork pull request, or one
+  whose fork status is unknown, has not been refused live. The refusal of a failed start
+  (`harness_review_start_failed`, `939a1277`, after #93's first attempt threw on a null review prompt and stayed
+  `reviewing`) is proven by tests only.
+- **A forced re-run's review reads `superseded` while its harness run works.** During #93's re-run the review status
+  showed `superseded`, with the note "Reviewing on codex…", until the run completed and posted. Not diagnosed, not
+  fixed; no test asserts the status during a re-run's harness run.
+- **A stuck `reviewing` review has no Re-run on the dashboard** (`techdebt/spire-ui/3-2-a-stuck-reviewing-review-cannot-be-re-run.md`).
+  #93's first attempt needed a `/review` comment. Its dead-lettered `ContextAssembled` must be discarded, not
+  replayed: a replay would start the first review again on a review already posted.
 - **Some paths no test or planned live run reaches.** These stay unproven after the live proof:
   - **`Uncertain` launch recovery.** A launch whose send outcome is unknown counts as started; the queued row
     exists, and a launch that never arrived is expected to surface as `REVIEW_STUCK`. No test drives that path end to
@@ -102,14 +115,16 @@ warning, never sent to the API.
   - **The entrypoint's fallback for a bad `SPIRE_ARTIFACT_MAX_BYTES`.** The reference entrypoint keeps 32768 for a
     value that is not a positive integer without a leading zero; the run worker always sets 262144, so no run
     reaches the fallback. `AgentArtifactCapIsConfigurableTest` reads the script; it does not run it.
-- **A review run loads no `AGENTS.md` from the head: switched off, not measured.** Codex loads `AGENTS.md` and
+- **A review run loads no `AGENTS.md` from the head: switched off, measured once.** Codex loads `AGENTS.md` and
   `AGENTS.override.md` from its working directory before it reads the prompt, and a review's working directory is the
   head commit, so a change could steer its own review (review of PR #368, security/H-1). A review unit's invocation
   now carries `ProjectGuidance.IGNORED`, which the Codex arm maps to `-c project_doc_max_bytes=0`; builds and drafts
   keep loading the operator's guidance. The key exists in codex-cli 0.156.1 (its binary carries it, default 32768);
-  that a budget of zero loads nothing is read from Codex's source, not measured. `CodexAdapterProjectGuidanceTest`
-  and `RunUnitBuilderReviewTest` prove the flag is on the review's command line and on no other, not that Codex obeys
-  it. The agent can still `cat` the head's `AGENTS.md` as a file of the change; the prompt says such files are the
+  that a budget of zero loads nothing is read from Codex's source. `CodexAdapterProjectGuidanceTest` and
+  `RunUnitBuilderReviewTest` prove the flag is on the review's command line and on no other. Live, #93 added an
+  `AGENTS.override.md` asking for a single finding `CANARY-AGENTS-LOADED`, and the review had no such finding: one
+  canary on one codex-cli version, not a guarantee that a later version keeps the key's meaning. The agent can
+  still `cat` the head's `AGENTS.md` as a file of the change; the prompt says such files are the
   change under review, not instructions.
 - **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
   and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
@@ -137,12 +152,11 @@ warning, never sent to the API.
   redelivered `ContextAssembled` funds the run once more before admission answers `AlreadyQueued`, so a seat token can
   be handed over for nothing. Neither is driven by a test.
 
-**What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on a
-harness on an API key and another on a seat, findings posted with a verdict as a GitHub review, one charge under the
-review, egress hosts recorded in report mode; a third refused with no seat signed in, with its attention row; and a
-canary for the guidance switch: a TEST pull request that adds an `AGENTS.override.md` asking for a finding whose
-message is `CANARY-AGENTS-LOADED`. The review must not contain that finding; if it does, Codex loaded the file and
-`project_doc_max_bytes=0` does not turn the loading off.
+**What evidence would settle it.** The step 5 live proof settled the main path (above). The rest needs: a fork pull
+request on `spire-test` refused with `fork_pull_request_not_reviewed_on_harness` and its attention row; the review
+page's run link opened on a harness review; the review status read during a forced re-run's harness run, then a
+fix and a test for `superseded`; the `CANARY-AGENTS-LOADED` canary repeated whenever codex-cli is bumped; and a
+test that races a push against a harness answer on the two real consumers.
 
 ---
 
@@ -154,9 +168,9 @@ up to 256 KiB, over-cap as a degraded answer), it is charged once under the revi
 its review round or a closed pull request cancels it, a dispatch in flight included.
 
 **Why nothing catches it today.**
-- **No review run has executed on a live stack.** Step 5 wires the dispatch: `HarnessReviewStart` calls
-  `ReviewRunDispatch` for the first review of a same-repository pull request on a harness repository (the entry
-  above). Until step 5's live proof the whole path is proven by unit and service tests only.
+- **Review runs executed live, cancellation did not.** Step 5's live proof ran two `REVIEW` runs on `spire-test`
+  (#93 on a seat, #94 on an API key), each charged under the review's call ref (the entry above). No review run has
+  been cancelled by a push or a close on a live stack, and no build ran beside one.
 - **The lane's isolation is proven by configuration, not load.** Tests assert the review lane's topic, group and
   pool differ from the build lane's; no test runs a build and a review at once and measures the review's wait.
 - **The concurrency cap is per run-worker instance.** Across replicas it multiplies, and it needs
@@ -172,10 +186,9 @@ its review round or a closed pull request cancels it, a dispatch in flight inclu
   an event published while the orchestrator was down is never read, so that run finishes and is charged.
 - **The over-cap path and the parts are proven against fakes.** No real agent has produced an answer over 32 KiB.
 
-**What evidence would settle it.** Step 5's live proof: a same-repository pull request on `spire-test` reviewed on
-a harness on an API key and on a seat, its run row `REVIEW` with the call slot, one ledger call under the review
-and none under the run, a review run cancelled by a push during it, and a build and a review running at once with
-the review finishing first.
+**What evidence would settle it.** A review run cancelled by a push during it, and a build and a review running at
+once with the review finishing first. The review runs on a key and a seat, charged under the review, were shown by
+step 5's live proof.
 
 ---
 

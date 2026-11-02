@@ -454,8 +454,9 @@ With them off, Codex declares:
 
 - **API key:** `api.openai.com`.
 - **Seat:** `chatgpt.com` only. Re-measured in harness reviews step 4 (`spire-test` #91, three seat runs): with
-  apps, plugins and analytics off, a seat called no `oaiusercontent.com` content host. The step 5 live proof runs in
-  report mode and puts a content host back if one appears.
+  apps, plugins and analytics off, a seat called no `oaiusercontent.com` content host. The step 5 live proof, in
+  report mode, called `chatgpt.com` alone on a seat and `api.openai.com` alone on an API key
+  (docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md).
 
 `auth.openai.com` is never declared: the orchestrator empties a seat's refresh token, so a run has nothing
 to renew. Which paths a long run adds is not settled

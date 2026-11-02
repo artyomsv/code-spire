@@ -8,8 +8,8 @@ Architecture decision records for Code Spire. Newest first.
 
 **Status:** step 4 of harness reviews, the plumbing, merged to master with PR #367, 2026-11-01. Step 5, first
 reviews (the "Step 5" part below), is built on `feat/harness-reviews-5-first-reviews` (PR #368) and dispatches the
-first review runs; its live proof has not been made, so every claim below is proven by tests only
-(docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+first review runs; its live proof was made on 2026-11-01 (docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md), and
+what it did not reach is proven by tests only (docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
