@@ -96,8 +96,14 @@ refused with `codex: subscription_unavailable` and its attention row, with no ru
 **Why nothing catches the rest.**
 - **Live paths the proof did not reach.** The review page's run link was not recorded. A fork pull request, or one
   whose fork status is unknown, has not been refused live. The refusal of a failed start
-  (`harness_review_start_failed`, `939a1277`, after #93's first attempt threw on a null review prompt and stayed
-  `reviewing`) is proven by tests only.
+  (`harness_review_start_failed`, after #93's first attempt threw on a null review prompt and stayed `reviewing`) is
+  proven by tests only. `939a1277` refused any failure composing or dispatching; `de7a905f` narrowed it to a failure
+  composing the request, because a dispatch may throw after its command reached the broker (an ack that timed out,
+  then a failed `dispatchUncertain` write), and a refusal would drop the paid run's answer. A dispatch that throws now
+  fails the start message, which dead-letters, and the review stays `reviewing` for the answer;
+  `HarnessDispatchFailureTest` proves the answer is then posted, against a fake broker and fake rows. A dispatch that
+  threw before publishing has no answer coming: the review shows as `REVIEW_STUCK` beside a dead-letter row, and
+  neither has been seen live for a harness start.
 - **A forced re-run's review reads `superseded` while its harness run works.** During #93's re-run the review status
   showed `superseded`, with the note "Reviewing on codex…", until the run completed and posted. Not diagnosed, not
   fixed; no test asserts the status during a re-run's harness run.

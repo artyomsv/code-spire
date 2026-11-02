@@ -179,8 +179,11 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   `REVIEW_HARNESS_REFUSED` attention row, never sent to the API. The prompt is the repository's REVIEW system text, a
   preamble and the locked review suffix; init keeps the target branch as `refs/spire-base/<target>`, the agent diffs
   against it and reads the rules from it, and gets no assembled context yet (step 6). The answer takes `ResultSaga`'s
-  outcome path (findings, verdict, posting) without a second charge; a failed run is not retried, and a start that
-  fails to compose or dispatch is refused with `harness_review_start_failed`. The review page links its run. Live on
+  outcome path (findings, verdict, posting) without a second charge; a failed run is not retried. A start whose request
+  cannot be composed is refused with `harness_review_start_failed` and an attention row; a dispatch that throws is not
+  refused, since its command may already be on the broker: the start message dead-letters and the review stays
+  `reviewing` for the run's answer (one that threw before publishing shows as `REVIEW_STUCK` and a dead-letter row,
+  `de7a905f`). The review page links its run. Live on
   `spire-test` (Codex `gpt-6-astra`): #93 on a seat was held with 4 inline findings citing the target branch's
   `.codespire`, at cost 0, calling `chatgpt.com` only, and ignored a canary `AGENTS.override.md`; #94 on an API key
   was approved with 1 MAJOR finding at 69,110 millicents, calling `api.openai.com` only; #95 with the seat off was

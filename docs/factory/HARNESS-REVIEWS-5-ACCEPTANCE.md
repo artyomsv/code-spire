@@ -79,8 +79,13 @@ attention bell showed "Harness review refused: codex: subscription_unavailable" 
    passed that null to `HarnessReviewPrompt.compose`, `ResultSaga`'s `ContextAssembled` handler threw a
    `NullPointerException` and the message was dead-lettered. The review stayed `reviewing` with no run and no
    attention row. Fixed in `939a1277`: the harness start uses `PromptCatalog.defaultTemplate(REVIEW)`, and any
-   failure composing or dispatching refuses the review with `harness_review_start_failed`. Three tests were added;
-   CI run 41355894965 is green. Case 1's re-run is the fix seen live.
+   failure composing or dispatching refused the review with `harness_review_start_failed`. Three tests were added;
+   CI run 41355894965 is green. Case 1's re-run is the fix seen live. The review of PR #368 (code-quality/M-2)
+   narrowed the refusal in `de7a905f`: only a failure composing the request refuses, with an attention row. A dispatch
+   that throws may already have published its command, so its exception fails the start message, which dead-letters,
+   and the review stays `reviewing` for the paid run's answer; one that threw before publishing shows as
+   `REVIEW_STUCK` beside the dead-letter row. `HarnessDispatchFailureTest` drives that path from an ambiguous ack to
+   the posted answer.
 
 ## Follow-ups (not fixed on PR #368)
 
@@ -96,8 +101,9 @@ attention bell showed "Harness review refused: codex: subscription_unavailable" 
 ## Limits that remain
 
 - **One model and one harness:** Codex `gpt-6-astra` at thinking `high`, one review per payment.
-- **Paths not proven live** (docs/UNVERIFIED.md, the step 5 entry): a fork refusal, a refused start
-  (`harness_review_start_failed`) after the fix, `Uncertain` launch recovery, an answer over 256 KiB, a seat
+- **Paths not proven live** (docs/UNVERIFIED.md, the step 5 entry): a fork refusal, a start refused for a request
+  that could not be composed (`harness_review_start_failed`) after the fix, a dispatch that throws (the start message
+  dead-letters and the review stays `reviewing`), `Uncertain` launch recovery, an answer over 256 KiB, a seat
   rejected by the vendor, and the entrypoint's fallback for a bad `SPIRE_ARTIFACT_MAX_BYTES`.
 - **The guidance switch is measured once.** One canary was not followed; Codex's loading rule is read from its
   source, and the agent can still read the head's `AGENTS.md` as a file of the change.

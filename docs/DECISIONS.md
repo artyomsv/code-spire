@@ -85,6 +85,14 @@ review behind an hour-long build would wait an hour.
   `ReviewRunDispatch` and `RunFunding` give). A refusal sets the review `refused`, records `RecordFailure` under phase
   `harness-review`, writes `review_status.harness_refusal` (`<harness>: <reason>`) and raises a
   `REVIEW_HARNESS_REFUSED` attention warning. Nothing falls back to the API or to another harness.
+- **Only a request that cannot be composed refuses a start.** A failure building the run's request (its prompt) is
+  refused with `harness_review_start_failed` and the attention row above: thrown, it left #93 `reviewing` with no run.
+  A dispatch that throws is not refused, because it may throw after its command reached the broker (an ack that timed
+  out, then a failed `dispatchUncertain` write), and a terminal refusal would drop the paid run's answer at the
+  stale-run guard. Its exception fails the start message, which dead-letters, and the review stays `reviewing` for the
+  answer; one that threw before publishing has no answer coming and shows as `REVIEW_STUCK` beside its dead-letter
+  row. `939a1277` refused both; `de7a905f` narrowed it (review of PR #368, code-quality/M-2), and
+  `HarnessDispatchFailureTest` holds it.
 - **The prompt.** The repository's REVIEW prompt's system text, then a preamble (the pull request, the checkout of
   its head, the diff command against the target branch, five working rules, and the artifact as the answer), then
   `PromptCatalog.lockedSystemSuffix(REVIEW)` (the security clause and the findings contract), a line that maps the

@@ -2264,8 +2264,10 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   (the answer is now fenced by its round under the review's advisory lock). The live proof on `spire-test` (Codex
   `gpt-6-astra`, thinking `high`, report mode) found the worst defect first: with no customised review prompt the
   harness start passed a null template to the prompt composer, `ContextAssembled` was dead-lettered and #93 sat at
-  `reviewing` with no run and no attention row. The start now uses the default REVIEW prompt and refuses any failed
-  start with `harness_review_start_failed` (`939a1277`, CI run 41355894965). Re-run by a `/review` comment, #93 on a
+  `reviewing` with no run and no attention row. The start now uses the default REVIEW prompt and refused any failed
+  start with `harness_review_start_failed` (`939a1277`, CI run 41355894965); review narrowed that to a request that
+  could not be composed (`de7a905f`), since a dispatch may throw after its command reached the broker, so a throwing
+  dispatch dead-letters the start message and leaves the review open for the paid run's answer. Re-run by a `/review` comment, #93 on a
   seat was held with four inline findings, two citing the target branch's `.codespire`, at cost 0, calling
   `chatgpt.com` only, and did not follow a canary `AGENTS.override.md` in the head; #94 on an API key was approved
   with one MAJOR off-by-one finding at 69,110 millicents, calling `api.openai.com` only; #95 with the seat off was
