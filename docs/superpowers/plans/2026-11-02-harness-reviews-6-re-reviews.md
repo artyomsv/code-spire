@@ -512,3 +512,37 @@ Add a third member to that JSON object, one entry for every prior finding:
 ## Out of scope (steps 7–8 and others)
 
 Replies on a harness (step 7). Fork pull requests and the credential-injecting proxy (steps 3 and 8). The API path's missing round check (docs/UNVERIFIED.md, step 5). The `superseded` status during a forced re-run's harness run, and the missing Re-run for a stuck review (step 5 follow-ups). An inputs copy for a Kubernetes arm.
+
+## Changes after the plan check (they override the tasks above where they disagree)
+
+1. **Task 4, a transient fault while finishing never fails the review.** A paid answer must survive a database hiccup:
+   `finish` emits a terminal `ReviewFailed(..., "harness-finish", retryable=false)` only when the cause is classified
+   non-retryable (`ReviewWorker.isRetryable`, `:988-1000`, or the shared failure helper Task 3 extracts; it must
+   classify an `IllegalStateException` caused by `SQLException` as retryable). Otherwise the exception propagates:
+   `commands-in` dead-letters `FinishHarnessReview` with the whole answer, and a replay from Settings → Dead-letter
+   finishes it at no cost. The review shows `REVIEW_STUCK` beside the dead-letter row meanwhile (UNVERIFIED). Tests:
+   `aTransientFaultWhileFinishingPropagatesForReplay`, `aNonRetryableFinishFailureFailsTheReview`. Call 10 changes
+   accordingly: prepare may retry; finish dead-letters a transient fault and fails only a permanent one.
+2. **Task 5, a cancelled admission is dropped, not refused.** `ReviewRunDispatch` maps `CANCELLED` to
+   `Refused("review_run_cancelled")` (`:99-100`); a forced re-run between the launch's round check and `admit` would
+   then refuse round N+1 (same commit). `HarnessReviewLaunch` maps `Refused("review_run_cancelled")` to
+   `Dropped("round ended or pull request closed")`. Test: `aCancelledAdmissionDropsTheLaunchAndRefusesNothing`.
+3. **Task 3, `ReviewWorkerTest` changes.** It sets `worker.blobStore` (`:949`, `:974`) to drive `loadContext`, which
+   moves into `AssembledContextReader`: the fixture wires `worker.contextReader` to a reader over the same in-memory
+   blob store. `downgradeUntouchedForTest` has four call sites (`:1207`, `:1219`, `:1231`, `:1239`); all move. The
+   reconcile cases (`:1032-1220`) stay the pin that the API path is unchanged.
+4. **Task 7, the red step changes two existing assertions.** `ReviewDetail.harness.test.tsx:74` and `:81` assert
+   `getRuns` with `kind: 'REVIEW'`; they change with the call to `{ reviewId, limit: 20 }`.
+5. **Task 1, `PrepareHarnessReview.toString`** prints `scmCredential=***` and `priorRun=<n findings>`, never the
+   credential or finding text.
+6. **Task 2, the invariant takes three parameters at most:** an instance method on `RunUnitSpec`, or the three
+   containers as the existing varargs shape, not `(init, agent, publisher, inputs)`.
+7. **Docs, the at-rest posture.** `HarnessReviewPrepared` and `ExecuteReviewRun` carry context text (issue bodies,
+   Confluence) that the blob store keeps encrypted; a dead-lettered copy lands in `dlq_entry.payload` in plain text.
+   Record it in UNVERIFIED and SECURITY; no mechanism in this step.
+8. **Docs, redelivery funds twice.** A redelivered `HarnessReviewPrepared` (or `ContextAssembled`, which now sends a
+   second Prepare) funds before admission answers `AlreadyQueued`; the step 6 UNVERIFIED entry keeps step 5's note.
+9. **Docs, charges by kind.** A harness re-review records one `RECONCILE` charge and no `REVIEW` charge for its round;
+   anything counting reviews by `ChargeKind.REVIEW` reads one fewer. Say so in ADR-050 step 6 and check the analytics
+   reads while writing the docs.
+10. **Counts:** 17 test `new RunUnitSpec(` sites; 12 `ExecuteReviewRun` construction sites across main and test.
