@@ -12,8 +12,10 @@ import dev.codespire.gateway.registry.WebhookRepoSecret;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +27,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
@@ -109,28 +112,57 @@ class WebhookAttentionResourceTest {
     }
 
     /**
-     * The resource builds secret-missing rows before rejection rows (see its javadoc); this
-     * pins that ordering as behavior rather than an incidental read of the code, so a future
-     * reordering of the two loops fails a test instead of only silently reshuffling the bell.
-     * Asserts relative order, not exact positions, so it survives a third condition being added.
+     * Newest first ({@code AttentionOrder}), whichever loop built the row: a registration that refused a delivery just
+     * now is listed above one that has lacked a secret since long ago. This replaces the old pin that secret-missing
+     * rows always came first. The secretless row is backdated, so the two cannot tie within one clock tick.
      */
     @Test
-    void secretMissingRowsPrecedeRejectionRows() throws SQLException {
-        insertSecretlessRegistration("TEST-OWNER/TEST-REPO-nosecret-order");
+    void theNewerConditionIsListedFirst() throws SQLException {
+        String missingTarget = "TEST-OWNER/TEST-REPO-nosecret-order";
+        insertSecretlessRegistration(missingTarget);
+        backdate(missingTarget);
         WebhookRepoSecret rejecting = registry.create(
                 new WebhookRepoInput("stub", "repo", "TEST-OWNER/TEST-REPO-rejecting-order", true));
         registry.recordRejection(rejecting.repo().webhookKey(), "bad_signature");
 
-        List<String> codes = given().when().get("/gw/webhook-repos/attention")
+        List<String> subjects = given().when().get("/gw/webhook-repos/attention")
                 .then().statusCode(200)
-                .extract().jsonPath().getList("code", String.class);
+                .extract().jsonPath().getList("subject", String.class);
 
-        int firstMissing = codes.indexOf("WEBHOOK_SECRET_MISSING");
-        int firstRejecting = codes.indexOf("WEBHOOK_DELIVERIES_REJECTED");
-        assertTrue(firstMissing >= 0, "expected a WEBHOOK_SECRET_MISSING row");
-        assertTrue(firstRejecting >= 0, "expected a WEBHOOK_DELIVERIES_REJECTED row");
-        assertTrue(firstMissing < firstRejecting,
-                "expected secret-missing rows to precede rejection rows");
+        int missing = subjects.indexOf("stub · " + missingTarget);
+        int refused = subjects.indexOf("stub · TEST-OWNER/TEST-REPO-rejecting-order");
+        assertTrue(missing >= 0 && refused >= 0, subjects.toString());
+        assertTrue(refused < missing, "the newer rejection precedes the older missing secret: " + subjects);
+    }
+
+    /** A rejection row's time is the stored last rejection, so an evaluation that changes nothing pushes nothing. */
+    @Test
+    void aRejectionRowCarriesTheStoredRejectionTime() throws SQLException {
+        String target = "TEST-OWNER/TEST-REPO-since";
+        WebhookRepoSecret created = registry.create(new WebhookRepoInput("stub", "repo", target, true));
+        registry.recordRejection(created.repo().webhookKey(), "bad_signature");
+
+        String since = given().when().get("/gw/webhook-repos/attention")
+                .then().statusCode(200)
+                .extract().jsonPath().getString("find { it.subject == 'stub · " + target + "' }.since");
+
+        assertEquals(storedInstant("SELECT last_rejected_at FROM webhook_repo WHERE target = '" + target + "'"),
+                Instant.parse(since));
+    }
+
+    private void backdate(String target) throws SQLException {
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            st.execute("UPDATE webhook_repo SET updated_at = TIMESTAMPTZ '2001-01-01 00:00:00Z' WHERE target = '"
+                    + target + "'");
+        }
+    }
+
+    private Instant storedInstant(String sql) throws SQLException {
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            assertTrue(rs.next(), sql);
+            return rs.getTimestamp(1).toInstant();
+        }
     }
 
     /** Bypasses {@code registry.create()} (which always mints a secret) with a direct insert. */

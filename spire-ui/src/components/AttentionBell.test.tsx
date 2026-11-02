@@ -398,4 +398,59 @@ describe('AttentionBell', () => {
       }),
     );
   });
+
+  /** The messages in the order the panel shows them. */
+  async function openedMessages(count: string): Promise<string[]> {
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent(count));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => screen.getByRole('dialog', { name: 'Needs attention' }));
+    return Array.from(document.querySelectorAll('.attention-message')).map((node) => node.textContent ?? '');
+  }
+
+  /**
+   * The order is applied after the two feeds merge, not only by each service. The review row arrives on the feed
+   * merged second and its code sorts after the other row's, so only the merged order puts it on top — a just-refused
+   * review once sat at the bottom of 23 rows.
+   */
+  it('shows a newer review row from one feed above an older row from the other', async () => {
+    const olderDeadLetter: AttentionItem = { ...warning, since: '2026-11-01T10:00:00Z' };
+    const newerRefusal: AttentionItem = {
+      code: 'REVIEW_HARNESS_REFUSED',
+      severity: 'WARNING',
+      subject: 'TEST-WS/TEST-REPO#95',
+      message: 'Harness review refused: TEST',
+      action: '/r/TEST-WS/TEST-REPO/95',
+      dismiss: null,
+      since: '2026-11-02T10:00:00Z',
+    };
+    await renderWithFeeds([olderDeadLetter], [newerRefusal]);
+
+    expect(await openedMessages('2')).toEqual([newerRefusal.message, olderDeadLetter.message]);
+  });
+
+  /** Outside the review group, the newer warning comes first across feeds, whatever its code. */
+  it('shows a newer gateway warning above an older orchestrator warning', async () => {
+    const olderDeadLetter: AttentionItem = { ...warning, since: '2026-11-01T10:00:00Z' };
+    const newerRejection: AttentionItem = {
+      code: 'WEBHOOK_DELIVERIES_REJECTED',
+      severity: 'WARNING',
+      subject: 'stub · TEST-OWNER/TEST-REPO',
+      message: '1 webhook delivery was refused: refused.',
+      action: '/settings/repositories?edit=TEST-1',
+      dismiss: null,
+      since: '2026-11-02T10:00:00Z',
+    };
+    await renderWithFeeds([olderDeadLetter], [newerRejection]);
+
+    expect(await openedMessages('2')).toEqual([newerRejection.message, olderDeadLetter.message]);
+  });
+
+  it('shows how long ago a timed condition began', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 120_000).toISOString();
+    await renderWithFeeds([{ ...failed, since: twoMinutesAgo }], []);
+
+    await openedMessages('1');
+
+    expect(screen.getByText('2m ago')).toBeInTheDocument();
+  });
 });
