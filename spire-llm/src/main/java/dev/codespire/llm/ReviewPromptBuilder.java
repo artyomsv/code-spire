@@ -57,7 +57,7 @@ public final class ReviewPromptBuilder {
      * {@code {{code_context}}} slot (its own token budget) so a chatty linked ticket in
      * {@code {{context}}} can never squeeze retrieved code definitions out by sharing one budget.
      */
-    private static String renderContext(List<ContextItem> context, boolean codeSnippets) {
+    static String renderContext(List<ContextItem> context, boolean codeSnippets) {
         StringBuilder out = new StringBuilder();
         for (ContextItem item : context) {
             boolean isCodeSnippet = ContextItem.CODE_SNIPPET.equals(item.kind());

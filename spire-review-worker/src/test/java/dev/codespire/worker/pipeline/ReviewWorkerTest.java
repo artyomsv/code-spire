@@ -161,6 +161,7 @@ class ReviewWorkerTest {
             }
         };
         worker.idempotency = idempotency;
+        worker.contextReader = contextReader(new InMemoryBlobStore());
         DiffSource fakeDiff = new DiffSource() {
             @Override
             public ScmType type() {
@@ -227,6 +228,14 @@ class ReviewWorkerTest {
                 return new LlmClient(provider, new ModelParams(provider.id(), 0.2, null));
             }
         };
+    }
+
+    /** The context reader over an in-memory blob store, the way the worker reads the assembled context. */
+    private static AssembledContextReader contextReader(InMemoryBlobStore blobs) {
+        AssembledContextReader reader = new AssembledContextReader();
+        reader.blobStore = blobs;
+        reader.mapper = new ObjectMapper();
+        return reader;
     }
 
     private static Finding finding(String path, int line) {
@@ -966,7 +975,7 @@ class ReviewWorkerTest {
         InMemoryBlobStore blobs = new InMemoryBlobStore();
         BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
                 new ObjectMapper().writeValueAsBytes(assembled));
-        worker.blobStore = blobs;
+        worker.contextReader = contextReader(blobs);
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
 
@@ -991,7 +1000,7 @@ class ReviewWorkerTest {
         InMemoryBlobStore blobs = new InMemoryBlobStore();
         BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
                 new ObjectMapper().writeValueAsBytes(assembled));
-        worker.blobStore = blobs;
+        worker.contextReader = contextReader(blobs);
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
 
@@ -1224,7 +1233,7 @@ class ReviewWorkerTest {
                 + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
         List<FindingVerdict> in = List.of(new FindingVerdict("t-1", "src/A.java", 5,
                 FindingVerdict.Status.STILL_OPEN, "still missing"));
-        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        List<FindingVerdict> out = ReconcileSteps.downgradeUntouched(in, diff);
         assertEquals(FindingVerdict.Status.STILL_OPEN, out.getFirst().status());
     }
 
@@ -1236,7 +1245,7 @@ class ReviewWorkerTest {
                 + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
         List<FindingVerdict> in = List.of(new FindingVerdict("t-2", "src/A.java", 12,
                 FindingVerdict.Status.STILL_OPEN, "still missing"));
-        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        List<FindingVerdict> out = ReconcileSteps.downgradeUntouched(in, diff);
         assertEquals(FindingVerdict.Status.UNCHANGED, out.getFirst().status(),
                 "finding's own line untouched -> silent even though the file changed elsewhere");
     }
@@ -1248,7 +1257,7 @@ class ReviewWorkerTest {
         List<FindingVerdict> in = List.of(new FindingVerdict("t-3", "src/Other.java", 9,
                 FindingVerdict.Status.STILL_OPEN, "x"));
         assertEquals(FindingVerdict.Status.UNCHANGED,
-                ReviewWorker.downgradeUntouchedForTest(in, diff).getFirst().status());
+                ReconcileSteps.downgradeUntouched(in, diff).getFirst().status());
     }
 
     @Test
@@ -1256,7 +1265,7 @@ class ReviewWorkerTest {
         List<FindingVerdict> in = List.of(new FindingVerdict("t-4", "src/A.java", 5,
                 FindingVerdict.Status.STILL_OPEN, "x"));
         assertEquals(FindingVerdict.Status.STILL_OPEN,
-                ReviewWorker.downgradeUntouchedForTest(in, null).getFirst().status());
+                ReconcileSteps.downgradeUntouched(in, null).getFirst().status());
     }
 
     @Test
