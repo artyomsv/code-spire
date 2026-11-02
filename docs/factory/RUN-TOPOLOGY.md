@@ -410,6 +410,16 @@ ordered parts on separate outcome lines, each small enough that its JSON-escaped
 cap. The worker reassembles them and refuses a gap or a duplicate; a total over the cap comes back as an over-cap
 answer with no text, which is charged, never a lost run.
 
+Since step 6 a review unit also has an `inputs` volume: the files the review worker prepared (`context.md` and, on a
+re-review, `prior-findings.md`) that ride `ExecuteReviewRun`. Init mounts it writable at `/inputs`, and the runtime
+copies the files into the created init container as a tar (mode `0444`, owned by root) before init starts, so init's
+mount is the volume's only writer. The agent mounts it read-only, so what it read is what it was handed. The publisher
+never mounts it, not even read-only: it holds the push credential, and the files carry text (an issue body, a prior
+finding) that only the agent was told to read. `RunUnitSpec` refuses any other wiring, so no arm can grant what Docker
+refuses. The files are never an environment variable, which `docker inspect` prints and Linux caps at 128 KiB. A
+review with no inputs still gets the volume, empty. The runtime bounds the files at 1 MiB in total, above the
+contract's 224 KiB.
+
 A supersede cancels the live review runs of the review round it ended (rounds, not commits: a forced re-run keeps the
 head), and a closed pull request cancels every live review run, with `CancelRun`. A run still being funded has no row
 yet, so the orchestrator admits a review run's row under an advisory lock per review that the cancellation also takes:

@@ -100,6 +100,7 @@ public record RunUnitSpec(String runId,
         requireContainment(agent, publisher);
         requireNoEnvironmentCollision(enterprise, egress, init, agent, publisher);
         requireHostPathsDoNotShadowVolumes(enterprise, init, agent, publisher);
+        if (inputs != null) inputs.requireReachOnlyInitAndAgent(init, agent, publisher);
     }
 
     /**
@@ -139,24 +140,25 @@ public record RunUnitSpec(String runId,
     /** Rebuild with another init container, enumerating the components once. */
     public RunUnitSpec withInit(ContainerSpec container) {
         return new RunUnitSpec(runId, container, agent, publisher, enterprise, egress,
-                memoryBytes, nanoCpus, diskBytes, wallClock);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with another agent container, enumerating the components once. */
     public RunUnitSpec withAgent(ContainerSpec container) {
         return new RunUnitSpec(runId, init, container, publisher, enterprise, egress,
-                memoryBytes, nanoCpus, diskBytes, wallClock);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with another publisher, enumerating the components once. */
     public RunUnitSpec withPublisher(ContainerSpec container) {
         return new RunUnitSpec(runId, init, agent, container, enterprise, egress,
-                memoryBytes, nanoCpus, diskBytes, wallClock);
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with other inputs, enumerating the components once. */
     public RunUnitSpec withInputs(UnitInputs replacement) {
-        throw new UnsupportedOperationException("not built yet");
+        return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress,
+                memoryBytes, nanoCpus, diskBytes, wallClock, replacement);
     }
 
     /** The host paths every container of this unit mounts, read-only. */
