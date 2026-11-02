@@ -23,6 +23,10 @@ class HarnessSagaProjection extends TestRepositoryProjection {
     final List<String> notes = new ArrayList<>();
     final List<String> harnessRefusals = new ArrayList<>();
     final List<ChargeCall> charges = new ArrayList<>();
+    final List<List<FindingVerdict>> reconciliations = new ArrayList<>();
+
+    /** The posted earlier round a re-review reconciles against; none on a first review. */
+    Optional<PriorRun> priorRun = Optional.empty();
 
     /** How often a new round cleared the last round's refusal. */
     int refusalClears;
@@ -72,11 +76,13 @@ class HarnessSagaProjection extends TestRepositoryProjection {
 
     @Override
     public Optional<PriorRun> priorRunFor(String reviewId) {
-        return Optional.empty();
+        return priorRun;
     }
 
+    /** Step 6: a re-review's verdicts are recorded against the prior run's findings. */
     @Override
     public void recordReconciliation(String reviewId, List<FindingVerdict> verdicts, List<PriorFinding> priorFindings) {
+        reconciliations.add(verdicts);
     }
 
     @Override

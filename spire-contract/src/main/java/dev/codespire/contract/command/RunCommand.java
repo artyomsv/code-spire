@@ -361,7 +361,8 @@ public sealed interface RunCommand {
      * and its answer handed back as {@code RunReviewArtifact}. Nothing is pushed. It rides {@code cs.review-runs}, the
      * run-worker's review lane, so a review never waits behind a build.
      */
-    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review)
+    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review,
+                            dev.codespire.contract.review.HarnessReviewInputs inputs)
             implements RunCommand {
         public ExecuteReviewRun {
             Objects.requireNonNull(execution, "A review execution is required");

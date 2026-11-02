@@ -15,6 +15,7 @@ import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunRuntimeContract;
 import dev.codespire.runtime.RunUnitSpec;
+import dev.codespire.runtime.UnitInputs;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -449,6 +450,59 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // against this adapter's belief about it.
         assertTrue(publisher.contains("readonly"), "publisher said: " + publisher);
         assertFalse(publisher.contains("WRITABLE"), "publisher said: " + publisher);
+    }
+
+    /**
+     * A review unit's shape (harness reviews, step 6): init mounts the inputs volume writable, the agent read-only, and
+     * the publisher not at all. The runtime copies the files into the created init container before it starts.
+     */
+    private RunUnitSpec inputsUnit(String id, String agentScript, String publisherScript) {
+        return new RunUnitSpec(id,
+                new ContainerSpec(IMAGE, List.of("sh", "-c", "echo seeded > /workspace/seed.txt"),
+                        Map.of(),
+                        List.of(Mount.writable("ws", "/workspace"), Mount.writable("ho", "/handoff"),
+                                Mount.writable("inputs", "/inputs"))),
+                new ContainerSpec(IMAGE, List.of("sh", "-c", agentScript),
+                        Map.of(),
+                        List.of(Mount.writable("ws", "/workspace"), Mount.writable("ho", "/handoff"),
+                                Mount.readOnly("inputs", "/inputs"))),
+                new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
+                        Map.of(),
+                        List.of(Mount.readOnly("ho", "/handoff"))),
+                EnterpriseEnvironment.NONE, EgressPolicy.OFF, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
+                Duration.ofMinutes(2),
+                new UnitInputs("inputs", "/inputs", Map.of("context.md", "TEST-INPUT-CANARY")));
+    }
+
+    @Test
+    void theAgentReadsItsInputsAndCannotWriteThem() {
+        RunHandle handle = start(inputsUnit("run_unit_inputs1",
+                "echo; cat /inputs/context.md; echo; if touch /inputs/x 2>/dev/null; then echo WRITABLE; "
+                        + "else echo readonly; fi",
+                "echo publisher-idle"));
+
+        List<String> agent = new ArrayList<>();
+        runtime.attach(handle, LogChannel.AGENT, agent::add);
+        runtime.salvage(handle);
+
+        assertTrue(agent.contains("TEST-INPUT-CANARY"), "the agent must read what init was given: " + agent);
+        assertTrue(agent.contains("readonly"), "agent said: " + agent);
+        assertFalse(agent.contains("WRITABLE"), "agent said: " + agent);
+    }
+
+    @Test
+    void thePublisherCannotSeeTheInputs() {
+        RunHandle handle = start(inputsUnit("run_unit_inputs2",
+                "echo x > /handoff/delta",
+                "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
+                        + "if [ -e /inputs/context.md ]; then echo LEAKED; else echo isolated; fi"));
+
+        List<String> publisher = new ArrayList<>();
+        runtime.attach(handle, LogChannel.PUBLISHER, publisher::add);
+        runtime.salvage(handle);
+
+        assertTrue(publisher.contains("isolated"), "publisher said: " + publisher);
+        assertFalse(publisher.contains("LEAKED"));
     }
 
     @Test

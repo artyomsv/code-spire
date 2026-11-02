@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.factory.HarnessCredentialPool;
@@ -168,7 +169,7 @@ class ReviewRunDispatchRaceTest {
         long prId = Long.parseLong(reviewId.substring(reviewId.indexOf('#') + 1));
         return new ReviewRunRequest(null, new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.FOLLOWUP, prId, HEAD,
                 "TEST-thread|TEST-comment-" + round, round), new RunFunding.Choice("TEST-harness", "TEST-model", null, false),
-                "TEST-prompt");
+                "TEST-prompt", HarnessReviewInputs.NONE);
     }
 
     private ReviewRunRequest request() {
@@ -180,7 +181,8 @@ class ReviewRunDispatchRaceTest {
         long prId = Long.parseLong(reviewId.substring(reviewId.indexOf('#') + 1));
         String slot = round == 1 ? head : head + "#run" + round;
         return new ReviewRunRequest(null, new ReviewRunBinding(reviewId, ReviewRunBinding.Kind.REVIEW, prId, head,
-                slot, round), new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt");
+                slot, round), new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt",
+                HarnessReviewInputs.NONE);
     }
 
     private void installFakes(long prId) {

@@ -59,6 +59,22 @@ public class HarnessReviewResults implements ReviewRunResults {
     @ConfigProperty(name = "spire.run.max-reported-tokens", defaultValue = "-1")
     long maxReportedTokens;
 
+    /** The reviewer's packed forge credential a {@code FinishHarnessReview} carries (step 6; not used yet). */
+    @Inject
+    dev.codespire.orchestrator.provider.WorkerCredentials credentials;
+
+    /** Where a {@code FinishHarnessReview} is sent (step 6; not used yet). */
+    @Inject
+    dev.codespire.orchestrator.pipeline.CommandsEmitter commands;
+
+    /**
+     * The worker's finished answer (harness reviews, step 6), applied under the round lock on the saga's ordered
+     * consumer.
+     */
+    public void acceptGenerated(IntegrationEvent.HarnessReviewGenerated generated) {
+        throw new UnsupportedOperationException("not built yet");
+    }
+
     @Override
     public void accept(RunResult result, ReviewRunBinding binding) {
         log(result, binding);

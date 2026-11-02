@@ -6,9 +6,11 @@ import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
@@ -37,7 +39,9 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap"),
         @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived"),
         @JsonSubTypes.Type(value = ActionCommand.ConfirmFinding.class, name = "ConfirmFinding"),
-        @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding")
+        @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding"),
+        @JsonSubTypes.Type(value = ActionCommand.PrepareHarnessReview.class, name = "PrepareHarnessReview"),
+        @JsonSubTypes.Type(value = ActionCommand.FinishHarnessReview.class, name = "FinishHarnessReview")
 })
 public sealed interface ActionCommand {
 
@@ -334,5 +338,24 @@ public sealed interface ActionCommand {
      */
     record RefuseFinding(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                          String scmCredential) implements ActionCommand {
+    }
+
+    /**
+     * Prepare a harness review (harness reviews, step 6): the worker loads the assembled context and, for a
+     * {@code RECONCILE}, numbers the prior open findings, then answers with {@code HarnessReviewPrepared}.
+     */
+    record PrepareHarnessReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
+                                String scmCredential, PriorRun priorRun, int round,
+                                ReviewRunBinding.Kind kind) implements ActionCommand {
+    }
+
+    /**
+     * Finish a harness review: the worker parses the agent's answer into findings and, for a {@code RECONCILE},
+     * verdicts, then answers with {@code HarnessReviewGenerated}. A null {@code answerText} means the answer was
+     * over the cap.
+     */
+    record FinishHarnessReview(String reviewId, RepoRef repo, long prId, String commit, int round,
+                               ReviewRunBinding.Kind kind, String answerText, ModelUsage usage,
+                               String scmCredential) implements ActionCommand {
     }
 }

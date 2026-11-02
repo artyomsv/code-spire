@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FactoryConfig;
@@ -41,7 +42,7 @@ class ReviewRunDispatchTest {
     private static final ReviewRunBinding CALL =
             new ReviewRunBinding("review::TEST-WS/TEST-REPO#7", ReviewRunBinding.Kind.REVIEW, 7, HEAD, "TEST-slot", 1);
     private static final ReviewRunRequest REQUEST = new ReviewRunRequest(REPOSITORY, CALL,
-            new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt");
+            new RunFunding.Choice("TEST-harness", "TEST-model", null, false), "TEST-prompt", HarnessReviewInputs.NONE);
 
     private String fundingRefusal;
     private boolean rowAccepted = true;

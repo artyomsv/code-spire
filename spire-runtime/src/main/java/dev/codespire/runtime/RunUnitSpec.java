@@ -61,7 +61,15 @@ import java.util.Set;
 public record RunUnitSpec(String runId,
                           ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
                           EnterpriseEnvironment enterprise, EgressPolicy egress,
-                          long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
+                          long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock,
+                          UnitInputs inputs) {
+
+    /** A unit with no inputs: every build unit, and a held build's unit stored before inputs existed. */
+    public RunUnitSpec(String runId, ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
+                       EnterpriseEnvironment enterprise, EgressPolicy egress,
+                       long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
+        this(runId, init, agent, publisher, enterprise, egress, memoryBytes, nanoCpus, diskBytes, wallClock, null);
+    }
 
     public RunUnitSpec {
         Objects.requireNonNull(runId, "runId");
@@ -144,6 +152,11 @@ public record RunUnitSpec(String runId,
     public RunUnitSpec withPublisher(ContainerSpec container) {
         return new RunUnitSpec(runId, init, agent, container, enterprise, egress,
                 memoryBytes, nanoCpus, diskBytes, wallClock);
+    }
+
+    /** Rebuild with other inputs, enumerating the components once. */
+    public RunUnitSpec withInputs(UnitInputs replacement) {
+        throw new UnsupportedOperationException("not built yet");
     }
 
     /** The host paths every container of this unit mounts, read-only. */

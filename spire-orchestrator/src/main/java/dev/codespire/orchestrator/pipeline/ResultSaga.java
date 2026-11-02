@@ -130,6 +130,17 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReviewStart harnessStart;
 
+    /** Dispatches a prepared harness review's run (harness reviews, step 6; not wired yet). */
+    @Inject
+    dev.codespire.orchestrator.review.run.HarnessReviewLaunch harnessLaunch;
+
+    /**
+     * Applies a finished harness answer (harness reviews, step 6; not wired yet). A CDI cycle with client proxies on
+     * both sides, as {@code HarnessReviewResults}'s own injection of this saga already is.
+     */
+    @Inject
+    dev.codespire.orchestrator.review.run.HarnessReviewResults harnessResults;
+
     /** The phase a harness review's refusal and failure are recorded under. */
     public static final String HARNESS_PHASE = "harness-review";
 
@@ -649,6 +660,10 @@ public class ResultSaga {
             }
             case dev.codespire.orchestrator.review.run.HarnessReviewStart.Refused refused ->
                     refuseHarness(e.reviewId(), e.commit(), refused);
+            case dev.codespire.orchestrator.review.run.HarnessReviewStart.Preparing ignored ->
+                    throw new UnsupportedOperationException("not built yet");
+            case dev.codespire.orchestrator.review.run.HarnessReviewStart.Dropped ignored ->
+                    throw new UnsupportedOperationException("not built yet");
         }
         return true;
     }

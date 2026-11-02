@@ -2,7 +2,9 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.llm.ReviewRuns;
+import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.pipeline.ResultSaga;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -20,9 +22,15 @@ public final class RealHarnessResults {
     private RealHarnessResults() {
     }
 
-    public static HarnessReviewResults results(ResultSaga saga) {
+    /**
+     * @param saga     the saga the finished outcome is handed to
+     * @param commands where a run's answer is sent to the worker to finish (step 6)
+     */
+    public static HarnessReviewResults results(ResultSaga saga, CommandsEmitter commands) {
         HarnessReviewResults results = new HarnessReviewResults();
         results.saga = saga;
+        results.commands = commands;
+        results.credentials = reviewerCredential();
         results.runs = firstRound();
         results.rounds = inlineLock();
         results.runRows = runRows();
@@ -40,6 +48,16 @@ public final class RealHarnessResults {
             @Override
             public int roundOrUnknown(String reviewId) {
                 return ReviewRuns.FIRST_RUN;
+            }
+        };
+    }
+
+    /** The real one resolves the reviewer account from the database and packs it with Tink. */
+    private static WorkerCredentials reviewerCredential() {
+        return new WorkerCredentials() {
+            @Override
+            public Optional<String> packForReview(String reviewId) {
+                return Optional.of("TEST-packed-scm");
             }
         };
     }

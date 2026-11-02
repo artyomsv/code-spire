@@ -799,6 +799,26 @@ class ReviewWorkerTest {
                 "no inline comment carries the LLM claim key as its path");
     }
 
+    /**
+     * Harness reviews, step 6: a harness prepare persists its numbered prior findings under a {@code harness:} claim on
+     * the same review and commit. That value is JSON, not a comment id, and must never be rebuilt as an inline thread.
+     */
+    @Test
+    void aHarnessClaimNeverBecomesAnInlineComment() {
+        idempotency.claim(REVIEW_ID, COMMIT, "harness:prepare#2");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "harness:prepare#2",
+                "{\"priorHead\":\"TEST-head\",\"incremental\":true,\"numbered\":[]}");
+        idempotency.claim(REVIEW_ID, COMMIT, "harness:finish#2");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "harness:finish#2", "{\"type\":\"HarnessReviewGenerated\"}");
+
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        CommentsPosted posted = assertInstanceOf(CommentsPosted.class, emitted.getLast());
+        assertEquals(1, posted.inline().size(), "only the real finding is posted — no harness claim is leaked");
+        assertTrue(posted.inline().stream().noneMatch(p -> p.path().startsWith(HarnessReviewWorker.CLAIM_PREFIX)),
+                "no inline comment carries a harness claim key as its path");
+    }
+
     // --- follow-up postComments: verdict-driven delta posting (ADR-019) ---
 
     @Test
@@ -1428,7 +1448,7 @@ class ReviewWorkerTest {
         }
     }
 
-    private static final class RecordingSink implements CommentSink, ThreadSource {
+    static final class RecordingSink implements CommentSink, ThreadSource {
 
         final List<String> repliedThreads = new ArrayList<>();
         final List<String> resolvedThreads = new ArrayList<>();
@@ -1573,7 +1593,7 @@ class ReviewWorkerTest {
      * real adapter (Tink, AAD=reviewId) and is transparent to {@link ReviewWorker}, which only ever
      * sees plaintext bytes in and out of the port.
      */
-    private static final class InMemoryBlobStore implements BlobStore {
+    static final class InMemoryBlobStore implements BlobStore {
 
         private final Map<String, byte[]> blobs = new HashMap<>();
         private int ids = 1;
@@ -1597,7 +1617,7 @@ class ReviewWorkerTest {
     }
 
     /** In-memory mirror of the store's claim semantics. */
-    private static final class InMemoryIdempotency extends CommentIdempotencyStore {
+    static final class InMemoryIdempotency extends CommentIdempotencyStore {
 
         private final Map<String, String> slots = new HashMap<>(); // key -> the recorded ref, or null
 

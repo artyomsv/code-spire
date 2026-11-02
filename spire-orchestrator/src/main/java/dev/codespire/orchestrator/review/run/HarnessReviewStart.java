@@ -63,8 +63,16 @@ public class HarnessReviewStart {
     @Inject
     WorkerPromptTemplates promptTemplates;
 
+    /** The reviewer's packed forge credential a {@code PrepareHarnessReview} carries (step 6; not used yet). */
+    @Inject
+    dev.codespire.orchestrator.provider.WorkerCredentials credentials;
+
+    /** Where a {@code PrepareHarnessReview} is sent (step 6; not used yet). */
+    @Inject
+    dev.codespire.orchestrator.pipeline.CommandsEmitter commands;
+
     /** What became of a review's start. */
-    public sealed interface Decision permits NotHarness, Started, Refused {
+    public sealed interface Decision permits NotHarness, Started, Refused, Preparing, Dropped {
     }
 
     /** The review takes today's API path. */
@@ -92,6 +100,19 @@ public class HarnessReviewStart {
         public String attentionReason() {
             return harness + ": " + reason;
         }
+    }
+
+    /** A {@code PrepareHarnessReview} was sent; the run is dispatched once the worker answers (step 6). */
+    public record Preparing(String harness) implements Decision {
+
+        /** The review's note while the worker prepares its inputs. */
+        public String note() {
+            throw new UnsupportedOperationException("not built yet");
+        }
+    }
+
+    /** A prepared review whose round ended before its launch: nothing is dispatched and nothing is refused. */
+    public record Dropped(String why) implements Decision {
     }
 
     /** The repository a harness review runs for and the harness it runs on. */
@@ -154,7 +175,7 @@ public class HarnessReviewStart {
         ReviewHarness harness = prepared.onHarness().harness();
         return new ReviewRunRequest(prepared.onHarness().repositoryId(), binding(event, prepared.round()),
                 new RunFunding.Choice(harness.harness(), harness.model(), harness.effort(), harness.subscription()),
-                prompt(event, prepared.target()));
+                prompt(event, prepared.target()), dev.codespire.contract.review.HarnessReviewInputs.NONE);
     }
 
     private Decision dispatched(ReviewRunRequest request, String harness) {

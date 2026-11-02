@@ -38,6 +38,9 @@ public class CommandDispatcher {
     ReviewWorker reviewWorker;
 
     @Inject
+    HarnessReviewWorker harnessReviewWorker;
+
+    @Inject
     FollowUpWorker followUpWorker;
 
     @Incoming("commands-in")

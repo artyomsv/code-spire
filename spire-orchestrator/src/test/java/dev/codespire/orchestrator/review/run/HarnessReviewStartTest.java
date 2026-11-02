@@ -1,17 +1,17 @@
 package dev.codespire.orchestrator.review.run;
 
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent.ContextAssembled;
 import dev.codespire.contract.event.ReviewIds;
-import dev.codespire.contract.llm.PromptCatalog;
-import dev.codespire.contract.llm.PromptKind;
-import dev.codespire.contract.llm.PromptTemplate;
+import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewRunBinding;
+import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FixTargets;
-import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ReviewRuns;
-import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
+import dev.codespire.orchestrator.pipeline.CommandsEmitter;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
 import dev.codespire.orchestrator.repository.ReviewHarness;
@@ -25,16 +25,17 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Whether a review's first round runs on its repository's harness, and that nothing but a same-repository first review
- * of a harness repository is ever dispatched (harness reviews, step 5).
+ * Whether a review runs on its repository's harness, and that a harness review is first sent to the worker to prepare
+ * its inputs, a re-review as a reconcile (harness reviews, step 6). The dispatch itself is {@link HarnessReviewLaunch}'s
+ * ({@code HarnessReviewLaunchTest}).
  *
  * <p>A plain unit test: every collaborator the path reaches is a fake overriding every method it calls, because an
- * un-overridden one opens a real database from a unit test (CLAUDE.md, saga test fakes).
+ * un-overridden one opens a real database from a unit test (CLAUDE.md, saga test fakes). The dispatch fake is kept
+ * to prove that the start never dispatches.
  */
 class HarnessReviewStartTest {
 
@@ -46,19 +47,18 @@ class HarnessReviewStartTest {
     private static final int CURRENT_RUN = 2;
     private static final ContextAssembled EVENT =
             new ContextAssembled(REVIEW_ID, PR, HEAD, "TEST-context-ref", Set.of(), Set.of());
+    private static final PriorRun PRIOR_WITH_FINDING = new PriorRun("TEST-prior-commit", "TEST-summary-ref",
+            List.of(new PriorFinding("src/TEST.java", 3, Severity.MAJOR, "TEST-message", "TEST-thread")));
 
     private Optional<ReviewHarness> harness =
             Optional.of(new ReviewHarness("TEST-harness", "TEST-model", "high", "SUBSCRIPTION"));
     private Optional<PriorRun> prior = Optional.empty();
     private Boolean fromFork = false;
-    private ReviewRunDispatch.Outcome dispatchOutcome = new ReviewRunDispatch.Dispatched("TEST-run-1");
     private int round = CURRENT_RUN;
-    /** Null, as the real resolver answers for a repository with no customized prompt (the common case). */
-    private PromptTemplate customReviewPrompt;
-    private RuntimeException dispatchFailure;
-    private RuntimeException promptFailure;
+    private Optional<String> reviewerCredential = Optional.of("TEST-packed-scm");
 
     private final List<ReviewRunRequest> dispatched = new ArrayList<>();
+    private final List<ActionCommand> emitted = new ArrayList<>();
 
     @Test
     void aRepositoryWithoutAHarnessIsNotAHarnessRun() {
@@ -67,29 +67,64 @@ class HarnessReviewStartTest {
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
         assertInstanceOf(HarnessReviewStart.NotHarness.class, decision);
-        assertTrue(dispatched.isEmpty(), "an API repository never dispatches a run");
+        assertNothingSent();
     }
 
-    /** Re-reviews stay on the API until step 6: a posted prior round takes today's path. */
     @Test
-    void aReReviewIsNotAHarnessRun() {
+    void aFirstReviewIsPreparedWithItsContext() {
+        HarnessReviewStart.Decision decision = start().start(EVENT);
+
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), decision);
+        ActionCommand.PrepareHarnessReview prepare = onlyPrepare();
+        assertEquals(REVIEW_ID, prepare.reviewId());
+        assertEquals(REPO, prepare.repo());
+        assertEquals(PR, prepare.prId());
+        assertEquals(HEAD, prepare.commit());
+        assertEquals("TEST-context-ref", prepare.contextRef());
+        assertEquals("TEST-packed-scm", prepare.scmCredential());
+        assertNull(prepare.priorRun());
+        assertEquals(CURRENT_RUN, prepare.round());
+        assertEquals(ReviewRunBinding.Kind.REVIEW, prepare.kind());
+        assertTrue(dispatched.isEmpty(), "the run is dispatched once the worker has prepared it: " + dispatched);
+    }
+
+    /** Step 6 replaces step 5's "a re-review is not a harness run": the prior findings go to the worker to number. */
+    @Test
+    void aReReviewIsPreparedAsAReconcile() {
+        prior = Optional.of(PRIOR_WITH_FINDING);
+
+        HarnessReviewStart.Decision decision = start().start(EVENT);
+
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), decision);
+        ActionCommand.PrepareHarnessReview prepare = onlyPrepare();
+        assertEquals(ReviewRunBinding.Kind.RECONCILE, prepare.kind());
+        assertEquals(PRIOR_WITH_FINDING, prepare.priorRun());
+        assertEquals(CURRENT_RUN, prepare.round());
+        assertTrue(dispatched.isEmpty(), dispatched.toString());
+    }
+
+    /** The API path skips reconcile when nothing is open, so an empty reconcile is never charged. */
+    @Test
+    void aReReviewWithNoOpenFindingsIsPreparedAsAReview() {
         prior = Optional.of(new PriorRun("TEST-prior-commit", "TEST-summary-ref", List.of()));
 
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
-        assertInstanceOf(HarnessReviewStart.NotHarness.class, decision);
-        assertTrue(dispatched.isEmpty(), "a re-review never dispatches a run in step 5");
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), decision);
+        ActionCommand.PrepareHarnessReview prepare = onlyPrepare();
+        assertEquals(ReviewRunBinding.Kind.REVIEW, prepare.kind());
+        assertNull(prepare.priorRun());
     }
 
     /** Forks wait for step 8: refused with a reason the attention feed shows, never sent to the API either. */
     @Test
-    void aForkIsRefusedAndNeverDispatched() {
+    void aForkIsRefusedAndNeverPrepared() {
         fromFork = true;
 
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
         assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_not_reviewed_on_harness"), decision);
-        assertTrue(dispatched.isEmpty());
+        assertNothingSent();
     }
 
     @Test
@@ -99,106 +134,39 @@ class HarnessReviewStartTest {
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
         assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_not_reviewed_on_harness"), decision);
-        assertTrue(dispatched.isEmpty());
+        assertNothingSent();
     }
 
+    /** A round that cannot be read is refused, never guessed (review of PR #368, code-quality/M-1). */
     @Test
-    void aFirstReviewDispatchesARunOfItsRound() {
-        HarnessReviewStart.Decision decision = start().start(EVENT);
-
-        assertEquals(new HarnessReviewStart.Started("TEST-run-1", "TEST-harness"), decision);
-        assertEquals(1, dispatched.size());
-        ReviewRunRequest request = dispatched.getFirst();
-        assertEquals(REPOSITORY, request.repositoryId());
-        assertEquals(new ReviewRunBinding(REVIEW_ID, ReviewRunBinding.Kind.REVIEW, PR, HEAD,
-                CallRefs.reviewSlot(HEAD, CURRENT_RUN), CURRENT_RUN), request.binding());
-        assertEquals("TEST-harness", request.choice().harness());
-        assertEquals("TEST-model", request.choice().model());
-        assertEquals("high", request.choice().effort());
-        assertTrue(request.choice().subscription(), "SUBSCRIPTION pays with a seat");
-        assertTrue(request.prompt() != null && !request.prompt().isBlank(), "the run is sent its prompt");
-    }
-
-    @Test
-    void aRefusedDispatchIsRefusedWithItsReason() {
-        dispatchOutcome = new ReviewRunDispatch.Refused("subscription_unavailable");
-
-        HarnessReviewStart.Decision decision = start().start(EVENT);
-
-        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "subscription_unavailable"), decision);
-    }
-
-    /**
-     * A round that cannot be read is refused, never guessed (review of PR #368, code-quality/M-1): the ledger's read
-     * would answer run 1, and a run bound to round 1 during round 2 is refused at admission or dropped as stale.
-     */
-    @Test
-    void anUnreadableRoundIsRefusedAndNeverDispatched() {
+    void anUnreadableRoundIsRefusedAndNeverPrepared() {
         round = ReviewRuns.UNKNOWN_RUN;
 
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
         assertEquals(new HarnessReviewStart.Refused("TEST-harness", "review_round_unknown"), decision);
-        assertTrue(dispatched.isEmpty(), "no run is bound to a guessed round: " + dispatched);
+        assertNothingSent();
     }
 
-    /** An uncertain launch has its queued row; a lost one surfaces as REVIEW_STUCK, so it is not refused here. */
+    /** Call 12: refused with attention, never left "reviewing" by a note-only skip. */
     @Test
-    void anUncertainLaunchCountsAsStarted() {
-        dispatchOutcome = new ReviewRunDispatch.Uncertain("TEST-run-1");
+    void aMissingReviewerCredentialIsRefused() {
+        reviewerCredential = Optional.empty();
 
         HarnessReviewStart.Decision decision = start().start(EVENT);
 
-        assertEquals(new HarnessReviewStart.Started("TEST-run-1", "TEST-harness"), decision);
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "reviewer_credential_unavailable"), decision);
+        assertNothingSent();
     }
 
-    /**
-     * No customized prompt resolves to null, and the run still gets the built-in review prompt: found live on
-     * spire-test #93, where the null reached the prompt and the review stayed in "reviewing" with no run.
-     */
-    @Test
-    void aRepositoryWithoutACustomPromptIsSentTheDefaultReviewPrompt() {
-        start().start(EVENT);
-
-        assertEquals(1, dispatched.size());
-        String prompt = dispatched.getFirst().prompt();
-        assertTrue(prompt.startsWith(PromptCatalog.defaultTemplate(PromptKind.REVIEW).system()),
-                "the default review system text opens the prompt: " + prompt);
+    private ActionCommand.PrepareHarnessReview onlyPrepare() {
+        assertEquals(1, emitted.size(), "one prepare is sent: " + emitted);
+        return assertInstanceOf(ActionCommand.PrepareHarnessReview.class, emitted.getFirst());
     }
 
-    @Test
-    void aCustomizedPromptOpensTheRunsPrompt() {
-        customReviewPrompt = new PromptTemplate(PromptKind.REVIEW, "TEST-custom-system", "TEST-body");
-
-        start().start(EVENT);
-
-        assertTrue(dispatched.getFirst().prompt().startsWith("TEST-custom-system"));
-    }
-
-    /** A failure composing the request refuses the review with attention; thrown, it left the review in "reviewing". */
-    @Test
-    void aRequestThatCannotBeComposedIsRefusedNotLeftReviewing() {
-        promptFailure = new IllegalStateException("TEST-failure");
-
-        HarnessReviewStart.Decision decision = start().start(EVENT);
-
-        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "harness_review_start_failed"), decision);
-        assertTrue(dispatched.isEmpty(), "nothing was sent");
-    }
-
-    /**
-     * A dispatch that throws may already have published the command, so the review is not refused: a terminal refusal
-     * would drop the paid run's answer (review of PR #368, code-quality/M-2). The message fails and the review stays open.
-     */
-    @Test
-    void aDispatchThatThrowsIsNotRefused() {
-        IllegalStateException failure = new IllegalStateException("TEST-uncertain-status-write");
-        dispatchFailure = failure;
-
-        HarnessReviewStart start = start();
-        IllegalStateException thrown = assertThrows(IllegalStateException.class, () -> start.start(EVENT));
-
-        assertSame(failure, thrown);
+    private void assertNothingSent() {
+        assertTrue(emitted.isEmpty(), "nothing is sent to the worker: " + emitted);
+        assertTrue(dispatched.isEmpty(), "and no run is dispatched: " + dispatched);
     }
 
     private HarnessReviewStart start() {
@@ -208,7 +176,8 @@ class HarnessReviewStartTest {
         start.targets = targets();
         start.dispatch = dispatch();
         start.runs = runs();
-        start.promptTemplates = prompts();
+        start.credentials = credentials();
+        start.commands = commands();
         return start;
     }
 
@@ -245,15 +214,13 @@ class HarnessReviewStartTest {
         };
     }
 
+    /** Recorded only to prove the start never dispatches; the launch does (step 6). */
     private ReviewRunDispatch dispatch() {
         return new ReviewRunDispatch() {
             @Override
             public Outcome dispatch(ReviewRunRequest request) {
-                if (dispatchFailure != null) {
-                    throw dispatchFailure;
-                }
                 dispatched.add(request);
-                return dispatchOutcome;
+                return new Dispatched("TEST-run-1");
             }
         };
     }
@@ -273,14 +240,22 @@ class HarnessReviewStartTest {
         };
     }
 
-    private WorkerPromptTemplates prompts() {
-        return new WorkerPromptTemplates() {
+    /** The real one resolves the reviewer account from the database and packs it with Tink. */
+    private WorkerCredentials credentials() {
+        return new WorkerCredentials() {
             @Override
-            public PromptTemplate forKind(PromptKind kind, RepoRef repo) {
-                if (promptFailure != null) {
-                    throw promptFailure;
-                }
-                return customReviewPrompt;
+            public Optional<String> packForReview(String reviewId) {
+                return reviewerCredential;
+            }
+        };
+    }
+
+    /** The real one awaits a Kafka ack. */
+    private CommandsEmitter commands() {
+        return new CommandsEmitter() {
+            @Override
+            public void emit(ActionCommand command) {
+                emitted.add(command);
             }
         };
     }

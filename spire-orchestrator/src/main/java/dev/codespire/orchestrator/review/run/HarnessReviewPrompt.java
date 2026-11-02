@@ -53,6 +53,11 @@ public final class HarnessReviewPrompt {
     public record ReviewTarget(String workspace, String slug, long prId, String commit, String targetBranch) {
     }
 
+    /** A re-review's prompt (harness reviews, step 6): both system texts, the prior findings and a verdict per finding. */
+    public static String composeReReview(PromptTemplate review, PromptTemplate reconcile, ReviewTarget target) {
+        throw new UnsupportedOperationException("not built yet");
+    }
+
     public static String compose(PromptTemplate review, ReviewTarget target) {
         String preamble = PREAMBLE.formatted(target.prId(), target.workspace(), target.slug(), target.commit(),
                 target.targetBranch());

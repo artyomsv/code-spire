@@ -6,8 +6,10 @@ import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
@@ -47,7 +49,9 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
-        @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused")
+        @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewPrepared.class, name = "HarnessReviewPrepared"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated")
 })
 public sealed interface IntegrationEvent {
 
@@ -413,5 +417,19 @@ public sealed interface IntegrationEvent {
      */
     record FindingRefused(String reviewId, ThreadRef threadRef, String commentId)
             implements IntegrationEvent {
+    }
+
+    /** The worker prepared a harness review's input files (harness reviews, step 6). */
+    record HarnessReviewPrepared(String reviewId, long prId, String commit, int round, ReviewRunBinding.Kind kind,
+                                 HarnessReviewInputs inputs) implements IntegrationEvent {
+    }
+
+    /** The worker finished a harness review's answer into findings and verdicts (harness reviews, step 6). */
+    record HarnessReviewGenerated(String reviewId, long prId, String commit, int round, ReviewResult result,
+                                  List<FindingVerdict> verdicts) implements IntegrationEvent {
+
+        public ReviewGenerated toReviewGenerated() {
+            throw new UnsupportedOperationException("not built yet");
+        }
     }
 }

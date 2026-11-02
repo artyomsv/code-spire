@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FactoryCloneUrls;
@@ -140,7 +141,8 @@ public class ReviewRunDispatch {
                 credentials.packScm(runId, login(reviewer), reviewer.secret()),
                 credentials.packHarness(runId, funded.handedOver()), false, target.targetBranch())
                 .atEffort(choice.effort());
-        return new RunCommand.ExecuteReviewRun(runId, choice.subscription() ? execution.paidBySignIn() : execution, binding);
+        return new RunCommand.ExecuteReviewRun(runId, choice.subscription() ? execution.paidBySignIn() : execution, binding,
+                HarnessReviewInputs.NONE);
     }
 
     private static FactoryRunProjection.QueuedRun row(RunCommand.ExecuteReviewRun command, ReviewRunRequest request,
