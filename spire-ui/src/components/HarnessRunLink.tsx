@@ -27,8 +27,10 @@ export default function HarnessRunLink({ reviewId, updatedAt }: Props) {
     if (previous && previous.review === reviewId && previous.updatedAt !== updatedAt) void invalidateLive(client, runsForReviewKey(reviewId));
   }, [client, reviewId, updatedAt]);
   // The server lists a review's runs newest first, so the first review-round run is the current round's. A fix run of
-  // the same review is not the review's own run.
-  const run = read.data?.find(candidate => isReviewRoundKind(candidate.kind));
+  // the same review is not the review's own run. An answer that is not a list shows nothing: this link must never take
+  // the review page down with it.
+  const runs = Array.isArray(read.data) ? read.data : [];
+  const run = runs.find(candidate => isReviewRoundKind(candidate.kind));
   if (!run) return null;
   return <p className="posted-as">
     <Bot size={12} aria-hidden="true" /> <span>{runKindLabel(run.kind)}</span>{' '}
