@@ -100,6 +100,42 @@ class HarnessReviewLaunchTest {
         assertTrue(dispatched.isEmpty());
     }
 
+    /**
+     * Round 1 prepared, then the repository switched to the API and round 2 was forced on the same head: round 1's
+     * prepared review is dropped, never refused, so round 2 is left alone (review of PR #370, code-quality/M-1).
+     */
+    @Test
+    void anEndedRoundIsDroppedBeforeARemovedHarnessIsRefused() {
+        fixture.harness = Optional.empty();
+
+        HarnessReviewStart.Decision decision = launch().launch(prepared(ReviewRunBinding.Kind.REVIEW, 1));
+
+        assertInstanceOf(HarnessReviewStart.Dropped.class, decision);
+        assertTrue(dispatched.isEmpty(), dispatched.toString());
+    }
+
+    /** The round is read and the decision applied under the lock a forced re-run holds while it starts its round. */
+    @Test
+    void theRoundIsReadAndTheDecisionAppliedUnderTheRoundLock() {
+        launch().launch(prepared(ReviewRunBinding.Kind.REVIEW, CURRENT_RUN),
+                decision -> fixture.steps.add("apply " + decision.getClass().getSimpleName()));
+
+        assertEquals(List.of("lock " + REVIEW_ID, "round", "dispatch", "apply Started", "unlock"), fixture.steps);
+    }
+
+    /** A forced re-run that took the lock first ended the prepared round: dropped, nothing dispatched or refused. */
+    @Test
+    void aLaunchWhoseRoundARerunEndedWhileItWaitedIsDropped() {
+        fixture.rerunWhileWaiting = true;
+        List<HarnessReviewStart.Decision> applied = new java.util.ArrayList<>();
+
+        launch().launch(prepared(ReviewRunBinding.Kind.REVIEW, CURRENT_RUN), applied::add);
+
+        assertEquals(1, applied.size(), applied.toString());
+        assertInstanceOf(HarnessReviewStart.Dropped.class, applied.getFirst());
+        assertTrue(dispatched.isEmpty(), dispatched.toString());
+    }
+
     @Test
     void aRefusedDispatchIsRefusedWithItsReason() {
         fixture.dispatchOutcome = new ReviewRunDispatch.Refused("subscription_unavailable");

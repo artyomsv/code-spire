@@ -51,7 +51,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
         @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused"),
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewPrepared.class, name = "HarnessReviewPrepared"),
-        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated")
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewFailed.class, name = "HarnessReviewFailed")
 })
 public sealed interface IntegrationEvent {
 
@@ -454,6 +455,21 @@ public sealed interface IntegrationEvent {
             int findings = result == null || result.findings() == null ? 0 : result.findings().size();
             return "HarnessReviewGenerated[reviewId=" + reviewId + ", prId=" + prId + ", commit=" + commit
                     + ", round=" + round + ", findings=" + findings + ", verdicts=" + verdicts.size() + "]";
+        }
+    }
+
+    /**
+     * The worker could not prepare or finish a harness review (harness reviews, step 6). It names the round it worked
+     * for, as {@link HarnessReviewGenerated} does: a forced re-run keeps the commit, so only the round tells a late
+     * failure of round 1 from one of round 2 (review of PR #370, code-quality/H-1). Its fields mirror
+     * {@link ReviewFailed}'s rather than nesting one, so the contract snapshot sees every component.
+     */
+    record HarnessReviewFailed(String reviewId, String commit, int round, String phase, String error,
+                               boolean retryable, boolean credentialRejected) implements IntegrationEvent {
+
+        /** The API path's failure, applied the same way once the round is known to be current; attempt 1. */
+        public ReviewFailed toReviewFailed() {
+            return new ReviewFailed(reviewId, commit, phase, error, retryable, 1, credentialRejected);
         }
     }
 }

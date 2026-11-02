@@ -8,6 +8,7 @@ import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.llm.ChargeCall;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +35,11 @@ class HarnessSagaProjection extends TestRepositoryProjection {
     /** What the verdict decision reads; one blocker makes it Request changes. */
     int openBlockers;
 
+    /** The attempts a retry was scheduled for, the terminal failures' notes, and how often a retry was cleared. */
+    final List<Integer> retries = new ArrayList<>();
+    final List<String> terminalFailures = new ArrayList<>();
+    int clearedRetries;
+
     @Override
     public void appendEvent(String reviewId, String lane, String type, String detail) {
     }
@@ -53,6 +59,23 @@ class HarnessSagaProjection extends TestRepositoryProjection {
 
     @Override
     public void clearScheduledRetry(String reviewId) {
+        clearedRetries++;
+    }
+
+    /** The failure path (review of PR #370, code-quality/H-1): the attempt the retry budget is read against. */
+    @Override
+    public int currentAttempt(String reviewId) {
+        return 1;
+    }
+
+    @Override
+    public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
+        retries.add(attempt);
+    }
+
+    @Override
+    public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
+        terminalFailures.add(note);
     }
 
     @Override

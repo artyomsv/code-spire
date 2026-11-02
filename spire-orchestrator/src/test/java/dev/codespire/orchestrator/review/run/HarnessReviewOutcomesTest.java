@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.review.run;
 
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
@@ -122,6 +123,52 @@ class HarnessReviewOutcomesTest {
         HarnessReviewResults results = fixture.results();
         assertThrows(IllegalStateException.class, () -> results.acceptGenerated(generated(1, List.of())));
         assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
+    }
+
+    /** The worker's failure takes the API path's handling, retry included, only for its own round, under the lock. */
+    @Test
+    void aWorkerFailureOfTheCurrentRoundIsAppliedUnderTheRoundLock() {
+        fixture.results().acceptFailed(workerFailure(1));
+
+        ReviewFailed failure = assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertEquals(HEAD, failure.commit());
+        assertEquals("harness-prepare", failure.phase());
+        assertTrue(failure.retryable(), "a transient prepare failure keeps the worker's classification");
+        assertEquals(1, failure.attempt());
+        assertEquals(List.of("lock " + REVIEW_ID, "round", "outcome", "unlock"), fixture.steps);
+    }
+
+    /** A forced re-run on the same head started round 2: round 1's late failure fails nothing (code-quality/H-1). */
+    @Test
+    void aWorkerFailureOfAnEndedRoundIsDropped() {
+        fixture.currentRun = 2;
+
+        fixture.results().acceptFailed(workerFailure(1));
+
+        assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
+    }
+
+    @Test
+    void aWorkerFailureWhoseRoundARerunEndedWhileItWaitedIsDropped() {
+        fixture.rerunWhileWaiting = true;
+
+        fixture.results().acceptFailed(workerFailure(1));
+
+        assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
+    }
+
+    /** As a finished answer: neither applied nor dropped, so a replay applies it once the round can be read. */
+    @Test
+    void aWorkerFailureWhoseRoundCannotBeReadIsThrownForAReplay() {
+        fixture.currentRun = UNKNOWN_RUN;
+
+        HarnessReviewResults results = fixture.results();
+        assertThrows(IllegalStateException.class, () -> results.acceptFailed(workerFailure(1)));
+        assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
+    }
+
+    private static HarnessReviewFailed workerFailure(int round) {
+        return new HarnessReviewFailed(REVIEW_ID, HEAD, round, "harness-prepare", "TEST-error", true, false);
     }
 
     private static HarnessReviewGenerated generated(int round, List<FindingVerdict> verdicts) {

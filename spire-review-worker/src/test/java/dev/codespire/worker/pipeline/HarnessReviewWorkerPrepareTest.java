@@ -3,6 +3,7 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.FindingVerdict;
@@ -140,10 +141,13 @@ class HarnessReviewWorkerPrepareTest {
 
         worker.prepare(prepareReview(null));
 
-        ReviewFailed failed = fx.last(ReviewFailed.class);
+        HarnessReviewFailed failed = fx.last(HarnessReviewFailed.class);
         assertEquals("harness-prepare", failed.phase());
         assertTrue(failed.retryable(), "a transient read is retried on the same round");
         assertEquals(COMMIT, failed.commit());
+        assertEquals(ROUND, failed.round(), "the round is carried, so a late failure never fails a newer round");
+        assertTrue(emitted.stream().noneMatch(ReviewFailed.class::isInstance),
+                "a plain ReviewFailed would bypass the round check: " + emitted);
         assertTrue(emitted.stream().noneMatch(HarnessReviewPrepared.class::isInstance));
     }
 

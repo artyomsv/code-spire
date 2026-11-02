@@ -90,6 +90,10 @@ public class HarnessReviewResults implements ReviewRunResults {
         });
     }
 
+    public void acceptFailed(IntegrationEvent.HarnessReviewFailed failed) {
+        // Compile stub for the red tests (review of PR #370, code-quality/H-1).
+    }
+
     @Override
     public void accept(RunResult result, ReviewRunBinding binding) {
         log(result, binding);

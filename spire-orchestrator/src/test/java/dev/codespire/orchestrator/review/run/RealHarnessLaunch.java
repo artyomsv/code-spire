@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The real {@link HarnessReviewLaunch} over the real {@link ReviewRunDispatch}, launching through the {@link RunLaunch}
@@ -58,7 +59,18 @@ public final class RealHarnessLaunch {
         harnessLaunch.dispatch = dispatch(targets, launch);
         harnessLaunch.runs = firstRound();
         harnessLaunch.promptTemplates = noCustomPrompt();
+        harnessLaunch.rounds = inlineLock();
         return harnessLaunch;
+    }
+
+    /** The real lock is a Postgres advisory lock (ReviewRoundLockTest drives it); here it runs the work inline. */
+    private static ReviewRoundLock inlineLock() {
+        return new ReviewRoundLock() {
+            @Override
+            public <T> T holding(String reviewId, Supplier<T> work) {
+                return work.get();
+            }
+        };
     }
 
     private static ReviewRunDispatch dispatch(FixTargets targets, RunLaunch launch) {

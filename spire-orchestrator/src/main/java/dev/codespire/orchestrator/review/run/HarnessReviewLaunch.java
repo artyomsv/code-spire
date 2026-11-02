@@ -60,6 +60,15 @@ public class HarnessReviewLaunch {
     @Inject
     WorkerPromptTemplates promptTemplates;
 
+    @Inject
+    ReviewRoundLock rounds;
+
+    public void launch(IntegrationEvent.HarnessReviewPrepared prepared,
+                       java.util.function.Consumer<HarnessReviewStart.Decision> apply) {
+        // Compile stub for the red tests (review of PR #370, code-quality/M-1).
+        apply.accept(launch(prepared));
+    }
+
     /** The repository a harness review runs for and the harness it runs on. */
     private record OnHarness(UUID repositoryId, ReviewHarness harness) {
     }

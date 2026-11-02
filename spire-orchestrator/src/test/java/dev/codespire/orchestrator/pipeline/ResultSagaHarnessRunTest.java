@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import static dev.codespire.orchestrator.pipeline.HarnessSagaFakes.COMMIT;
 import static dev.codespire.orchestrator.pipeline.HarnessSagaFakes.PR;
@@ -181,6 +182,12 @@ class ResultSagaHarnessRunTest {
             public HarnessReviewStart.Decision launch(HarnessReviewPrepared prepared) {
                 launched.add(prepared);
                 return launchDecision;
+            }
+
+            /** The real one decides and applies under the review's round lock, a Postgres advisory lock. */
+            @Override
+            public void launch(HarnessReviewPrepared prepared, Consumer<HarnessReviewStart.Decision> apply) {
+                apply.accept(launch(prepared));
             }
         };
     }

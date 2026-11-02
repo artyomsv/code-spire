@@ -32,6 +32,7 @@ class DlqTopicsTest {
     @Test void harnessReviewResultsReplayOntoResults() {
         assertEquals("cs.results", DlqTopics.forType("HarnessReviewPrepared"));
         assertEquals("cs.results", DlqTopics.forType("HarnessReviewGenerated"));
+        assertEquals("cs.results", DlqTopics.forType("HarnessReviewFailed"));
     }
 
     @Test void registrationReplaysOntoItsRegistryTopic() {

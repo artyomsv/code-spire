@@ -2,6 +2,7 @@ package dev.codespire.worker.pipeline;
 
 import dev.codespire.contract.event.IntegrationEvent;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.ReviewFailed;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.ReviewRunBinding;
@@ -184,11 +185,14 @@ class HarnessReviewWorkerFinishTest {
 
         worker.finish(finish(ReviewRunBinding.Kind.REVIEW, answer(finding("src/C.java", 20), "")));
 
-        ReviewFailed failed = fx.last(ReviewFailed.class);
+        HarnessReviewFailed failed = fx.last(HarnessReviewFailed.class);
         assertEquals("harness-finish", failed.phase());
         assertFalse(failed.retryable(), "a retry would meet the same run id and never answer");
-        assertEquals(1, failed.attempt());
+        assertEquals(ROUND, failed.round(), "the round is carried, so a late failure never fails a newer round");
+        assertEquals(COMMIT, failed.commit());
         assertFalse(failed.credentialRejected());
+        assertTrue(emitted.stream().noneMatch(ReviewFailed.class::isInstance),
+                "a plain ReviewFailed would bypass the round check: " + emitted);
     }
 
     /** Every store method a finish reaches throws the given fault. */

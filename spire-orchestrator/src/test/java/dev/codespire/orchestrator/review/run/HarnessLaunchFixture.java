@@ -21,12 +21,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The real {@link HarnessReviewLaunch} over fakes, for {@code HarnessReviewLaunchTest}: the repositories, the projection,
- * the push targets, the dispatch, the round counter and the prompt templates each override every method the launch
- * reaches, because an un-overridden one opens a real database from a unit test (CLAUDE.md, saga test fakes). Each test
- * sets the state below, then calls {@link #launch()}.
+ * the push targets, the dispatch, the round counter, the prompt templates and the round lock each override every method
+ * the launch reaches, because an un-overridden one opens a real database from a unit test (CLAUDE.md, saga test fakes).
+ * Each test sets the state below, then calls {@link #launch()}.
  */
 final class HarnessLaunchFixture {
 
@@ -52,8 +53,12 @@ final class HarnessLaunchFixture {
     RuntimeException promptFailure;
     /** Answers as admission does: the deterministic run id of a call already queued is AlreadyQueued. */
     boolean deterministicIds;
+    /** A forced re-run that held the review's round lock first: it ends the round before the launch reads it. */
+    boolean rerunWhileWaiting;
 
     final List<ReviewRunRequest> dispatched = new ArrayList<>();
+    /** What ran, in order: the lock, the round read, the dispatch, and what the caller applied inside the lock. */
+    final List<String> steps = new ArrayList<>();
     private final Set<String> queuedRunIds = new HashSet<>();
 
     static HarnessReviewPrepared prepared(ReviewRunBinding.Kind kind, int preparedRound) {
@@ -68,7 +73,24 @@ final class HarnessLaunchFixture {
         launch.dispatch = dispatch();
         launch.runs = runs();
         launch.promptTemplates = prompts();
+        launch.rounds = roundLock();
         return launch;
+    }
+
+    /** The real lock is a Postgres advisory lock (ReviewRoundLockTest); this one records what ran inside it. */
+    private ReviewRoundLock roundLock() {
+        return new ReviewRoundLock() {
+            @Override
+            public <T> T holding(String reviewId, Supplier<T> work) {
+                steps.add("lock " + reviewId);
+                if (rerunWhileWaiting) {
+                    round++;
+                }
+                T done = work.get();
+                steps.add("unlock");
+                return done;
+            }
+        };
     }
 
     private RepositoryRegistry repositories() {
@@ -107,6 +129,7 @@ final class HarnessLaunchFixture {
                 if (dispatchFailure != null) {
                     throw dispatchFailure;
                 }
+                steps.add("dispatch");
                 dispatched.add(request);
                 return deterministicIds ? admitted(request) : dispatchOutcome;
             }
@@ -130,6 +153,7 @@ final class HarnessLaunchFixture {
 
             @Override
             public int roundOrUnknown(String reviewId) {
+                steps.add("round");
                 return round;
             }
         };

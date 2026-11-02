@@ -183,5 +183,28 @@ class HarnessReviewMessagesTest {
         assertEquals(REVIEW_ID, EventKeys.of(generated()));
         assertEquals(REVIEW_ID, prepare(null, ReviewRunBinding.Kind.REVIEW).reviewId());
         assertEquals(REVIEW_ID, finish(null).reviewId());
+        assertEquals(REVIEW_ID, EventKeys.of(failed()));
+    }
+
+    /** The round rides the wire, so a late failure of an ended round can be told from the current round's. */
+    @Test
+    void aFailedRoundTripsWithItsRound() throws Exception {
+        IntegrationEvent decoded = mapper.readValue(mapper.writeValueAsString(failed()), IntegrationEvent.class);
+
+        assertEquals(failed(), decoded);
+        assertEquals(2, ((IntegrationEvent.HarnessReviewFailed) decoded).round());
+    }
+
+    @Test
+    void aFailedBecomesTheApiPathsFailureAtAttemptOne() {
+        IntegrationEvent.ReviewFailed failure = failed().toReviewFailed();
+
+        assertEquals(new IntegrationEvent.ReviewFailed(REVIEW_ID, COMMIT, "harness-prepare", "TEST-error", true, 1,
+                true), failure);
+    }
+
+    private static IntegrationEvent.HarnessReviewFailed failed() {
+        return new IntegrationEvent.HarnessReviewFailed(REVIEW_ID, COMMIT, 2, "harness-prepare", "TEST-error", true,
+                true);
     }
 }
