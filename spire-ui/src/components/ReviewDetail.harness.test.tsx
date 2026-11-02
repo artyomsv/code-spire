@@ -109,7 +109,7 @@ describe('ReviewDetail harness run', () => {
   it('the review page links the newest review run', async () => {
     vi.mocked(api.getRuns).mockResolvedValue([
       runRow({ runId: RECONCILE_RUN, kind: 'RECONCILE', status: 'running', reviewId: review.id, startedAt: '2026-08-02T00:00:00Z' }),
-      runRow({ runId: HARNESS_RUN, kind: 'REVIEW', status: 'completed', reviewId: review.id, startedAt: '2026-08-01T00:00:00Z' }),
+      runRow({ runId: HARNESS_RUN, kind: 'REVIEW', status: 'succeeded', reviewId: review.id, startedAt: '2026-08-01T00:00:00Z' }),
     ]);
 
     renderPage();
