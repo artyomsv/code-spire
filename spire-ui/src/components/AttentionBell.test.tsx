@@ -70,6 +70,11 @@ class FakeSocket {
   }
 }
 
+/** What a test reads from a `setInterval` or `clearInterval` spy: the arguments and the returned timer id. */
+interface TimerSpy {
+  mock: { calls: unknown[][]; results: { value: unknown }[] };
+}
+
 const ORCHESTRATOR = '/api/ws/attention';
 const GATEWAY = '/gw/ws/webhook-attention';
 
@@ -83,10 +88,11 @@ const renderBell = () =>
 
 /** Both feeds connected and reporting, which is the precondition for most assertions below. */
 async function renderWithFeeds(orchestrator: AttentionItem[], gateway: AttentionItem[]) {
-  renderBell();
+  const rendered = renderBell();
   await waitFor(() => expect(FakeSocket.open.size).toBe(2));
   FakeSocket.push(ORCHESTRATOR, orchestrator);
   FakeSocket.push(GATEWAY, gateway);
+  return rendered;
 }
 
 describe('AttentionBell', () => {
@@ -397,5 +403,117 @@ describe('AttentionBell', () => {
         headers: { 'X-Requested-With': 'JavaScript' },
       }),
     );
+  });
+
+  /** The messages in the order the panel shows them. */
+  async function openedMessages(count: string): Promise<string[]> {
+    await waitFor(() => expect(screen.getByTestId('attention-count')).toHaveTextContent(count));
+    screen.getByTestId('attention-toggle').click();
+    await waitFor(() => screen.getByRole('dialog', { name: 'Needs attention' }));
+    return Array.from(document.querySelectorAll('.attention-message')).map((node) => node.textContent ?? '');
+  }
+
+  /**
+   * The order is applied after the two feeds merge, not only by each service. The review row arrives on the feed
+   * merged second and its code sorts after the other row's, so only the merged order puts it on top — a just-refused
+   * review once sat at the bottom of 23 rows.
+   */
+  it('shows a newer review row from one feed above an older row from the other', async () => {
+    const olderDeadLetter: AttentionItem = { ...warning, since: '2026-11-01T10:00:00Z' };
+    const newerRefusal: AttentionItem = {
+      code: 'REVIEW_HARNESS_REFUSED',
+      severity: 'WARNING',
+      subject: 'TEST-WS/TEST-REPO#95',
+      message: 'Harness review refused: TEST',
+      action: '/r/TEST-WS/TEST-REPO/95',
+      dismiss: null,
+      since: '2026-11-02T10:00:00Z',
+    };
+    await renderWithFeeds([olderDeadLetter], [newerRefusal]);
+
+    expect(await openedMessages('2')).toEqual([newerRefusal.message, olderDeadLetter.message]);
+  });
+
+  /** Outside the review group, the newer warning comes first across feeds, whatever its code. */
+  it('shows a newer gateway warning above an older orchestrator warning', async () => {
+    const olderDeadLetter: AttentionItem = { ...warning, since: '2026-11-01T10:00:00Z' };
+    const newerRejection: AttentionItem = {
+      code: 'WEBHOOK_DELIVERIES_REJECTED',
+      severity: 'WARNING',
+      subject: 'stub · TEST-OWNER/TEST-REPO',
+      message: '1 webhook delivery was refused: refused.',
+      action: '/settings/repositories?edit=TEST-1',
+      dismiss: null,
+      since: '2026-11-02T10:00:00Z',
+    };
+    await renderWithFeeds([olderDeadLetter], [newerRejection]);
+
+    expect(await openedMessages('2')).toEqual([newerRejection.message, olderDeadLetter.message]);
+  });
+
+  it('shows how long ago a timed condition began', async () => {
+    const twoMinutesAgo = new Date(Date.now() - 120_000).toISOString();
+    await renderWithFeeds([{ ...failed, since: twoMinutesAgo }], []);
+
+    await openedMessages('1');
+
+    expect(screen.getByText('2m ago')).toBeInTheDocument();
+  });
+
+  /**
+   * The feeds push only when the condition list changes, so an idle dashboard sends no frame to re-render a row. The
+   * age must still move on while the panel is open, from the clock alone.
+   */
+  it("moves a row's age on while the panel stays open, with no new frame", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(new Date('2026-11-02T10:02:00Z'));
+      await renderWithFeeds([{ ...failed, since: '2026-11-02T10:00:00Z' }], []);
+      await openedMessages('1');
+      expect(screen.getByText('2m ago')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(screen.getByText('3m ago')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The minute intervals started for the panel's clock, each with whether it was cleared since. */
+  function minuteClocks(started: TimerSpy, cleared: TimerSpy): boolean[] {
+    const clearedIds = cleared.mock.calls.map((call) => call[0]);
+    return started.mock.calls
+      .map((call, index) => ({ delay: call[1], id: started.mock.results[index]?.value }))
+      .filter((timer) => timer.delay === 60_000)
+      .map((timer) => clearedIds.includes(timer.id));
+  }
+
+  it("stops the panel's clock when the panel closes", async () => {
+    const started = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    await renderWithFeeds([{ ...failed, since: new Date().toISOString() }], []);
+    expect(minuteClocks(started, cleared)).toEqual([]);
+
+    await openedMessages('1');
+    expect(minuteClocks(started, cleared)).toEqual([false]);
+
+    act(() => screen.getByTestId('attention-toggle').click());
+
+    expect(minuteClocks(started, cleared)).toEqual([true]);
+  });
+
+  it("stops the panel's clock when the bell unmounts", async () => {
+    const started = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    const { unmount } = await renderWithFeeds([{ ...failed, since: new Date().toISOString() }], []);
+    await openedMessages('1');
+    expect(minuteClocks(started, cleared)).toEqual([false]);
+
+    unmount();
+
+    expect(minuteClocks(started, cleared)).toEqual([true]);
   });
 });

@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AttentionItem } from '../api';
 import { writeLive } from '../liveCache';
+import { orderAttention } from './attentionOrder';
 import { useLiveSocket } from './useLiveSocket';
-
-const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { BLOCKING: 0, WARNING: 1 };
 
 /**
  * Each service pushes the conditions it owns, because neither reads the other's schema — so there is
@@ -56,13 +55,6 @@ const UNAVAILABLE: Record<FeedKey, AttentionItem> = {
   },
 };
 
-function bySeverityThenCode(a: AttentionItem, b: AttentionItem): number {
-  const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
-  if (bySeverity !== 0) return bySeverity;
-  const byCode = a.code.localeCompare(b.code);
-  return byCode !== 0 ? byCode : (a.subject ?? '').localeCompare(b.subject ?? '');
-}
-
 function isAttentionItem(value: unknown): value is AttentionItem {
   return (
     typeof value === 'object' &&
@@ -87,7 +79,7 @@ function isAttentionItem(value: unknown): value is AttentionItem {
  */
 export function useAttention(): { items: AttentionItem[] } {
   const feeds: Record<FeedKey, FeedState> = { orchestrator: useFeed(FEEDS[0]), gateway: useFeed(FEEDS[1]) };
-  const items = FEEDS.flatMap(({ key }) => {
+  const merged = FEEDS.flatMap(({ key }) => {
     const feed = feeds[key];
     switch (feed.status) {
       case 'live':
@@ -99,9 +91,10 @@ export function useAttention(): { items: AttentionItem[] } {
         // would raise a blocking alarm about a socket that is merely still opening.
         return [];
     }
-  }).sort(bySeverityThenCode);
+  });
 
-  return { items };
+  // Each service orders its own feed; only the merged list can put one feed's newer row above the other's.
+  return { items: orderAttention(merged) };
 }
 
 /** One service's conditions. The socket is the only source: a feed has no REST read. */

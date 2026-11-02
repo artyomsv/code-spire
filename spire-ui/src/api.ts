@@ -1306,6 +1306,11 @@ export interface AttentionItem {
    * repair must not be silenceable, or a broken system could be made to look healthy.
    */
   dismiss: string | null;
+  /**
+   * ISO-8601: the stored time of the newest fact behind the row, never the server's clock at evaluation. Null when
+   * nothing stored says when the condition arose (a configuration condition), and absent on a synthesized row.
+   */
+  since?: string | null;
 }
 
 /** Acknowledge one row. The server decides what that means; the UI just posts where it was told. */

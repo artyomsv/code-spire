@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.work;
 
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.work.WorkItemLifecycle;
+import dev.codespire.orchestrator.attention.StoredTime;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
@@ -12,7 +13,7 @@ public final class WorkAttentionRows {
 
     public static void collect(Connection c, List<AttentionView> rows) throws SQLException {
         try (var ps = c.prepareStatement("""
-                SELECT w.id,w.issue_key FROM work_item w
+                SELECT w.id,w.issue_key,w.updated_at FROM work_item w
                 JOIN work_repository_policy p ON p.repository_id=w.repository_id AND p.revision=w.policy_revision
                 JOIN work_source s ON s.id=w.source_id
                 JOIN scm_provider a ON a.id=s.account_id
@@ -22,10 +23,10 @@ public final class WorkAttentionRows {
                 """); var rs = ps.executeQuery()) {
             while (rs.next()) rows.add(new AttentionView("WORK_POLICY_CLAMPED", AttentionView.Severity.WARNING,
                     rs.getString(2), "The requested profile is restricted by the current ceiling, applied labels or admission policy.",
-                    "/work-items/" + rs.getString(1)));
+                    "/work-items/" + rs.getString(1)).withSince(StoredTime.of(rs, "updated_at")));
         }
         try(var ps=c.prepareStatement("""
-                SELECT w.id,w.issue_key,g.state FROM work_item_gate g JOIN work_item w ON w.id=g.work_item_id
+                SELECT w.id,w.issue_key,g.state,CASE WHEN g.state='OPEN' THEN g.opened_at ELSE g.expires_at END AS since FROM work_item_gate g JOIN work_item w ON w.id=g.work_item_id
                 AND w.generation=g.generation AND w.phase=g.phase
                 WHERE g.state='OPEN' OR (g.state='EXPIRED' AND w.reason='gate_expired') ORDER BY g.expires_at,g.id
                 """);var rs=ps.executeQuery()) {
@@ -33,18 +34,18 @@ public final class WorkAttentionRows {
                 boolean open="OPEN".equals(rs.getString(3));
                 rows.add(new AttentionView(open?"WORK_APPROVAL_OPEN":"WORK_APPROVAL_EXPIRED",AttentionView.Severity.WARNING,
                         rs.getString(2),open?"A workflow phase is waiting for an operator decision.":"An approval expired; explicit re-admission is required.",
-                        open?"/approvals":"/work-items/"+rs.getString(1)));
+                        open?"/approvals":"/work-items/"+rs.getString(1)).withSince(StoredTime.of(rs,"since")));
             }
         }
         // Land handed these to the operator (spec §7.6): no gate is open, so the approval rows above do not list them.
         try(var ps=c.prepareStatement("""
-                SELECT w.id,w.issue_key FROM work_item w WHERE w.phase='land' AND w.workflow_status='awaiting_input' AND w.reason=ANY(?)
+                SELECT w.id,w.issue_key,w.updated_at FROM work_item w WHERE w.phase='land' AND w.workflow_status='awaiting_input' AND w.reason=ANY(?)
                 ORDER BY w.updated_at,w.id
                 """)) {
             ps.setArray(1,c.createArrayOf("text",WorkItemLifecycle.LAND_HANDOFF_REASONS.toArray(String[]::new)));
             try(var rs=ps.executeQuery()) {
                 while(rs.next())rows.add(new AttentionView("WORK_LAND_HANDED",AttentionView.Severity.WARNING,rs.getString(2),
-                        "Land was handed to an operator: retry land or stop the item.","/work-items/"+rs.getString(1)));
+                        "Land was handed to an operator: retry land or stop the item.","/work-items/"+rs.getString(1)).withSince(StoredTime.of(rs,"updated_at")));
             }
         }
         try(var ps=c.prepareStatement("""

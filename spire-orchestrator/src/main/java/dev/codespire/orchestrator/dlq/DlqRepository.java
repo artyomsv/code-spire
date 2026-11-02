@@ -8,6 +8,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -76,6 +78,19 @@ public class DlqRepository {
             return rs.next() ? rs.getInt(1) : 0;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to count pending dead-letter entries", e);
+        }
+    }
+
+    /** When the newest pending entry was recorded, or null when none is pending: the attention row's time. */
+    public Instant newestPendingAt() {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT max(created_at) FROM dlq_entry WHERE status = 'pending'");
+             ResultSet rs = ps.executeQuery()) {
+            Timestamp newest = rs.next() ? rs.getTimestamp(1) : null;
+            return newest == null ? null : newest.toInstant();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to read the newest pending dead-letter entry", e);
         }
     }
 

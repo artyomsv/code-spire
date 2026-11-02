@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.attention;
 
+import dev.codespire.contract.attention.AttentionOrder;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.orchestrator.caps.CapPolicy;
@@ -21,7 +22,6 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -72,7 +72,7 @@ public class AttentionQueries {
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
-    /** Blockers first, then warnings; stable by code within a severity. */
+    /** In {@link AttentionOrder}: blockers, then review problems, then newest first, then code and subject. */
     public List<AttentionView> collect() {
         List<AttentionView> rows = new ArrayList<>();
         try (Connection c = dataSource.getConnection()) {
@@ -95,9 +95,7 @@ public class AttentionQueries {
         }
         deadLetterRows(rows);
         capRows(rows);
-        rows.sort(Comparator.comparing((AttentionView v) -> v.severity().ordinal())
-                .thenComparing(AttentionView::code)
-                .thenComparing(v -> v.subject() == null ? "" : v.subject()));
+        rows.sort(AttentionOrder.ORDER);
         return rows;
     }
 
@@ -231,7 +229,7 @@ public class AttentionQueries {
     }
 
     private void accountScopeRows(Connection c, List<AttentionView> rows) throws SQLException {
-        try (var ps = c.prepareStatement("SELECT id, name, type, role, reported_scopes FROM scm_provider "
+        try (var ps = c.prepareStatement("SELECT id, name, type, role, reported_scopes, scopes_checked_at FROM scm_provider "
                 + "WHERE enabled = TRUE AND reported_scopes IS NOT NULL"); var rs = ps.executeQuery()) {
             while (rs.next()) {
                 if (dev.codespire.orchestrator.provider.ProviderClients.scopesNeedAttention(rs.getString("type"),
@@ -240,7 +238,8 @@ public class AttentionQueries {
                             "The token's reported scopes do not include the expected "
                                     + ("FACTORY".equals(rs.getString("role")) ? "write" : "read")
                                     + " scope. Check the account's permissions; reported scopes alone cannot establish access.",
-                            editLink("/settings/accounts", rs.getObject("id", UUID.class))));
+                            editLink("/settings/accounts", rs.getObject("id", UUID.class)))
+                            .withSince(StoredTime.of(rs, "scopes_checked_at")));
                 }
             }
         }
@@ -313,24 +312,24 @@ public class AttentionQueries {
      */
     private void reviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
-                SELECT workspace, slug, pr_id FROM review_status
+                SELECT workspace, slug, pr_id, updated_at FROM review_status
                  WHERE lower(status) NOT IN ('completed', 'failed', 'cancelled', 'superseded', 'refused')
                    AND pr_state = 'OPEN'
                    AND archived_at IS NULL
                    AND updated_at < now() - make_interval(mins => ?)
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at
+                 ORDER BY updated_at DESC, review_id
                 """, stuckMinutes, "REVIEW_STUCK",
                 "This review has not progressed for over " + stuckMinutes
                         + " minutes — a webhook delivery path or a worker may be down.",
                 "review(s) stalled"));
 
         rows.addAll(perReviewRows(c, """
-                SELECT workspace, slug, pr_id FROM review_status
+                SELECT workspace, slug, pr_id, updated_at FROM review_status
                  WHERE lower(status) = 'failed'
                    AND archived_at IS NULL
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at DESC
+                 ORDER BY updated_at DESC, review_id
                 """, null, "REVIEW_FAILED",
                 "This review failed. Open it for the reason, then re-run it or dismiss this.",
                 "review(s) failed"));
@@ -353,12 +352,12 @@ public class AttentionQueries {
      */
     private void degradedReviewRows(Connection c, List<AttentionView> rows) throws SQLException {
         rows.addAll(perReviewRows(c, """
-                SELECT workspace, slug, pr_id FROM review_status
+                SELECT workspace, slug, pr_id, updated_at FROM review_status
                  WHERE degraded
                    AND lower(status) = 'completed'
                    AND archived_at IS NULL
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at DESC
+                 ORDER BY updated_at DESC, review_id
                 """, null, "REVIEW_DEGRADED",
                 "This review was charged but did not produce a usable result: the model's response "
                         + "was unparseable or cut off at its output limit. Re-run it, and if it "
@@ -375,6 +374,9 @@ public class AttentionQueries {
      * comparison that reported every completed review as stalled — so the guard is now a cap rather
      * than an unconditional collapse: past {@link #MAX_REVIEW_ROWS} the remainder becomes a single
      * summary row, which keeps a systemic outage from burying the configuration blockers above it.
+     *
+     * <p>The SQL must select newest first, with a unique tie-break: the cap keeps the first rows read, and the bell is
+     * newest first, so a query read oldest first hides the newest review in the remainder.
      *
      * @param minutes bound for the stuck query's interval, or null when the SQL takes no parameter
      */
@@ -399,7 +401,8 @@ public class AttentionQueries {
                     String repo = workspace + "/" + slug;
                     found.add(new AttentionView(code, Severity.WARNING, repo + "#" + pr, message,
                             "/r/" + workspace + "/" + slug + "/" + pr,
-                            "/api/reviews/" + workspace + "/" + slug + "/" + pr + "/attention-ack"));
+                            "/api/reviews/" + workspace + "/" + slug + "/" + pr + "/attention-ack")
+                            .withSince(StoredTime.of(rs, "updated_at")));
                 }
             }
         }
@@ -434,7 +437,8 @@ public class AttentionQueries {
                 rows.add(new AttentionView("CREDENTIAL_REJECTED", Severity.WARNING, rs.getString("name"),
                         "The " + registry.kind + "'s credential was rejected"
                                 + (detail == null || detail.isBlank() ? "." : ": " + detail),
-                        editLink(registry.settingsPath, rs.getObject("id", UUID.class))));
+                        editLink(registry.settingsPath, rs.getObject("id", UUID.class)))
+                        .withSince(StoredTime.of(rs, "last_check_at")));
             }
         }
     }
@@ -452,19 +456,19 @@ public class AttentionQueries {
     private enum Registry {
 
         SCM("""
-                SELECT id, name, last_check_error FROM scm_provider
+                SELECT id, name, last_check_error, last_check_at FROM scm_provider
                  WHERE enabled = TRUE AND last_check_ok = FALSE
                  ORDER BY name""",
                 "/settings/accounts", "source-control provider"),
 
         LLM("""
-                SELECT id, name, last_check_error FROM llm_provider
+                SELECT id, name, last_check_error, last_check_at FROM llm_provider
                  WHERE enabled = TRUE AND last_check_ok = FALSE
                  ORDER BY name""",
                 "/settings/llm", "LLM provider"),
 
         CONTEXT("""
-                SELECT id, name, last_check_error FROM context_provider
+                SELECT id, name, last_check_error, last_check_at FROM context_provider
                  WHERE enabled = TRUE AND last_check_ok = FALSE
                  ORDER BY name""",
                 "/settings/context", "context provider");
@@ -492,9 +496,9 @@ public class AttentionQueries {
      */
     private void costRows(Connection c, List<AttentionView> rows) throws SQLException {
         for (CostAttentionRow row : CostAttentionRow.values()) {
-            int calls = countSince(c, row.countQuery(), acks.since(row));
-            if (calls > 0) {
-                rows.add(row.view(calls));
+            Backlog backlog = backlogSince(c, row.countQuery(), acks.since(row));
+            if (backlog.calls() > 0) {
+                rows.add(row.view(backlog.calls(), backlog.newest()));
             }
         }
     }
@@ -565,7 +569,7 @@ public class AttentionQueries {
         if (pending > 0) {
             rows.add(new AttentionView("DLQ_PENDING", Severity.WARNING, null,
                     pending + " message(s) failed processing and are waiting in the dead-letter queue.",
-                    "/settings/dlq"));
+                    "/settings/dlq").withSince(dlq.newestPendingAt()));
         }
     }
 
@@ -586,12 +590,20 @@ public class AttentionQueries {
         }
     }
 
-    /** As {@link #count}, for a query bounded by one acknowledgement watermark. */
-    private static int countSince(Connection c, String sql, Instant since) throws SQLException {
+    /** Unacknowledged calls and when the newest of them was priced (null when there are none). */
+    private record Backlog(int calls, Instant newest) {
+    }
+
+    /** As {@link #count}, for a query bounded by one acknowledgement watermark that also reads its newest time. */
+    private static Backlog backlogSince(Connection c, String sql, Instant watermark) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setTimestamp(1, Timestamp.from(since));
+            ps.setTimestamp(1, Timestamp.from(watermark));
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getInt(1) : 0;
+                if (!rs.next()) {
+                    return new Backlog(0, null);
+                }
+                Timestamp newest = rs.getTimestamp(2);
+                return new Backlog(rs.getInt(1), newest == null ? null : newest.toInstant());
             }
         }
     }

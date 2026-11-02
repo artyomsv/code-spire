@@ -1,6 +1,7 @@
 package dev.codespire.orchestrator.repository;
 
 import dev.codespire.contract.attention.AttentionView;
+import dev.codespire.orchestrator.attention.StoredTime;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -13,7 +14,7 @@ public final class RepositoryAttentionRows {
 
     public static void collect(Connection connection, List<AttentionView> rows) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT u.registration_id,u.scm_type,u.forge_origin,u.workspace,u.slug FROM repository_unregistered_event u
+                SELECT u.registration_id,u.scm_type,u.forge_origin,u.workspace,u.slug,u.last_seen_at FROM repository_unregistered_event u
                 WHERE NOT EXISTS (SELECT 1 FROM repository r WHERE r.scm_type=u.scm_type
                   AND r.forge_origin=u.forge_origin AND r.workspace=u.workspace AND r.slug=u.slug)
                 ORDER BY u.registration_id,u.workspace,u.slug
@@ -30,7 +31,8 @@ public final class RepositoryAttentionRows {
                                 + " from registration " + registration + ". Register this repository to enable routing.",
                         "/settings/repositories?register=true&registration=" + registration
                                 + "&scmType=" + encode(results.getString("scm_type")) + "&forgeOrigin=" + encode(origin)
-                                + "&workspace=" + encode(workspace) + "&slug=" + encode(slug)));
+                                + "&workspace=" + encode(workspace) + "&slug=" + encode(slug))
+                        .withSince(StoredTime.of(results, "last_seen_at")));
             }
         }
         try (PreparedStatement statement = connection.prepareStatement("""

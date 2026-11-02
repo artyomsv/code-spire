@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.attention;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 
@@ -45,7 +46,7 @@ enum CostAttentionRow {
      */
     UNPRICED("LLM_COST_UNPRICED", "attention.llm-cost-unpriced.ack-at",
             """
-            SELECT count(DISTINCT call_ref) FROM llm_charge
+            SELECT count(DISTINCT call_ref), max(priced_at) FROM llm_charge
              WHERE subject_kind = 'REVIEW' AND pricing_mode = 'UNKNOWN' AND token_type <> 'TOTAL'
                AND archived_at IS NULL AND priced_at > ?""",
             " LLM call(s) could not be priced, so the reported cost is lower than the real spend.",
@@ -61,7 +62,7 @@ enum CostAttentionRow {
      */
     UNRECONCILED("LLM_USAGE_UNRECONCILED", "attention.llm-usage-unreconciled.ack-at",
             """
-            SELECT count(DISTINCT call_ref) FROM llm_charge
+            SELECT count(DISTINCT call_ref), max(priced_at) FROM llm_charge
              WHERE subject_kind = 'REVIEW' AND token_type = 'TOTAL'
                AND archived_at IS NULL AND priced_at > ?""",
             " LLM call(s) reported a token breakdown that did not match their own total, or reported no"
@@ -96,7 +97,7 @@ enum CostAttentionRow {
      */
     RUN_UNPRICED("RUN_SPEND_UNPRICED", "attention.run-spend-unpriced.ack-at",
             """
-            SELECT count(DISTINCT call_ref) FROM llm_charge
+            SELECT count(DISTINCT call_ref), max(priced_at) FROM llm_charge
              WHERE subject_kind = 'RUN' AND pricing_mode = 'UNKNOWN'
                AND archived_at IS NULL AND priced_at > ?""",
             " factory run(s) spent tokens the ledger could not price, so that spend is missing from the"
@@ -136,11 +137,11 @@ enum CostAttentionRow {
     }
 
     /**
-     * The row for {@code calls} unacknowledged calls. Dismissable, unlike almost every other condition:
-     * this one describes calls already made, which no repair can un-make.
+     * The row for {@code calls} unacknowledged calls, the newest priced at {@code newest}. Dismissable, unlike almost
+     * every other condition: this one describes calls already made, which no repair can un-make.
      */
-    AttentionView view(int calls) {
+    AttentionView view(int calls, Instant newest) {
         return new AttentionView(code, Severity.WARNING, null, calls + messageSuffix, action,
-                "/api/attention/ack/" + code);
+                "/api/attention/ack/" + code, newest);
     }
 }
