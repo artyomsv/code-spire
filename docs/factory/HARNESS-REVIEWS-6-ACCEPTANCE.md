@@ -30,7 +30,7 @@ merged.
 | Run | `run::github:artyomsv/spire-test:review-97-628e11f19d9e-31504680:1` | `run::github:artyomsv/spire-test:review-97-f4548a29a621-f555c15d:1` | `run::github:artyomsv/spire-test:review-97-8dcc6ec9045f-ffff52f7:1` |
 | Kind | `REVIEW`, about 50 s | `RECONCILE`, about 1 minute from push to posted review | `RECONCILE` |
 | GitHub review | **APPROVED**, 3 inline findings | **APPROVED**, "Reconciliation: 1 closed · 2 still open.", 1 new inline finding | **APPROVED**, "Reconciliation: 0 closed · 3 still open.", no new inline comment |
-| Egress hosts (port 443) | `chatgpt.com` | `chatgpt.com` | not recorded |
+| Egress hosts (port 443) | `chatgpt.com` | `chatgpt.com` | `chatgpt.com` |
 
 **Round 1** is a first review with assembled context. The agent read the issue from `/inputs/context.md` and posted
 three findings:
@@ -70,7 +70,15 @@ One charge set, under `review::artyomsv/spire-test#97|f4548a29a6217cdee1ca74705b
 | `REASONING` | 135 |
 
 **Round 3** proves the rename remap on a harness. The three open findings were matched at `Coupons.java`: no thread
-was closed, none was reported again, and no duplicate was posted.
+was closed, none was reported again, and no duplicate was posted. One charge set, under
+`review::artyomsv/spire-test#97|8dcc6ec9045f062602fe2d3e978caaa5bfa5fb53#run3|RECONCILE`, `UNMETERED`, cost 0:
+
+| Token type | Tokens |
+|---|---|
+| `INPUT` | 19,209 |
+| `CACHED_INPUT` | 84,736 |
+| `OUTPUT` | 1,268 |
+| `REASONING` | 63 |
 
 ## What the proof found
 
