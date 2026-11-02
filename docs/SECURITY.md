@@ -196,6 +196,17 @@ and LAND remain unavailable. [M3 acceptance](factory/M3-ACCEPTANCE.md) and the s
   + **broker disk/volume encryption** (a
   documented deployment requirement) + SASL/mTLS transport. Escalation path if ever needed: findings
   behind an encrypted blob ref instead of inline.
+- **Harness reviews put the assembled context on the bus, and a dead letter keeps it (ADR-050, step 6).** The API
+  path keeps context text (issue bodies, Confluence pages, code definitions) in the object store, encrypted, and
+  sends only its `contextRef`. A harness review cannot: its agent reads the context as a file, so
+  `HarnessReviewPrepared` (`cs.results`) and `ExecuteReviewRun` (`cs.review-runs`) carry the rendered `context.md`
+  and `prior-findings.md` inline, and `FinishHarnessReview` (`cs.commands`) carries the agent's answer. On the bus
+  that is the posture of the bullet above. A record that dead-letters, however, is persisted by the orchestrator in
+  `dlq_entry.payload` as the raw JSON, in plain text, until an operator discards it: the context the blob store
+  encrypts then rests in Postgres in cleartext. `GET /api/dlq` is already admin-only because a dead-letter row carries the raw record. No mechanism closes
+  it yet; it is recorded in docs/UNVERIFIED.md (harness reviews step 6). The prepared numbering of the prior
+  findings and the finished outcome are stored in the review worker's `comment_idempotency` in plain text, as the
+  API path's stored review result already is.
 
 ## Secrets
 

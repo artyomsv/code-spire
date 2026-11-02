@@ -418,7 +418,12 @@ never mounts it, not even read-only: it holds the push credential, and the files
 finding) that only the agent was told to read. `RunUnitSpec` refuses any other wiring, so no arm can grant what Docker
 refuses. The files are never an environment variable, which `docker inspect` prints and Linux caps at 128 KiB. A
 review with no inputs still gets the volume, empty. The runtime bounds the files at 1 MiB in total, above the
-contract's 224 KiB.
+contract's 224 KiB. Only the Docker arm copies them today.
+
+The run worker only runs a review. The review worker prepares the inputs before the run (`PrepareHarnessReview`, answered
+by `HarnessReviewPrepared`) and parses the answer after it (`FinishHarnessReview`, answered by
+`HarnessReviewGenerated`), both on `cs.commands` and `cs.results`, so the review's outcome is applied on its ordered
+consumer. The run worker's `RunReviewArtifact` reaches the orchestrator on `cs.run-results` as before.
 
 A supersede cancels the live review runs of the review round it ended (rounds, not commits: a forced re-run keeps the
 head), and a closed pull request cancels every live review run, with `CancelRun`. A run still being funded has no row

@@ -122,8 +122,13 @@ review-run port and no further: no draft inbox, no work-run inbox, no pull reque
 (`HarnessReviewResults`) turns a `REVIEW` run's answer of the review's current round into a `ReviewGenerated` (parsed by
 `FindingsParser`; an over-cap answer is a degraded review) and a `RunFailed` into a `ReviewFailed` (retry budget 1,
 never `credentialRejected`), and hands either to `ResultSaga.acceptHarnessOutcome`, which takes the existing outcome
-path behind the stale-run guard without charging again. An ended round's result is dropped, and `RECONCILE` and
-`FOLLOWUP` results are only logged until steps 6 and 7. A supersede ends a review
+path behind the stale-run guard without charging again. An ended round's result is dropped, and `FOLLOWUP` results
+are only logged until step 7. Since step 6 a `REVIEW` or `RECONCILE` answer is not parsed in the orchestrator: the port
+sends it to the review worker as `FinishHarnessReview` (null text for an over-cap answer), the worker answers
+`HarnessReviewGenerated` on `cs.results`, and `HarnessReviewResults.acceptGenerated` applies it under the review's round
+lock as a `ReviewGenerated` with no `reconcileUsage`. The run's start passes through the worker too: `ContextAssembled` sends
+`PrepareHarnessReview`, and the worker's `HarnessReviewPrepared` is dispatched by `HarnessReviewLaunch` with its
+`inputs`. A `RunFailed` still becomes a `ReviewFailed` from `cs.run-results`. A supersede ends a review
 round, not a commit (a forced re-run keeps the commit): `ReviewSuperseded` cancels the live review runs of the round it
 ended, counted from the review's stream at the supersede's position, and a closed pull request cancels every live review
 run, both with `CancelRun` on `cs.run-control`, never `CancelReview` (ADR-013). The row is admitted under an advisory
@@ -633,7 +638,7 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
-| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
+| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared` and `HarnessReviewGenerated`, which carry a harness review's inputs and parsed answer). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
 Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and

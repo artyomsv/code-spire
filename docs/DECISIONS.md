@@ -7,9 +7,9 @@ Architecture decision records for Code Spire. Newest first.
 ## ADR-050 — Reviews may run on a harness, on the run-worker's own lane
 
 **Status:** step 4 of harness reviews, the plumbing, merged to master with PR #367, 2026-11-01. Step 5, first
-reviews (the "Step 5" part below), is built on `feat/harness-reviews-5-first-reviews` (PR #368) and dispatches the
-first review runs; its live proof was made on 2026-11-01 (docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md), and
-what it did not reach is proven by tests only (docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+reviews (the "Step 5" part below), merged to master with PR #368 on 2026-11-02; its live proof was made on 2026-11-01 (docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md), and
+what it did not reach is proven by tests only (docs/UNVERIFIED.md). Step 6, re-reviews (the "Step 6" part below), is
+built on `feat/harness-reviews-6-re-reviews` (PR #370); its live proof is pending. Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
@@ -121,6 +121,60 @@ review behind an hour-long build would wait an hour.
   that flag marks the reviewer's forge account, and a refused seat is marked by the run plane's credential feedback.
 - **The review page links its run.** A review run's row carries its `review_id`; the review page shows the harness
   run with its status, and run detail names the review kinds in words.
+
+**Step 6: re-reviews on a harness** ([step 6 plan](superpowers/plans/2026-11-02-harness-reviews-6-re-reviews.md),
+"Changes after the plan check" included).
+- **Every review of a harness repository runs on it.** `HarnessReviewStart` no longer sends a re-review to the API: a
+  repository whose "Review with" names a harness has no API path for reviews any more, first or later. A re-review
+  whose prior run has open findings is one `RECONCILE` run; one with no open findings is a `REVIEW` run, as the API
+  path skips reconcile then, so an empty reconcile is never charged. Replies (`FOLLOWUP`) stay on the API until step 7.
+- **The review worker prepares and finishes; the run worker runs.** On `ContextAssembled` the saga sends
+  `PrepareHarnessReview` (the review's round, its kind, the prior run read once from the projection, and the
+  reviewer's packed forge credential; with no credential the review is refused as `reviewer_credential_unavailable`
+  with attention). `HarnessReviewWorker` reads the pull request (abandoning a head that moved), loads the assembled
+  context and answers `HarnessReviewPrepared` with the run's inputs. `HarnessReviewLaunch` then checks the round,
+  composes the prompt and dispatches the run with those inputs: a round that ended meanwhile, or an admission that
+  answers `review_run_cancelled`, is dropped, never refused, and a repository switched off its harness is refused as
+  `review_harness_removed`. The run's answer is sent back to the worker as `FinishHarnessReview`, which parses it with
+  `FindingsParser` and `VerdictsParser` (one JSON object carries `summary`, `findings` and `verdicts`) and answers
+  `HarnessReviewGenerated`. The API path and the harness path share `ReconcileSteps`: the compare, the rename remap,
+  the thread transcripts, the verdict backstop that downgrades a finding the change never touched, and the
+  anchor-collision filter.
+- **The inputs are read-only files at `/inputs`.** `context.md` holds the pull request's title and description, the
+  linked issues, documents and rules, and the definitions of the symbols the change touches; a re-review adds
+  `prior-findings.md`, the prior open findings numbered from 1 with their threads and the `git diff <prior head> HEAD`
+  the agent runs itself (no diff is carried, ADR-011). Each file is fenced as untrusted data and cut at its cap with a
+  marker (128 KiB and 96 KiB; the contract caps the set at 224 KiB). The files ride `ExecuteReviewRun.inputs`; the
+  Docker runtime copies them as a tar (`0444`, owned by root) into the created init container, whose mount of the
+  `inputs` volume is the only writable one. The agent mounts it read-only, the publisher not at all, and `RunUnitSpec`
+  refuses any other wiring. They never travel as an environment variable. First reviews get `context.md` too, so a
+  harness review now sees the linked issues that step 5's agent never saw.
+- **The numbering is stored.** The prepare remaps the prior findings through the compare's renames, numbers them and
+  stores that list in `comment_idempotency` under `harness:prepare#<round>` before rendering it; a redelivered prepare
+  reads it back. The finish judges the answer's verdict ids against that stored list, never a recomputed one (a
+  `/finding` filed mid-run would shift positions), and fetches the compare again only for the backstop. With no stored
+  numbering no verdict is read. The finish stores its outcome under `harness:finish#<round>` before it emits, so a
+  redelivered finish re-emits the first outcome. `PostComments`' recovery skips every `harness:` claim.
+- **Both system texts.** A re-review's prompt is the REVIEW system text, then the RECONCILE system text, the step 5
+  preamble with two more rules (judge every prior finding by its number; never report one again as new), the locked
+  review suffix, and a third member of the answer object, one verdict per prior finding. The agent still gives no
+  review verdict.
+- **The outcome is applied on the review's ordered consumer, under the round lock.** `HarnessReviewGenerated` arrives
+  on `cs.results`, keyed by review, with the review's other worker results; `HarnessReviewResults.acceptGenerated`
+  checks the round under `ReviewRoundLock` and hands `ResultSaga.acceptHarnessOutcome` a `ReviewGenerated` with no
+  `reconcileUsage`, so the saga charges nothing. A run failure still takes step 5's path, applied from
+  `cs.run-results`.
+- **Failures.** A prepare failure is a `ReviewFailed` with the worker's retry classification. A finish failure the
+  worker classifies as transient (an `IllegalStateException` caused by an `SQLException` among them) propagates, so
+  `FinishHarnessReview` dead-letters with its paid answer and a replay finishes it at no cost; a permanent one fails
+  the review terminally (`harness-finish`), since a retry would meet the same run id and never be answered.
+- **Charged once, as `RECONCILE`.** `ReviewRunCharges` charges the run under the review's call slot with the run's
+  kind, so a harness re-review records one `RECONCILE` call and no `REVIEW` call for its round, where the API path
+  records both. Anything that counts reviews by `ChargeKind.REVIEW` reads one fewer per harness re-review. Read on
+  this branch, nothing does: `AnalyticsQueries` reads `review_finding` and `review_status`, never `llm_charge`; the
+  spend caps (`SpendWindow`), the review list's cost and unpriced-call count, and the cost attention rows filter on
+  `subject_kind`, never the call kind. Only the review page's cost card names the kind, so a harness re-review shows
+  one "Reconcile" call.
 
 ---
 

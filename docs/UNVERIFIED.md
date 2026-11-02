@@ -76,6 +76,55 @@ whose egress proxy log shows the upstream used.
 
 ---
 
+## Re-reviews on a harness (harness reviews step 6, PR #370, 2026-11-02)
+
+**The claim.** On a repository that reviews with a harness, every review runs on it: a re-review with open prior
+findings is one `RECONCILE` run that judges each numbered prior finding and reports new ones, and every review's agent
+reads `/inputs/context.md` (the pull request's title and description, linked issues and documents, rules and symbol
+definitions). The review worker prepares the inputs and finishes the answer with the API path's own parsers and
+reconcile backstops; the outcome is applied on the review's ordered consumer under the round lock, charged once as
+`RECONCILE` (ADR-050, step 6).
+
+**What is proven, and how.** By unit tests over fakes only: the start, prepare, launch, finish and apply halves
+(`HarnessReviewStartTest`, `HarnessReviewWorkerTest`, `HarnessReviewLaunchTest`, `HarnessReviewResultsTest`,
+`HarnessReviewOutcomesTest`, `ResultSagaHarnessRunTest`, `ReconcileStepsTest`), the input files and their caps
+(`HarnessReviewInputFilesTest`), the prompt (`HarnessReviewPromptTest`), the unit's wiring (`RuntimeSpiTest`,
+`RunUnitBuilderReviewTest`) and the wire messages (`HarnessReviewMessagesTest`, `ExecuteReviewRunTest`). The Docker
+copy-in is proven against a real daemon by `DockerRunRuntimeIT` only: the agent reads the file and cannot write it,
+and the publisher cannot see it. **No step 6 run has been made on a live stack**; the live proof (a first review that
+cites a requirement found only in its linked issue, a re-review that resolves one finding, leaves one unchanged and
+reports one new, and a rename that keeps the open finding) is pending (plan Task 8, steps 2 to 6).
+
+**Why nothing catches the rest.**
+- **Paths the planned live proof will not reach.** The compare fallback (a rewritten prior head) live; a `/finding`
+  filed while the run works; an over-cap re-review; a finish with no stored numbering (its verdicts are not read); a
+  cut `prior-findings.md` (the tail's findings carry no verdict). Each is proven against fakes, or not at all.
+- **Only the Docker arm copies inputs.** Another runtime arm would have to copy them into its init container too;
+  `RunUnitSpec` checks the wiring, not that an arm wrote anything.
+- **The context text rests in plain text in two places.** `HarnessReviewPrepared` (on `cs.results`) and
+  `ExecuteReviewRun` (on `cs.review-runs`) carry the context text (issue bodies, Confluence pages) that the blob store
+  keeps encrypted, and `FinishHarnessReview` (on `cs.commands`) carries the agent's answer. On the bus that is
+  ADR-014's posture. A dead-lettered copy, though, lands in `dlq_entry.payload` as plain text, in the orchestrator's
+  Postgres, until it is discarded. No mechanism in this step (docs/SECURITY.md, encryption at rest). The stored
+  numbering and the finish's outcome sit in `comment_idempotency` in plain text, as the API path's stored review
+  result already does.
+- **Redelivery funds twice.** A redelivered `HarnessReviewPrepared`, or a redelivered `ContextAssembled` (which now
+  sends a second `PrepareHarnessReview`, answered from the stored numbering), funds the run again before admission
+  answers `AlreadyQueued`, so a seat token can be handed over for nothing. Step 5's note, unchanged; no test drives it.
+- **A transient finish fault waits for an operator.** It dead-letters `FinishHarnessReview` with the paid answer, and
+  the review stays `reviewing` and is expected to show as `REVIEW_STUCK` until the record is replayed from
+  Settings → Dead-letter, which finishes it at no cost. `HarnessReviewWorkerTest` proves the propagation; the replay
+  and the attention row are not driven by a test.
+- **A push on `cs.integration` is still not fenced.** The answer now has the API answer's windows and no others (the
+  step 5 entry below): `IntegrationSaga` appends a push's new round without the round lock.
+
+**What evidence would settle it.** The step 6 live proof on `spire-test`, recorded in
+`docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md`: one `REVIEW` run whose `/inputs/context.md` holds the linked issue,
+one `RECONCILE` run with exactly one charge set under `…|RECONCILE` and none under `…|REVIEW`, the verdict per prior
+finding as expected, egress `chatgpt.com` only. Then a replayed `FinishHarnessReview` on a live stack.
+
+---
+
 ## First reviews on a harness (harness reviews step 5, 2026-11-01)
 
 **The claim.** A repository whose "Review with" names a harness has the first review of each same-repository pull
@@ -132,10 +181,13 @@ refused with `codex: subscription_unavailable` and its attention row, with no ru
   canary on one codex-cli version, not a guarantee that a later version keeps the key's meaning. The agent can
   still `cat` the head's `AGENTS.md` as a file of the change; the prompt says such files are the
   change under review, not instructions.
-- **The answer is posted off the review's ordered consumer.** A review's worker results arrive on `cs.results`, keyed
-  and ordered per review; a harness answer arrives on `cs.run-results`, keyed by run id, and `HarnessReviewResults`
-  hands it to `ResultSaga.acceptHarnessOutcome` from there. So a push, a re-run or a close for the same review may be
-  processed at the same moment as the answer.
+- **The answer was posted off the review's ordered consumer; since step 6 only a run failure is.** A review's worker
+  results arrive on `cs.results`, keyed and ordered per review. Since step 6 a harness answer goes to the review
+  worker as `FinishHarnessReview` and comes back as `HarnessReviewGenerated` on `cs.results`, ordered with the review's
+  other worker results and applied under the round lock, so it has the API answer's windows and no others: a push on
+  `cs.integration` is still not fenced, as for the API. A run FAILURE still arrives on `cs.run-results`, keyed by run
+  id, and `HarnessReviewResults` hands it to `ResultSaga.acceptHarnessOutcome` from there, so a push, a re-run or a
+  close for the same review may be processed at the same moment as it. The items below describe that path.
   - **A forced re-run on the same head is fenced** (review of PR #368, code-quality/H-1). `ReviewRerunService` appends
     the next round and replaces the run token under the review's `ReviewRoundLock`, and `HarnessReviewResults` reads
     the round and takes every effect of the answer under the same lock, so round 1's answer is never applied as round
