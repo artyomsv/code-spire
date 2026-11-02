@@ -44,7 +44,7 @@ public class RunAttentionRows {
             SELECT run_id, blocked_changes, ended_at FROM factory_run
              WHERE status = 'push_gate_refused'
                AND (attention_ack_at IS NULL OR ended_at > attention_ack_at)
-             ORDER BY ended_at DESC
+             ORDER BY ended_at DESC NULLS LAST, run_id
             """ + " LIMIT " + (MAX_ROWS + 1);
 
     static final String UNCERTAIN_CODE = "RUN_DISPATCH_UNCERTAIN";
@@ -60,7 +60,7 @@ public class RunAttentionRows {
     private static final String UNCERTAIN_SQL = """
             SELECT run_id, COALESCE(ended_at, started_at) AS since FROM factory_run
              WHERE status = 'dispatch_uncertain'
-             ORDER BY started_at DESC
+             ORDER BY since DESC NULLS LAST, run_id
             """ + " LIMIT " + (MAX_ROWS + 1);
 
     static final String POOL_CODE = "HARNESS_POOL_EXHAUSTED";

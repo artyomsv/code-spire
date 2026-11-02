@@ -318,7 +318,7 @@ public class AttentionQueries {
                    AND archived_at IS NULL
                    AND updated_at < now() - make_interval(mins => ?)
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at
+                 ORDER BY updated_at DESC, review_id
                 """, stuckMinutes, "REVIEW_STUCK",
                 "This review has not progressed for over " + stuckMinutes
                         + " minutes — a webhook delivery path or a worker may be down.",
@@ -329,7 +329,7 @@ public class AttentionQueries {
                  WHERE lower(status) = 'failed'
                    AND archived_at IS NULL
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at DESC
+                 ORDER BY updated_at DESC, review_id
                 """, null, "REVIEW_FAILED",
                 "This review failed. Open it for the reason, then re-run it or dismiss this.",
                 "review(s) failed"));
@@ -357,7 +357,7 @@ public class AttentionQueries {
                    AND lower(status) = 'completed'
                    AND archived_at IS NULL
                    AND (attention_ack_at IS NULL OR updated_at > attention_ack_at)
-                 ORDER BY updated_at DESC
+                 ORDER BY updated_at DESC, review_id
                 """, null, "REVIEW_DEGRADED",
                 "This review was charged but did not produce a usable result: the model's response "
                         + "was unparseable or cut off at its output limit. Re-run it, and if it "
@@ -374,6 +374,9 @@ public class AttentionQueries {
      * comparison that reported every completed review as stalled — so the guard is now a cap rather
      * than an unconditional collapse: past {@link #MAX_REVIEW_ROWS} the remainder becomes a single
      * summary row, which keeps a systemic outage from burying the configuration blockers above it.
+     *
+     * <p>The SQL must select newest first, with a unique tie-break: the cap keeps the first rows read, and the bell is
+     * newest first, so a query read oldest first hides the newest review in the remainder.
      *
      * @param minutes bound for the stuck query's interval, or null when the SQL takes no parameter
      */

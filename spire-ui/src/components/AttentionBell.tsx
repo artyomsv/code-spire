@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { Bell, CircleAlert, TriangleAlert } from 'lucide-react';
 import { useAttention } from '../hooks/useAttention';
+import { useClockTick } from '../hooks/useClockTick';
 import { dismissAttention } from '../api';
 import { formatEventTime } from '../format';
 import { ago } from '../render';
@@ -47,6 +48,8 @@ function actionLabel(action: string): string {
 export default function AttentionBell() {
   const { items } = useAttention();
   const [open, setOpen] = useState(false);
+  // The feeds push only when the condition list changes, so on an idle dashboard nothing else re-renders a row's age.
+  useClockTick(open);
 
   /**
    * No local removal and no refetch: acknowledging is a server-side state change, and the server
