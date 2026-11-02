@@ -9,7 +9,7 @@ import { renderWithQuery } from '../../test/queryWrapper';
 
 const repository: Repository = {
   id: 'TEST-repository', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'service', enabled: true, revision: 1, reviewerMayApprove: true, reviewLlmProviderId: null,
+  slug: 'service', enabled: true, revision: 1, reviewerMayApprove: true, reviewLlmProviderId: null, reviewHarness: null,
   reviewer: { id: 'TEST-reviewer', name: 'Review account', role: 'REVIEWER', handle: 'review-bot', state: 'ok' },
   factory: { id: 'TEST-factory', name: 'Push account', role: 'FACTORY', handle: 'push-bot', state: 'disabled' },
 };

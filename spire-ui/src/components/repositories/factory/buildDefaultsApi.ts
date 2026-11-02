@@ -24,6 +24,8 @@ export interface BuildDefaults {
   updatedAt: string | null;
 }
 export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
+/** How a run pays, in the words the build setup and the review setting show. */
+export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
 /** `composed` copies the ticket as one step; `generated` writes a specification and plan with the build model. */
 export type Preparation = 'composed' | 'generated';
 

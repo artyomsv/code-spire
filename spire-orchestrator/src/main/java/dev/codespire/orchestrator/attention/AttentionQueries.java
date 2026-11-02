@@ -86,6 +86,7 @@ public class AttentionQueries {
             repositoryLlmProviderRows(c, rows);
             reviewRows(c, rows);
             degradedReviewRows(c, rows);
+            HarnessRefusalAttentionRows.collect(c, rows);
             runRows.collect(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);

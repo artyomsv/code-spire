@@ -274,6 +274,14 @@ class SpendCapGateTest {
         };
         saga.capPolicy = capPolicy;
         saga.spendGate = spendGate;
+        // Harness reviews, step 5: the harness decision runs before the gate under test. These repositories review
+        // on the API, so it answers NotHarness rather than reading a registry this suite does not seed.
+        saga.harnessStart = new dev.codespire.orchestrator.review.run.HarnessReviewStart() {
+            @Override
+            public Decision start(ContextAssembled event) {
+                return new NotHarness();
+            }
+        };
         return saga;
     }
 }

@@ -72,8 +72,13 @@ public class ReviewRunDispatch {
     public record Refused(String reason) implements Outcome {
     }
 
-    /** What the dispatch read before it funds anything: a refusal here costs nothing. */
-    private record Target(RepoRef repo, ScmType type, String sourceBranch, ScmProvider reviewer) {
+    /**
+     * What the dispatch read before it funds anything: a refusal here costs nothing.
+     *
+     * @param targetBranch the pull request's destination branch, which the run's init keeps under refs/spire-base for
+     *                     the agent to diff against (step 5)
+     */
+    private record Target(RepoRef repo, ScmType type, String sourceBranch, String targetBranch, ScmProvider reviewer) {
     }
 
     public Outcome dispatch(ReviewRunRequest request) {
@@ -108,15 +113,19 @@ public class ReviewRunDispatch {
     }
 
     /**
-     * The pull request as the review row recorded it and the reviewer account, or empty when either is missing or
-     * the reviewer has no login a clone credential could carry.
+     * The pull request as the review row recorded it and the reviewer account, or empty when either is missing, the
+     * row names no target branch (the agent would have nothing to diff against), or the reviewer has no login a clone
+     * credential could carry.
      */
     private Optional<Target> target(ReviewRunRequest request) {
-        return targets.forReview(request.binding().reviewId()).flatMap(found -> accounts
-                .resolve(request.repositoryId(), ProviderRole.REVIEWER)
-                .filter(account -> login(account) != null)
-                .flatMap(reviewer -> ScmType.fromProviderType(found.providerType()).map(type -> new Target(
-                        new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(), reviewer))));
+        return targets.forReview(request.binding().reviewId())
+                .filter(found -> found.destBranch() != null && !found.destBranch().isBlank())
+                .flatMap(found -> accounts
+                        .resolve(request.repositoryId(), ProviderRole.REVIEWER)
+                        .filter(account -> login(account) != null)
+                        .flatMap(reviewer -> ScmType.fromProviderType(found.providerType()).map(type -> new Target(
+                                new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(),
+                                found.destBranch(), reviewer))));
     }
 
     private RunCommand.ExecuteReviewRun command(String runId, ReviewRunRequest request, Target target,
@@ -129,7 +138,8 @@ public class ReviewRunDispatch {
                 binding.commit(), target.sourceBranch(), request.prompt(), choice.harness(), choice.model(),
                 funded.image(), List.of(), config.reviewWallClockSeconds(),
                 credentials.packScm(runId, login(reviewer), reviewer.secret()),
-                credentials.packHarness(runId, funded.handedOver())).atEffort(choice.effort());
+                credentials.packHarness(runId, funded.handedOver()), false, target.targetBranch())
+                .atEffort(choice.effort());
         return new RunCommand.ExecuteReviewRun(runId, choice.subscription() ? execution.paidBySignIn() : execution, binding);
     }
 

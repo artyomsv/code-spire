@@ -165,14 +165,32 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   M4's exit criterion (three verified steps on one chain, step 1's decision in step 3's prompt), and #77
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
 
-- **Harness reviews, step 4: the review-run plumbing** (PR #367, ADR-050, design
-  docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review may run as a read-only factory run of kind
-  `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane, `cs.review-runs` (offset `earliest`, its own
-  pool, `SPIRE_RUN_REVIEW_CONCURRENCY` runs per run-worker instance), so it never waits behind a build. Its answer,
-  `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts; one over the cap is still charged. It is charged once under the
-  review's call slot, never as a run; its wall clock (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`) may not exceed a build's;
-  a supersede cancels its review round's runs (rounds, not commits, so a forced re-run on the same head is admitted)
-  and a closed pull request cancels all of them, a dispatch in flight included (V108, one advisory lock per review). **Nothing dispatches a review run until step 5.** The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+- **Harness reviews, steps 4 and 5: review runs and first reviews** (step 4 on master with PR #367; step 5 on PR
+  #368, live-proven 2026-11-01 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md, not merged; ADR-050, design
+  docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
+  may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
+  `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
+  behind a build. Its answer, `RunReviewArtifact`, is up to 256 KiB in 8 KiB parts (`SPIRE_ARTIFACT_MAX_BYTES` reaches
+  the agent and the publisher); one over the cap is a charged, degraded review. It is charged once under the review's
+  call slot, never as a run; a supersede cancels its round's runs and a closed pull request all of them, a dispatch in
+  flight included (V108). Step 5: a repository's "Review with" names an API provider or a harness, never both (V109),
+  and on a harness the FIRST review of a same-repository pull request dispatches a `REVIEW` run. Re-reviews stay on
+  the API until step 6. A fork, an unknown fork status or a refused dispatch is `refused` with a
+  `REVIEW_HARNESS_REFUSED` attention row, never sent to the API. The prompt is the repository's REVIEW system text, a
+  preamble and the locked review suffix; init keeps the target branch as `refs/spire-base/<target>`, the agent diffs
+  against it and reads the rules from it, and gets no assembled context yet (step 6). The answer takes `ResultSaga`'s
+  outcome path (findings, verdict, posting) without a second charge; a failed run is not retried. A start whose request
+  cannot be composed is refused with `harness_review_start_failed` and an attention row; a dispatch that throws is not
+  refused, since its command may already be on the broker: the start message dead-letters and the review stays
+  `reviewing` for the run's answer (one that threw before publishing shows as `REVIEW_STUCK` and a dead-letter row,
+  `de7a905f`). The review page links its run. Live on
+  `spire-test` (Codex `gpt-6-astra`): #93 on a seat was held with 4 inline findings citing the target branch's
+  `.codespire`, at cost 0, calling `chatgpt.com` only, and ignored a canary `AGENTS.override.md`; #94 on an API key
+  was approved with 1 MAJOR finding at 69,110 millicents, calling `api.openai.com` only; #95 with the seat off was
+  refused with `codex: subscription_unavailable` and an attention row. The proof fixed a first review that never
+  started without a customised review prompt. Open: a stuck `reviewing` review has no dashboard Re-run, a forced
+  re-run reads `superseded` while its run works, and fork refusal is not live (docs/UNVERIFIED.md, the step 5
+  entry). The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

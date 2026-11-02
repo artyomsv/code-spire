@@ -24,7 +24,7 @@ have passes, and the first thing that notices is a run that has already been pai
 
 ## The run-time interface
 
-These are the five variables a run sets and the three your entrypoint exports, and the handoff clauses below are only passable
+These are the six variables a run sets and the three your entrypoint exports, and the handoff clauses below are only passable
 by an image that honours them. An earlier version of this page listed the clauses and not the
 interface — so an image written from the contract ALONE failed three of them with nothing here
 to explain why. A contract that is not sufficient to build against is not doing its job.
@@ -37,7 +37,8 @@ to explain why. A contract that is not sufficient to build against is not doing 
 | `SPIRE_BASE_COMMIT` | The commit the workspace starts at. **Required** — a bundle is `$SPIRE_BASE_COMMIT..HEAD` and there is no safe guess, so the reference entrypoint refuses to start without it. |
 | `SPIRE_AUTOSAVE_SECONDS` | How often to checkpoint while the harness runs. A default is fine. |
 | `SPIRE_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace that the harness may write one line to: what it changed, in its own words. Your final checkpoint uses that line as its commit message; a mid-run one must not, because nothing has been summarised yet. Absent or blank falls back to a generic message. |
-| `SPIRE_ARTIFACT` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a specification or plan run writes its result. After the final checkpoint and before `DONE`, your entrypoint copies it, if it exists, to `$SPIRE_HANDOFF/artifact.md`. Capped at 32 KiB. Control characters other than newline and tab are dropped; text that still passes one 64 Ki-character outcome line once JSON-escaped is refused as `TOO_LARGE`. |
+| `SPIRE_ARTIFACT` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a specification or plan run writes its result. After the final checkpoint and before `DONE`, your entrypoint copies it, if it exists, to `$SPIRE_HANDOFF/artifact.md`. Capped at 32 KiB, or at `SPIRE_ARTIFACT_MAX_BYTES` when a run sets it. Control characters other than newline and tab are dropped; text that still passes one 64 Ki-character outcome line once JSON-escaped is refused as `TOO_LARGE`. |
+| `SPIRE_ARTIFACT_MAX_BYTES` | The artifact's cap in bytes, set only on a review run (262144, `RunReviewArtifact.MAX_TEXT_BYTES`): a review's answer may be larger than a draft's. Your entrypoint copies at most one byte past it, so an oversize stays detectable. Unset means 32768; the reference entrypoint also keeps 32768, with one line on stderr, for a value that is not a positive integer. |
 | `SPIRE_STEP_SUMMARY` | **Exported by your entrypoint, not given to it.** A path OUTSIDE the workspace where a plan step writes its decisions as one JSON object, `{"decisions": [...], "alternativesRejected": [...], "deviations": [...]}`, each a list of strings. Copied, if it exists, to `$SPIRE_HANDOFF/step-summary.json` before `DONE`, like the artifact. Capped at 8 KiB; the run worker keeps at most 20 items of 500 characters per list. |
 
 Every plan step's prompt names `SPIRE_STEP_SUMMARY`, gives that shape and those limits, and asks for the file also

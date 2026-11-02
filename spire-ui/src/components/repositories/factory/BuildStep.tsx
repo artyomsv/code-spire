@@ -6,7 +6,7 @@ import { writeLive } from '../../../liveCache';
 import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
-import { buildDefaultsKey, buildOptions, buildOptionsKey, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
+import { PAY_WITH_LABEL, buildDefaultsKey, buildOptions, buildOptionsKey, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -33,8 +33,6 @@ interface Choices {
 }
 const NO_CHOICES: Choices = { harnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] };
 
-/** How a build pays, in the words the setup shows. */
-const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
 /** How the specification and plan are made (M4 slice 3, §6.1). */
 const PREPARATION_LABEL: Record<Preparation, string> = { composed: 'Copy the ticket as one step', generated: 'Write them with the build model' };
 /** The verify limit a setup takes when none was saved; the server bounds it by the deployment's wall clock. */

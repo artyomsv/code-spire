@@ -76,7 +76,8 @@ public sealed interface RunCommand {
      *     as a push target in every mode. A name rather than a rule, because the publisher holds
      *     a write credential and under ADR-039 may make no API call to discover it — and a
      *     deployment whose trunk is {@code develop} is covered by no convention list it could
-     *     hold. Empty when the run is not pushing to an existing branch.
+     *     hold. Empty when the run is not pushing to an existing branch, except on a harness review run, which
+     *     pushes nothing and names its pull request's target branch so init keeps it under refs/spire-base.
      */
     record ExecuteRun(String runId, RepoRef repo, String remoteUri,
                       String baseBranch, String baseCommit, String branch,

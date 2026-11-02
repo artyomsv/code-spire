@@ -136,12 +136,28 @@ public class RunUnitBuilder {
 
     /**
      * A harness review run's unit (harness reviews, step 4): the read-only topology, with the review answer's artifact
-     * cap handed to the publisher.
+     * cap handed to the publisher and to the agent's entrypoint, which would otherwise cut the answer at its own 32 KiB
+     * (step 5). Init keeps the pull request's target branch under refs/spire-base, as a land fix's init does, so the
+     * agent can diff the change against it; the agent itself is given no remote.
      */
     public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter adapter) {
-        RunUnitSpec unit = build(review.execution(), adapter, Topology.READ_ONLY);
-        return unit.withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
-                dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
+        RunUnitSpec unit = build(review.execution(), adapter, Topology.REVIEW);
+        String cap = Integer.toString(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES);
+        // The dispatch refuses a review with no target branch; a blank one would reach CloneMain, which ignores it.
+        return unit.withInit(withVariable(unit.init(), FETCH_BRANCH, review.execution().protectedBranch()))
+                .withAgent(withVariable(unit.agent(), PublisherEnvironments.ARTIFACT_MAX_BYTES, cap))
+                .withPublisher(PublisherEnvironments.readOnly(unit.publisher(),
+                        dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES));
+    }
+
+    /** The variable a trusted init reads the branch to keep under refs/spire-base from (spire-publisher's CloneMain). */
+    static final String FETCH_BRANCH = "SPIRE_FETCH_BRANCH";
+
+    /** The same container with one more environment variable. */
+    private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
+        Map<String, String> env = new LinkedHashMap<>(container.environment());
+        env.put(name, value);
+        return new ContainerSpec(container.image(), container.argv(), env, container.mounts(), container.entrypoint());
     }
 
     /** Where a retried build's init reads the previous run's handoff. */
@@ -190,15 +206,18 @@ public class RunUnitBuilder {
         // A land fix (M4 slice 7a) builds on the item's own branch and may need to merge the pull request's base.
         // The trusted init keeps that base under refs/spire-base, because removing origin drops every
         // remote-tracking ref. The agent still receives no remote and no credential.
-        Map<String, String> initEnv = new LinkedHashMap<>(unit.init().environment());
-        initEnv.put("SPIRE_FETCH_BRANCH", command.execution().protectedBranch());
-        ContainerSpec init = new ContainerSpec(unit.init().image(), unit.init().argv(), initEnv, unit.init().mounts());
+        ContainerSpec init = withVariable(unit.init(), FETCH_BRANCH, command.execution().protectedBranch());
         return unit.withInit(init).withPublisher(publisher);
     }
 
-    /** Which publisher a unit runs, and so which instruction its agent's prompt ends with. */
+    /**
+     * Which publisher a unit runs, and so which instruction its agent's prompt ends with. A review is read-only like a
+     * draft, and its agent also loads no guidance from the checkout: that is the pull request's head, whose guidance
+     * files are part of the change under review (review of PR #368, security/H-1).
+     */
     private enum Topology {
-        CONTINUOUS("spire-publish"), HELD("spire-publish-held"), READ_ONLY(PublisherEnvironments.READ_ONLY_COMMAND);
+        CONTINUOUS("spire-publish"), HELD("spire-publish-held"), READ_ONLY(PublisherEnvironments.READ_ONLY_COMMAND),
+        REVIEW(PublisherEnvironments.READ_ONLY_COMMAND);
 
         private final String publisherCommand;
 
@@ -207,8 +226,12 @@ public class RunUnitBuilder {
         }
 
         String prompt(String dispatched) {
-            return this == READ_ONLY ? AgentPrompts.withReadOnlyInstruction(dispatched)
+            return this == READ_ONLY || this == REVIEW ? AgentPrompts.withReadOnlyInstruction(dispatched)
                     : AgentPrompts.withCommitInstruction(dispatched);
+        }
+
+        HarnessInvocation.ProjectGuidance guidance() {
+            return this == REVIEW ? HarnessInvocation.ProjectGuidance.IGNORED : HarnessInvocation.ProjectGuidance.LOADED;
         }
     }
 
@@ -242,7 +265,7 @@ public class RunUnitBuilder {
         HarnessInvocation invocation = new HarnessInvocation(command.runId(),
                 topology.prompt(command.prompt()),
                 "/workspace", command.model(), harnessEnv,
-                Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort());
+                Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort(), topology.guidance());
 
         Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
         agentEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());

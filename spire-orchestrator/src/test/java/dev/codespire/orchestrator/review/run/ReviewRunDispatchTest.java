@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +46,7 @@ class ReviewRunDispatchTest {
     private String fundingRefusal;
     private boolean rowAccepted = true;
     private RunLaunch.Outcome launchOutcome = new RunLaunch.Dispatched();
+    private String destBranch = "TEST-main";
 
     private final List<FactoryRunProjection.QueuedRun> rows = new ArrayList<>();
     private final List<RunCommand> reviewLane = new ArrayList<>();
@@ -115,6 +117,31 @@ class ReviewRunDispatchTest {
         assertEquals(new ReviewRunDispatch.Uncertain(ReviewRunIds.of(REPO, ScmType.GITHUB, CALL)), outcome);
     }
 
+    /**
+     * Step 5: the review's execution protects the pull request's target branch, which the run worker's init then
+     * keeps under refs/spire-base for the agent to diff against.
+     */
+    @Test
+    void theDispatchProtectsTheReviewsTargetBranch() {
+        dispatch().dispatch(REQUEST);
+
+        RunCommand.ExecuteReviewRun command = assertInstanceOf(RunCommand.ExecuteReviewRun.class, reviewLane.getFirst());
+        assertEquals("TEST-main", command.execution().protectedBranch());
+        assertFalse(command.execution().pushesToAnExistingBranch(), "a review still pushes nothing");
+    }
+
+    /** With no target branch the agent has nothing to diff against, so nothing is funded or sent. */
+    @Test
+    void aReviewWithNoTargetBranchIsRefused() {
+        destBranch = "";
+
+        ReviewRunDispatch.Outcome outcome = dispatch().dispatch(REQUEST);
+
+        assertEquals(new ReviewRunDispatch.Refused("review_run_target_unavailable"), outcome);
+        assertTrue(rows.isEmpty(), "a refusal writes no row");
+        assertTrue(reviewLane.isEmpty(), "and sends nothing");
+    }
+
     private RunFunding funding() {
         return new RunFunding() {
             @Override
@@ -166,7 +193,7 @@ class ReviewRunDispatchTest {
         return new FixTargets() {
             @Override
             public Optional<PushTarget> forReview(String reviewId) {
-                return Optional.of(new PushTarget("github", "TEST-WS", "TEST-REPO", 7, "TEST-source", "main", HEAD, "OPEN", false));
+                return Optional.of(new PushTarget("github", "TEST-WS", "TEST-REPO", 7, "TEST-source", destBranch, HEAD, "OPEN", false));
             }
         };
     }

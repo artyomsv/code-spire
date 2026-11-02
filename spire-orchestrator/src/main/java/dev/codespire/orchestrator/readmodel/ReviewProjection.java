@@ -304,6 +304,20 @@ public class ReviewProjection {
     }
 
     /**
+     * Why this review's harness run was refused (harness reviews, step 5), or null for none: the attention feed raises
+     * a row for a refused review that carries one.
+     *
+     * <p>No {@code updated_at} bump: the refusal is written beside the status change that bumps it, and the clear at
+     * each new round's start must not count as progress for the stuck-review check.
+     */
+    public void setHarnessRefusal(String reviewId, String reason) {
+        update("UPDATE review_status SET harness_refusal = ? WHERE review_id = ?", ps -> {
+            ps.setString(1, reason);
+            ps.setString(2, reviewId);
+        });
+    }
+
+    /**
      * The operator acknowledged this review's current stuck/failed state, so the attention panel
      * stops raising a row for it. A later failure raises it again, because the panel compares this
      * against {@code updated_at}.

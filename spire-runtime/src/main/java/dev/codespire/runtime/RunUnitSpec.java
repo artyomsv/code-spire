@@ -134,6 +134,12 @@ public record RunUnitSpec(String runId,
                 memoryBytes, nanoCpus, diskBytes, wallClock);
     }
 
+    /** Rebuild with another agent container, enumerating the components once. */
+    public RunUnitSpec withAgent(ContainerSpec container) {
+        return new RunUnitSpec(runId, init, container, publisher, enterprise, egress,
+                memoryBytes, nanoCpus, diskBytes, wallClock);
+    }
+
     /** Rebuild with another publisher, enumerating the components once. */
     public RunUnitSpec withPublisher(ContainerSpec container) {
         return new RunUnitSpec(runId, init, agent, container, enterprise, egress,

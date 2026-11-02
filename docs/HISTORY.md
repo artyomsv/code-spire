@@ -2250,3 +2250,29 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   step and the Revise limit are proven against fakes only; the artifact passes through the run-worker
   host's Docker log. PR #287 merged to master on 2026-10-27. Record:
   [specification, plan and steps acceptance](factory/M4-SPEC-PLAN-ACCEPTANCE.md). Next: M5.
+
+- **Harness reviews step 5: first reviews on a harness (2026-11-01, PR #368; live-proven, not merged).** The earlier
+  steps (the per-repository review LLM provider, the per-run egress proxy, the review-run plumbing) merged with PRs
+  #365 to #367. Step 5 lets a repository's "Review with" name a harness instead of an API provider, never both
+  (V109), and sends the FIRST review of a same-repository pull request to a read-only `REVIEW` run (ADR-050, "Step
+  5"). Init keeps the target branch as `refs/spire-base/<target>`; the agent diffs against it, reads the rules from
+  it, writes a JSON answer to `$SPIRE_ARTIFACT`, and the answer takes `ResultSaga`'s outcome path without a second
+  charge. Re-reviews stay on the API until step 6; a fork, an unknown fork status or a refused dispatch is `refused`
+  with a `REVIEW_HARNESS_REFUSED` attention row and never falls back. The review of PR #368 found that Codex loads
+  `AGENTS.md` from the head, so a change could steer its own review (a review run now passes
+  `-c project_doc_max_bytes=0`), and that a forced re-run on the same head could apply round 1's answer as round 2
+  (the answer is now fenced by its round under the review's advisory lock). The live proof on `spire-test` (Codex
+  `gpt-6-astra`, thinking `high`, report mode) found the worst defect first: with no customised review prompt the
+  harness start passed a null template to the prompt composer, `ContextAssembled` was dead-lettered and #93 sat at
+  `reviewing` with no run and no attention row. The start now uses the default REVIEW prompt and refused any failed
+  start with `harness_review_start_failed` (`939a1277`, CI run 41355894965); review narrowed that to a request that
+  could not be composed (`de7a905f`), since a dispatch may throw after its command reached the broker, so a throwing
+  dispatch dead-letters the start message and leaves the review open for the paid run's answer. Re-run by a `/review` comment, #93 on a
+  seat was held with four inline findings, two citing the target branch's `.codespire`, at cost 0, calling
+  `chatgpt.com` only, and did not follow a canary `AGENTS.override.md` in the head; #94 on an API key was approved
+  with one MAJOR off-by-one finding at 69,110 millicents, calling `api.openai.com` only; #95 with the seat off was
+  refused with `codex: subscription_unavailable` and an attention row, with no run. Left open: the dashboard hides
+  Re-run on a stuck `reviewing` review, a forced re-run reads `superseded` while its run works, #93's dead-lettered
+  message must be discarded, not replayed, and a fork refusal, an over-cap answer and a rejected seat are proven
+  against fakes only. Record: [first reviews on a harness acceptance](factory/HARNESS-REVIEWS-5-ACCEPTANCE.md).
+  Next: step 6, re-reviews and assembled context on a harness.

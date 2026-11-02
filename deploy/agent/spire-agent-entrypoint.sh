@@ -38,8 +38,14 @@ ARTIFACT_FILE="$SCRATCH/artifact.md"
 STEP_SUMMARY_FILE="$SCRATCH/step-summary.json"
 AUTOSAVE_MESSAGE="autosave: work in progress"
 
-# The publisher's caps for the two handoff files (HandoffFiles), in bytes.
-ARTIFACT_MAX_BYTES=32768
+# The publisher's caps for the two handoff files (HandoffFiles), in bytes. A review run's answer may
+# be larger than a draft's, so the run worker passes its cap in $SPIRE_ARTIFACT_MAX_BYTES; unset keeps
+# 32768. A value that is not a positive integer without a leading zero also keeps 32768, said once on
+# stderr: $((max + 1)) below would read a leading zero as octal.
+ARTIFACT_MAX_BYTES="${SPIRE_ARTIFACT_MAX_BYTES:-32768}"
+case "$ARTIFACT_MAX_BYTES" in
+  ''|*[!0-9]*|0*) echo "spire-agent: SPIRE_ARTIFACT_MAX_BYTES is not a positive integer; using 32768" >&2; ARTIFACT_MAX_BYTES=32768 ;;
+esac
 STEP_SUMMARY_MAX_BYTES=8192
 
 # The longest commit SUBJECT taken from the summary, in BYTES. Beyond this git's own tooling starts

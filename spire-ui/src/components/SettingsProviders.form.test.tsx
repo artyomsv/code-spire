@@ -64,7 +64,7 @@ describe('SettingsProviders — provider form', () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
     const repository: repositories.Repository = { id: 'TEST-selected', scmType: 'bitbucket-cloud',
       forgeOrigin: 'https://api.bitbucket.org', workspace: 'TEST-team', slug: 'TEST-project',
-      enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true, reviewLlmProviderId: null };
+      enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true, reviewLlmProviderId: null, reviewHarness: null };
     vi.spyOn(repositories, 'fetchRepositories').mockResolvedValue([repository,
       { ...repository, id: 'TEST-other-origin', forgeOrigin: 'https://other.example.test', slug: 'TEST-other-origin' },
       { ...repository, id: 'TEST-other-kind', scmType: 'github', slug: 'TEST-other-kind' }]);
@@ -83,7 +83,7 @@ describe('SettingsProviders — provider form', () => {
     const create = vi.spyOn(api, 'createProvider').mockResolvedValue(existing);
     vi.spyOn(repositories, 'fetchRepositories').mockResolvedValue([{ id: 'TEST-selected', scmType: 'bitbucket-cloud',
       forgeOrigin: 'https://api.bitbucket.org', workspace: 'TEST-team', slug: 'TEST-project',
-      enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true, reviewLlmProviderId: null }]);
+      enabled: true, revision: 1, reviewer: null, factory: null, reviewerMayApprove: true, reviewLlmProviderId: null, reviewHarness: null }]);
     renderPage();
     const dialog = await openFilledAddForm();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Choose validation repository' }));

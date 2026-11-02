@@ -60,6 +60,8 @@ interface Props {
   effort: string;
   setModel: (model: string) => void;
   setEffort: (effort: string) => void;
+  /** Which setting these fields belong to, for the info controls' names. */
+  scope?: string;
 }
 
 /**
@@ -70,18 +72,18 @@ interface Props {
  * chosen model every time, and it is offered only when the image said which levels exist: there is nothing
  * honest to offer otherwise, and the save refuses a level it cannot check.
  */
-export default function BuildModelFields({ harness, known, choices, model, effort, setModel, setEffort }: Props) {
+export default function BuildModelFields({ harness, known, choices, model, effort, setModel, setEffort, scope = 'build setup' }: Props) {
   const runs = known?.status === 'OK' ? known.offered.find(entry => entry.slug === model) : undefined;
   return <>
     {harness && known && known.status !== 'OK' && <p className="factory-note" role="status">{NO_LIST[known.status]}</p>}
-    <SettingField label="Model" scope="build setup" hint="Required. The model the agent calls. An API-key run also needs a rate for every token type this harness reports, set in Settings → LLM.">
+    <SettingField label="Model" scope={scope} hint="Required. The model the agent calls. An API-key run also needs a rate for every token type this harness reports, set in Settings → LLM.">
       <select aria-label="Model" value={model} onChange={event => { setModel(event.target.value); setEffort(''); }}>
         <option value="">{choices.length ? 'Select a model' : 'No model is available'}</option>
         {choices.map(choice => <option key={choice.value} value={choice.value} disabled={choice.blocked !== null}>
           {choice.label}{choice.blocked ? ` — ${choice.blocked}` : ''}</option>)}
         {model && !choices.some(choice => choice.value === model) && <option value={model}>{model} (not offered here)</option>}
       </select></SettingField>
-    {runs && <SettingField label="Thinking level" scope="build setup" hint="How hard the model thinks. The levels are the ones this model offers; deeper costs more and takes longer.">
+    {runs && <SettingField label="Thinking level" scope={scope} hint="How hard the model thinks. The levels are the ones this model offers; deeper costs more and takes longer.">
       <select aria-label="Thinking level" value={effort} onChange={event => setEffort(event.target.value)}>
         <option value="">Model default ({runs.defaultEffort})</option>
         {runs.efforts.map(level => <option key={level} value={level}>{level}</option>)}
