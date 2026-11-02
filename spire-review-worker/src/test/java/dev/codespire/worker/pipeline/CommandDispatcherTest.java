@@ -60,7 +60,19 @@ class CommandDispatcherTest {
                 record("gatherContext");
             }
         };
-        dispatcher.reviewWorker = new ReviewWorker() {
+        dispatcher.reviewWorker = recordingReviewWorker();
+        dispatcher.followUpWorker = new FollowUpWorker() {
+            @Override
+            public void answer(AnswerFollowUp command) {
+                record("answerFollowUp");
+            }
+        };
+        // Harness reviews, step 6: prepare and finish reach the harness worker, never the API path's.
+        dispatcher.harnessReviewWorker = recordingHarnessReviewWorker();
+    }
+
+    private ReviewWorker recordingReviewWorker() {
+        return new ReviewWorker() {
             @Override
             public void generateReview(GenerateReview command) {
                 record("generateReview");
@@ -71,14 +83,10 @@ class CommandDispatcherTest {
                 record("postComments");
             }
         };
-        dispatcher.followUpWorker = new FollowUpWorker() {
-            @Override
-            public void answer(AnswerFollowUp command) {
-                record("answerFollowUp");
-            }
-        };
-        // Harness reviews, step 6: prepare and finish reach the harness worker, never the API path's.
-        dispatcher.harnessReviewWorker = new HarnessReviewWorker() {
+    }
+
+    private HarnessReviewWorker recordingHarnessReviewWorker() {
+        return new HarnessReviewWorker() {
             @Override
             public void prepare(PrepareHarnessReview command) {
                 record("prepareHarnessReview");

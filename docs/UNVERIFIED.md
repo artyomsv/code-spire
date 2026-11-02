@@ -86,11 +86,12 @@ reconcile backstops; the outcome is applied on the review's ordered consumer und
 `RECONCILE` (ADR-050, step 6).
 
 **What is proven, and how.** By unit tests over fakes only: the start, prepare, launch, finish and apply halves
-(`HarnessReviewStartTest`, `HarnessReviewWorkerTest`, `HarnessReviewLaunchTest`, `HarnessReviewResultsTest`,
-`HarnessReviewOutcomesTest`, `ResultSagaHarnessRunTest`, `ReconcileStepsTest`), the input files and their caps
-(`HarnessReviewInputFilesTest`), the prompt (`HarnessReviewPromptTest`), the unit's wiring (`RuntimeSpiTest`,
-`RunUnitBuilderReviewTest`) and the wire messages (`HarnessReviewMessagesTest`, `ExecuteReviewRunTest`). The Docker
-copy-in is proven against a real daemon by `DockerRunRuntimeIT` only: the agent reads the file and cannot write it,
+(`HarnessReviewStartTest`, `HarnessReviewWorkerPrepareTest`, `HarnessReviewWorkerFinishTest`, `HarnessReviewLaunchTest`,
+`HarnessReviewResultsTest`, `HarnessReviewOutcomesTest`, `ResultSagaHarnessRunTest`, `ReconcileStepsTest`), the input
+files and their caps (`HarnessReviewInputFilesTest`), the prompt (`HarnessReviewPromptTest`), the unit's wiring
+(`RunUnitSpecInputsTest`, `RunUnitBuilderReviewTest`) and the wire messages (`HarnessReviewMessagesTest`,
+`ExecuteReviewRunTest`). The Docker copy-in is proven against a real daemon by `DockerRunRuntimeIT` only: the agent
+reads the file and cannot write it,
 and the publisher cannot see it. **No step 6 run has been made on a live stack**; the live proof (a first review that
 cites a requirement found only in its linked issue, a re-review that resolves one finding, leaves one unchanged and
 reports one new, and a rename that keeps the open finding) is pending (plan Task 8, steps 2 to 6).
@@ -113,7 +114,7 @@ reports one new, and a rename that keeps the open finding) is pending (plan Task
   answers `AlreadyQueued`, so a seat token can be handed over for nothing. Step 5's note, unchanged; no test drives it.
 - **A transient finish fault waits for an operator.** It dead-letters `FinishHarnessReview` with the paid answer, and
   the review stays `reviewing` and is expected to show as `REVIEW_STUCK` until the record is replayed from
-  Settings → Dead-letter, which finishes it at no cost. `HarnessReviewWorkerTest` proves the propagation; the replay
+  Settings → Dead-letter, which finishes it at no cost. `HarnessReviewWorkerFinishTest` proves the propagation; the replay
   and the attention row are not driven by a test.
 - **A push on `cs.integration` is still not fenced.** The answer now has the API answer's windows and no others (the
   step 5 entry below): `IntegrationSaga` appends a push's new round without the round lock.

@@ -44,37 +44,40 @@ class ReconcileStepsTest {
             + "--- a/src/A.java\n+++ b/src/A.java\n@@ -2,3 +2,3 @@\n line2\n-old3\n+new3\n line4\n";
 
     private static DiffSource comparing(String compare, RuntimeException failure) {
-        return new DiffSource() {
-            @Override
-            public ScmType type() {
-                return ScmType.GITHUB;
-            }
+        return new ComparingDiff(compare, failure);
+    }
 
-            @Override
-            public String apiHost() {
-                return "TEST-reconcile.example.invalid";
-            }
+    /** Answers only the compare, from the prior head to the head under review; every other read is a defect. */
+    private record ComparingDiff(String compare, RuntimeException failure) implements DiffSource {
+        @Override
+        public ScmType type() {
+            return ScmType.GITHUB;
+        }
 
-            @Override
-            public PullRequest fetchPullRequest(RepoRef repo, long prId) {
-                throw new AssertionError("a reconcile step never reads the pull request");
-            }
+        @Override
+        public String apiHost() {
+            return "TEST-reconcile.example.invalid";
+        }
 
-            @Override
-            public Diff fetchDiff(RepoRef repo, long prId, String commit) {
-                throw new AssertionError("a reconcile step never reads the full diff");
-            }
+        @Override
+        public PullRequest fetchPullRequest(RepoRef repo, long prId) {
+            throw new AssertionError("a reconcile step never reads the pull request");
+        }
 
-            @Override
-            public String fetchCompareDiff(RepoRef repo, String base, String head) {
-                assertEquals(PRIOR_HEAD, base, "the compare starts at the prior head");
-                assertEquals(COMMIT, head, "and ends at the head under review");
-                if (failure != null) {
-                    throw failure;
-                }
-                return compare;
+        @Override
+        public Diff fetchDiff(RepoRef repo, long prId, String commit) {
+            throw new AssertionError("a reconcile step never reads the full diff");
+        }
+
+        @Override
+        public String fetchCompareDiff(RepoRef repo, String base, String head) {
+            assertEquals(PRIOR_HEAD, base, "the compare starts at the prior head");
+            assertEquals(COMMIT, head, "and ends at the head under review");
+            if (failure != null) {
+                throw failure;
             }
-        };
+            return compare;
+        }
     }
 
     private static PriorFinding at(String path, int line, String threadRef) {

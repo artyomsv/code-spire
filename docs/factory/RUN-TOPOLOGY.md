@@ -414,8 +414,10 @@ Since step 6 a review unit also has an `inputs` volume: the files the review wor
 re-review, `prior-findings.md`) that ride `ExecuteReviewRun`. Init mounts it writable at `/inputs`, and the runtime
 copies the files into the created init container as a tar (mode `0444`, owned by root) before init starts, so init's
 mount is the volume's only writer. The agent mounts it read-only, so what it read is what it was handed. The publisher
-never mounts it, not even read-only: it holds the push credential, and the files carry text (an issue body, a prior
-finding) that only the agent was told to read. `RunUnitSpec` refuses any other wiring, so no arm can grant what Docker
+never mounts it, not even read-only: it never needs the inputs, and the files carry text (an issue body, a prior
+finding) that only the agent was told to read. A review unit's publisher is `spire-publish-none` with no write
+credential; the rule is the unit's, not the review's, so it holds just the same for a publisher that does hold one.
+`RunUnitSpec` refuses any other wiring, so no arm can grant what Docker
 refuses. The files are never an environment variable, which `docker inspect` prints and Linux caps at 128 KiB. A
 review with no inputs still gets the volume, empty. The runtime bounds the files at 1 MiB in total, above the
 contract's 224 KiB. Only the Docker arm copies them today.

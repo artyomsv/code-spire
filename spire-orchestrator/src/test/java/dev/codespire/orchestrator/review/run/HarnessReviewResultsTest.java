@@ -31,8 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A review run's answer is sent to the review worker to finish (harness reviews, step 6), under the review's round
- * lock and only for its current round. The answer's parsing moved to the worker ({@code HarnessReviewWorkerTest}); a
- * failed run and the worker's finished answer are {@code HarnessReviewOutcomesTest}'s.
+ * lock and only for its current round. The answer's parsing moved to the worker
+ * ({@code HarnessReviewWorkerFinishTest}); a failed run and the worker's finished answer are
+ * {@code HarnessReviewOutcomesTest}'s.
  *
  * <p>A plain unit test over {@link HarnessResultsFixture}, whose fakes override every method the path reaches.
  */

@@ -414,10 +414,15 @@ public class ReviewWorker {
         } catch (RuntimeException e) {
             Throwable cause = WorkerFailures.unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
-            results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                    cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
-                    WorkerFailures.isCredentialRejected(cause)));
+            emitPostCommentsFailed(command, cause);
         }
+    }
+
+    /** A PostComments, or its summary, that failed on its one attempt. */
+    private void emitPostCommentsFailed(PostComments command, Throwable cause) {
+        results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
+                cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
+                WorkerFailures.isCredentialRejected(cause)));
     }
 
     /**
@@ -687,9 +692,7 @@ public class ReviewWorker {
                 } catch (RuntimeException e) {
                     Throwable cause = WorkerFailures.unwrap(e);
                     LOG.warnf(cause, "Summary post failed for %s", command.reviewId());
-                    results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                            cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
-                            WorkerFailures.isCredentialRejected(cause)));
+                    emitPostCommentsFailed(command, cause);
                     yield null;
                 }
             }

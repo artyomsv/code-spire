@@ -45,7 +45,9 @@ public record UnitInputs(String volume, String path, Map<String, String> files) 
      * Who may see these inputs, checked by {@link RunUnitSpec}, the one place that sees all three containers. Init
      * mounts the volume writable at {@code path}, where an arm copies the files before it starts. The agent mounts it
      * read-only at most, so what it read is what it was handed. The publisher never mounts it, not even read-only: it
-     * holds the push credential, and the files carry text (an issue body, a prior finding) only the agent was to read.
+     * never needs the inputs, and the files carry text (an issue body, a prior finding) only the agent was to read. A
+     * review unit's publisher is {@code spire-publish-none} with no write credential; the check is the unit's, not the
+     * review's, so it holds just the same for a publisher that does hold one.
      */
     void requireReachOnlyInitAndAgent(ContainerSpec init, ContainerSpec agent, ContainerSpec publisher) {
         boolean initWrites = init.mounts().stream()
