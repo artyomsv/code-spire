@@ -41,7 +41,7 @@ public class RunAttentionRows {
 
     /** One past the cap is fetched, so the summary row knows there is more without counting it all. */
     private static final String REFUSED_SQL = """
-            SELECT run_id, blocked_changes FROM factory_run
+            SELECT run_id, blocked_changes, ended_at FROM factory_run
              WHERE status = 'push_gate_refused'
                AND (attention_ack_at IS NULL OR ended_at > attention_ack_at)
              ORDER BY ended_at DESC
@@ -58,7 +58,7 @@ public class RunAttentionRows {
      * leave a run that may be executing with nothing tracking it.
      */
     private static final String UNCERTAIN_SQL = """
-            SELECT run_id FROM factory_run
+            SELECT run_id, COALESCE(ended_at, started_at) AS since FROM factory_run
              WHERE status = 'dispatch_uncertain'
              ORDER BY started_at DESC
             """ + " LIMIT " + (MAX_ROWS + 1);
@@ -138,7 +138,8 @@ public class RunAttentionRows {
                                 + ". That change was not pushed; checkpoints this run pushed earlier may "
                                 + "already be on its branch. Read the paths, then acknowledge this.",
                         "/",
-                        "/api/runs/" + runId + "/attention-ack"));
+                        "/api/runs/" + runId + "/attention-ack")
+                        .withSince(StoredTime.of(rs, "ended_at")));
             }
         }
         if (total > listed) {
@@ -176,7 +177,7 @@ public class RunAttentionRows {
                                 + " the model twice. If it started, its own result clears this. Otherwise"
                                 + " POST {\"neverRan\": true} to /api/runs/" + runId + "/dispatch-resolution"
                                 + " and then retry the original request.",
-                        "/"));
+                        "/").withSince(StoredTime.of(rs, "since")));
             }
         }
         if (total > listed) {

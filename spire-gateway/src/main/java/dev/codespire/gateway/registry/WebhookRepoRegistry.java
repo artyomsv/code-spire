@@ -11,6 +11,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -195,12 +197,20 @@ public class WebhookRepoRegistry {
      * repo path alone cannot identify a registration: the same workspace name can be registered on
      * two different providers, so an operator told only {@code owner/repo} would not know which
      * provider's webhook settings to open.
+     *
+     * @param lastRejectedAt the stored time of the latest refusal, the attention row's time
      */
-    public record Rejection(String id, String providerType, String target, String reason, int count) {
+    public record Rejection(String id, String providerType, String target, String reason, int count,
+                            Instant lastRejectedAt) {
     }
 
-    /** An enabled registration, identified the way an operator has to act on it. */
-    public record Registration(String id, String providerType, String target) {
+    /**
+     * An enabled registration, identified the way an operator has to act on it.
+     *
+     * @param updatedAt the registration's last stored change: a secret is cleared only by one, so it is the latest
+     *                  time the registration was saved without a secret
+     */
+    public record Registration(String id, String providerType, String target, Instant updatedAt) {
     }
 
     /**
@@ -253,14 +263,16 @@ public class WebhookRepoRegistry {
     public List<Rejection> rejecting() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, provider_type, target, last_rejection_reason, rejection_count FROM webhook_repo "
+                     "SELECT id, provider_type, target, last_rejection_reason, rejection_count, last_rejected_at"
+                             + " FROM webhook_repo "
                              + "WHERE enabled = TRUE AND rejection_count > 0 ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
             List<Rejection> out = new ArrayList<>();
             while (rs.next()) {
                 out.add(new Rejection(rs.getObject("id", UUID.class).toString(),
                         rs.getString("provider_type"), rs.getString("target"),
-                        rs.getString("last_rejection_reason"), rs.getInt("rejection_count")));
+                        rs.getString("last_rejection_reason"), rs.getInt("rejection_count"),
+                        instant(rs, "last_rejected_at")));
             }
             return out;
         } catch (SQLException e) {
@@ -272,18 +284,24 @@ public class WebhookRepoRegistry {
     public List<Registration> missingSecret() {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, provider_type, target FROM webhook_repo WHERE enabled = TRUE "
+                     "SELECT id, provider_type, target, updated_at FROM webhook_repo WHERE enabled = TRUE "
                              + "AND (webhook_secret IS NULL OR webhook_secret = '') ORDER BY target");
              ResultSet rs = ps.executeQuery()) {
             List<Registration> out = new ArrayList<>();
             while (rs.next()) {
                 out.add(new Registration(rs.getObject("id", UUID.class).toString(),
-                        rs.getString("provider_type"), rs.getString("target")));
+                        rs.getString("provider_type"), rs.getString("target"), instant(rs, "updated_at")));
             }
             return out;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list webhook repos without a secret", e);
         }
+    }
+
+    /** A stored time, or null when the column is null: an attention row's time is never the clock's. */
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        Timestamp stored = rs.getTimestamp(column);
+        return stored == null ? null : stored.toInstant();
     }
 
     // ---- helpers -----------------------------------------------------------

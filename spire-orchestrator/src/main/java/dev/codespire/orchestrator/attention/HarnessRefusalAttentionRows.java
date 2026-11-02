@@ -15,6 +15,9 @@ import java.util.List;
  * <p>Its own query rather than one of {@code AttentionQueries}'s per-review rows, whose message is fixed per code:
  * each row here carries its own reason. Not dismissable: re-running the review once the cause is fixed clears the
  * status, and archiving it is the operator's other resolution, as for every review row.
+ *
+ * <p>Its time is the review's {@code updated_at}: {@code setHarnessRefusal} leaves that column alone, but the status
+ * change to {@code refused} written beside it bumps it, so it is the moment of the refusal.
  */
 final class HarnessRefusalAttentionRows {
 
@@ -25,7 +28,7 @@ final class HarnessRefusalAttentionRows {
 
     static void collect(Connection connection, List<AttentionView> rows) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT workspace, slug, pr_id, harness_refusal FROM review_status
+                SELECT workspace, slug, pr_id, harness_refusal, updated_at FROM review_status
                  WHERE lower(status) = 'refused'
                    AND harness_refusal IS NOT NULL
                    AND archived_at IS NULL
@@ -37,7 +40,8 @@ final class HarnessRefusalAttentionRows {
                 long pr = results.getLong("pr_id");
                 rows.add(new AttentionView(CODE, AttentionView.Severity.WARNING, workspace + "/" + slug + "#" + pr,
                         "Harness review refused: " + results.getString("harness_refusal"),
-                        "/r/" + workspace + "/" + slug + "/" + pr));
+                        "/r/" + workspace + "/" + slug + "/" + pr)
+                        .withSince(StoredTime.of(results, "updated_at")));
             }
         }
     }

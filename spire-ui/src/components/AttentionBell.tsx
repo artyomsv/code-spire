@@ -3,6 +3,8 @@ import { Link } from 'react-router';
 import { Bell, CircleAlert, TriangleAlert } from 'lucide-react';
 import { useAttention } from '../hooks/useAttention';
 import { dismissAttention } from '../api';
+import { formatEventTime } from '../format';
+import { ago } from '../render';
 import Tooltip from './Tooltip';
 
 /**
@@ -100,6 +102,11 @@ export default function AttentionBell() {
                     {item.subject && <span className="attention-subject">{item.subject}</span>}
                     <span className="attention-message">{item.message}</span>
                     <span className="attention-row-actions">
+                      {item.since && (
+                        <span className="attention-since" title={formatEventTime(item.since)}>
+                          {ago(item.since)}
+                        </span>
+                      )}
                       {item.action && (
                         <Link className="attention-action" to={item.action} onClick={() => setOpen(false)}>
                           {actionLabel(item.action)}

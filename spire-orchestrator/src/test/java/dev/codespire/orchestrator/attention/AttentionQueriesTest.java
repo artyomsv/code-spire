@@ -254,7 +254,10 @@ class AttentionQueriesTest {
         assertEquals(2, stuck.size(), stuck.toString());
         assertTrue(stuck.stream().anyMatch(v -> "TEST-WS/TEST-REPO#1".equals(v.subject())), stuck.toString());
         assertTrue(stuck.stream().anyMatch(v -> "TEST-WS/TEST-REPO#2".equals(v.subject())), stuck.toString());
-        AttentionView first = stuck.getFirst();
+        // By subject, not position: both rows are newest first by their own updated_at, which two inserts
+        // a moment apart do not order deterministically enough to pin.
+        AttentionView first = stuck.stream().filter(v -> "TEST-WS/TEST-REPO#1".equals(v.subject()))
+                .findFirst().orElseThrow();
         assertEquals("/r/TEST-WS/TEST-REPO/" + prOf("TEST-r1"), first.action());
         assertTrue(first.dismiss().endsWith("/attention-ack"), first.dismiss());
     }
@@ -276,8 +279,8 @@ class AttentionQueriesTest {
                 .filter(v -> "REVIEW_STUCK".equals(v.code())).toList();
 
         assertEquals(6, stuck.size(), "5 individual rows plus one remainder row: " + stuck);
-        // Identified by what makes it the remainder — no single review — not by position: collect()
-        // sorts by subject, and a null subject sorts ahead of the named rows rather than after them.
+        // Identified by what makes it the remainder — no single review — not by position, which belongs to
+        // AttentionOrder (an untimed remainder sorts after the timed review rows) and is tested there.
         AttentionView remainder = stuck.stream()
                 .filter(v -> v.subject() == null).findFirst()
                 .orElseThrow(() -> new AssertionError("no remainder row in " + stuck));

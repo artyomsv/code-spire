@@ -1658,6 +1658,13 @@
     margin-top: 0;
   }
 
+  /* When the condition arose, quieter than the action: it orders the list, the action fixes it. */
+  .attention-since {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
   /* Deliberately quieter than the action link: acknowledging is the fallback for a past event that
      cannot be fixed, not the thing we want the operator reaching for first. */
   .attention-dismiss {

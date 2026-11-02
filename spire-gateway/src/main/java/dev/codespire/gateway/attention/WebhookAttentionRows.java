@@ -1,5 +1,6 @@
 package dev.codespire.gateway.attention;
 
+import dev.codespire.contract.attention.AttentionOrder;
 import dev.codespire.contract.attention.AttentionView;
 import dev.codespire.contract.attention.AttentionView.Severity;
 import dev.codespire.gateway.registry.WebhookRepoRegistry;
@@ -25,13 +26,14 @@ public class WebhookAttentionRows {
     @Inject
     WebhookRepoRegistry registry;
 
+    /** In {@link AttentionOrder}, the same order the orchestrator's feed is in, so the UI merges like with like. */
     public List<AttentionView> collect() {
         List<AttentionView> rows = new ArrayList<>();
         for (WebhookRepoRegistry.Registration reg : registry.missingSecret()) {
             rows.add(new AttentionView("WEBHOOK_SECRET_MISSING", Severity.WARNING,
                     subject(reg.providerType(), reg.target()),
                     "This webhook registration has no shared secret, so no delivery can be verified.",
-                    editLink(reg.id())));
+                    editLink(reg.id())).withSince(reg.updatedAt()));
         }
         for (WebhookRepoRegistry.Rejection rejection : registry.rejecting()) {
             rows.add(new AttentionView("WEBHOOK_DELIVERIES_REJECTED", Severity.WARNING,
@@ -39,8 +41,9 @@ public class WebhookAttentionRows {
                     refused(rejection.count()) + ": " + reason(rejection.reason())
                             + ". Rotate the secret here, then re-save it in the webhook settings at "
                             + rejection.providerType() + ".",
-                    editLink(rejection.id())));
+                    editLink(rejection.id())).withSince(rejection.lastRejectedAt()));
         }
+        rows.sort(AttentionOrder.ORDER);
         return rows;
     }
 
