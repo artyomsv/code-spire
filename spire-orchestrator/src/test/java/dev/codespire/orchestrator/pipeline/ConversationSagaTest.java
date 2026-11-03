@@ -651,6 +651,12 @@ class ConversationSagaTest {
             }
         };
         saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
+            /** Read for the reply's off-limits list before the credential check (step 7); the real one opens a database. */
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+
             @Override
             public void setNote(String reviewId, String note) {
                 dashboardNotes.add(note);
@@ -680,6 +686,12 @@ class ConversationSagaTest {
             }
         };
         saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
+            /** Read for the reply's off-limits list before the credential check (step 7); the real one opens a database. */
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+
             @Override
             public void setNote(String reviewId, String note) {
                 dashboardNotes.add(note);
@@ -743,6 +755,12 @@ class ConversationSagaTest {
             }
         };
         saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
+            /** Read for the reply's off-limits list before the credential check (step 7); the real one opens a database. */
+            @Override
+            public Optional<PriorRun> priorRunFor(String reviewId) {
+                return Optional.empty();
+            }
+
             @Override
             public void setNote(String reviewId, String note) {
                 dashboardNotes.add(note);
