@@ -91,7 +91,10 @@ charge identity (`ReviewRunChargesTest`, `ResultSagaPricingTest`), the thread fi
 the prompt (`HarnessReplyPromptTest`), the slot round trip (`ReplyCallTest`) and the wire messages
 (`HarnessReplyMessagesTest`). Against a real database: a supersede leaves a reply run alive and a close cancels it
 (`ReviewRunCancellationTest`), and admission admits a reply of an ended round and refuses one of a closed pull request
-(`ReviewRunDispatchRaceTest`). The live proof is pending (the step 7 plan, Task 6).
+(`ReviewRunDispatchRaceTest`). **The main path is proven live** (2026-11-03, docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md):
+on `spire-test` #97 two replies in one finding thread were each one `FOLLOWUP` run on a seat, answered in the
+thread in under a minute, charged once per turn under `…|<thread>:<comment>|FOLLOWUP` at cost 0, calling
+`chatgpt.com` only; the second answer opened with `@artyomsv`.
 
 **Why nothing catches the rest.**
 - **The "responding" flag can stay up.** The worker's quiet exits at prepare (a provider with no threads, a second
@@ -110,9 +113,9 @@ the prompt (`HarnessReplyPromptTest`), the slot round trip (`ReplyCallTest`) and
   `PostHarnessReply` carry finding and thread text, and the answer, as `AnswerFollowUp` already does; a dead-lettered
   copy lands in `dlq_entry.payload` until it is discarded.
 
-**What evidence would settle it.** A reply answered on a seat on `spire-test` (one `FOLLOWUP` run, the answer in
-its thread, one charge set under `…|<thread>:<comment>|FOLLOWUP` at cost 0, egress `chatgpt.com` only), and a second
-turn charged separately.
+**What evidence would settle it.** The step 7 live proof settled the main path (above). The rest needs: a push while a
+reply run works, a reply on a refused seat and on an API key, an over-cap answer, a reply on the summary thread, a
+reply on GitLab and on Bitbucket Cloud (their mentions), and a dead-lettered `PostHarnessReply` replayed.
 
 ---
 

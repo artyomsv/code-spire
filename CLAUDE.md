@@ -167,7 +167,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
 
 - **Harness reviews, steps 4 to 7: review runs, first reviews, re-reviews and replies** (steps 4 to 6 on master with
   PRs #367, #368 and #370, live-proven 2026-11-01 and 2026-11-02 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md and
-  docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; step 7 on PR #371, not merged, its live proof pending; ADR-050, design
+  docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; step 7 on PR #371, not merged, live-proven 2026-11-03 in docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; ADR-050, design
   docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
@@ -202,7 +202,9 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   (`PrepareHarnessReply` → `HarnessReplyPrepared`), the run is charged once under the API reply's own identity, and
   the worker posts the answer (`PostHarnessReply` → `FollowUpGenerated` with no usage, `FollowUpPosted`). A push never
   cancels a reply run, a close does; a refused or failed reply writes `FollowUpRefused` or `FollowUpFailed` under its
-  thread. The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+  thread. Every reply, API and harness, opens with the forge's own mention of the person it answers. Live on
+  `spire-test` #97: two replies in one thread were each one `FOLLOWUP` run on a seat, charged once per turn at cost 0,
+  `chatgpt.com` only. The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

@@ -11,7 +11,8 @@ reviews (the "Step 5" part below), merged to master with PR #368 on 2026-11-02; 
 what it did not reach is proven by tests only (docs/UNVERIFIED.md). Step 6, re-reviews (the "Step 6" part below),
 merged to master with PR #370 on 2026-11-03; its live proof was made on 2026-11-02 at `4a02f003`
 (docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md), and what it did not reach is proven by tests only (docs/UNVERIFIED.md).
-Step 7, replies (the "Step 7" part below), is built on `feat/harness-reviews-7-replies` (PR #371, not merged). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+Step 7, replies (the "Step 7" part below), is built on `feat/harness-reviews-7-replies` (PR #371, not merged); its live
+proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
