@@ -303,8 +303,7 @@ class HarnessReviewInputFilesTest {
         String thread = file(HarnessReviewInputFiles.reply(7, longThread, manyOthers), HarnessReviewInputs.THREAD);
 
         assertTrue(bytes(thread) <= HarnessReviewInputFiles.THREAD_MAX_BYTES, "bytes: " + bytes(thread));
-        assertTrue(thread.contains("[reviewer] TEST-human: TEST-NEW-QUESTION
-"), "the question survives");
+        assertTrue(thread.contains("[reviewer] TEST-human: TEST-NEW-QUESTION\n"), "the question survives");
         assertTrue(thread.contains("earlier messages were cut"), thread.substring(0, 300));
         assertFalse(thread.contains("TEST-OLD-0 "), "the oldest message went first");
         assertTrue(thread.contains("The other findings were cut"), "the other findings are capped too");
