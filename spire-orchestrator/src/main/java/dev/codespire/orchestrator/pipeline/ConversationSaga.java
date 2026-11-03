@@ -145,16 +145,16 @@ public class ConversationSaga {
         };
     }
 
+    /**
+     * Resolving the default credential also answers whether the model can be priced — the same
+     * pre-spend guard the review path applies, on a path that used to have none: an unpriceable
+     * model refused new reviews while an author replying in a live thread still made the bot spend,
+     * up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
+     * construction because the registry guard makes an unpriceable provider impossible; V30
+     * falsifies that, creating rateless models in SQL without passing through the registry at all.
+     * Resolved for the thread's review, so a reply spends the provider its review's repository names.
+     */
     private Optional<ActionCommand> answerOnApi(AuthorReplied e, Answering answering, List<PriorFinding> others) {
-        ThreadTarget target = answering.target();
-        boolean botMentioned = answering.mentioned();
-        // Resolving the default credential also answers whether the model can be priced — the same
-        // pre-spend guard the review path applies, on a path that used to have none: an unpriceable
-        // model refused new reviews while an author replying in a live thread still made the bot spend,
-        // up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
-        // construction because the registry guard makes an unpriceable provider impossible; V30
-        // falsifies that, creating rateless models in SQL without passing through the registry at all.
-        // Resolved for the thread's review, so a reply spends the provider its review's repository names.
         DefaultLlm llm = workerLlmCredentials.resolveForReview(e.reviewId());
         if (!llm.isSpendable()) {
             skipUnspendable(e, llm);
@@ -165,13 +165,15 @@ public class ConversationSaga {
         // conversation path finite — hence AFTER that override, and after the free NotifyTurnCap above.
         dev.codespire.orchestrator.caps.SpendGate.Decision capped = spendGate.decide();
         if (capped.refused()) {
-            refuseFollowUp(e, target.thread(), capped.refusal());
+            refuseFollowUp(e, answering.target().thread(), capped.refusal());
             return Optional.empty();
         }
-        LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
+        ThreadRef thread = answering.target().thread();
+        LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), thread.value(),
+                answering.mentioned());
         return Optional.of(new ActionCommand.AnswerFollowUp(
-                e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
-                workerCredentials.pack(answering.provider(), e.repo().workspace()), llm.packed(), botMentioned,
+                e.reviewId(), e.repo(), e.prId(), thread, e.commentId(), e.text(),
+                workerCredentials.pack(answering.provider(), e.repo().workspace()), llm.packed(), answering.mentioned(),
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
                 promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()), others,
                 HarnessReplyStart.replyAuthor(e.author())));

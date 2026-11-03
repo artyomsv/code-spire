@@ -24,6 +24,18 @@ class ReviewThreadViewIT {
         assertEquals(2, threads.turnCount(reviewId, t));
     }
 
+    /** A resent FollowUpPosted names the same answer: it is one turn, not two (review of PR #371, M-1). */
+    @Test
+    void theSameAnswerCountedTwiceIsOneTurn() {
+        String reviewId = "review::artyomsv/spire-test#371";
+        ThreadRef t = new ThreadRef("TEST-371");
+        threads.bumpTurn(reviewId, t, "TEST-answer-1");
+        threads.bumpTurn(reviewId, t, "TEST-answer-1");
+        assertEquals(1, threads.turnCount(reviewId, t));
+        threads.bumpTurn(reviewId, t, "TEST-answer-2");
+        assertEquals(2, threads.turnCount(reviewId, t), "the control: a new answer is a new turn");
+    }
+
     @Test
     void markingAThreadOwnedMakesItOurs() {
         String reviewId = "review::artyomsv/spire-test#9";

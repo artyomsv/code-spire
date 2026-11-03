@@ -15,7 +15,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.util.Optional;
+import java.util.Map;
 
 /**
  * The review worker's half of a reply on a harness (harness reviews, step 7). {@link #prepare} does what the API path
@@ -64,14 +64,20 @@ public class HarnessReplyWorker {
         return HarnessReviewWorker.CLAIM_PREFIX + "mention:" + triggeringCommentId;
     }
 
-    private void rememberMention(PrepareHarnessReply command, Optional<String> mention) {
-        if (mention.isEmpty()) {
+    /** Where the post records that both completion events went out, so a retry knows whether to send them again. */
+    static String doneKey(String triggeringCommentId) {
+        return HarnessReviewWorker.CLAIM_PREFIX + "reply-done:" + triggeringCommentId;
+    }
+
+    /** @param mention the forge's mention of the reply's author, or null when it has none: nothing is stored then */
+    private void rememberMention(PrepareHarnessReply command, String mention) {
+        if (mention == null) {
             return;
         }
         String thread = command.threadRef().value();
         String key = mentionKey(command.triggeringCommentId());
         idempotency.claim(command.reviewId(), thread, key);
-        idempotency.markPosted(command.reviewId(), thread, key, mention.orElseThrow());
+        idempotency.markPosted(command.reviewId(), thread, key, mention);
     }
 
     private void doPrepare(PrepareHarnessReply command) {
@@ -92,7 +98,7 @@ public class HarnessReplyWorker {
                     command.reviewId());
             return;
         }
-        rememberMention(command, clients.comments().mention(command.replyAuthor()));
+        rememberMention(command, clients.comments().mention(command.replyAuthor()).orElse(null));
         // The run checks out the head, not the thread's anchor commit: a force-push can make that one unreachable.
         String head = clients.diff().fetchPullRequest(command.repo(), command.prId()).headCommit();
         results.emit(new HarnessReplyPrepared(command.reviewId(), command.prId(), head, command.threadRef(),
@@ -101,26 +107,40 @@ public class HarnessReplyWorker {
     }
 
     /**
-     * Posted as Markdown as-is, as the API path posts: the forge renders and sanitizes it, and escaping {@code <} would
-     * corrupt code the answer quotes. Null usage on {@code FollowUpGenerated}: {@code ReviewRunCharges} charged the run.
+     * Posted escaped once, whole, outside Markdown code, as every posted comment is (review of PR #371, rules/H-1);
+     * code keeps its `<`. Null usage on {@code FollowUpGenerated}: {@code ReviewRunCharges} charged the run.
+     *
+     * <p>A comment already posted is never posted again, but its completion events are sent again until a done mark
+     * says both went out: a publish that failed after the post would otherwise lose them for good, leaving the thread
+     * uncounted and "answering" up (review of PR #371, code-quality/M-1). The orchestrator counts a turn once per
+     * posted comment, so a resend counts nothing twice.
      */
     private void doPost(PostHarnessReply command) {
-        String key = claimKey(command.triggeringCommentId());
         String thread = command.threadRef().value();
-        if (idempotency.claim(command.reviewId(), thread, key)
-                instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
+        Map<String, String> posted = idempotency.postedFor(command.reviewId(), thread);
+        if (posted.containsKey(doneKey(command.triggeringCommentId()))) {
             LOG.infof("Harness reply to comment %s on %s was already posted — staying quiet",
                     command.triggeringCommentId(), command.reviewId());
             return;
         }
-        Optional<String> mention = Optional.ofNullable(
-                idempotency.postedFor(command.reviewId(), thread).get(mentionKey(command.triggeringCommentId())));
-        String text = ReplyMention.opened(mention, FollowUpAnswer.of(command.answerText()).text());
-        CommentRef ref = scm.forCommand(command).comments().replyInThread(command.repo(), command.prId(),
-                command.threadRef(), text);
-        idempotency.markPosted(command.reviewId(), thread, key, ref.commentId());
+        String text = ReplyMention.posted(posted.get(mentionKey(command.triggeringCommentId())),
+                FollowUpAnswer.of(command.answerText()).text());
+        String key = claimKey(command.triggeringCommentId());
+        String commentId = idempotency.claim(command.reviewId(), thread, key)
+                instanceof CommentIdempotencyStore.Claim.AlreadyPosted already
+                ? already.postedRef() : postAndMark(command, key, text);
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), text, null,
                 command.triggeringCommentId()));
-        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), ref.commentId()));
+        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), commentId));
+        String done = doneKey(command.triggeringCommentId());
+        idempotency.claim(command.reviewId(), thread, done);
+        idempotency.markPosted(command.reviewId(), thread, done, commentId);
+    }
+
+    private String postAndMark(PostHarnessReply command, String key, String text) {
+        CommentRef ref = scm.forCommand(command).comments().replyInThread(command.repo(), command.prId(),
+                command.threadRef(), text);
+        idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, ref.commentId());
+        return ref.commentId();
     }
 }

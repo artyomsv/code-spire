@@ -235,11 +235,34 @@ class FollowUpWorkerTest {
         when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
                 .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
 
-        FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(repo, 5L, thread, transcript, diffs, llm,
-                new ModelParams("m", 0.2, null), sink, null, List.of(), author);
+        FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(
+                new FollowUpWorker.AnswerCall(repo, 5L, thread, transcript, null, List.of(), author),
+                new FollowUpWorker.AnswerPorts(diffs, llm, new ModelParams("m", 0.2, null), sink));
 
         verify(sink).replyInThread(repo, 5L, thread, "@TEST-alice Because the caller can pass null.");
         assertEquals("@TEST-alice Because the caller can pass null.", r.answerText());
+    }
+
+    /** The API reply is escaped outside code too, as every posted comment is (review of PR #371, rules/H-1). */
+    @Test
+    void anApiReplyEscapesRawHtmlOutsideCode() {
+        DiffSource diffs = mock(DiffSource.class);
+        CommentSink sink = mock(CommentSink.class);
+        LlmProvider llm = mock(LlmProvider.class);
+        RepoRef repo = new RepoRef("TEST-work", "app");
+        ThreadRef thread = new ThreadRef("100");
+        ThreadTranscript transcript = new ThreadTranscript(thread, "src/App.java", 42, "abc123",
+                List.of(new ThreadMessage("TEST-alice", "why?", false)));
+        when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123"))).thenReturn(new Diff("abc123", List.of(), false));
+        when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new Completion("<img src=x> but `n < 2` is fine", ModelUsage.of("m", 1, 1))));
+        when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
+                .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
+
+        FollowUpWorker.answer(repo, 5L, thread, transcript, diffs, llm, new ModelParams("m", 0.2, null), sink, null,
+                List.of());
+
+        verify(sink).replyInThread(repo, 5L, thread, "&lt;img src=x> but `n < 2` is fine");
     }
 
     private static final RepoRef CAP_REPO = new RepoRef("artyomsv", "spire-test");

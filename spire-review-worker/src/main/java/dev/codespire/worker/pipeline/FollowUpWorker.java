@@ -112,10 +112,10 @@ public class FollowUpWorker {
             return;
         }
         WorkerLlmProvider.LlmClient client = llm.forCommand(command);
-        FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
-                transcript, clients.diff(), promptLog.tap("follow-up", client.provider()),
-                client.params(), clients.comments(),
-                command.followUpPrompt(), command.otherFindings(), command.replyAuthor());
+        FollowUpResult result = answer(new AnswerCall(command.repo(), command.prId(), command.threadRef(), transcript,
+                        command.followUpPrompt(), command.otherFindings(), command.replyAuthor()),
+                new AnswerPorts(clients.diff(), promptLog.tap("follow-up", client.provider()), client.params(),
+                        clients.comments()));
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
         // The triggering comment rides along because it is half of the claim key above: without it the
         // orchestrator's ledger identity cannot tell turn 2 of this thread from a redelivery of turn 1.
@@ -307,30 +307,39 @@ public class FollowUpWorker {
     static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
                                  DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
                                  PromptTemplate followUpPrompt, List<PriorFinding> otherFindings) {
-        return answer(repo, prId, thread, transcript, diffs, llmProvider, params, sink, followUpPrompt, otherFindings,
-                null);
+        return answer(new AnswerCall(repo, prId, thread, transcript, followUpPrompt, otherFindings, null),
+                new AnswerPorts(diffs, llmProvider, params, sink));
     }
 
     /**
-     * As above, with the reply opened by the forge's mention of {@code replyAuthor}, so they are notified; null means
-     * no mention. The posted text, mention included, is the answer the result reports.
+     * One reply to write: where it goes, the thread it answers, the prompt and its off-limits list, and whom it
+     * mentions ({@code replyAuthor}, null for no mention).
      */
-    static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
-                                 DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
-                                 PromptTemplate followUpPrompt, List<PriorFinding> otherFindings,
-                                 Author replyAuthor) {
+    record AnswerCall(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
+                      PromptTemplate followUpPrompt, List<PriorFinding> otherFindings, Author replyAuthor) {
+    }
+
+    /** What writes the reply: the diff source, the model and its parameters, and the forge it is posted to. */
+    record AnswerPorts(DiffSource diffs, LlmProvider llm, ModelParams params, CommentSink sink) {
+    }
+
+    /**
+     * As above, with the reply opened by the forge's mention of the call's author, so they are notified. The posted
+     * text, mention included and escaped outside code, is the answer the result reports.
+     */
+    static FollowUpResult answer(AnswerCall call, AnswerPorts ports) {
+        ThreadTranscript transcript = call.transcript();
         String commit = transcript.commit() != null
-                ? transcript.commit() : diffs.fetchPullRequest(repo, prId).headCommit();
-        Diff diff = diffs.fetchDiff(repo, prId, commit);
+                ? transcript.commit() : ports.diffs().fetchPullRequest(call.repo(), call.prId()).headCommit();
+        Diff diff = ports.diffs().fetchDiff(call.repo(), call.prId(), commit);
         String diffText = DiffRenderer.render(anchoredFiles(diff, transcript.path()));
-        Prompt prompt = FollowUpPrompt.render(transcript, diffText, otherFindings, followUpPrompt);
-        Completion completion = llmProvider.complete(prompt, params).toCompletableFuture().join();
+        Prompt prompt = FollowUpPrompt.render(transcript, diffText, call.otherFindings(), call.followUpPrompt());
+        Completion completion = ports.llm().complete(prompt, ports.params()).toCompletableFuture().join();
         FollowUpAnswer parsed = FollowUpAnswer.of(completion.text());
-        // Post the answer as Markdown as-is. The SCM renders + sanitizes HTML in comments (no active markup
-        // executes), and the injection defense is the prompt fence — NOT output escaping. Escaping "<" here
-        // would corrupt code the answer includes, e.g. "if (n < 2)" inside a ``` block rendering as "n &lt; 2".
-        String posted = ReplyMention.opened(sink.mention(replyAuthor), parsed.text());
-        CommentRef ref = sink.replyInThread(repo, prId, thread, posted);
+        // Escaped once, whole, outside Markdown code, as every posted comment is (CLAUDE.md): raw HTML in model text
+        // must not become markup, and code keeps its "<" (review of PR #371, rules/H-1).
+        String posted = ReplyMention.posted(ports.sink().mention(call.replyAuthor()).orElse(null), parsed.text());
+        CommentRef ref = ports.sink().replyInThread(call.repo(), call.prId(), call.thread(), posted);
         return new FollowUpResult(posted, ref.commentId(), completion.usage());
     }
 }

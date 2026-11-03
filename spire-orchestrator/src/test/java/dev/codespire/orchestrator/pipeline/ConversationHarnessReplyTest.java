@@ -117,12 +117,7 @@ class ConversationHarnessReplyTest {
             }
         };
         saga.levels = levels();
-        saga.threads = new ReviewThreadView() {
-            @Override
-            public int turnCount(String reviewId, ThreadRef thread) {
-                return priorTurns;
-            }
-        };
+        saga.threads = threads();
         saga.workerCredentials = new WorkerCredentials() {
             @Override
             public String pack(ScmProvider provider, String repositoryWorkspace) {
@@ -130,13 +125,33 @@ class ConversationHarnessReplyTest {
             }
         };
         saga.workerLlmCredentials = apiCredentials();
-        saga.timeline = new TimelineBroadcaster() {
+        saga.timeline = timeline();
+        saga.projection = projection();
+        apiOnly(saga);
+        saga.harnessReplies = harnessStart();
+        return saga;
+    }
+
+    private ReviewThreadView threads() {
+        return new ReviewThreadView() {
+            @Override
+            public int turnCount(String reviewId, ThreadRef thread) {
+                return priorTurns;
+            }
+        };
+    }
+
+    private TimelineBroadcaster timeline() {
+        return new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
                 timelineTypes.add(type);
             }
         };
-        saga.projection = projection();
+    }
+
+    /** The API path's prompt and spend gate: a harness reply reaching either is the defect under test. */
+    private static void apiOnly(ConversationSaga saga) {
         saga.promptTemplates = new WorkerPromptTemplates() {
             @Override
             public dev.codespire.contract.llm.PromptTemplate forKind(dev.codespire.contract.llm.PromptKind kind,
@@ -150,14 +165,16 @@ class ConversationHarnessReplyTest {
                 throw new AssertionError("the run's funding applies the spend gate, not the conversation path");
             }
         };
-        saga.harnessReplies = new HarnessReplyStart() {
+    }
+
+    private HarnessReplyStart harnessStart() {
+        return new HarnessReplyStart() {
             @Override
             public Decision start(ReplyAsk ask) {
                 asks.add(ask);
                 return decision;
             }
         };
-        return saga;
     }
 
     /** Null for the harness cases: resolving the API credential at all is the defect under test. */

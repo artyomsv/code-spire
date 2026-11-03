@@ -31,13 +31,20 @@ public class ReviewThreadView {
         }
     }
 
+    /**
+     * Count the bot's answer {@code lastCommentId} as a turn of {@code thread}, once: the same answer counted again (a
+     * resent {@code FollowUpPosted}, which the harness reply's worker sends until its events are known to have gone
+     * out) changes nothing (review of PR #371, code-quality/M-1).
+     */
     public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
                      INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id)
                      VALUES (?, ?, 1, ?)
                      ON CONFLICT (review_id, thread_ref)
-                     DO UPDATE SET turn_count = review_thread.turn_count + 1,
+                     DO UPDATE SET turn_count = review_thread.turn_count
+                                       + CASE WHEN review_thread.last_comment_id IS NOT DISTINCT FROM EXCLUDED.last_comment_id
+                                              THEN 0 ELSE 1 END,
                                    last_comment_id = EXCLUDED.last_comment_id
                      """)) {
             ps.setString(1, reviewId);

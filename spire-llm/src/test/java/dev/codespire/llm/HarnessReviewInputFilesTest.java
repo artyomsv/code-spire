@@ -271,16 +271,44 @@ class HarnessReviewInputFilesTest {
     }
 
     @Test
-    void anOversizedThreadIsCutWithAMarker() {
+    void anOversizedNewestMessageIsCutAtACodePoint() {
         String body = THREE_BYTES.repeat(150 * 1024 / 3);
 
         String thread = file(HarnessReviewInputFiles.reply(7, replyThread(body), otherFindings()),
                 HarnessReviewInputs.THREAD);
 
         assertTrue(bytes(thread) <= HarnessReviewInputFiles.THREAD_MAX_BYTES, "bytes: " + bytes(thread));
-        assertTrue(thread.matches("(?s).*\n\n\\[Cut here: this file was \\d+ bytes, over its "
-                + HarnessReviewInputFiles.THREAD_MAX_BYTES + "-byte limit\\.]\n"), "ends with the marker");
+        assertTrue(thread.contains("[reviewer] TEST-human: " + THREE_BYTES), "the question keeps its beginning");
+        assertTrue(thread.contains("1 earlier messages were cut"), "the bot's earlier message is said to be cut");
+        assertEquals(thread.indexOf(END), thread.lastIndexOf(END), "the fence still closes once");
         assertValidUtf8(thread);
+    }
+
+    /** The newest message is the question the run answers: older messages and other findings go first (M-2). */
+    @Test
+    void theNewestQuestionSurvivesALongThread() {
+        java.util.List<ThreadMessage> messages = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            messages.add(new ThreadMessage("TEST-human", "TEST-OLD-" + i + " " + "x".repeat(4 * 1024), false));
+        }
+        messages.add(new ThreadMessage("TEST-human", "TEST-NEW-QUESTION", false));
+        ThreadTranscript longThread = new ThreadTranscript(new ThreadRef("TEST-thread-1"), "src/A.java", 3, PRIOR_HEAD,
+                messages);
+        List<PriorFinding> manyOthers = new java.util.ArrayList<>();
+        for (int i = 0; i < 400; i++) {
+            manyOthers.add(new PriorFinding("src/B.java", i, Severity.MINOR, "TEST-OTHER-" + "y".repeat(200),
+                    "TEST-thread-" + i));
+        }
+
+        String thread = file(HarnessReviewInputFiles.reply(7, longThread, manyOthers), HarnessReviewInputs.THREAD);
+
+        assertTrue(bytes(thread) <= HarnessReviewInputFiles.THREAD_MAX_BYTES, "bytes: " + bytes(thread));
+        assertTrue(thread.contains("[reviewer] TEST-human: TEST-NEW-QUESTION
+"), "the question survives");
+        assertTrue(thread.contains("earlier messages were cut"), thread.substring(0, 300));
+        assertFalse(thread.contains("TEST-OLD-0 "), "the oldest message went first");
+        assertTrue(thread.contains("The other findings were cut"), "the other findings are capped too");
+        assertEquals(thread.indexOf(END), thread.lastIndexOf(END), "the fence still closes once");
     }
 
     private static void assertValidUtf8(String text) {

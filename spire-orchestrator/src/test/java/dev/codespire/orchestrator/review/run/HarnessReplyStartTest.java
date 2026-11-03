@@ -129,27 +129,36 @@ class HarnessReplyStartTest {
                 return Optional.of(REPOSITORY);
             }
         };
-        start.targets = new FixTargets() {
-            @Override
-            public Optional<PushTarget> forReview(String reviewId) {
-                return Optional.of(new PushTarget("github", REPO.workspace(), REPO.slug(), PR, "TEST-source",
-                        "TEST-main", "a".repeat(40), "OPEN", fromFork));
-            }
-        };
+        start.targets = targets();
         start.runs = new ReviewRuns() {
             @Override
             public int roundOrUnknown(String reviewId) {
                 return round;
             }
         };
-        start.credentials = new WorkerCredentials() {
+        start.credentials = credentials();
+        start.levels = levels();
+        return start;
+    }
+
+    private FixTargets targets() {
+        return new FixTargets() {
+            @Override
+            public Optional<PushTarget> forReview(String reviewId) {
+                return Optional.of(new PushTarget("github", REPO.workspace(), REPO.slug(), PR, "TEST-source",
+                        "TEST-main", "a".repeat(40), "OPEN", fromFork));
+            }
+        };
+    }
+
+    /** The real one resolves the reviewer account from the database and packs it with Tink. */
+    private WorkerCredentials credentials() {
+        return new WorkerCredentials() {
             @Override
             public Optional<String> packForReview(String reviewId) {
                 return reviewerCredential;
             }
         };
-        start.levels = levels();
-        return start;
     }
 
     /** The real one reads app_setting. */

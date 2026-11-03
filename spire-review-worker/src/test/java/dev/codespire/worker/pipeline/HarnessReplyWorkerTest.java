@@ -56,6 +56,8 @@ class HarnessReplyWorkerTest {
     private final List<IntegrationEvent> emitted = new ArrayList<>();
     /** The claim slots by {@code thread/key}: the posted ref, or null while only claimed. */
     private final Map<String, String> slots = new HashMap<>();
+    /** How many of the next emits fail, as a publish that times out after the post. */
+    private int failingEmits;
     private CommentSink sink;
     private DiffSource diffs;
     private HarnessReplyWorker worker;
@@ -78,8 +80,14 @@ class HarnessReplyWorkerTest {
                 return new Clients(diffs, comments);
             }
         };
-        // Overrides both methods the reply path reaches, so no real database is opened (CLAUDE.md gotcha).
-        built.idempotency = new CommentIdempotencyStore() {
+        built.idempotency = idempotency();
+        built.results = results();
+        return built;
+    }
+
+    /** Overrides every method the reply path reaches, so no real database is opened (CLAUDE.md gotcha). */
+    private CommentIdempotencyStore idempotency() {
+        return new CommentIdempotencyStore() {
             @Override
             public Claim claim(String reviewId, String commit, String anchorKey) {
                 String posted = slots.get(commit + "/" + anchorKey);
@@ -103,13 +111,20 @@ class HarnessReplyWorkerTest {
                 return posted;
             }
         };
-        built.results = new ResultsEmitter() {
+    }
+
+    /** The real one awaits a Kafka ack; this one records, or fails the next {@code failingEmits} publishes. */
+    private ResultsEmitter results() {
+        return new ResultsEmitter() {
             @Override
             public void emit(IntegrationEvent event) {
+                if (failingEmits > 0) {
+                    failingEmits--;
+                    throw new IllegalStateException("TEST-publish-failed");
+                }
                 emitted.add(event);
             }
         };
-        return built;
     }
 
     private static ThreadTranscript thread(ThreadMessage... messages) {
@@ -253,6 +268,62 @@ class HarnessReplyWorkerTest {
         worker.post(post("TEST-ANSWER"));
 
         verify(sink).replyInThread(REPO, 7, THREAD, "TEST-ANSWER");
+    }
+
+    /**
+     * A publish that fails after the post: the retry posts no second comment and sends both completion events with
+     * the stored comment id, so the thread is counted and "answering" clears (review of PR #371, code-quality/M-1).
+     */
+    @Test
+    void aPublishThatFailsAfterThePostIsSentAgainWithoutASecondComment() {
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+        failingEmits = 1;
+
+        assertThrows(IllegalStateException.class, () -> worker.post(post("TEST-ANSWER")));
+        worker.post(post("TEST-ANSWER"));
+
+        verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
+        assertEquals(2, emitted.size(), emitted.toString());
+        assertInstanceOf(IntegrationEvent.FollowUpGenerated.class, emitted.get(0));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(1));
+    }
+
+    /** The second of the two events failing is recovered the same way: both are sent again, one comment stays. */
+    @Test
+    void aSecondEventThatFailsIsSentAgainToo() {
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+        worker.results = new ResultsEmitter() {
+            private int calls;
+
+            @Override
+            public void emit(IntegrationEvent event) {
+                if (++calls == 2) {
+                    throw new IllegalStateException("TEST-publish-failed");
+                }
+                emitted.add(event);
+            }
+        };
+
+        assertThrows(IllegalStateException.class, () -> worker.post(post("TEST-ANSWER")));
+        worker.post(post("TEST-ANSWER"));
+        worker.post(post("TEST-ANSWER"));
+
+        verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
+        assertEquals(3, emitted.size(), "FollowUpGenerated twice, FollowUpPosted once, then nothing: " + emitted);
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(2));
+    }
+
+    /** Raw HTML in model text must not become markup; code keeps its "<" (review of PR #371, rules/H-1). */
+    @Test
+    void rawHtmlOutsideCodeIsEscapedAndCodeIsNot() {
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+
+        worker.post(post("<b>TEST</b> and `a < b`"));
+
+        verify(sink).replyInThread(REPO, 7, THREAD, "&lt;b>TEST&lt;/b> and `a < b`");
     }
 
     @Test

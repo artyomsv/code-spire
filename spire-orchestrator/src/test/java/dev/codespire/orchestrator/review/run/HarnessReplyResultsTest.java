@@ -134,7 +134,13 @@ class HarnessReplyResultsTest {
                 timelineDetails.add(type + ": " + detail);
             }
         };
-        results.projection = new ReviewProjection() {
+        results.projection = projection();
+        return results;
+    }
+
+    /** The real one writes review_status and the history; this one records both. */
+    private ReviewProjection projection() {
+        return new ReviewProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail, String threadRef) {
                 events.add(type + "@" + threadRef + ": " + detail);
@@ -145,6 +151,5 @@ class HarnessReplyResultsTest {
                 answering.add(value);
             }
         };
-        return results;
     }
 }
