@@ -4,8 +4,7 @@ import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ArchivedNotice;
 import dev.codespire.contract.command.ConversationFindingRefusal;
-import dev.codespire.worker.adapters.LlmFailures;
-import dev.codespire.worker.adapters.ProviderCircuits;
+import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.event.IntegrationEvent.ArchivedNotified;
 import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
@@ -27,7 +26,6 @@ import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.RepoRef;
-import dev.codespire.contract.scm.ScmApiException;
 import dev.codespire.contract.scm.ThreadMessage;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
@@ -40,11 +38,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.List;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Answers a reviewer's follow-up in a review thread (spec §4-§5): claim per-triggering-comment
@@ -80,30 +74,16 @@ public class FollowUpWorker {
     public record FollowUpResult(String answerText, String postedCommentId, ModelUsage usage) {
     }
 
+    /**
+     * Never silently lost (ADR-013): after the last attempt the failure is re-thrown, so the channel's dead-letter-queue
+     * strategy routes the command to cs.dlq, where it can be inspected and replayed once the SCM/LLM recovers. The
+     * settings are clamped as the orchestrator clamps them, so a hand-built command cannot refuse its own retry.
+     */
     public void answer(AnswerFollowUp command) {
-        int maxAttempts = Math.max(1, command.maxAttempts());
-        RuntimeException lastFailure = null;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                doAnswer(command);
-                return;
-            } catch (RuntimeException e) {
-                lastFailure = e;
-                Throwable cause = unwrap(e);
-                if (attempt < maxAttempts && isTransient(cause)) {
-                    LOG.warnf("Follow-up attempt %d/%d for %s failed transiently (%s) — retrying",
-                            attempt, maxAttempts, command.reviewId(), cause.getMessage());
-                    backoff(attempt, command.backoffBaseMs(), command.backoffFactor());
-                    continue;
-                }
-                break; // non-retryable, or attempts exhausted
-            }
-        }
-        // Never silently lost (ADR-013): re-throw so the channel's dead-letter-queue strategy routes the
-        // command to cs.dlq, where it can be inspected and replayed once the SCM/LLM recovers.
-        LOG.warnf(unwrap(lastFailure), "AnswerFollowUp for %s failed after %d attempt(s) — routing to cs.dlq",
-                command.reviewId(), maxAttempts);
-        throw lastFailure;
+        ReplyRetry retry = new ReplyRetry(Math.max(1, command.maxAttempts()), Math.max(0, command.backoffBaseMs()),
+                Math.max(1.0, command.backoffFactor()));
+        FollowUpRetry.run(new FollowUpRetry.RetryCall(command.reviewId(), "AnswerFollowUp", retry),
+                () -> doAnswer(command));
     }
 
     private void doAnswer(AnswerFollowUp command) {
@@ -298,39 +278,6 @@ public class FollowUpWorker {
                 .filter(f -> anchorPath.equals(f.newPath()) || anchorPath.equals(f.oldPath()))
                 .toList();
         return matching.isEmpty() ? diff.files() : matching;
-    }
-
-    /** {@code min(cap, base * factor^(attempt-1))} — the base/factor are the command's runtime-configured
-     * retry policy (ADR: conversation settings), packed by the orchestrator from {@code app_setting}. */
-    private static void backoff(int attempt, long backoffBaseMs, double backoffFactor) {
-        long sleepMs = (long) Math.min(60_000L, backoffBaseMs * Math.pow(backoffFactor, attempt - 1));
-        try {
-            Thread.sleep(sleepMs);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private static Throwable unwrap(RuntimeException e) {
-        return e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
-    }
-
-    /** Transient SCM (5xx / 429) or IO / timeout → worth a retry; anything else → dead-letter immediately. */
-    static boolean isTransient(Throwable cause) {
-        for (Throwable t = cause; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof ScmApiException api && (api.status() >= 500 || api.isRateLimited())) {
-                return true;
-            }
-            if (t instanceof UncheckedIOException || t instanceof IOException || t instanceof TimeoutException
-                    || t instanceof ProviderCircuits.CircuitOpenException) {
-                return true;
-            }
-        }
-        // An LLM provider that is rate-limiting or 5xx-ing is transient here exactly as it is for a
-        // review. Without this a follow-up went straight to cs.dlq on the provider's first bad
-        // minute — and once the LLM call is behind a circuit breaker, so would every reply for the
-        // whole cooldown.
-        return LlmFailures.isProviderUnwell(cause);
     }
 
     /**

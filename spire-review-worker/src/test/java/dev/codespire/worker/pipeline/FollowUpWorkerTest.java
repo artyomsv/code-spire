@@ -132,11 +132,11 @@ class FollowUpWorkerTest {
 
     @Test
     void classifiesTransientVersusTerminalFailures() {
-        assertTrue(FollowUpWorker.isTransient(new GitHubApiException(503, "GET", "/user", "Unicorn")));
-        assertTrue(FollowUpWorker.isTransient(new GitHubApiException(429, "GET", "/x", "rate limited")));
-        assertTrue(FollowUpWorker.isTransient(new java.io.IOException("connection reset")));
-        assertFalse(FollowUpWorker.isTransient(new GitHubApiException(404, "GET", "/x", "not found")));
-        assertFalse(FollowUpWorker.isTransient(new IllegalStateException("boom")));
+        assertTrue(FollowUpRetry.isTransient(new GitHubApiException(503, "GET", "/user", "Unicorn")));
+        assertTrue(FollowUpRetry.isTransient(new GitHubApiException(429, "GET", "/x", "rate limited")));
+        assertTrue(FollowUpRetry.isTransient(new java.io.IOException("connection reset")));
+        assertFalse(FollowUpRetry.isTransient(new GitHubApiException(404, "GET", "/x", "not found")));
+        assertFalse(FollowUpRetry.isTransient(new IllegalStateException("boom")));
     }
 
     // --- prompt scope: the thread's own file, and the findings that belong elsewhere ---

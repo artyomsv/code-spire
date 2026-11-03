@@ -8,6 +8,7 @@ import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
 import dev.codespire.contract.command.ActionCommand.PrepareHarnessReview;
+import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
@@ -69,6 +70,18 @@ class CommandDispatcherTest {
         };
         // Harness reviews, step 6: prepare and finish reach the harness worker, never the API path's.
         dispatcher.harnessReviewWorker = recordingHarnessReviewWorker();
+        // Harness reviews, step 7: a reply's prepare and post reach the reply worker.
+        dispatcher.harnessReplyWorker = new HarnessReplyWorker() {
+            @Override
+            public void prepare(ActionCommand.PrepareHarnessReply command) {
+                record("prepareHarnessReply");
+            }
+
+            @Override
+            public void post(ActionCommand.PostHarnessReply command) {
+                record("postHarnessReply");
+            }
+        };
     }
 
     private ReviewWorker recordingReviewWorker() {
@@ -146,6 +159,16 @@ class CommandDispatcherTest {
                 "TEST-answer", null, null));
         assertEquals(List.of("prepareHarnessReview", "finishHarnessReview"), calls);
         assertEquals(List.of((Object) REVIEW_ID, REVIEW_ID), mdcSeenByWorker);
+    }
+
+    @Test
+    void routesPrepareAndPostToTheReplyWorker() {
+        ReplyRetry retry = new ReplyRetry(1, 0, 1.0);
+        dispatcher.on(new ActionCommand.PrepareHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef("comment-1"), "comment-2",
+                null, false, 1, List.of(), retry));
+        dispatcher.on(new ActionCommand.PostHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef("comment-1"), "comment-2",
+                "TEST-answer", null, retry));
+        assertEquals(List.of("prepareHarnessReply", "postHarnessReply"), calls);
     }
 
     @Test
