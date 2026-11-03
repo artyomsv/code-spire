@@ -41,7 +41,9 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.ConfirmFinding.class, name = "ConfirmFinding"),
         @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding"),
         @JsonSubTypes.Type(value = ActionCommand.PrepareHarnessReview.class, name = "PrepareHarnessReview"),
-        @JsonSubTypes.Type(value = ActionCommand.FinishHarnessReview.class, name = "FinishHarnessReview")
+        @JsonSubTypes.Type(value = ActionCommand.FinishHarnessReview.class, name = "FinishHarnessReview"),
+        @JsonSubTypes.Type(value = ActionCommand.PrepareHarnessReply.class, name = "PrepareHarnessReply"),
+        @JsonSubTypes.Type(value = ActionCommand.PostHarnessReply.class, name = "PostHarnessReply")
 })
 public sealed interface ActionCommand {
 
@@ -352,7 +354,7 @@ public sealed interface ActionCommand {
         public PrepareHarnessReview {
             java.util.Objects.requireNonNull(kind, "A harness review names its kind");
             if (kind == ReviewRunBinding.Kind.FOLLOWUP) {
-                throw new IllegalArgumentException("A reply is not a harness review; it stays on the API");
+                throw new IllegalArgumentException("A reply is not a harness review; it is a PrepareHarnessReply");
             }
             if (round < 1) throw new IllegalArgumentException("A harness review names its round from 1, not " + round);
             boolean hasPriorFindings = priorRun != null && !priorRun.findings().isEmpty();
@@ -391,6 +393,63 @@ public sealed interface ActionCommand {
                     + ", commit=" + commit + ", round=" + round + ", kind=" + kind
                     + ", answerText=" + (answerText == null ? "null" : "<" + answerText.length() + " chars>")
                     + ", usage=" + usage + ", scmCredential=" + ActionCommand.redacted(scmCredential) + "]";
+        }
+    }
+
+    /**
+     * Prepare a reply on a harness (harness reviews, step 7): the worker fetches the thread, applies the "smart 1:1"
+     * rule, claims {@code followup:<triggeringCommentId>}, reads the pull request's head and answers with
+     * {@code HarnessReplyPrepared}. {@code round} is the review's round when the reply was decided; a reply run is not
+     * cancelled by a later round. Its {@code toString} prints counts, never the credential or a finding's text.
+     */
+    record PrepareHarnessReply(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                               String triggeringCommentId, String scmCredential, boolean mentioned, int round,
+                               List<PriorFinding> otherFindings, ReplyRetry retry) implements ActionCommand {
+        public PrepareHarnessReply {
+            // Half of the claim key and of the charge identity: without it turn 2 reads as turn 1's redelivery.
+            if (triggeringCommentId == null || triggeringCommentId.isBlank()) {
+                throw new IllegalArgumentException("A harness reply names the comment it answers");
+            }
+            java.util.Objects.requireNonNull(threadRef, "A harness reply names its thread");
+            java.util.Objects.requireNonNull(retry, "A harness reply names its retry policy");
+            if (round < 1) throw new IllegalArgumentException("A harness reply names its round from 1, not " + round);
+            otherFindings = otherFindings == null ? List.of() : List.copyOf(otherFindings);
+        }
+
+        @Override
+        public String toString() {
+            return "PrepareHarnessReply[reviewId=" + reviewId + ", repo=" + repo + ", prId=" + prId
+                    + ", threadRef=" + threadRef + ", triggeringCommentId=" + triggeringCommentId
+                    + ", scmCredential=" + ActionCommand.redacted(scmCredential) + ", mentioned=" + mentioned
+                    + ", round=" + round + ", otherFindings=<" + otherFindings.size() + " findings>"
+                    + ", retry=" + retry + "]";
+        }
+    }
+
+    /**
+     * Post a harness reply's answer in its thread (harness reviews, step 7): post-only, no model call. The worker claims
+     * the same {@code followup:<triggeringCommentId>} key, so a redelivery posts nothing. Its {@code toString} prints
+     * the answer's length and never the answer or the credential.
+     */
+    record PostHarnessReply(String reviewId, RepoRef repo, long prId, ThreadRef threadRef, String triggeringCommentId,
+                            String answerText, String scmCredential, ReplyRetry retry) implements ActionCommand {
+        public PostHarnessReply {
+            if (answerText == null || answerText.isBlank()) {
+                throw new IllegalArgumentException("A harness reply posts an answer; an empty one is a failed reply");
+            }
+            if (triggeringCommentId == null || triggeringCommentId.isBlank()) {
+                throw new IllegalArgumentException("A harness reply names the comment it answers");
+            }
+            java.util.Objects.requireNonNull(threadRef, "A harness reply names its thread");
+            java.util.Objects.requireNonNull(retry, "A harness reply names its retry policy");
+        }
+
+        @Override
+        public String toString() {
+            return "PostHarnessReply[reviewId=" + reviewId + ", repo=" + repo + ", prId=" + prId
+                    + ", threadRef=" + threadRef + ", triggeringCommentId=" + triggeringCommentId
+                    + ", answerText=<" + answerText.length() + " chars>"
+                    + ", scmCredential=" + ActionCommand.redacted(scmCredential) + ", retry=" + retry + "]";
         }
     }
 

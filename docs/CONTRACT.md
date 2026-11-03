@@ -438,6 +438,7 @@ Every event (integration or domain) is wrapped:
 | `HarnessReviewPrepared` | `spire-review-worker` | reviewId, prId, commit, round, kind (`REVIEW` or `RECONCILE`), inputs (`HarnessReviewInputs`: `context.md` and, on a re-review, `prior-findings.md`, at most 224 KiB in total, plain text, never a diff; `toString` prints sizes) — harness reviews, step 6 |
 | `HarnessReviewGenerated` | `spire-review-worker` | reviewId, prId, commit, round, result (`ReviewResult`), verdicts[] — the harness answer parsed by the API path's own parsers; applied as a `ReviewGenerated` with no `reconcileUsage`, since the run was charged once |
 | `HarnessReviewFailed` | `spire-review-worker` | reviewId, commit, round, phase (`harness-prepare` or `harness-finish`), error, retryable, credentialRejected — the worker could not prepare or finish a harness review; applied as a `ReviewFailed` (attempt 1) under the review's round lock only for its own round, so a late failure of an ended round never fails or retries the current one (review of PR #370) |
+| `HarnessReplyPrepared` | `spire-review-worker` | reviewId, prId, commit (the pull request's head the worker read, which the reply run checks out), threadRef (the conversation root), triggeringCommentId, round, inputs (`HarnessReviewInputs` holding `thread.md`: the anchor, the review's other findings and the thread, fenced, at most 96 KiB) — harness reviews, step 7 |
 
 > Only the **assembled context** is offloaded to the object store (encrypted, referenced by `contextRef`)
 > so events stay small. **Diffs are never stored** (re-fetched by commit); **findings** ride inline in
@@ -474,6 +475,8 @@ Every event (integration or domain) is wrapped:
 | `RefuseFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef — fixed-text refusal that a `/finding` had nowhere to anchor, no LLM credential; only emitted when there is a thread to reply into (a bare timeline note otherwise) |
 | `PrepareHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, contextRef?, scmCredential, priorRun?, round (from 1), kind — `RECONCILE` exactly when `priorRun` has findings, `REVIEW` otherwise, `FOLLOWUP` refused; `toString` prints neither the credential nor a finding |
 | `FinishHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, round, kind, answerText? (null: the answer was over the cap), usage, scmCredential — `toString` prints the answer's length and never the answer or the credential |
+| `PrepareHarnessReply` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId (non-blank), scmCredential, mentioned, round (from 1), otherFindings[], retry (`ReplyRetry`: maxAttempts, backoffBaseMs, backoffFactor) — a reply on a harness: the worker fetches the thread, applies "smart 1:1", claims `followup:<commentId>` and answers `HarnessReplyPrepared`; `toString` prints neither the credential nor a finding |
+| `PostHarnessReply` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, answerText (non-blank), scmCredential, retry — post-only: the reply run's answer, posted under the same claim and answered with `FollowUpGenerated` (no usage: `ReviewRunCharges` charged the run) and `FollowUpPosted`; `toString` prints the answer's length |
 
 **Record commands** (to the `ReviewLifecycle` decider — append *domain* events):
 

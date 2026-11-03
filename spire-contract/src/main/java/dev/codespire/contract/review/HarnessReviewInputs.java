@@ -25,6 +25,9 @@ public record HarnessReviewInputs(List<InputFile> files) {
 
     public static final String PRIOR_FINDINGS = "prior-findings.md";
 
+    /** A reply's only input (harness reviews, step 7): the thread, its anchor and the review's other findings. */
+    public static final String THREAD = "thread.md";
+
     private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9-]*\\.md");
 
     public static final HarnessReviewInputs NONE = new HarnessReviewInputs(List.of());

@@ -52,7 +52,8 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused"),
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewPrepared.class, name = "HarnessReviewPrepared"),
         @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated"),
-        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewFailed.class, name = "HarnessReviewFailed")
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewFailed.class, name = "HarnessReviewFailed"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReplyPrepared.class, name = "HarnessReplyPrepared")
 })
 public sealed interface IntegrationEvent {
 
@@ -428,6 +429,18 @@ public sealed interface IntegrationEvent {
                                  HarnessReviewInputs inputs) implements IntegrationEvent {
         public HarnessReviewPrepared {
             java.util.Objects.requireNonNull(inputs, "A prepared harness review carries its inputs");
+        }
+    }
+
+    /**
+     * The worker prepared a reply on a harness (harness reviews, step 7): {@code commit} is the pull request's head it
+     * read, which the run checks out, and {@code inputs} hold {@code thread.md}. It prints sizes, never text.
+     */
+    record HarnessReplyPrepared(String reviewId, long prId, String commit, ThreadRef threadRef,
+                                String triggeringCommentId, int round, HarnessReviewInputs inputs)
+            implements IntegrationEvent {
+        public HarnessReplyPrepared {
+            java.util.Objects.requireNonNull(inputs, "A prepared harness reply carries its inputs");
         }
     }
 

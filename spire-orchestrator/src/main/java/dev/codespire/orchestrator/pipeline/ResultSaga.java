@@ -9,6 +9,7 @@ import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReplyPrepared;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
@@ -888,6 +889,7 @@ public class ResultSaga {
             case HarnessReviewPrepared e -> e.reviewId();
             case HarnessReviewGenerated e -> e.reviewId();
             case HarnessReviewFailed e -> e.reviewId();
+            case HarnessReplyPrepared e -> e.reviewId();
             default -> "";
         };
     }
