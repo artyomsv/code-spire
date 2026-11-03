@@ -282,7 +282,7 @@ Write your reply as the whole content of the file named by $SPIRE_ARTIFACT.
    - *Alternative:* cancel on push like a review (the spec's "a newer head cancels the older run" is written for reviews). Costs a silent thread.
 3. **The thread and turn are read back from the call slot** (`ReplyCall.ofSlot`), not added to `ReviewRunBinding`. A run failure reads its binding from `factory_run`, which stores the slot; a new binding component would need a migration and every rebuild site.
    - *Alternative:* two binding components plus a migration.
-4. **The claim is taken at prepare and checked again at post.** A claim reserves the slot without blocking a redelivery (`posted_ref` stays null until `markPosted`); the run id's determinism stops a second run, and the post's claim stops a second comment.
+4. **The claim is taken at prepare and checked again at post.** It blocks nothing until post (`posted_ref` stays null). A second run of one turn is stopped by the launch's slot read (plan check, item 3); a second comment by the post's claim.
 5. **A refused reply is said on the thread's history (`FollowUpRefused`), with no attention row.** The same as a reply refused by the spend cap (`ConversationSaga.refuseFollowUp`). The review's own `REVIEW_HARNESS_REFUSED` row speaks of a review that was not reviewed, which is false here.
    - *Alternative:* raise `REVIEW_HARNESS_REFUSED` for a reply too. Shows a seat problem sooner, with misleading words.
 6. **A run that ends with no answer is `FollowUpFailed`, and clears "answering".** The API path leaves the flag up until the next review run, because its failure dead-letters with no event; the harness path knows, so it says so.
@@ -295,3 +295,39 @@ Write your reply as the whole content of the file named by $SPIRE_ARTIFACT.
 ## Out of scope
 
 Fork pull requests and the credential-injecting proxy (steps 3 and 8). A review-page link from a thread to its reply run. The API path's own stuck "answering" flag after a dead-lettered `AnswerFollowUp`. The step 5/6 follow-ups (Re-run for a stuck review, `superseded` during a forced re-run).
+
+## Changes after the plan check (they override the tasks above where they disagree)
+
+1. **Task 2, the admission tests go where the real admission runs.** `ReviewRunDispatchTest` uses a fake
+   `ReviewRunAdmission` (`:163-164`), so a guard tested there passes with the guard deleted. Put
+   `aReplyIsAdmittedAfterItsRoundWasSuperseded` and `aReplyOfAClosedPullRequestIsNotAdmitted` in
+   `ReviewRunDispatchRaceTest` (`@QuarkusTest`, Postgres).
+2. **Review Focus 3 covers a run that ended, and the closed-PR drop.** `HarnessReplyLaunch`'s cancelled arm also appends
+   `FollowUpRefused` ("pull request closed") under the thread, not only a timeline line (the timeline is in memory, 500
+   entries). Test: `aCancelledAdmissionDropsTheReply` asserts the event. The worker's three silent exits at prepare (no
+   `ThreadSource`, `!shouldAnswer`, `AlreadyPosted`) keep the API path's behaviour: "answering" stays up until the next
+   review. Name them in the step 7 UNVERIFIED entry.
+3. **Task 4, a second prepare of one turn sends no second run.** The claim at prepare blocks nothing (`posted_ref` stays
+   null until post), and the run id carries the head, so a redelivered `PrepareHarnessReply` after a push would fund a
+   second run whose charge the ledger then drops (same `call_ref`). `HarnessReplyLaunch` first reads
+   `FactoryRunProjection.reviewRunWithSlot(String reviewId, String callSlot): Optional<String>` (any row, any status);
+   present means `AlreadyQueued` with that run id, and nothing is funded. Test:
+   `aSecondPrepareOfOneTurnOnANewHeadSendsNoSecondRun`. Call 4 is rewritten to say this.
+4. **Task 1, the summary anchor.** The reply file uses the summary line when the transcript's path is null or blank. A
+   GitHub issue-thread transcript is `(thread, null, 0, null, messages)` (`GitHubCommentSink.java:373`); never copy
+   `FollowUpPrompt`'s `null line 0 (commit null)`. `aSummaryThreadIsAnchoredOnThePullRequest` uses that exact shape.
+5. **Sizes.** `FollowUpRetry.run(RetryCall call, Runnable attempt)` with
+   `record RetryCall(String reviewId, String what, ReplyRetry retry)`. In `ConversationSaga`, the harness branch and the
+   existing API-credential and spend-gate lines (`:112-138`) move into one extracted method,
+   `answerOnHarnessOrApi(AuthorReplied e, ReplyTarget t)` with a small record for the provider, thread and mention, so
+   `planFollowUp` shrinks.
+6. **Line references.** `FollowUpWorker`: the retry loop is `:83-107`, `backoff` `:305-312`, `unwrap` `:314-316`,
+   `isTransient` `:319-334`. `ResultSaga.reviewIdOf` is `:876`; `IntegrationSaga.threadRefOf` `:824`. `IntegrationSaga`
+   grows by 2 lines.
+7. **Task 6, stale text.** Update `ActionCommand.PrepareHarnessReview`'s FOLLOWUP refusal message (`:354-356`: "stays
+   on the API"), ADR-050 step 6's "Replies stay on the API until step 7", and ADR-050's "Deterministic, cancellable"
+   bullet (a supersede no longer cancels reply runs).
+8. **UNVERIFIED, two replies during one run.** The turn count rises only on `FollowUpPosted`, so a second reply in the
+   same thread while the first run works is decided on the old count and gets its own run. The API path has the same
+   window, about a minute; a harness widens it to minutes.
+9. **ReplyCallTest** uses a GitHub summary thread ref holding `::` (`GitHubCommentSink.java:54`) for the round trip.
