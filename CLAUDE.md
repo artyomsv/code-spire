@@ -165,9 +165,9 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   M4's exit criterion (three verified steps on one chain, step 1's decision in step 3's prompt), and #77
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
 
-- **Harness reviews, steps 4 to 6: review runs, first reviews and re-reviews** (steps 4 and 5 on master with PRs
-  #367 and #368, live-proven 2026-11-01 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md; step 6 on PR #370, not
-  merged, live-proven 2026-11-02 in docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; ADR-050, design
+- **Harness reviews, steps 4 to 7: review runs, first reviews, re-reviews and replies** (steps 4 to 6 on master with
+  PRs #367, #368 and #370, live-proven 2026-11-01 and 2026-11-02 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md and
+  docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; step 7 on PR #371, not merged, its live proof pending; ADR-050, design
   docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
@@ -194,10 +194,15 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   linked issue #96; a re-review was one `RECONCILE` run that resolved the fixed thread with a reply, kept two open and
   reported one new bug, charged once under `…#run2|RECONCILE` at cost 0; a rename kept the three open findings at the
   new path with no duplicate; `chatgpt.com` only. Open: an unreachable prior head, a replayed finish fault, a stale
-  round's late message, an API key or a refused seat on a re-review, an over-cap answer, forks and replies are proven
+  round's late message, an API key or a refused seat on a re-review, an over-cap answer and forks are proven
   against fakes only; dead-lettered harness messages keep the context in `dlq_entry.payload` in plain text, a
   redelivery funds twice, and a stuck `reviewing` review has no dashboard Re-run (docs/UNVERIFIED.md, the step 5 and
-  step 6 entries). The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+  step 6 entries). Step 7 answers a reply on a harness repository with one `FOLLOWUP` run per turn, after every
+  conversation policy check: the worker prepares `/inputs/thread.md` and claims `followup:<commentId>`
+  (`PrepareHarnessReply` → `HarnessReplyPrepared`), the run is charged once under the API reply's own identity, and
+  the worker posts the answer (`PostHarnessReply` → `FollowUpGenerated` with no usage, `FollowUpPosted`). A push never
+  cancels a reply run, a close does; a refused or failed reply writes `FollowUpRefused` or `FollowUpFailed` under its
+  thread. The lane is docs/factory/RUN-TOPOLOGY.md §6B.
 
 **Limits that remain:**
 

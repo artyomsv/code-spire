@@ -411,7 +411,7 @@ cap. The worker reassembles them and refuses a gap or a duplicate; a total over 
 answer with no text, which is charged, never a lost run.
 
 Since step 6 a review unit also has an `inputs` volume: the files the review worker prepared (`context.md` and, on a
-re-review, `prior-findings.md`) that ride `ExecuteReviewRun`. Init mounts it writable at `/inputs`, and the runtime
+re-review, `prior-findings.md`; a reply run, since step 7, gets `thread.md` only) that ride `ExecuteReviewRun`. Init mounts it writable at `/inputs`, and the runtime
 copies the files into the created init container as a tar (mode `0444`, owned by root) before init starts, so init's
 mount is the volume's only writer. The agent mounts it read-only, so what it read is what it was handed. The publisher
 never mounts it, not even read-only: it never needs the inputs, and the files carry text (an issue body, a prior

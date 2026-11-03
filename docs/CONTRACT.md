@@ -642,7 +642,7 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
-| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared`, `HarnessReviewGenerated` and `HarnessReviewFailed`, which carry a harness review's inputs, parsed answer and round-tagged failure). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
+| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared`, `HarnessReviewGenerated` and `HarnessReviewFailed`, which carry a harness review's inputs, parsed answer and round-tagged failure, and `HarnessReplyPrepared`, which carries a harness reply's `thread.md`). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
 Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and
