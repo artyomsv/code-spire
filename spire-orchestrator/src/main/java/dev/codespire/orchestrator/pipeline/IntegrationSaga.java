@@ -197,7 +197,7 @@ public class IntegrationSaga {
                         // Only for a real answer: the cap notice is fixed text with no LLM call, and
                         // flagging it would leave a "responding…" pill up for a reply that never comes.
                         if (cmd instanceof ActionCommand.AnswerFollowUp
-                                || cmd instanceof ActionCommand.PrepareHarnessReply) {
+                                ) {
                             projection.setAnswering(e.reviewId(), true);
                         }
                         commands.emit(cmd);

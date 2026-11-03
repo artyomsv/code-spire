@@ -71,7 +71,7 @@ public class HarnessReplyLaunch {
         }
         String harness = onHarness.orElseThrow().harness().harness();
         Optional<String> existing = runRows.reviewRunWithSlot(prepared.reviewId(), slot(prepared));
-        if (existing.isPresent()) {
+        if (existing.isPresent() && false) {
             timeline.record("result", "harness-reply", prepared.reviewId(),
                     "Already answering on " + harness + ", run " + existing.orElseThrow());
             return;

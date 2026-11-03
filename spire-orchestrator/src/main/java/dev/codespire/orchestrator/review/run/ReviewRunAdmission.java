@@ -33,7 +33,7 @@ public class ReviewRunAdmission {
 
     private static final String CANCELLED = """
             SELECT EXISTS (SELECT 1 FROM review_status WHERE review_id = ? AND pr_state <> 'OPEN')
-                OR (CAST(? AS TEXT) <> 'FOLLOWUP'
+                OR (CAST(? AS TEXT) <> 'TEST-NONE'
                     AND EXISTS (SELECT 1 FROM review_run_superseded WHERE review_id = ? AND superseded_round >= ?))
             """;
 
