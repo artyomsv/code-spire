@@ -1,33 +1,30 @@
 package dev.codespire.orchestrator.review.run;
 
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.event.IntegrationEvent;
-import dev.codespire.contract.llm.PromptCatalog;
-import dev.codespire.contract.llm.PromptKind;
-import dev.codespire.contract.llm.PromptTemplate;
+import dev.codespire.contract.event.ReviewIds;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewRunBinding;
-import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FixTargets;
-import dev.codespire.orchestrator.factory.RunFunding;
-import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ReviewRuns;
-import dev.codespire.orchestrator.prompt.WorkerPromptTemplates;
+import dev.codespire.orchestrator.pipeline.CommandsEmitter;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.repository.RepositoryRegistry;
-import dev.codespire.orchestrator.repository.ReviewHarness;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.jboss.logging.Logger;
 
 import java.util.Optional;
-import java.util.UUID;
 
 /**
- * Whether a review's first round runs on a harness, and if so dispatches its review run (harness reviews, step 5).
+ * Whether a review runs on a harness, and if so sends it to the review worker to prepare (harness reviews, step 6).
  *
- * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; a re-review (a prior round was
- * posted) is {@link NotHarness}, because re-reviews stay on the API until step 6; a fork pull request, or one whose
- * fork status is unknown, is {@link Refused}; a review whose round cannot be read is {@link Refused}; otherwise the run is dispatched, and a refused dispatch is
- * {@link Refused} with its reason. A refusal never falls back to the API (operator decision 6).
+ * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; a fork pull request, or one whose
+ * fork status is unknown, is {@link Refused}; a review whose round cannot be read is {@link Refused}; a review with no
+ * packed reviewer credential is {@link Refused}; otherwise a {@code PrepareHarnessReview} is sent and the decision is
+ * {@link Preparing}. A re-review whose prior run has open findings is prepared as a {@code RECONCILE}, any other review
+ * as a {@code REVIEW}. The run is dispatched once the worker answers, by {@link HarnessReviewLaunch}. A refusal never
+ * falls back to the API (operator decision 6).
  *
  * <p>The texts the saga writes for each decision are built here, so {@code ResultSaga} only routes them.
  */
@@ -43,7 +40,8 @@ public class HarnessReviewStart {
     /** Composing the run's prompt or request threw; the log has the cause. */
     static final String START_FAILED = "harness_review_start_failed";
 
-    private static final Logger LOG = Logger.getLogger(HarnessReviewStart.class);
+    /** The worker cannot read the pull request without the reviewer's account (plan call 12). */
+    static final String CREDENTIAL_UNAVAILABLE = "reviewer_credential_unavailable";
 
     @Inject
     RepositoryRegistry repositories;
@@ -54,17 +52,23 @@ public class HarnessReviewStart {
     @Inject
     FixTargets targets;
 
+    /** Never called from here: the launch dispatches (HarnessReviewStartTest keeps a fake to prove the start never does). */
     @Inject
     ReviewRunDispatch dispatch;
 
     @Inject
     ReviewRuns runs;
 
+    /** The reviewer's packed forge credential a {@code PrepareHarnessReview} carries. */
     @Inject
-    WorkerPromptTemplates promptTemplates;
+    WorkerCredentials credentials;
 
-    /** What became of a review's start. */
-    public sealed interface Decision permits NotHarness, Started, Refused {
+    /** Where a {@code PrepareHarnessReview} is sent. */
+    @Inject
+    CommandsEmitter commands;
+
+    /** What became of a review's start or of its launch. */
+    public sealed interface Decision permits NotHarness, Started, Refused, Preparing, Dropped {
     }
 
     /** The review takes today's API path. */
@@ -94,91 +98,54 @@ public class HarnessReviewStart {
         }
     }
 
-    /** The repository a harness review runs for and the harness it runs on. */
-    private record OnHarness(UUID repositoryId, ReviewHarness harness) {
+    /** A {@code PrepareHarnessReview} was sent; the run is dispatched once the worker answers (step 6). */
+    public record Preparing(String harness) implements Decision {
+
+        /** The review's note while the worker prepares its inputs. */
+        public String note() {
+            return "Preparing the review on " + harness;
+        }
     }
 
-    /** A same-repository first review ready to dispatch: where it runs, what it reads, and the round it answers. */
-    private record Prepared(OnHarness onHarness, FixTargets.PushTarget target, int round) {
+    /** A prepared review whose round ended before its launch: nothing is dispatched and nothing is refused. */
+    public record Dropped(String why) implements Decision {
     }
 
     public Decision start(IntegrationEvent.ContextAssembled event) {
-        Optional<OnHarness> onHarness = onHarness(event.reviewId());
-        if (onHarness.isEmpty()) {
+        Optional<String> harness = projection.repositoryIdOf(event.reviewId())
+                .flatMap(id -> repositories.reviewHarness(id)).map(found -> found.harness());
+        if (harness.isEmpty()) {
             return new NotHarness();
         }
-        // Re-reviews stay on the API in step 5: step 6 brings the prior findings a harness re-review needs.
-        if (projection.priorRunFor(event.reviewId()).isPresent()) {
-            return new NotHarness();
-        }
-        String harness = onHarness.orElseThrow().harness().harness();
         Optional<FixTargets.PushTarget> target = targets.forReview(event.reviewId());
         // Null is unknown, and unknown is refused like a fork: only a known same-repository pull request runs.
         if (!Boolean.FALSE.equals(target.map(FixTargets.PushTarget::fromFork).orElse(null))) {
-            return new Refused(harness, FORK_REFUSED);
+            return new Refused(harness.orElseThrow(), FORK_REFUSED);
         }
         // Fail-closed: the ledger's read answers run 1 on a failed read, and a run bound to a guessed round is either
         // refused at admission or dropped as stale after it was paid for (review of PR #368, code-quality/M-1).
         int round = runs.roundOrUnknown(event.reviewId());
         if (round == ReviewRuns.UNKNOWN_RUN) {
-            return new Refused(harness, ROUND_UNKNOWN);
+            return new Refused(harness.orElseThrow(), ROUND_UNKNOWN);
         }
-        return startedOrRefused(new Prepared(onHarness.orElseThrow(), target.orElseThrow(), round), event);
+        return prepare(event, harness.orElseThrow(), round);
     }
 
     /**
-     * A failure while composing the run's request refuses the review: thrown, it failed the saga's message and left the
-     * review in "reviewing" with no run and no attention row (live on spire-test #93). The dispatch stays outside this
-     * guard: once it may have published the command a paid run may be executing, and a terminal refusal would make its
-     * answer arrive at a failed review and be dropped (review of PR #368, code-quality/M-2). A dispatch that throws fails
-     * the message as before, and the review stays open for the run's answer.
+     * Sends the review to the worker to prepare. A missing reviewer credential refuses it with attention, never leaves it
+     * "reviewing" as a note-only skip would (plan call 12). The prior run is read here, once: the worker numbers and
+     * persists it, so the verdict ids stay those the agent read (plan call 3).
      */
-    private Decision startedOrRefused(Prepared prepared, IntegrationEvent.ContextAssembled event) {
-        String harness = prepared.onHarness().harness().harness();
-        ReviewRunRequest request;
-        try {
-            request = request(prepared, event);
-        } catch (RuntimeException e) {
-            LOG.errorf(e, "Harness review start failed for %s; the review is refused", event.reviewId());
-            return new Refused(harness, START_FAILED);
+    private Decision prepare(IntegrationEvent.ContextAssembled event, String harness, int round) {
+        // The API path skips reconcile when nothing is open (plan call 6), so an empty reconcile is never charged.
+        PriorRun prior = projection.priorRunFor(event.reviewId()).filter(run -> !run.findings().isEmpty()).orElse(null);
+        ReviewRunBinding.Kind kind = prior == null ? ReviewRunBinding.Kind.REVIEW : ReviewRunBinding.Kind.RECONCILE;
+        Optional<String> credential = credentials.packForReview(event.reviewId());
+        if (credential.isEmpty()) {
+            return new Refused(harness, CREDENTIAL_UNAVAILABLE);
         }
-        return dispatched(request, harness);
-    }
-
-    private Optional<OnHarness> onHarness(String reviewId) {
-        return projection.repositoryIdOf(reviewId).flatMap(id -> repositories.reviewHarness(id)
-                .map(harness -> new OnHarness(id, harness)));
-    }
-
-    private ReviewRunRequest request(Prepared prepared, IntegrationEvent.ContextAssembled event) {
-        ReviewHarness harness = prepared.onHarness().harness();
-        return new ReviewRunRequest(prepared.onHarness().repositoryId(), binding(event, prepared.round()),
-                new RunFunding.Choice(harness.harness(), harness.model(), harness.effort(), harness.subscription()),
-                prompt(event, prepared.target()));
-    }
-
-    private Decision dispatched(ReviewRunRequest request, String harness) {
-        return switch (dispatch.dispatch(request)) {
-            case ReviewRunDispatch.Dispatched sent -> new Started(sent.runId(), harness);
-            case ReviewRunDispatch.AlreadyQueued queued -> new Started(queued.runId(), harness);
-            // The queued row exists; a launch that never arrived surfaces as REVIEW_STUCK, not as a refusal.
-            case ReviewRunDispatch.Uncertain uncertain -> new Started(uncertain.runId(), harness);
-            case ReviewRunDispatch.Refused refused -> new Refused(harness, refused.reason());
-        };
-    }
-
-    /** The review call this run answers: the current round's slot, so its one charge lands where an API call's would. */
-    private static ReviewRunBinding binding(IntegrationEvent.ContextAssembled event, int round) {
-        return new ReviewRunBinding(event.reviewId(), ReviewRunBinding.Kind.REVIEW, event.prId(), event.commit(),
-                CallRefs.reviewSlot(event.commit(), round), round);
-    }
-
-    private String prompt(IntegrationEvent.ContextAssembled event, FixTargets.PushTarget target) {
-        // Null means no customized prompt: the API path leaves the default to the worker, a run gets it here.
-        PromptTemplate review = Optional.ofNullable(
-                        promptTemplates.forKind(PromptKind.REVIEW, new RepoRef(target.workspace(), target.slug())))
-                .orElseGet(() -> PromptCatalog.defaultTemplate(PromptKind.REVIEW));
-        return HarnessReviewPrompt.compose(review, new HarnessReviewPrompt.ReviewTarget(target.workspace(),
-                target.slug(), event.prId(), event.commit(), target.destBranch()));
+        commands.emit(new ActionCommand.PrepareHarnessReview(event.reviewId(), ReviewIds.parse(event.reviewId()).repo(),
+                event.prId(), event.commit(), event.contextRef(), credential.orElseThrow(), prior, round, kind));
+        return new Preparing(harness);
     }
 }

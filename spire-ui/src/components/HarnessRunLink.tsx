@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { Bot } from 'lucide-react';
 import { getRuns, runsForReviewKey } from '../api';
 import { invalidateLive } from '../liveCache';
-import { runStatusLabel, runStatusPill, shortRunId } from './Runs';
+import { isReviewRoundKind, runKindLabel, runStatusLabel, runStatusPill, shortRunId } from './Runs';
 
 interface Props {
   reviewId: string;
@@ -13,12 +13,12 @@ interface Props {
 }
 
 /**
- * The run reviewing this pull request on a harness (harness reviews, step 5), so its transcript is one click away.
- * An API review has no such run, and shows nothing.
+ * The run reviewing this pull request on a harness (harness reviews, steps 5 and 6), so its transcript is one click
+ * away: the current round's run, a first review or a re-review. An API review has no such run, and shows nothing.
  */
 export default function HarnessRunLink({ reviewId, updatedAt }: Props) {
   const client = useQueryClient();
-  const read = useQuery({ queryKey: runsForReviewKey(reviewId), queryFn: () => getRuns({ reviewId, kind: 'REVIEW', limit: 1 }) });
+  const read = useQuery({ queryKey: runsForReviewKey(reviewId), queryFn: () => getRuns({ reviewId, limit: 20 }) });
   // The first change time seen is where the page starts, not a change.
   const seen = useRef<{ review: string; updatedAt: string } | null>(null);
   useEffect(() => {
@@ -26,10 +26,14 @@ export default function HarnessRunLink({ reviewId, updatedAt }: Props) {
     seen.current = { review: reviewId, updatedAt };
     if (previous && previous.review === reviewId && previous.updatedAt !== updatedAt) void invalidateLive(client, runsForReviewKey(reviewId));
   }, [client, reviewId, updatedAt]);
-  const run = read.data?.[0];
+  // The server lists a review's runs newest first, so the first review-round run is the current round's. A fix run of
+  // the same review is not the review's own run. An answer that is not a list shows nothing: this link must never take
+  // the review page down with it.
+  const runs = Array.isArray(read.data) ? read.data : [];
+  const run = runs.find(candidate => isReviewRoundKind(candidate.kind));
   if (!run) return null;
   return <p className="posted-as">
-    <Bot size={12} aria-hidden="true" /> <span>Harness run</span>{' '}
+    <Bot size={12} aria-hidden="true" /> <span>{runKindLabel(run.kind)}</span>{' '}
     <Link to={`/runs/${encodeURIComponent(run.runId)}`} className="mono" title={run.runId}>{shortRunId(run.runId)}</Link>{' '}
     <span className={`pill ${runStatusPill(run.status)}`}>{runStatusLabel(run.status)}</span>
   </p>;

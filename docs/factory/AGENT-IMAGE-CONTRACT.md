@@ -61,6 +61,10 @@ The harness argv arrives as the container **command**, so your entrypoint receiv
 is the entrypoint's job. `deploy/agent/spire-agent-entrypoint.sh` is a working
 implementation you may copy or replace.
 
+A review run also mounts `/inputs` **read-only**: the files the prompt names (`context.md`, and on a re-review
+`prior-findings.md`), owned by root with mode `0444`. Your image must not need to write there, nor need the
+directory to exist outside a review run; any image whose run user can read a world-readable file can read them.
+
 ---
 
 ## Verified clauses

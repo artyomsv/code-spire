@@ -78,6 +78,11 @@ export function runKindLabel(kind: string): string {
   return REVIEW_KIND_LABEL[kind] ?? kind;
 }
 
+/** Whether a run is one round of a review: the first review or a re-review. A reply (`FOLLOWUP`) and a fix are not. */
+export function isReviewRoundKind(kind: string): boolean {
+  return kind === 'REVIEW' || kind === 'RECONCILE';
+}
+
 /**
  * Whether a run's charge is recorded under its review rather than under the run. Such a row shows a dash for its
  * cost, so a review call's spend never reads as the run's own.

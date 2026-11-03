@@ -2,13 +2,15 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.llm.ReviewRuns;
+import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.pipeline.ResultSaga;
+import dev.codespire.orchestrator.provider.WorkerCredentials;
 
 import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * The real {@link HarnessReviewResults} handing its outcomes to the saga it is given, with the review in round 1. The
+ * The real {@link HarnessReviewResults} handing its outcomes to the saga it is given, in round 1 or a given round. The
  * round lock is a Postgres advisory lock (ReviewRoundLockTest drives it), so here it runs the work inline; the round
  * read and the run row's model are fakes for the same reason.
  *
@@ -20,26 +22,51 @@ public final class RealHarnessResults {
     private RealHarnessResults() {
     }
 
-    public static HarnessReviewResults results(ResultSaga saga) {
+    /**
+     * @param saga     the saga the finished outcome is handed to
+     * @param commands where a run's answer is sent to the worker to finish (step 6)
+     */
+    public static HarnessReviewResults results(ResultSaga saga, CommandsEmitter commands) {
+        return inRound(saga, commands, ReviewRuns.FIRST_RUN);
+    }
+
+    /**
+     * @param saga         the saga the finished outcome is handed to
+     * @param commands     where a run's answer is sent to the worker to finish (step 6)
+     * @param currentRound the review's current round, as a forced re-run on the same head leaves it
+     */
+    public static HarnessReviewResults inRound(ResultSaga saga, CommandsEmitter commands, int currentRound) {
         HarnessReviewResults results = new HarnessReviewResults();
         results.saga = saga;
-        results.runs = firstRound();
+        results.commands = commands;
+        results.credentials = reviewerCredential();
+        results.runs = round(currentRound);
         results.rounds = inlineLock();
         results.runRows = runRows();
         results.maxReportedTokens = -1;
         return results;
     }
 
-    private static ReviewRuns firstRound() {
+    private static ReviewRuns round(int currentRound) {
         return new ReviewRuns() {
             @Override
             public int currentRun(String reviewId) {
-                return ReviewRuns.FIRST_RUN;
+                return currentRound;
             }
 
             @Override
             public int roundOrUnknown(String reviewId) {
-                return ReviewRuns.FIRST_RUN;
+                return currentRound;
+            }
+        };
+    }
+
+    /** The real one resolves the reviewer account from the database and packs it with Tink. */
+    private static WorkerCredentials reviewerCredential() {
+        return new WorkerCredentials() {
+            @Override
+            public Optional<String> packForReview(String reviewId) {
+                return Optional.of("TEST-packed-scm");
             }
         };
     }

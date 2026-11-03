@@ -22,6 +22,19 @@ class DlqTopicsTest {
         assertEquals("cs.harness-sign-in-results", DlqTopics.forType("Failed"));
     }
 
+    /** Harness reviews, step 6: the review worker reads prepare and finish from cs.commands. */
+    @Test void harnessReviewCommandsReplayOntoCommands() {
+        assertEquals("cs.commands", DlqTopics.forType("PrepareHarnessReview"));
+        assertEquals("cs.commands", DlqTopics.forType("FinishHarnessReview"));
+    }
+
+    /** Without these a dead-lettered worker result fell through to cs.commands, where nothing reads it. */
+    @Test void harnessReviewResultsReplayOntoResults() {
+        assertEquals("cs.results", DlqTopics.forType("HarnessReviewPrepared"));
+        assertEquals("cs.results", DlqTopics.forType("HarnessReviewGenerated"));
+        assertEquals("cs.results", DlqTopics.forType("HarnessReviewFailed"));
+    }
+
     @Test void registrationReplaysOntoItsRegistryTopic() {
         assertEquals("cs.registry-integration", DlqTopics.forType("RepositoryRegistration"));
     }

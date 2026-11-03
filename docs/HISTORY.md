@@ -2276,3 +2276,24 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   message must be discarded, not replayed, and a fork refusal, an over-cap answer and a rejected seat are proven
   against fakes only. Record: [first reviews on a harness acceptance](factory/HARNESS-REVIEWS-5-ACCEPTANCE.md).
   Next: step 6, re-reviews and assembled context on a harness.
+
+- **Harness reviews step 6: re-reviews on a harness (2026-11-02, PR #370; live-proven, not merged).** Step 6 sends
+  every review of a harness repository to the harness: a re-review with open prior findings is one `RECONCILE` run,
+  any other a `REVIEW` run, with no API fallback (ADR-050, "Step 6"). The review worker prepares (`PrepareHarnessReview`
+  → `HarnessReviewPrepared`: the assembled context, and on a re-review the prior findings numbered once and stored
+  under `harness:prepare#<round>`), the orchestrator launches the run, and the worker finishes (`FinishHarnessReview`
+  → `HarnessReviewGenerated`) with the API path's parsers and the shared `ReconcileSteps`; the outcome is applied on
+  the review's ordered `cs.results` consumer under the round lock and charged once. The agent reads
+  `/inputs/context.md` and `/inputs/prior-findings.md`, copied by the Docker runtime as a tar into init and mounted
+  read-only by the agent. The review of PR #370 found that a stale round's failure, or its replayed dead letter, could
+  fail the current round on the same head, and that a forced re-run could land between the launch's round check and
+  its refusal; failures now name their round and are applied, like the launch's decision, under the round lock only
+  for the current round (`4a02f003`). The live proof on `spire-test` (built at `4a02f003`, Codex `gpt-6-astra` on a
+  seat, report mode) found no defect: on #97, which implements issue #96, the first `REVIEW` run approved with three
+  findings, one citing the issue's TEST-RULE-COUPON-50 cap that no file states; a push fixing one finding and adding
+  a division by zero ran one `RECONCILE` run that resolved the fixed thread with a reply, kept two open and reported
+  the new bug, charged once under `…#run2|RECONCILE` and never under `…|REVIEW`, at cost 0, calling `chatgpt.com`
+  only; a rename kept all three findings open at the new path with no duplicate. Left open: an unreachable prior
+  head, a replayed finish fault, a stale round's late message, a seat refused mid re-review, a re-review on an API
+  key, an over-cap answer, forks and replies are proven against fakes only. Record:
+  [re-reviews on a harness acceptance](factory/HARNESS-REVIEWS-6-ACCEPTANCE.md). Next: step 7, replies on a harness.

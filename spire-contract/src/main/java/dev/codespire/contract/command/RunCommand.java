@@ -361,7 +361,8 @@ public sealed interface RunCommand {
      * and its answer handed back as {@code RunReviewArtifact}. Nothing is pushed. It rides {@code cs.review-runs}, the
      * run-worker's review lane, so a review never waits behind a build.
      */
-    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review)
+    record ExecuteReviewRun(String runId, ExecuteRun execution, dev.codespire.contract.review.ReviewRunBinding review,
+                            dev.codespire.contract.review.HarnessReviewInputs inputs)
             implements RunCommand {
         public ExecuteReviewRun {
             Objects.requireNonNull(execution, "A review execution is required");
@@ -371,6 +372,8 @@ public sealed interface RunCommand {
             // pushes nothing, so a checkpoint start or a push target is a command that should never have been built.
             if (execution.startFromRunId() != null) throw new IllegalArgumentException("A review run reads its head, never a checkpoint");
             if (execution.existingBranch()) throw new IllegalArgumentException("A review run pushes nothing, so it names no existing branch");
+            // A step 5 command still in flight has no inputs member: it runs, and its agent finds /inputs empty.
+            if (inputs == null) inputs = dev.codespire.contract.review.HarnessReviewInputs.NONE;
         }
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}

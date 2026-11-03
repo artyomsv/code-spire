@@ -7,6 +7,8 @@ import dev.codespire.contract.event.IntegrationEvent.ReviewGenerated;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.LineRange;
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static dev.codespire.orchestrator.pipeline.HarnessSagaFakes.COMMIT;
@@ -31,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link HarnessReviewStart}, and a started run sends no {@code GenerateReview}; a refused one ends the review
  * {@code refused} with the reason the attention feed shows. The run's outcome comes back through
  * {@link ResultSaga#acceptHarnessOutcome}, which takes the existing outcome path and never charges again.
+ *
+ * <p>Step 6 sends a harness review to the worker to prepare first ({@code Preparing}); what follows the worker's answer
+ * is {@code ResultSagaHarnessRunTest}'s.
  *
  * <p>A plain unit test with hand-written fakes, as {@code ResultSagaVerdictTest} has: {@link HarnessSagaFakes} and
  * {@link HarnessSagaProjection} override every method these paths reach (CLAUDE.md, saga test fakes).
@@ -127,6 +133,33 @@ class ResultSagaHarnessReviewTest {
     @Test
     void anOutcomeOfAnotherKindIsRefused() {
         assertThrows(IllegalArgumentException.class, () -> saga().acceptHarnessOutcome(CONTEXT));
+    }
+
+    /** Step 6: a re-review on a harness repository is prepared for the harness, never sent to the API. */
+    @Test
+    void aHarnessRepositorysReReviewSendsNoGenerateReview() {
+        projection.priorRun = Optional.of(prior());
+        decision = new HarnessReviewStart.Preparing("TEST-harness");
+
+        saga().on(CONTEXT);
+
+        assertTrue(emitted.stream().noneMatch(ActionCommand.GenerateReview.class::isInstance), emitted.toString());
+        assertTrue(timelineLines.contains("harness-prepare"), timelineLines.toString());
+    }
+
+    @Test
+    void aPreparingReviewSetsItsNote() {
+        decision = new HarnessReviewStart.Preparing("TEST-harness");
+
+        saga().on(CONTEXT);
+
+        assertEquals("Preparing the review on TEST-harness", projection.notes.getLast());
+        assertTrue(projection.statuses.isEmpty(), "preparing is not a refusal: " + projection.statuses);
+    }
+
+    private static PriorRun prior() {
+        return new PriorRun("TEST-prior-commit", "TEST-summary-ref",
+                List.of(new PriorFinding("src/TEST.java", 3, Severity.MAJOR, "TEST-message", "TEST-thread")));
     }
 
     private static ReviewGenerated generated(String commit) {

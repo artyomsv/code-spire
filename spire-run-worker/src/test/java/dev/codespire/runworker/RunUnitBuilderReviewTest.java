@@ -3,6 +3,7 @@ package dev.codespire.runworker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.MachineAccountCredential;
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.work.WorkDraftBinding;
@@ -13,11 +14,14 @@ import dev.codespire.runtime.RunUnitSpec;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -61,9 +65,72 @@ class RunUnitBuilderReviewTest {
     }
 
     private RunUnitSpec reviewUnit(RunCommand.ExecuteRun execution) {
+        return reviewUnit(execution, HarnessReviewInputs.NONE);
+    }
+
+    private RunUnitSpec reviewUnit(RunCommand.ExecuteRun execution, HarnessReviewInputs inputs) {
         RunCommand.ExecuteReviewRun review = new RunCommand.ExecuteReviewRun(RUN_ID, execution,
-                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1));
+                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1), inputs);
         return builder.buildReview(review, new CodexAdapter());
+    }
+
+    private static final HarnessReviewInputs INPUTS = new HarnessReviewInputs(List.of(
+            new HarnessReviewInputs.InputFile(HarnessReviewInputs.CONTEXT, "TEST-CONTEXT"),
+            new HarnessReviewInputs.InputFile(HarnessReviewInputs.PRIOR_FINDINGS, "TEST-PRIOR")));
+
+    /** Step 6: the command's input files reach the unit, for the runtime to copy into init. */
+    @Test
+    void aReviewUnitCarriesItsInputs() throws Exception {
+        RunUnitSpec unit = reviewUnit(execution(RUN_ID, "TEST-source"), INPUTS);
+
+        assertNotNull(unit.inputs(), "a review unit always carries its inputs");
+        assertEquals(Map.of(HarnessReviewInputs.CONTEXT, "TEST-CONTEXT", HarnessReviewInputs.PRIOR_FINDINGS, "TEST-PRIOR"),
+                unit.inputs().files());
+        assertEquals("/inputs", unit.inputs().path());
+    }
+
+    /** No inputs is still an inputs volume, empty: every review unit has the same shape. */
+    @Test
+    void aReviewWithNoInputsGetsAnEmptyInputsVolume() throws Exception {
+        RunUnitSpec unit = reviewUnit();
+
+        assertNotNull(unit.inputs());
+        assertEquals(Map.of(), unit.inputs().files());
+    }
+
+    @Test
+    void aReviewsInitWritesTheInputsAndItsAgentOnlyReadsThem() throws Exception {
+        RunUnitSpec unit = reviewUnit(execution(RUN_ID, "TEST-source"), INPUTS);
+
+        assertTrue(unit.init().mounts().contains(Mount.writable("inputs", "/inputs")), unit.init().mounts().toString());
+        assertTrue(unit.agent().mounts().contains(Mount.readOnly("inputs", "/inputs")), unit.agent().mounts().toString());
+        assertFalse(unit.agent().mounts().contains(Mount.writable("inputs", "/inputs")));
+    }
+
+    /** Rebuilding a container to add a mount keeps its entrypoint, as withVariable does. */
+    @Test
+    void addingTheInputsMountKeepsEachEntrypoint() throws Exception {
+        RunUnitSpec plain = reviewUnit();
+        RunUnitSpec given = reviewUnit(execution(RUN_ID, "TEST-source"), INPUTS);
+
+        assertEquals(plain.init().entrypoint(), given.init().entrypoint());
+        assertEquals(plain.agent().entrypoint(), given.agent().entrypoint());
+        assertTrue(given.init().mounts().contains(Mount.writable("inputs", "/inputs")), given.init().mounts().toString());
+    }
+
+    @Test
+    void theReviewPublisherNeverMountsTheInputs() throws Exception {
+        RunUnitSpec unit = reviewUnit(execution(RUN_ID, "TEST-source"), INPUTS);
+
+        assertTrue(unit.publisher().mounts().stream().noneMatch(mount -> mount.volume().equals("inputs")),
+                unit.publisher().mounts().toString());
+        assertNotNull(unit.inputs(), "guards the guard: the unit does carry inputs");
+    }
+
+    /** A draft reads no inputs: the volume is the review's alone. */
+    @Test
+    void aDraftUnitHasNoInputs() throws Exception {
+        assertNull(draftUnit().inputs());
     }
 
     /** A review's execution as the dispatch sends it: the pull request's target branch as its protected branch. */

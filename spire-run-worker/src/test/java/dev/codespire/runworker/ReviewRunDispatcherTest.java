@@ -4,6 +4,7 @@ import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunFailureCause;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.event.RunReviewArtifact;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,7 @@ class ReviewRunDispatcherTest {
             new RunCommand.ExecuteRun(RUN_ID, new RepoRef("TEST-work", "app"), "https://forge.example.test/TEST-work/app.git",
                     "TEST-source", "a".repeat(40), "TEST-source", "TEST-review the pull request", "codex", "TEST-model",
                     "TEST-image", List.of(), 60, "enc-scm", "enc-harness"),
-            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1));
+            new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1), HarnessReviewInputs.NONE);
 
     private final List<String> order = new ArrayList<>();
     private final RunDispatcherTest.FakeClaims claims = new RunDispatcherTest.FakeClaims(order);

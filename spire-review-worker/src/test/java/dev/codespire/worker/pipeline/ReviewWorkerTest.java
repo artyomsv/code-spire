@@ -161,6 +161,7 @@ class ReviewWorkerTest {
             }
         };
         worker.idempotency = idempotency;
+        worker.contextReader = contextReader(new InMemoryBlobStore());
         DiffSource fakeDiff = new DiffSource() {
             @Override
             public ScmType type() {
@@ -227,6 +228,14 @@ class ReviewWorkerTest {
                 return new LlmClient(provider, new ModelParams(provider.id(), 0.2, null));
             }
         };
+    }
+
+    /** The context reader over an in-memory blob store, the way the worker reads the assembled context. */
+    private static AssembledContextReader contextReader(InMemoryBlobStore blobs) {
+        AssembledContextReader reader = new AssembledContextReader();
+        reader.blobStore = blobs;
+        reader.mapper = new ObjectMapper();
+        return reader;
     }
 
     private static Finding finding(String path, int line) {
@@ -799,6 +808,26 @@ class ReviewWorkerTest {
                 "no inline comment carries the LLM claim key as its path");
     }
 
+    /**
+     * Harness reviews, step 6: a harness prepare persists its numbered prior findings under a {@code harness:} claim on
+     * the same review and commit. That value is JSON, not a comment id, and must never be rebuilt as an inline thread.
+     */
+    @Test
+    void aHarnessClaimNeverBecomesAnInlineComment() {
+        idempotency.claim(REVIEW_ID, COMMIT, "harness:prepare#2");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "harness:prepare#2",
+                "{\"priorHead\":\"TEST-head\",\"incremental\":true,\"numbered\":[]}");
+        idempotency.claim(REVIEW_ID, COMMIT, "harness:finish#2");
+        idempotency.markPosted(REVIEW_ID, COMMIT, "harness:finish#2", "{\"type\":\"HarnessReviewGenerated\"}");
+
+        worker.postComments(postCommand(List.of(finding("src/A.java", 2))));
+
+        CommentsPosted posted = assertInstanceOf(CommentsPosted.class, emitted.getLast());
+        assertEquals(1, posted.inline().size(), "only the real finding is posted — no harness claim is leaked");
+        assertTrue(posted.inline().stream().noneMatch(p -> p.path().startsWith(HarnessReviewWorker.CLAIM_PREFIX)),
+                "no inline comment carries a harness claim key as its path");
+    }
+
     // --- follow-up postComments: verdict-driven delta posting (ADR-019) ---
 
     @Test
@@ -946,7 +975,7 @@ class ReviewWorkerTest {
         InMemoryBlobStore blobs = new InMemoryBlobStore();
         BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
                 new ObjectMapper().writeValueAsBytes(assembled));
-        worker.blobStore = blobs;
+        worker.contextReader = contextReader(blobs);
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
 
@@ -971,7 +1000,7 @@ class ReviewWorkerTest {
         InMemoryBlobStore blobs = new InMemoryBlobStore();
         BlobStore.BlobRef ref = blobs.put(BlobStore.Kind.CONTEXT, REVIEW_ID,
                 new ObjectMapper().writeValueAsBytes(assembled));
-        worker.blobStore = blobs;
+        worker.contextReader = contextReader(blobs);
 
         worker.generateReview(new GenerateReview(REVIEW_ID, REPO, 9, COMMIT, ref.key(), 1, null, null, null));
 
@@ -1204,7 +1233,7 @@ class ReviewWorkerTest {
                 + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
         List<FindingVerdict> in = List.of(new FindingVerdict("t-1", "src/A.java", 5,
                 FindingVerdict.Status.STILL_OPEN, "still missing"));
-        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        List<FindingVerdict> out = ReconcileSteps.downgradeUntouched(in, diff);
         assertEquals(FindingVerdict.Status.STILL_OPEN, out.getFirst().status());
     }
 
@@ -1216,7 +1245,7 @@ class ReviewWorkerTest {
                 + "@@ -4,3 +4,3 @@\n line4\n-old5\n+new5\n line6\n";
         List<FindingVerdict> in = List.of(new FindingVerdict("t-2", "src/A.java", 12,
                 FindingVerdict.Status.STILL_OPEN, "still missing"));
-        List<FindingVerdict> out = ReviewWorker.downgradeUntouchedForTest(in, diff);
+        List<FindingVerdict> out = ReconcileSteps.downgradeUntouched(in, diff);
         assertEquals(FindingVerdict.Status.UNCHANGED, out.getFirst().status(),
                 "finding's own line untouched -> silent even though the file changed elsewhere");
     }
@@ -1228,7 +1257,7 @@ class ReviewWorkerTest {
         List<FindingVerdict> in = List.of(new FindingVerdict("t-3", "src/Other.java", 9,
                 FindingVerdict.Status.STILL_OPEN, "x"));
         assertEquals(FindingVerdict.Status.UNCHANGED,
-                ReviewWorker.downgradeUntouchedForTest(in, diff).getFirst().status());
+                ReconcileSteps.downgradeUntouched(in, diff).getFirst().status());
     }
 
     @Test
@@ -1236,7 +1265,7 @@ class ReviewWorkerTest {
         List<FindingVerdict> in = List.of(new FindingVerdict("t-4", "src/A.java", 5,
                 FindingVerdict.Status.STILL_OPEN, "x"));
         assertEquals(FindingVerdict.Status.STILL_OPEN,
-                ReviewWorker.downgradeUntouchedForTest(in, null).getFirst().status());
+                ReconcileSteps.downgradeUntouched(in, null).getFirst().status());
     }
 
     @Test
@@ -1428,7 +1457,7 @@ class ReviewWorkerTest {
         }
     }
 
-    private static final class RecordingSink implements CommentSink, ThreadSource {
+    static final class RecordingSink implements CommentSink, ThreadSource {
 
         final List<String> repliedThreads = new ArrayList<>();
         final List<String> resolvedThreads = new ArrayList<>();
@@ -1573,7 +1602,7 @@ class ReviewWorkerTest {
      * real adapter (Tink, AAD=reviewId) and is transparent to {@link ReviewWorker}, which only ever
      * sees plaintext bytes in and out of the port.
      */
-    private static final class InMemoryBlobStore implements BlobStore {
+    static final class InMemoryBlobStore implements BlobStore {
 
         private final Map<String, byte[]> blobs = new HashMap<>();
         private int ids = 1;
@@ -1597,7 +1626,7 @@ class ReviewWorkerTest {
     }
 
     /** In-memory mirror of the store's claim semantics. */
-    private static final class InMemoryIdempotency extends CommentIdempotencyStore {
+    static final class InMemoryIdempotency extends CommentIdempotencyStore {
 
         private final Map<String, String> slots = new HashMap<>(); // key -> the recorded ref, or null
 

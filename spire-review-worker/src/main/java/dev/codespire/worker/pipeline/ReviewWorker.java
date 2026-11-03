@@ -9,13 +9,10 @@ import dev.codespire.contract.llm.Completion;
 import dev.codespire.contract.llm.Prompt;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
-import dev.codespire.contract.port.BlobStore;
 import dev.codespire.contract.port.CommentSink;
 import dev.codespire.contract.port.DiffSource;
-import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.worker.adapters.WorkerLlmProvider;
 import dev.codespire.worker.adapters.WorkerScmClients;
-import dev.codespire.contract.review.AssembledContext;
 import dev.codespire.contract.review.ContextItem;
 import dev.codespire.contract.review.Finding;
 import dev.codespire.contract.review.FindingVerdict;
@@ -23,11 +20,8 @@ import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
-import dev.codespire.contract.scm.ChangeType;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
-import dev.codespire.contract.scm.FilePatch;
-import dev.codespire.contract.scm.Hunk;
 import dev.codespire.contract.scm.InlineAnchor;
 import dev.codespire.contract.scm.PullRequest;
 import dev.codespire.contract.scm.ScmApiException;
@@ -35,11 +29,9 @@ import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.contract.scm.ThreadTranscript;
 import dev.codespire.diff.Anchors;
 import dev.codespire.diff.DiffRenderer;
-import dev.codespire.diff.UnifiedDiffParser;
 import dev.codespire.llm.FindingsParser;
 import dev.codespire.llm.ReconcilePrompt;
 import dev.codespire.llm.ReviewPromptBuilder;
-import dev.codespire.llm.VerdictsParser;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -47,13 +39,9 @@ import org.jboss.logging.Logger;
 
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.CompletionException;
-import java.util.stream.Collectors;
 
 /**
  * The review worker: GenerateReview (re-fetch diff by commit -> prompt -> LLM
@@ -94,7 +82,7 @@ public class ReviewWorker {
     PromptLog promptLog;
 
     @Inject
-    BlobStore blobStore;
+    AssembledContextReader contextReader;
 
     @Inject
     ObjectMapper mapper;
@@ -148,7 +136,7 @@ public class ReviewWorker {
                 return;
             }
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
-            List<ContextItem> context = loadContext(command.contextRef());
+            List<ContextItem> context = contextReader.load(command.contextRef());
             WorkerLlmProvider.LlmClient client = llm.forCommand(command);
 
             // ADR-019: reconcile (its own claim) runs before the LLM_KEY switch below. Skipped
@@ -171,15 +159,16 @@ public class ReviewWorker {
             }
             runReviewCall(command, pr, diff, context, reconciliation, client);
         } catch (RuntimeException e) {
-            Throwable cause = unwrap(e);
-            if (isCommitGone(cause)) {
+            Throwable cause = WorkerFailures.unwrap(e);
+            if (WorkerFailures.isCommitGone(cause)) {
                 LOG.infof("Abandoning GenerateReview for %s: diff 404 — commit force-pushed away (%s)",
                         command.reviewId(), cause.getMessage());
                 return;
             }
             LOG.warnf(cause, "GenerateReview failed for %s", command.reviewId());
             results.emit(new ReviewFailed(command.reviewId(), command.commit(), "generate",
-                    cause.getMessage(), isRetryable(cause), command.attempt(), isCredentialRejected(cause)));
+                    cause.getMessage(), WorkerFailures.isRetryable(cause), command.attempt(),
+                    WorkerFailures.isCredentialRejected(cause)));
         }
     }
 
@@ -206,7 +195,7 @@ public class ReviewWorker {
         ReconcileOutcome reconcile = reconciliation.outcome();
         ReviewResult result = reconcile == null
                 ? truncatedAware
-                : dropAnchorCollisions(truncatedAware, reconcile.verdicts());
+                : ReconcileSteps.dropAnchorCollisions(truncatedAware, reconcile.verdicts());
 
         // Persist-then-emit (finding M2): marking first makes the paid call
         // unrepeatable; the serialized result keeps redelivery re-emittable
@@ -241,17 +230,18 @@ public class ReviewWorker {
             }
             case CommentIdempotencyStore.Claim.Post ignored -> { }
         }
-        String incremental = compareOrNull(clients.diff(), command, prior);
-        List<PriorFinding> remapped = remapRenames(prior.findings(), renameMap(incremental));
+        ReconcileSteps.ReviewAt at = new ReconcileSteps.ReviewAt(command.repo(), command.prId(), command.commit());
+        ReconcileSteps.Basis basis = ReconcileSteps.basis(clients.diff(), at, prior);
+        String incremental = basis.incrementalDiff();
+        List<PriorFinding> remapped = basis.remapped();
         String diffText = incremental != null ? incremental : DiffRenderer.render(diff.files());
-        Map<String, ThreadTranscript> transcripts = fetchTranscripts(clients, command, remapped);
+        Map<String, ThreadTranscript> transcripts = ReconcileSteps.transcripts(clients.comments(), at, remapped);
         Prompt prompt = ReconcilePrompt.render(remapped, transcripts, diffText,
                 incremental != null, command.reconcilePrompt());
         Completion completion = promptLog.tap("reconcile", client.provider())
                 .complete(prompt, client.params())
                 .toCompletableFuture().join();
-        List<FindingVerdict> verdicts = downgradeUntouched(
-                VerdictsParser.parse(completion.text(), remapped), incremental);
+        List<FindingVerdict> verdicts = ReconcileSteps.judge(completion.text(), remapped, incremental);
         ReconcileOutcome outcome = new ReconcileOutcome(verdicts, completion.usage());
         idempotency.markPosted(command.reviewId(), command.commit(), RECONCILE_KEY, writeReconcileOutcome(outcome));
         return new Reconciliation(remapped, outcome);
@@ -303,166 +293,6 @@ public class ReviewWorker {
         return -1;
     }
 
-    /** Old path -> new path for files the incremental diff renamed/moved; empty when there is no
-     *  incremental diff (force-push fallback) or nothing was renamed. Copies are deliberately
-     *  excluded (Minor fix): a COPIED patch's oldPath is the ORIGINAL file, still present and
-     *  unmodified — remapping a prior finding there to the copy's path would follow it to code
-     *  that never moved. */
-    private static Map<String, String> renameMap(String incrementalDiff) {
-        if (incrementalDiff == null) {
-            return Map.of();
-        }
-        Map<String, String> renames = new HashMap<>();
-        for (FilePatch patch : UnifiedDiffParser.parse(incrementalDiff)) {
-            if (patch.change() != ChangeType.RENAMED) {
-                continue;
-            }
-            String oldPath = patch.oldPath();
-            String newPath = patch.newPath();
-            if (oldPath != null && !oldPath.isBlank() && newPath != null && !newPath.isBlank()
-                    && !oldPath.equals(newPath)) {
-                renames.put(oldPath, newPath);
-            }
-        }
-        return renames;
-    }
-
-    /**
-     * Follows each finding's path through {@code renames} — a no-op (same list) when nothing was
-     * renamed, so first-review and non-rename follow-ups pay zero cost. A remapped finding keeps
-     * its line/severity/message/threadRef; only the path changes.
-     */
-    private static List<PriorFinding> remapRenames(List<PriorFinding> findings, Map<String, String> renames) {
-        if (renames.isEmpty()) {
-            return findings;
-        }
-        return findings.stream()
-                .map(f -> {
-                    String renamed = renames.get(f.path());
-                    return renamed == null ? f
-                            : new PriorFinding(renamed, f.line(), f.severity(), f.message(), f.threadRef());
-                })
-                .toList();
-    }
-
-    /**
-     * Deterministic backstop: the LLM sometimes marks a finding STILL_OPEN even though the
-     * follow-up commit never touched its own anchor line. When the incremental diff is available,
-     * downgrade any such verdict to UNCHANGED so the reviewer stays silent on threads the
-     * author's changes couldn't possibly have affected — hunk-level, not file-level, so fixing
-     * one part of a file no longer keeps every other prior finding in that file "open". No
-     * incremental diff (force-push/blank fallback) means we can't tell what was touched, so the
-     * LLM's verdicts stand as-is.
-     */
-    private static List<FindingVerdict> downgradeUntouched(List<FindingVerdict> verdicts, String incrementalDiff) {
-        if (incrementalDiff == null) {
-            return verdicts;
-        }
-        Map<String, List<int[]>> changedRangesByPath = changedOldSideRanges(incrementalDiff);
-        return verdicts.stream()
-                .map(v -> v.status() == FindingVerdict.Status.STILL_OPEN && !lineTouched(changedRangesByPath, v)
-                        ? new FindingVerdict(v.threadRef(), v.path(), v.line(),
-                                FindingVerdict.Status.UNCHANGED, v.note())
-                        : v)
-                .toList();
-    }
-
-    /** Test-only entry point: {@link #downgradeUntouched} is exercised directly by
-     *  hunk-granularity unit tests instead of through the full generateReview pipeline. */
-    static List<FindingVerdict> downgradeUntouchedForTest(List<FindingVerdict> verdicts, String incrementalDiff) {
-        return downgradeUntouched(verdicts, incrementalDiff);
-    }
-
-    /** OLD-side hunk ranges per path (registered under both old and new path, rename-safe). */
-    private static Map<String, List<int[]>> changedOldSideRanges(String incrementalDiff) {
-        Map<String, List<int[]>> ranges = new HashMap<>();
-        for (FilePatch patch : UnifiedDiffParser.parse(incrementalDiff)) {
-            for (Hunk hunk : patch.hunks()) {
-                int[] range = { hunk.oldStart(), hunk.oldStart() + Math.max(hunk.oldLines(), 1) - 1 };
-                register(ranges, patch.oldPath(), range);
-                register(ranges, patch.newPath(), range);
-            }
-        }
-        return ranges;
-    }
-
-    private static void register(Map<String, List<int[]>> ranges, String path, int[] range) {
-        if (path != null) {
-            ranges.computeIfAbsent(path, k -> new ArrayList<>()).add(range);
-        }
-    }
-
-    private static boolean lineTouched(Map<String, List<int[]>> ranges, FindingVerdict v) {
-        List<int[]> forPath = ranges.get(v.path());
-        if (forPath == null) {
-            return false;
-        }
-        return forPath.stream().anyMatch(r -> v.line() >= r[0] && v.line() <= r[1]);
-    }
-
-    /**
-     * @return the incremental diff, or null (fall back to the full diff) when the provider can't
-     * compare or returns a blank result (GitLab: no diffs between the revisions; GitHub: an empty
-     * body when base==head) — a blank string is not a valid "incremental diff", it's "no diff".
-     */
-    private String compareOrNull(DiffSource diffSource, GenerateReview command, PriorRun prior) {
-        String result;
-        try {
-            result = diffSource.fetchCompareDiff(command.repo(), prior.headCommit(), command.commit());
-        } catch (RuntimeException e) {
-            LOG.infof("compare %s..%s unavailable (%s) — reconciling on the full diff",
-                    prior.headCommit(), command.commit(), e.getMessage());
-            return null;
-        }
-        if (result == null || result.isBlank()) {
-            LOG.debugf("compare %s..%s returned a blank diff — reconciling on the full diff",
-                    prior.headCommit(), command.commit());
-            return null;
-        }
-        return result;
-    }
-
-    /** Best-effort per-finding thread transcripts: a fetch failure never aborts the reconcile call. */
-    private Map<String, ThreadTranscript> fetchTranscripts(WorkerScmClients.Clients clients,
-                                                           GenerateReview command, List<PriorFinding> findings) {
-        if (!(clients.comments() instanceof ThreadSource threadSource)) {
-            return Map.of(); // transcripts are best-effort; reconcile still runs on findings + diff
-        }
-        Map<String, ThreadTranscript> transcripts = new HashMap<>();
-        for (PriorFinding finding : findings) {
-            if (finding.threadRef() == null) {
-                continue;
-            }
-            try {
-                transcripts.put(finding.threadRef(), threadSource.fetchThread(
-                        command.repo(), command.prId(), new ThreadRef(finding.threadRef())));
-            } catch (RuntimeException e) {
-                LOG.debugf("thread %s fetch failed: %s", finding.threadRef(), e.getMessage());
-            }
-        }
-        return transcripts;
-    }
-
-    /**
-     * Drops new findings whose anchor collides with a STILL_OPEN or UNCHANGED verdict — that code
-     * is already tracked (in its thread, or deliberately left untouched) so a fresh finding there
-     * would be a duplicate.
-     */
-    private static ReviewResult dropAnchorCollisions(ReviewResult result, List<FindingVerdict> verdicts) {
-        Set<String> stillPresent = verdicts.stream()
-                .filter(v -> v.status() == FindingVerdict.Status.STILL_OPEN
-                        || v.status() == FindingVerdict.Status.UNCHANGED)
-                .map(v -> v.path() + ":" + v.line())
-                .collect(Collectors.toSet());
-        if (stillPresent.isEmpty()) {
-            return result;
-        }
-        List<Finding> kept = result.findings().stream()
-                .filter(f -> !stillPresent.contains(f.path() + ":" + f.range().startLine()))
-                .toList();
-        return result.withFindings(kept);
-    }
-
     /**
      * Redelivery of a completed LLM call: never pay twice, but always converge —
      * the original emit may not have reached the broker, so ReviewGenerated is
@@ -482,30 +312,6 @@ public class ReviewWorker {
                 ? new ReviewGenerated(command.reviewId(), command.prId(), command.commit(), persisted)
                 : new ReviewGenerated(command.reviewId(), command.prId(), command.commit(),
                         persisted, reconcile.verdicts(), reconcile.usage()));
-    }
-
-    /**
-     * Loads the assembled context the aggregator persisted for this run. A null
-     * ref (no context source configured) or a vanished blob (deleted / superseded
-     * by a re-run mid-flight) both degrade to an empty list — the review still
-     * runs, just without ticket context.
-     */
-    private List<ContextItem> loadContext(String contextRef) {
-        if (contextRef == null || contextRef.isBlank()) {
-            return List.of();
-        }
-        byte[] bytes = blobStore.get(new BlobStore.BlobRef(contextRef));
-        if (bytes == null) {
-            LOG.debugf("Context blob %s not found — reviewing without context", contextRef);
-            return List.of();
-        }
-        try {
-            AssembledContext assembled = mapper.readValue(bytes, AssembledContext.class);
-            return assembled.items() == null ? List.of() : assembled.items();
-        } catch (java.io.IOException e) {
-            LOG.warnf(e, "Unreadable context blob %s — reviewing without context", contextRef);
-            return List.of();
-        }
     }
 
     private String writeResult(ReviewResult result) {
@@ -606,22 +412,29 @@ public class ReviewWorker {
             results.emit(new CommentsPosted(command.reviewId(), command.prId(), command.commit(),
                     summaryThreadRef, posted, outcomes));
         } catch (RuntimeException e) {
-            Throwable cause = unwrap(e);
+            Throwable cause = WorkerFailures.unwrap(e);
             LOG.warnf(cause, "PostComments failed for %s", command.reviewId());
-            results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                    cause.getMessage(), isRetryable(cause), 1, isCredentialRejected(cause)));
+            emitPostCommentsFailed(command, cause);
         }
+    }
+
+    /** A PostComments, or its summary, that failed on its one attempt. */
+    private void emitPostCommentsFailed(PostComments command, Throwable cause) {
+        results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
+                cause.getMessage(), WorkerFailures.isRetryable(cause), 1,
+                WorkerFailures.isCredentialRejected(cause)));
     }
 
     /**
      * Recover inline comment ids from a previous partially-completed attempt. Skip the non-inline claims
-     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:) — none of those are posted inline comments, so
+     * (SUMMARY, REVIEW, LLM[:reconcile], reply:, resolve:, harness:) — none of those are posted inline comments, so
      * they must never leak into the inline list.
      */
     private static void recoverPreviouslyPosted(Map<String, String> previouslyPosted, List<CommentsPosted.PostedInline> posted) {
         previouslyPosted.forEach((key, ref) -> {
             if (!SUMMARY_KEY.equals(key) && !NativeReviewPost.REVIEW_KEY.equals(key) && !LLM_KEY.equals(key)
                     && !RECONCILE_KEY.equals(key) && !key.startsWith("reply:") && !key.startsWith("resolve:")
+                    && !key.startsWith(HarnessReviewWorker.CLAIM_PREFIX)
                     && posted.stream().noneMatch(p -> p.threadRef().equals(ref))) {
                 posted.add(new CommentsPosted.PostedInline(ref, key, 0));
             }
@@ -688,7 +501,7 @@ public class ReviewWorker {
         try {
             return sink.resolveThread(command.repo(), command.prId(), thread);
         } catch (RuntimeException e) {
-            LOG.warnf(unwrap(e), "resolve %s failed — continuing reply-only", thread.value());
+            LOG.warnf(WorkerFailures.unwrap(e), "resolve %s failed — continuing reply-only", thread.value());
             return CommentSink.ThreadResolution.UNSUPPORTED;
         }
     }
@@ -706,7 +519,7 @@ public class ReviewWorker {
                     idempotency.markPosted(command.reviewId(), command.commit(), replyKey, reply.commentId());
                     return reply.commentId();
                 } catch (RuntimeException e) {
-                    LOG.warnf(unwrap(e), "reply in %s failed", thread.value());
+                    LOG.warnf(WorkerFailures.unwrap(e), "reply in %s failed", thread.value());
                     return null;   // claim stays NULL -> reclaimable on redelivery
                 }
             }
@@ -759,7 +572,7 @@ public class ReviewWorker {
                 } catch (RuntimeException e) {
                     // Per-finding isolation: one failure never aborts the batch.
                     // The NULL claim row stays reclaimable for a retry.
-                    LOG.warnf(unwrap(e), "Inline post failed for %s at %s", command.reviewId(), key);
+                    LOG.warnf(WorkerFailures.unwrap(e), "Inline post failed for %s at %s", command.reviewId(), key);
                     failed.add(finding);
                 }
             }
@@ -807,7 +620,7 @@ public class ReviewWorker {
             try {
                 return sink.postInline(command.repo(), command.prId(), diff.headCommit(), anchor, body);
             } catch (RuntimeException e) {
-                Throwable cause = unwrap(e);
+                Throwable cause = WorkerFailures.unwrap(e);
                 if (attempt >= MAX_INLINE_ATTEMPTS || !(cause instanceof ScmApiException api)
                         || !api.isRateLimited()) {
                     throw e;
@@ -877,10 +690,9 @@ public class ReviewWorker {
                             summary.thread().value());
                     yield summary.thread().value();
                 } catch (RuntimeException e) {
-                    Throwable cause = unwrap(e);
+                    Throwable cause = WorkerFailures.unwrap(e);
                     LOG.warnf(cause, "Summary post failed for %s", command.reviewId());
-                    results.emit(new ReviewFailed(command.reviewId(), command.commit(), "post-comments",
-                            cause.getMessage(), isRetryable(cause), 1, isCredentialRejected(cause)));
+                    emitPostCommentsFailed(command, cause);
                     yield null;
                 }
             }
@@ -897,7 +709,7 @@ public class ReviewWorker {
                 return sink.updateComment(command.repo(), command.prId(),
                         new ThreadRef(command.priorSummaryRef()), body);
             } catch (RuntimeException e) {
-                if (!(unwrap(e) instanceof ScmApiException api) || !api.isNotFound()) {
+                if (!(WorkerFailures.unwrap(e) instanceof ScmApiException api) || !api.isNotFound()) {
                     throw e;   // permission/transient failures classify upstream; don't double-post
                 }
                 LOG.infof("summary %s is gone (404) — posting fresh", command.priorSummaryRef());
@@ -973,43 +785,4 @@ public class ReviewWorker {
     private static String escapeHtml(String text) {
         return MarkdownHtmlEscape.outsideCode(text);
     }
-
-    // --- failure classification ---
-
-    private static Throwable unwrap(RuntimeException e) {
-        return e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
-    }
-
-    private static boolean isCommitGone(Throwable cause) {
-        return cause instanceof ScmApiException api && api.isNotFound();
-    }
-
-    /** Transient (SCM 5xx/429, LLM retriable, I/O, timeout) -> retryable; client errors -> terminal. */
-    private static boolean isRetryable(Throwable cause) {
-        for (Throwable t = cause; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof ScmApiException api && (api.status() >= 500 || api.isRateLimited())) {
-                return true;
-            }
-            if (t instanceof UncheckedIOException || t instanceof java.io.IOException
-                    || t instanceof java.util.concurrent.TimeoutException
-                    || t instanceof dev.codespire.worker.adapters.ProviderCircuits.CircuitOpenException) {
-                return true;
-            }
-        }
-        return dev.codespire.worker.adapters.LlmFailures.isProviderUnwell(cause);
-    }
-
-    /**
-     * The provider refused the credential. Walks the cause chain for the same reason
-     * {@link #isRetryable} does: an adapter failure can arrive wrapped by the LLM client.
-     */
-    private static boolean isCredentialRejected(Throwable cause) {
-        for (Throwable t = cause; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof ScmApiException api && api.isUnauthorized()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
 }

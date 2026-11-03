@@ -37,13 +37,13 @@ public final class ReconcilePrompt {
         PromptTemplate effective = template != null
                 ? template : PromptCatalog.defaultTemplate(PromptKind.RECONCILE);
         Map<String, String> values = new HashMap<>();
-        values.put("prior_findings", renderFindings(findings, transcripts));
+        values.put("prior_findings", numberedFindings(findings, transcripts));
         values.put("diff", diffText == null ? "" : diffText);
         values.put("diff_kind", incremental ? INCREMENTAL_DIFF_KIND : FULL_DIFF_KIND);
         return PromptRenderer.render(effective, values).prompt();
     }
 
-    private static String renderFindings(List<PriorFinding> findings, Map<String, ThreadTranscript> transcripts) {
+    static String numberedFindings(List<PriorFinding> findings, Map<String, ThreadTranscript> transcripts) {
         StringBuilder body = new StringBuilder();
         for (int i = 0; i < findings.size(); i++) {
             PriorFinding f = findings.get(i);

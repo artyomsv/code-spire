@@ -6,8 +6,10 @@ import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
@@ -47,7 +49,10 @@ import java.util.Set;
         @JsonSubTypes.Type(value = IntegrationEvent.TurnCapNotified.class, name = "TurnCapNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.ArchivedNotified.class, name = "ArchivedNotified"),
         @JsonSubTypes.Type(value = IntegrationEvent.FindingConfirmed.class, name = "FindingConfirmed"),
-        @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused")
+        @JsonSubTypes.Type(value = IntegrationEvent.FindingRefused.class, name = "FindingRefused"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewPrepared.class, name = "HarnessReviewPrepared"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewGenerated.class, name = "HarnessReviewGenerated"),
+        @JsonSubTypes.Type(value = IntegrationEvent.HarnessReviewFailed.class, name = "HarnessReviewFailed")
 })
 public sealed interface IntegrationEvent {
 
@@ -413,5 +418,58 @@ public sealed interface IntegrationEvent {
      */
     record FindingRefused(String reviewId, ThreadRef threadRef, String commentId)
             implements IntegrationEvent {
+    }
+
+    /**
+     * The worker prepared a harness review's input files (harness reviews, step 6). It always carries its inputs,
+     * {@code NONE} when there are none, and prints their sizes, never their text.
+     */
+    record HarnessReviewPrepared(String reviewId, long prId, String commit, int round, ReviewRunBinding.Kind kind,
+                                 HarnessReviewInputs inputs) implements IntegrationEvent {
+        public HarnessReviewPrepared {
+            java.util.Objects.requireNonNull(inputs, "A prepared harness review carries its inputs");
+        }
+    }
+
+    /**
+     * The worker finished a harness review's answer into findings and verdicts (harness reviews, step 6). Null
+     * {@code verdicts} read as none. It prints counts, never a finding's text.
+     */
+    record HarnessReviewGenerated(String reviewId, long prId, String commit, int round, ReviewResult result,
+                                  List<FindingVerdict> verdicts) implements IntegrationEvent {
+
+        public HarnessReviewGenerated {
+            verdicts = verdicts == null ? List.of() : List.copyOf(verdicts);
+        }
+
+        /**
+         * The API path's event, applied the same way. Its {@code reconcileUsage} is null on purpose: the run was
+         * charged once, by {@code ReviewRunCharges}, so nothing here may charge it again.
+         */
+        public ReviewGenerated toReviewGenerated() {
+            return new ReviewGenerated(reviewId, prId, commit, result, verdicts, null);
+        }
+
+        @Override
+        public String toString() {
+            int findings = result == null || result.findings() == null ? 0 : result.findings().size();
+            return "HarnessReviewGenerated[reviewId=" + reviewId + ", prId=" + prId + ", commit=" + commit
+                    + ", round=" + round + ", findings=" + findings + ", verdicts=" + verdicts.size() + "]";
+        }
+    }
+
+    /**
+     * The worker could not prepare or finish a harness review (harness reviews, step 6). It names the round it worked
+     * for, as {@link HarnessReviewGenerated} does: a forced re-run keeps the commit, so only the round tells a late
+     * failure of round 1 from one of round 2 (review of PR #370, code-quality/H-1). Its fields mirror
+     * {@link ReviewFailed}'s rather than nesting one, so the contract snapshot sees every component.
+     */
+    record HarnessReviewFailed(String reviewId, String commit, int round, String phase, String error,
+                               boolean retryable, boolean credentialRejected) implements IntegrationEvent {
+
+        /** The API path's failure, applied the same way once the round is known to be current; attempt 1. */
+        public ReviewFailed toReviewFailed() {
+            return new ReviewFailed(reviewId, commit, phase, error, retryable, 1, credentialRejected);
+        }
     }
 }

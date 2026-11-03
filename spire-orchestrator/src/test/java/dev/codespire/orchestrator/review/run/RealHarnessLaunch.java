@@ -25,39 +25,52 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
- * The real {@link HarnessReviewStart} over the real {@link ReviewRunDispatch}, launching through the {@link RunLaunch}
- * it is given. Only the reads and writes that need a database are fakes: the repository's harness, the pull request
- * target, the round, the prompt override, funding, admission, the reviewer account, credential packing and the config.
- * A same-repository first review on an API-key harness in round 1, so the start reaches the dispatch.
+ * The real {@link HarnessReviewLaunch} over the real {@link ReviewRunDispatch}, launching through the {@link RunLaunch}
+ * it is given (harness reviews, step 6: the dispatch moved from the start to the launch). Only the reads and writes that
+ * need a database are fakes: the repository's harness, the pull request target, the round, the prompt override,
+ * funding, admission, the reviewer account, credential packing and the config. A same-repository review on an API-key
+ * harness in round 1, so the launch reaches the dispatch.
  *
  * <p>Public for {@code HarnessDispatchFailureTest} in the pipeline package; the beans' fields are package-private.
  * Every fake overrides each method this path reaches (CLAUDE.md, saga test fakes).
  */
-public final class RealHarnessStart {
+public final class RealHarnessLaunch {
 
     private static final ReviewHarness HARNESS = new ReviewHarness("TEST-harness", "TEST-model", null, "API_KEY");
     private static final UUID POOL_MEMBER = UUID.fromString("00000000-0000-4000-8000-0000000000d2");
 
-    private RealHarnessStart() {
+    private RealHarnessLaunch() {
     }
 
     /**
-     * @param projection the review read model; it answers the repository id and that no prior round was posted
+     * @param projection the review read model; it answers the repository id
      * @param launch     the launch the dispatch hands its command to
      * @param head       the head the review reads
      */
-    public static HarnessReviewStart start(ReviewProjection projection, RunLaunch launch, String head) {
+    public static HarnessReviewLaunch launch(ReviewProjection projection, RunLaunch launch, String head) {
         FixTargets targets = targets(head);
-        HarnessReviewStart start = new HarnessReviewStart();
-        start.repositories = repositories();
-        start.projection = projection;
-        start.targets = targets;
-        start.dispatch = dispatch(targets, launch);
-        start.runs = firstRound();
-        start.promptTemplates = noCustomPrompt();
-        return start;
+        HarnessReviewLaunch harnessLaunch = new HarnessReviewLaunch();
+        harnessLaunch.repositories = repositories();
+        harnessLaunch.projection = projection;
+        harnessLaunch.targets = targets;
+        harnessLaunch.dispatch = dispatch(targets, launch);
+        harnessLaunch.runs = firstRound();
+        harnessLaunch.promptTemplates = noCustomPrompt();
+        harnessLaunch.rounds = inlineLock();
+        return harnessLaunch;
+    }
+
+    /** The real lock is a Postgres advisory lock (ReviewRoundLockTest drives it); here it runs the work inline. */
+    private static ReviewRoundLock inlineLock() {
+        return new ReviewRoundLock() {
+            @Override
+            public <T> T holding(String reviewId, Supplier<T> work) {
+                return work.get();
+            }
+        };
     }
 
     private static ReviewRunDispatch dispatch(FixTargets targets, RunLaunch launch) {

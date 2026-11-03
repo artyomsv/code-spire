@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.event.RunReviewArtifact;
+import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import io.quarkus.test.common.QuarkusTestResource;
@@ -115,7 +116,7 @@ class ReviewLaneDeliveryTest {
         return new RunCommand.ExecuteReviewRun(runId, new RunCommand.ExecuteRun(runId, new RepoRef("TEST-work", "app"),
                 "https://forge.example.test/TEST-work/app.git", "TEST-source", "a".repeat(40), "TEST-source",
                 "TEST-review the pull request", "codex", "TEST-model", "TEST-image", List.of(), 60, "enc-scm", "enc-harness"),
-                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1));
+                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1), HarnessReviewInputs.NONE);
     }
 
     private record Sent(String key, RecordMetadata metadata) {

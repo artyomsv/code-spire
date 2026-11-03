@@ -30,6 +30,9 @@ public final class EventKeys {
             case IntegrationEvent.ArchivedNotified e -> e.reviewId();
             case IntegrationEvent.FindingConfirmed e -> e.reviewId();
             case IntegrationEvent.FindingRefused e -> e.reviewId();
+            case IntegrationEvent.HarnessReviewPrepared e -> e.reviewId();
+            case IntegrationEvent.HarnessReviewGenerated e -> e.reviewId();
+            case IntegrationEvent.HarnessReviewFailed e -> e.reviewId();
         };
     }
 }

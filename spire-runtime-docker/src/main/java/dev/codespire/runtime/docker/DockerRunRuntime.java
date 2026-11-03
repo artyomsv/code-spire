@@ -276,6 +276,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
 
         String initId = createContainer(spec, spec.init(), INIT, binding, null);
+        copyInputs(spec, initId);
         client.startContainerCmd(initId).exec();
         int initExit;
         try {
@@ -578,6 +579,15 @@ public final class DockerRunRuntime implements PublicationRuntime {
             return Optional.empty();
         }
         return Optional.of(Map.of(TMPFS_MOUNT, TMPFS_OPTIONS + spec.diskBytes()));
+    }
+
+    /** Into the created init container, before it starts: its writable mount is the inputs volume's one writer. */
+    private void copyInputs(RunUnitSpec spec, String initId) {
+        if (spec.inputs() == null || spec.inputs().files().isEmpty()) return;
+        client.copyArchiveToContainerCmd(initId)
+                .withRemotePath(spec.inputs().path())
+                .withTarInputStream(new java.io.ByteArrayInputStream(InputsArchive.of(spec.inputs())))
+                .exec();
     }
 
     private String createContainer(RunUnitSpec spec, ContainerSpec container, String role,

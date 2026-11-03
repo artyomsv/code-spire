@@ -6,9 +6,11 @@ import dev.codespire.contract.llm.PromptTemplate;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.review.CodeReferences;
 import dev.codespire.contract.review.FindingVerdict;
+import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
+import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
 import dev.codespire.contract.scm.RepoRef;
@@ -37,7 +39,9 @@ import java.util.Set;
         @JsonSubTypes.Type(value = ActionCommand.NotifyTurnCap.class, name = "NotifyTurnCap"),
         @JsonSubTypes.Type(value = ActionCommand.NotifyArchived.class, name = "NotifyArchived"),
         @JsonSubTypes.Type(value = ActionCommand.ConfirmFinding.class, name = "ConfirmFinding"),
-        @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding")
+        @JsonSubTypes.Type(value = ActionCommand.RefuseFinding.class, name = "RefuseFinding"),
+        @JsonSubTypes.Type(value = ActionCommand.PrepareHarnessReview.class, name = "PrepareHarnessReview"),
+        @JsonSubTypes.Type(value = ActionCommand.FinishHarnessReview.class, name = "FinishHarnessReview")
 })
 public sealed interface ActionCommand {
 
@@ -334,5 +338,64 @@ public sealed interface ActionCommand {
      */
     record RefuseFinding(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                          String scmCredential) implements ActionCommand {
+    }
+
+    /**
+     * Prepare a harness review (harness reviews, step 6): the worker loads the assembled context and, for a
+     * {@code RECONCILE}, numbers the prior open findings, then answers with {@code HarnessReviewPrepared}.
+     * {@code RECONCILE} holds exactly when there are prior findings to judge. Its {@code toString} prints neither the
+     * credential nor a finding's text.
+     */
+    record PrepareHarnessReview(String reviewId, RepoRef repo, long prId, String commit, String contextRef,
+                                String scmCredential, PriorRun priorRun, int round,
+                                ReviewRunBinding.Kind kind) implements ActionCommand {
+        public PrepareHarnessReview {
+            java.util.Objects.requireNonNull(kind, "A harness review names its kind");
+            if (kind == ReviewRunBinding.Kind.FOLLOWUP) {
+                throw new IllegalArgumentException("A reply is not a harness review; it stays on the API");
+            }
+            if (round < 1) throw new IllegalArgumentException("A harness review names its round from 1, not " + round);
+            boolean hasPriorFindings = priorRun != null && !priorRun.findings().isEmpty();
+            if ((kind == ReviewRunBinding.Kind.RECONCILE) != hasPriorFindings) {
+                throw new IllegalArgumentException("A RECONCILE needs prior findings and a REVIEW judges none, not "
+                        + kind + " with " + (priorRun == null ? 0 : priorRun.findings().size()) + " prior findings");
+            }
+        }
+
+        @Override
+        public String toString() {
+            return "PrepareHarnessReview[reviewId=" + reviewId + ", repo=" + repo + ", prId=" + prId
+                    + ", commit=" + commit + ", contextRef=" + contextRef
+                    + ", scmCredential=" + ActionCommand.redacted(scmCredential)
+                    + ", priorRun=" + (priorRun == null ? "null" : "<" + priorRun.findings().size() + " findings>")
+                    + ", round=" + round + ", kind=" + kind + "]";
+        }
+    }
+
+    /**
+     * Finish a harness review: the worker parses the agent's answer into findings and, for a {@code RECONCILE},
+     * verdicts, then answers with {@code HarnessReviewGenerated}. A null {@code answerText} means the answer was
+     * over the cap. Its {@code toString} prints the answer's length and never the answer or the credential.
+     */
+    record FinishHarnessReview(String reviewId, RepoRef repo, long prId, String commit, int round,
+                               ReviewRunBinding.Kind kind, String answerText, ModelUsage usage,
+                               String scmCredential) implements ActionCommand {
+        public FinishHarnessReview {
+            java.util.Objects.requireNonNull(kind, "A harness review names its kind");
+            if (round < 1) throw new IllegalArgumentException("A harness review names its round from 1, not " + round);
+        }
+
+        @Override
+        public String toString() {
+            return "FinishHarnessReview[reviewId=" + reviewId + ", repo=" + repo + ", prId=" + prId
+                    + ", commit=" + commit + ", round=" + round + ", kind=" + kind
+                    + ", answerText=" + (answerText == null ? "null" : "<" + answerText.length() + " chars>")
+                    + ", usage=" + usage + ", scmCredential=" + ActionCommand.redacted(scmCredential) + "]";
+        }
+    }
+
+    /** How a harness message prints a credential: whether it has one, never what it is. */
+    private static String redacted(String secret) {
+        return secret == null ? "null" : "***";
     }
 }

@@ -8,6 +8,7 @@ import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import dev.codespire.orchestrator.llm.ChargeCall;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -23,12 +24,21 @@ class HarnessSagaProjection extends TestRepositoryProjection {
     final List<String> notes = new ArrayList<>();
     final List<String> harnessRefusals = new ArrayList<>();
     final List<ChargeCall> charges = new ArrayList<>();
+    final List<List<FindingVerdict>> reconciliations = new ArrayList<>();
+
+    /** The posted earlier round a re-review reconciles against; none on a first review. */
+    Optional<PriorRun> priorRun = Optional.empty();
 
     /** How often a new round cleared the last round's refusal. */
     int refusalClears;
 
     /** What the verdict decision reads; one blocker makes it Request changes. */
     int openBlockers;
+
+    /** The attempts a retry was scheduled for, the terminal failures' notes, and how often a retry was cleared. */
+    final List<Integer> retries = new ArrayList<>();
+    final List<String> terminalFailures = new ArrayList<>();
+    int clearedRetries;
 
     @Override
     public void appendEvent(String reviewId, String lane, String type, String detail) {
@@ -49,6 +59,23 @@ class HarnessSagaProjection extends TestRepositoryProjection {
 
     @Override
     public void clearScheduledRetry(String reviewId) {
+        clearedRetries++;
+    }
+
+    /** The failure path (review of PR #370, code-quality/H-1): the attempt the retry budget is read against. */
+    @Override
+    public int currentAttempt(String reviewId) {
+        return 1;
+    }
+
+    @Override
+    public void scheduleRetry(String reviewId, int attempt, String note, Instant dueAt) {
+        retries.add(attempt);
+    }
+
+    @Override
+    public void projectTerminalFailure(String reviewId, int stage, String note, String error) {
+        terminalFailures.add(note);
     }
 
     @Override
@@ -72,11 +99,13 @@ class HarnessSagaProjection extends TestRepositoryProjection {
 
     @Override
     public Optional<PriorRun> priorRunFor(String reviewId) {
-        return Optional.empty();
+        return priorRun;
     }
 
+    /** Step 6: a re-review's verdicts are recorded against the prior run's findings. */
     @Override
     public void recordReconciliation(String reviewId, List<FindingVerdict> verdicts, List<PriorFinding> priorFindings) {
+        reconciliations.add(verdicts);
     }
 
     @Override

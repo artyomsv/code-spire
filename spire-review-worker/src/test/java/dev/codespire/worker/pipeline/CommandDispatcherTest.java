@@ -3,9 +3,12 @@ package dev.codespire.worker.pipeline;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.AnswerFollowUp;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
+import dev.codespire.contract.command.ActionCommand.FinishHarnessReview;
 import dev.codespire.contract.command.ActionCommand.GatherContext;
 import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.contract.command.ActionCommand.PrepareHarnessReview;
+import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import org.jboss.logging.MDC;
@@ -57,7 +60,19 @@ class CommandDispatcherTest {
                 record("gatherContext");
             }
         };
-        dispatcher.reviewWorker = new ReviewWorker() {
+        dispatcher.reviewWorker = recordingReviewWorker();
+        dispatcher.followUpWorker = new FollowUpWorker() {
+            @Override
+            public void answer(AnswerFollowUp command) {
+                record("answerFollowUp");
+            }
+        };
+        // Harness reviews, step 6: prepare and finish reach the harness worker, never the API path's.
+        dispatcher.harnessReviewWorker = recordingHarnessReviewWorker();
+    }
+
+    private ReviewWorker recordingReviewWorker() {
+        return new ReviewWorker() {
             @Override
             public void generateReview(GenerateReview command) {
                 record("generateReview");
@@ -68,10 +83,18 @@ class CommandDispatcherTest {
                 record("postComments");
             }
         };
-        dispatcher.followUpWorker = new FollowUpWorker() {
+    }
+
+    private HarnessReviewWorker recordingHarnessReviewWorker() {
+        return new HarnessReviewWorker() {
             @Override
-            public void answer(AnswerFollowUp command) {
-                record("answerFollowUp");
+            public void prepare(PrepareHarnessReview command) {
+                record("prepareHarnessReview");
+            }
+
+            @Override
+            public void finish(FinishHarnessReview command) {
+                record("finishHarnessReview");
             }
         };
     }
@@ -113,6 +136,16 @@ class CommandDispatcherTest {
         dispatcher.on(new AnswerFollowUp(REVIEW_ID, REPO, 7,
                 new ThreadRef("comment-1"), "comment-1", "why?", null, null, false, 3, 500L, 2.0));
         assertEquals(List.of("answerFollowUp"), calls);
+    }
+
+    @Test
+    void routesPrepareAndFinishToTheHarnessWorker() {
+        dispatcher.on(new PrepareHarnessReview(REVIEW_ID, REPO, 7, "abc123", null, null, null, 1,
+                ReviewRunBinding.Kind.REVIEW));
+        dispatcher.on(new FinishHarnessReview(REVIEW_ID, REPO, 7, "abc123", 1, ReviewRunBinding.Kind.REVIEW,
+                "TEST-answer", null, null));
+        assertEquals(List.of("prepareHarnessReview", "finishHarnessReview"), calls);
+        assertEquals(List.of((Object) REVIEW_ID, REVIEW_ID), mdcSeenByWorker);
     }
 
     @Test

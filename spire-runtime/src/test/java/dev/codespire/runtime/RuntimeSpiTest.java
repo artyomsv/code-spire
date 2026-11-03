@@ -165,7 +165,7 @@ class RuntimeSpiTest {
      * WRITABLE mount of the agent volume — the fixture was itself an instance of the bug the
      * containment check now refuses, and it is what made that hole invisible.
      */
-    private static RunUnitSpec unit(long memoryBytes, long nanoCpus, Duration wallClock) {
+    static RunUnitSpec unit(long memoryBytes, long nanoCpus, Duration wallClock) {
         ContainerSpec agent = new ContainerSpec("spire/agent:1", List.of("codex", "exec"),
                 Map.of("OPENAI_API_KEY", "sk-secret"),
                 List.of(Mount.writable("workspace", "/workspace"), Mount.writable("handoff", "/handoff")));
