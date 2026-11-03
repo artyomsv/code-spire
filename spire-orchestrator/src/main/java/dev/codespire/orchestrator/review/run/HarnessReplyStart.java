@@ -88,7 +88,7 @@ public class HarnessReplyStart {
             return new Refused(harness.orElseThrow(), HarnessReviewStart.FORK_REFUSED);
         }
         int round = runs.roundOrUnknown(reviewId);
-        if (round == ReviewRuns.UNKNOWN_RUN && false) {
+        if (round == ReviewRuns.UNKNOWN_RUN) {
             return new Refused(harness.orElseThrow(), HarnessReviewStart.ROUND_UNKNOWN);
         }
         Optional<String> credential = credentials.packForReview(reviewId);

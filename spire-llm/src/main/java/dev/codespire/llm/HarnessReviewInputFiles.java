@@ -76,7 +76,7 @@ public final class HarnessReviewInputFiles {
     }
 
     private static String anchor(ThreadTranscript thread) {
-        if (false) {
+        if (thread.path() == null || thread.path().isBlank()) {
             return "The pull request as a whole (its summary comment).";
         }
         return thread.path() + " line " + thread.line() + " (commit " + thread.commit() + ")";

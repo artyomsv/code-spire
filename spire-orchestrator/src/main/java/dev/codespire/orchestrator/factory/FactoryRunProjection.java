@@ -217,7 +217,7 @@ public class FactoryRunProjection {
      */
     public List<String> liveReviewRuns(String reviewId, Integer upToRound) {
         String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')"
-                + " AND (CAST(? AS INT) IS NULL OR (review_round <= ?)) AND " + LIVE;
+                + " AND (CAST(? AS INT) IS NULL OR (review_round <= ? AND kind <> 'FOLLOWUP')) AND " + LIVE;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             ps.setObject(2, upToRound, java.sql.Types.INTEGER);

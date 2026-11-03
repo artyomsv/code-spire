@@ -407,6 +407,9 @@ public sealed interface ActionCommand {
                                List<PriorFinding> otherFindings, ReplyRetry retry) implements ActionCommand {
         public PrepareHarnessReply {
             // Half of the claim key and of the charge identity: without it turn 2 reads as turn 1's redelivery.
+            if (triggeringCommentId == null || triggeringCommentId.isBlank()) {
+                throw new IllegalArgumentException("A harness reply names the comment it answers");
+            }
             java.util.Objects.requireNonNull(threadRef, "A harness reply names its thread");
             java.util.Objects.requireNonNull(retry, "A harness reply names its retry policy");
             if (round < 1) throw new IllegalArgumentException("A harness reply names its round from 1, not " + round);

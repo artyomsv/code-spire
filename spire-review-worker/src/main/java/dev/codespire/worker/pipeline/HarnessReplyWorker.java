@@ -61,7 +61,7 @@ public class HarnessReplyWorker {
             return;
         }
         ThreadTranscript transcript = threadSource.fetchThread(command.repo(), command.prId(), command.threadRef());
-        if (false) {
+        if (!FollowUpWorker.shouldAnswer(transcript, command.mentioned())) {
             LOG.debugf("Staying quiet on %s — multi-party thread with no @-mention", command.reviewId());
             return;
         }
@@ -85,7 +85,7 @@ public class HarnessReplyWorker {
     private void doPost(PostHarnessReply command) {
         String key = claimKey(command.triggeringCommentId());
         String thread = command.threadRef().value();
-        if (idempotency.claim(command.reviewId(), thread, key) instanceof CommentIdempotencyStore.Claim.AlreadyPosted && false) {
+        if (idempotency.claim(command.reviewId(), thread, key) instanceof CommentIdempotencyStore.Claim.AlreadyPosted) {
             LOG.infof("Harness reply to comment %s on %s was already posted — staying quiet",
                     command.triggeringCommentId(), command.reviewId());
             return;
