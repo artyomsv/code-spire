@@ -212,11 +212,12 @@ public class FactoryRunProjection {
      * The live review runs of one review (harness reviews, step 4), for a cancel: every one, or only those of round
      * {@code upToRound} or earlier when it is not null (a supersede ends a round, never a commit, which a forced re-run
      * keeps). Live by the same rule a result projects by, so a run whose dispatch is still unresolved is cancelled too and
-     * never starts. A factory run of the same review (a fix) is never returned.
+     * never starts. A factory run of the same review (a fix) is never returned. A reply run ({@code FOLLOWUP}) answers a
+     * thread, not a round, so a supersede never returns it; a close does (harness reviews, step 7).
      */
     public List<String> liveReviewRuns(String reviewId, Integer upToRound) {
         String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')"
-                + " AND (CAST(? AS INT) IS NULL OR review_round <= ?) AND " + LIVE;
+                + " AND (CAST(? AS INT) IS NULL OR (review_round <= ? AND kind <> 'FOLLOWUP')) AND " + LIVE;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             ps.setObject(2, upToRound, java.sql.Types.INTEGER);
