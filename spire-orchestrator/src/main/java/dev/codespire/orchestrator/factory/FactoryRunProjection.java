@@ -234,6 +234,26 @@ public class FactoryRunProjection {
         }
     }
 
+    /**
+     * A review run of {@code reviewId} already recorded for {@code callSlot}, in any status (harness reviews, step 7): a
+     * reply's slot is its thread and turn, so a second prepare of one turn, after a push changed the head the run id
+     * carries, finds the first run here and sends none. A throw on a failed read: a guessed "none" would fund twice.
+     */
+    public Optional<String> reviewRunWithSlot(String reviewId, String callSlot) {
+        String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND review_call_slot = ?"
+                + " AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP') ORDER BY started_at LIMIT 1";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, callSlot);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The review runs of " + reviewId + " for call " + callSlot
+                    + " could not be read", e);
+        }
+    }
+
     public Optional<UUID> harnessCredentialOf(String runId) {
         String sql = "SELECT harness_credential_id FROM factory_run WHERE run_id = ?";
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {

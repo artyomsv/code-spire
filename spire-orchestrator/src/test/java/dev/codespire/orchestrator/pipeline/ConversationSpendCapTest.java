@@ -202,6 +202,7 @@ class ConversationSpendCapTest {
     /** A bot-owned thread "finding-1" with {@code priorTurns} turns already spent. */
     private ConversationSaga sagaWith(int priorTurns, SpendGate gate) {
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         wireCredentials(saga);
         saga.threads = new ReviewThreadView() {
             @Override

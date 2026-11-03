@@ -196,7 +196,8 @@ public class IntegrationSaga {
                         // the plain touch() that used to sit here (fix #5, avoid double-broadcast).
                         // Only for a real answer: the cap notice is fixed text with no LLM call, and
                         // flagging it would leave a "responding…" pill up for a reply that never comes.
-                        if (cmd instanceof ActionCommand.AnswerFollowUp) {
+                        if (cmd instanceof ActionCommand.AnswerFollowUp
+                                || cmd instanceof ActionCommand.PrepareHarnessReply) {
                             projection.setAnswering(e.reviewId(), true);
                         }
                         commands.emit(cmd);
@@ -824,6 +825,7 @@ public class IntegrationSaga {
     private static String threadRefOf(ActionCommand command) {
         return switch (command) {
             case ActionCommand.AnswerFollowUp c -> c.threadRef().value();
+            case ActionCommand.PrepareHarnessReply c -> c.threadRef().value();
             case ActionCommand.NotifyTurnCap c -> c.threadRef().value();
             default -> null;
         };

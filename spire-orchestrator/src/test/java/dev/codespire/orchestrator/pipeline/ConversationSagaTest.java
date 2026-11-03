@@ -166,6 +166,7 @@ class ConversationSagaTest {
     void topLevelReplyRoutesToThePostedSummaryThread() {
         List<String> notes = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
@@ -239,6 +240,7 @@ class ConversationSagaTest {
     @Test
     void theResolvedPromptReachesTheAnswerFollowUpCommand() {
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
@@ -303,6 +305,7 @@ class ConversationSagaTest {
     @Test
     void aReplyOnTheBotsAnswerIsNormalizedToTheConversationRoot() {
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
@@ -514,6 +517,7 @@ class ConversationSagaTest {
      */
     private static ConversationSaga cappedThreadSaga(int priorTurns, List<String> notes) {
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
@@ -757,6 +761,7 @@ class ConversationSagaTest {
         List<String> notes = new ArrayList<>();
         List<String> details = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
@@ -801,6 +806,7 @@ class ConversationSagaTest {
     void topLevelReplyWithNoPostedSummaryIsSkippedWithATimelineNote() {
         List<String> notes = new ArrayList<>();
         ConversationSaga saga = new ConversationSaga();
+        saga.harnessReplies = new NoHarnessReplies();
         saga.reviewProviders = new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {

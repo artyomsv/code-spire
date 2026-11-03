@@ -146,6 +146,10 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReviewResults harnessResults;
 
+    /** Dispatches a prepared reply's run (harness reviews, step 7). */
+    @Inject
+    dev.codespire.orchestrator.review.run.HarnessReplyLaunch harnessReplies;
+
     /** The phase a harness review's refusal and failure are recorded under. */
     public static final String HARNESS_PHASE = "harness-review";
 
@@ -434,6 +438,8 @@ public class ResultSaga {
             // A harness failure names its round: a plain ReviewFailed of round 1 would fail round 2 on the same head
             // (review of PR #370, code-quality/H-1). Round lock, round and commit checks inside, as above.
             case HarnessReviewFailed e -> harnessResults.acceptFailed(e);
+            // No commit guard and no round lock: a reply answers a thread, not a round (harness reviews, step 7).
+            case HarnessReplyPrepared e -> harnessReplies.launch(e);
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
