@@ -4,6 +4,7 @@ import dev.codespire.contract.command.ActionCommand.PrepareHarnessReply;
 import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.event.IntegrationEvent.AuthorReplied;
 import dev.codespire.contract.review.PriorFinding;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.llm.ReviewRuns;
@@ -102,6 +103,15 @@ public class HarnessReplyStart {
         AuthorReplied event = ask.event();
         return new PrepareHarnessReply(event.reviewId(), event.repo(), event.prId(), ask.thread(), event.commentId(),
                 credential, ask.mentioned(), round, ask.otherFindings(),
-                new ReplyRetry(levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor()));
+                new ReplyRetry(levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor()),
+                replyAuthor(event.author()));
+    }
+
+    /**
+     * The person a reply answers, as the worker needs them for the forge's mention: the stable id, the login and the
+     * display name, never the email, which is never put on a command (CLAUDE.md: email is never logged or persisted).
+     */
+    public static Author replyAuthor(Author author) {
+        return author == null ? null : Author.of(author.providerUserId(), author.username(), author.displayName());
     }
 }

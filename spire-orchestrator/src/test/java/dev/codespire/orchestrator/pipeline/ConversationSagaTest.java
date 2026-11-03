@@ -226,6 +226,7 @@ class ConversationSagaTest {
                 assertInstanceOf(ActionCommand.AnswerFollowUp.class, cmd.get());
         assertEquals("sum-1", answer.threadRef().value(), "the command threads onto the SUMMARY comment");
         assertEquals("555", answer.triggeringCommentId(), "the triggering id stays the author's own comment");
+        assertEquals(Author.of("human-1", "alice", "Alice"), answer.replyAuthor(), "whom the posted answer mentions");
         assertFalse(notes.contains("skipped:AnswerFollowUp"));
     }
 

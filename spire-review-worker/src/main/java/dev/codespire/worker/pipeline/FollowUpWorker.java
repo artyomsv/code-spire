@@ -22,6 +22,7 @@ import dev.codespire.contract.port.ThreadSource;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.CommentRef;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
@@ -114,7 +115,7 @@ public class FollowUpWorker {
         FollowUpResult result = answer(command.repo(), command.prId(), command.threadRef(),
                 transcript, clients.diff(), promptLog.tap("follow-up", client.provider()),
                 client.params(), clients.comments(),
-                command.followUpPrompt(), command.otherFindings());
+                command.followUpPrompt(), command.otherFindings(), command.replyAuthor());
         idempotency.markPosted(command.reviewId(), command.threadRef().value(), key, result.postedCommentId());
         // The triggering comment rides along because it is half of the claim key above: without it the
         // orchestrator's ledger identity cannot tell turn 2 of this thread from a redelivery of turn 1.
@@ -306,6 +307,18 @@ public class FollowUpWorker {
     static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
                                  DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
                                  PromptTemplate followUpPrompt, List<PriorFinding> otherFindings) {
+        return answer(repo, prId, thread, transcript, diffs, llmProvider, params, sink, followUpPrompt, otherFindings,
+                null);
+    }
+
+    /**
+     * As above, with the reply opened by the forge's mention of {@code replyAuthor}, so they are notified; null means
+     * no mention. The posted text, mention included, is the answer the result reports.
+     */
+    static FollowUpResult answer(RepoRef repo, long prId, ThreadRef thread, ThreadTranscript transcript,
+                                 DiffSource diffs, LlmProvider llmProvider, ModelParams params, CommentSink sink,
+                                 PromptTemplate followUpPrompt, List<PriorFinding> otherFindings,
+                                 Author replyAuthor) {
         String commit = transcript.commit() != null
                 ? transcript.commit() : diffs.fetchPullRequest(repo, prId).headCommit();
         Diff diff = diffs.fetchDiff(repo, prId, commit);
@@ -316,7 +329,8 @@ public class FollowUpWorker {
         // Post the answer as Markdown as-is. The SCM renders + sanitizes HTML in comments (no active markup
         // executes), and the injection defense is the prompt fence — NOT output escaping. Escaping "<" here
         // would corrupt code the answer includes, e.g. "if (n < 2)" inside a ``` block rendering as "n &lt; 2".
-        CommentRef ref = sink.replyInThread(repo, prId, thread, parsed.text());
-        return new FollowUpResult(parsed.text(), ref.commentId(), completion.usage());
+        String posted = ReplyMention.opened(sink.mention(replyAuthor), parsed.text());
+        CommentRef ref = sink.replyInThread(repo, prId, thread, posted);
+        return new FollowUpResult(posted, ref.commentId(), completion.usage());
     }
 }

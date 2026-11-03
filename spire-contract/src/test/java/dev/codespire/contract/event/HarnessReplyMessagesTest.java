@@ -6,6 +6,7 @@ import dev.codespire.contract.command.ReplyRetry;
 import dev.codespire.contract.review.HarnessReviewInputs;
 import dev.codespire.contract.review.PriorFinding;
 import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,7 @@ class HarnessReplyMessagesTest {
         return new ActionCommand.PrepareHarnessReply(REVIEW_ID, REPO, 7, THREAD, triggeringCommentId,
                 "TEST-SECRET-CRED", true, 2,
                 List.of(new PriorFinding("src/B.java", 9, Severity.MINOR, "TEST-OTHER-FINDING", "TEST-thread-2")),
-                RETRY);
+                RETRY, Author.of("TEST-id-9", "TEST-alice", "TEST Alice"));
     }
 
     private static ActionCommand.PostHarnessReply post(String answer) {

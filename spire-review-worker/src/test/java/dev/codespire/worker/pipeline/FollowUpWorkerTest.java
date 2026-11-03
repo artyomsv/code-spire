@@ -217,6 +217,31 @@ class FollowUpWorkerTest {
 
     // --- turn-cap hand-off notice ---
 
+    /** The API reply opens with the forge's mention of the comment's author, never one the model wrote. */
+    @Test
+    void anApiReplyOpensWithTheAuthorsMention() {
+        DiffSource diffs = mock(DiffSource.class);
+        CommentSink sink = mock(CommentSink.class);
+        LlmProvider llm = mock(LlmProvider.class);
+        RepoRef repo = new RepoRef("TEST-work", "app");
+        ThreadRef thread = new ThreadRef("100");
+        Author author = Author.of("TEST-id-9", "TEST-alice", "TEST Alice");
+        ThreadTranscript transcript = new ThreadTranscript(thread, "src/App.java", 42, "abc123",
+                List.of(new ThreadMessage("TEST-alice", "why?", false)));
+        when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123"))).thenReturn(new Diff("abc123", List.of(), false));
+        when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new Completion("Because the caller can pass null.", ModelUsage.of("m", 1, 1))));
+        when(sink.mention(author)).thenReturn(java.util.Optional.of("@TEST-alice"));
+        when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
+                .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
+
+        FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(repo, 5L, thread, transcript, diffs, llm,
+                new ModelParams("m", 0.2, null), sink, null, List.of(), author);
+
+        verify(sink).replyInThread(repo, 5L, thread, "@TEST-alice Because the caller can pass null.");
+        assertEquals("@TEST-alice Because the caller can pass null.", r.answerText());
+    }
+
     private static final RepoRef CAP_REPO = new RepoRef("artyomsv", "spire-test");
     private static final ThreadRef CAP_THREAD = new ThreadRef("finding-1");
     private static final ActionCommand.NotifyTurnCap CAP_COMMAND =

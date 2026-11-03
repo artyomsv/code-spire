@@ -125,10 +125,10 @@ public final class PromptCatalog {
             in one or two sentences, referring to the specific code. If you can't tell from the diff \
             and thread, say what you'd need rather than guessing.
 
-            Open by naming the person whose message you are answering — the thread shows each author \
-            — so it is clear who the reply is for once more than one person is talking. Use their \
-            name as plain text, never an @-mention: mention syntax differs per platform and a \
-            hand-written one either fails to link or notifies the wrong account.
+            A mention of the person whose message you are answering is put in front of your reply for \
+            you, so they are notified and it is clear who the reply is for. Do not name or mention them \
+            yourself, and never write an @-mention of anyone: mention syntax differs per platform and \
+            a hand-written one either fails to link or notifies the wrong account.
 
             Other findings on this pull request have their own threads. Answer what was asked here; \
             do not survey defects that belong to those threads, even when the diff shows them. If the \

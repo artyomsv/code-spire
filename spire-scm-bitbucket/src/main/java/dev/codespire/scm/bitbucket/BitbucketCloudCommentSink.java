@@ -48,6 +48,19 @@ public class BitbucketCloudCommentSink implements CommentSink, ThreadSource {
         this.brokeredBotAccountId = botAccountId;
     }
 
+    /**
+     * Bitbucket Cloud links a mention written as {@code @{account_id}} (BitbucketCloudIngress reads the same form); a
+     * display name or nickname does not notify anyone.
+     */
+    @Override
+    public java.util.Optional<String> mention(Author author) {
+        String accountId = author == null ? null : author.providerUserId();
+        if (accountId == null || accountId.isBlank() || accountId.contains("}") || accountId.contains(" ")) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of("@{" + accountId + "}");
+    }
+
     @Override
     public ScmType type() {
         return ScmType.BITBUCKET_CLOUD;

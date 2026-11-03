@@ -101,6 +101,9 @@ the prompt (`HarnessReplyPromptTest`), the slot round trip (`ReplyCallTest`) and
   the same thread while the first run works is decided on the old count and gets its own run. The API path has the
   same window, about a minute; a harness widens it to minutes.
 - **A push during a reply run** is proven against the database only; no live run was superseded mid-answer.
+- **The mention is proven live on GitHub only.** GitLab's `@username` and Bitbucket Cloud's `@{account_id}` are
+  proven by unit tests on the adapters; a repository's customized FOLLOWUP prompt that still asks the model to name
+  the author makes the answer name them twice.
 - **Paths not proven live.** A refused seat on a reply, an over-cap answer, a summary-thread reply (unless the proof
   runs one), Bitbucket and GitLab replies on a harness, and a dead-lettered `PostHarnessReply` replayed.
 - **Thread text rests in plain text when dead-lettered.** `PrepareHarnessReply`, `HarnessReplyPrepared` and

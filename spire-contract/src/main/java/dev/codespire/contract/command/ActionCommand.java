@@ -13,6 +13,7 @@ import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.review.ReviewVerdict;
 import dev.codespire.contract.review.Severity;
+import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
 
@@ -248,16 +249,30 @@ public sealed interface ActionCommand {
      * this the model cannot tell which are already under discussion elsewhere and answers a narrow
      * question with a survey of the whole file. The REVIEW command has always carried the equivalent
      * exclusion list via {@link PriorRun}; this one did not.
+     *
+     * <p>{@code replyAuthor} is who wrote the triggering comment: the worker opens the answer with the forge's own
+     * mention of them, so they are notified. Null on a command from before it existed: the answer has no mention.
      */
     record AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                           String triggeringCommentId, String question,
                           String scmCredential, String llmCredential, boolean mentioned,
                           int maxAttempts, long backoffBaseMs, double backoffFactor,
                           PromptTemplate followUpPrompt,
-                          List<PriorFinding> otherFindings) implements ActionCommand {
+                          List<PriorFinding> otherFindings, Author replyAuthor) implements ActionCommand {
 
         public AnswerFollowUp {
             otherFindings = otherFindings == null ? List.of() : List.copyOf(otherFindings);
+        }
+
+        // 14-arg: no reply author (kept for call sites that have none; the answer then has no mention).
+        public AnswerFollowUp(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
+                              String triggeringCommentId, String question,
+                              String scmCredential, String llmCredential, boolean mentioned,
+                              int maxAttempts, long backoffBaseMs, double backoffFactor,
+                              PromptTemplate followUpPrompt, List<PriorFinding> otherFindings) {
+            this(reviewId, repo, prId, threadRef, triggeringCommentId, question, scmCredential,
+                    llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
+                    followUpPrompt, otherFindings, null);
         }
 
         // 13-arg: prompt override, no other-findings list (kept for call sites that have none).
@@ -268,7 +283,7 @@ public sealed interface ActionCommand {
                               PromptTemplate followUpPrompt) {
             this(reviewId, repo, prId, threadRef, triggeringCommentId, question, scmCredential,
                     llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
-                    followUpPrompt, List.of());
+                    followUpPrompt, List.of(), null);
         }
 
         // Without a prompt override — the worker uses the built-in default follow-up prompt.
@@ -278,7 +293,7 @@ public sealed interface ActionCommand {
                               int maxAttempts, long backoffBaseMs, double backoffFactor) {
             this(reviewId, repo, prId, threadRef, triggeringCommentId, question,
                     scmCredential, llmCredential, mentioned, maxAttempts, backoffBaseMs, backoffFactor,
-                    null, List.of());
+                    null, List.of(), null);
         }
     }
 
@@ -400,11 +415,13 @@ public sealed interface ActionCommand {
      * Prepare a reply on a harness (harness reviews, step 7): the worker fetches the thread, applies the "smart 1:1"
      * rule, claims {@code followup:<triggeringCommentId>}, reads the pull request's head and answers with
      * {@code HarnessReplyPrepared}. {@code round} is the review's round when the reply was decided; a reply run is not
-     * cancelled by a later round. Its {@code toString} prints counts, never the credential or a finding's text.
+     * cancelled by a later round. {@code replyAuthor} is who wrote the triggering comment, whom the posted answer
+     * mentions; null means no mention. Its {@code toString} prints counts, never the credential or a finding's text.
      */
     record PrepareHarnessReply(String reviewId, RepoRef repo, long prId, ThreadRef threadRef,
                                String triggeringCommentId, String scmCredential, boolean mentioned, int round,
-                               List<PriorFinding> otherFindings, ReplyRetry retry) implements ActionCommand {
+                               List<PriorFinding> otherFindings, ReplyRetry retry, Author replyAuthor)
+            implements ActionCommand {
         public PrepareHarnessReply {
             // Half of the claim key and of the charge identity: without it turn 2 reads as turn 1's redelivery.
             if (triggeringCommentId == null || triggeringCommentId.isBlank()) {
@@ -422,7 +439,8 @@ public sealed interface ActionCommand {
                     + ", threadRef=" + threadRef + ", triggeringCommentId=" + triggeringCommentId
                     + ", scmCredential=" + ActionCommand.redacted(scmCredential) + ", mentioned=" + mentioned
                     + ", round=" + round + ", otherFindings=<" + otherFindings.size() + " findings>"
-                    + ", retry=" + retry + "]";
+                    + ", retry=" + retry
+                    + ", replyAuthor=" + (replyAuthor == null ? "null" : replyAuthor.username()) + "]";
         }
     }
 

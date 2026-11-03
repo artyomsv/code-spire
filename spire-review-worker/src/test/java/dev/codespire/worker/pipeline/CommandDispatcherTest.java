@@ -165,7 +165,7 @@ class CommandDispatcherTest {
     void routesPrepareAndPostToTheReplyWorker() {
         ReplyRetry retry = new ReplyRetry(1, 0, 1.0);
         dispatcher.on(new ActionCommand.PrepareHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef("comment-1"), "comment-2",
-                null, false, 1, List.of(), retry));
+                null, false, 1, List.of(), retry, null));
         dispatcher.on(new ActionCommand.PostHarnessReply(REVIEW_ID, REPO, 7, new ThreadRef("comment-1"), "comment-2",
                 "TEST-answer", null, retry));
         assertEquals(List.of("prepareHarnessReply", "postHarnessReply"), calls);

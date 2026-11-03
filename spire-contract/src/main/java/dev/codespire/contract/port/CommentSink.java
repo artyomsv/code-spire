@@ -35,6 +35,16 @@ public interface CommentSink {
 
     Author getPullRequestAuthor(RepoRef repo, long prId);
 
+    /**
+     * How this forge writes an @-mention of {@code author} in a comment, so the person a reply answers is notified.
+     * Each forge has its own syntax (a login on GitHub and GitLab, a braced account id on Bitbucket Cloud), so only the
+     * adapter knows it; the model never writes a mention, since a hand-written one fails to link or notifies the wrong
+     * account. Empty when the forge has no syntax or the author lacks the identity it needs.
+     */
+    default Optional<String> mention(Author author) {
+        return Optional.empty();
+    }
+
     /** Outcome of a resolve attempt — ALREADY_RESOLVED means a human beat us to it. */
     enum ThreadResolution { RESOLVED_NOW, ALREADY_RESOLVED, UNSUPPORTED }
 

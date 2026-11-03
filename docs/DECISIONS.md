@@ -214,6 +214,15 @@ review behind an hour-long build would wait an hour.
   (failed, cancelled, over the cap, no reviewer account) writes `FollowUpFailed`; both clear the "responding" flag.
   The worker's quiet exits at prepare (no thread support, a second human with no mention, a comment already answered)
   keep the API path's behaviour: the flag stays up until the next review.
+- **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
+  notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
+  one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the
+  forge's own mention of the triggering comment's author: `CommentSink.mention` gives `@login` on GitHub and GitLab
+  and `@{account_id}` on Bitbucket Cloud, or nothing when the author lacks that identity. `AnswerFollowUp` and
+  `PrepareHarnessReply` carry `replyAuthor` (never the email); the harness prepare stores the mention under
+  `harness:mention:<commentId>` for the post, since the run's result names only the thread and the turn. The FOLLOWUP
+  persona now says the mention is added and the model must not name or mention anyone; a repository's customized
+  FOLLOWUP prompt keeps its own text.
 - **No attention row for a reply.** A refused reply is said in its thread's history, as a reply the spend cap refuses
   is; `REVIEW_HARNESS_REFUSED` speaks of a review that was not reviewed, which is false here.
 

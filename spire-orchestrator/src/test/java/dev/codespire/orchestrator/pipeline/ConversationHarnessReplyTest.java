@@ -48,7 +48,7 @@ class ConversationHarnessReplyTest {
             new PriorFinding("src/A.java", 3, Severity.MAJOR, "TEST-OTHER-FINDING", "TEST-other-thread"));
     private static final ActionCommand.PrepareHarnessReply PREPARED = new ActionCommand.PrepareHarnessReply(REVIEW_ID,
             new RepoRef("TEST-WS", "TEST-REPO"), 412, SUMMARY, "TEST-comment-555", "TEST-packed", false, 2, List.of(),
-            new ReplyRetry(3, 100, 2.0));
+            new ReplyRetry(3, 100, 2.0), null);
 
     private HarnessReplyStart.Decision decision = new HarnessReplyStart.Preparing(PREPARED);
     private int priorTurns;

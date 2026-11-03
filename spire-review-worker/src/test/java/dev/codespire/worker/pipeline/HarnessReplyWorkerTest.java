@@ -51,6 +51,7 @@ class HarnessReplyWorkerTest {
     private static final String COMMENT = "TEST-comment-5";
     private static final String HEAD = "c".repeat(40);
     private static final String KEY = "followup:" + COMMENT;
+    private static final Author ALICE = Author.of("TEST-id-9", "TEST-alice", "TEST Alice");
 
     private final List<IntegrationEvent> emitted = new ArrayList<>();
     /** The claim slots by {@code thread/key}: the posted ref, or null while only claimed. */
@@ -90,6 +91,17 @@ class HarnessReplyWorkerTest {
             public void markPosted(String reviewId, String commit, String anchorKey, String postedRef) {
                 slots.put(commit + "/" + anchorKey, postedRef);
             }
+
+            @Override
+            public Map<String, String> postedFor(String reviewId, String commit) {
+                Map<String, String> posted = new HashMap<>();
+                slots.forEach((slot, ref) -> {
+                    if (ref != null && slot.startsWith(commit + "/")) {
+                        posted.put(slot.substring(commit.length() + 1), ref);
+                    }
+                });
+                return posted;
+            }
         };
         built.results = new ResultsEmitter() {
             @Override
@@ -111,7 +123,7 @@ class HarnessReplyWorkerTest {
     private static ActionCommand.PrepareHarnessReply prepare(boolean mentioned, int maxAttempts) {
         return new ActionCommand.PrepareHarnessReply(REVIEW_ID, REPO, 7, THREAD, COMMENT, null, mentioned, 2,
                 List.of(new PriorFinding("src/B.java", 9, Severity.MINOR, "TEST-OTHER-FINDING", "TEST-thread-2")),
-                new ReplyRetry(maxAttempts, 0, 1.0));
+                new ReplyRetry(maxAttempts, 0, 1.0), ALICE);
     }
 
     private static ActionCommand.PostHarnessReply post(String answer) {
@@ -211,6 +223,36 @@ class HarnessReplyWorkerTest {
 
         verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
         assertEquals(List.of(), emitted);
+    }
+
+    /** The model never writes a mention; the forge's own one, remembered at prepare, opens the posted answer. */
+    @Test
+    void thePostedAnswerOpensWithTheMentionThePrepareRemembered() {
+        threadIs(thread(new ThreadMessage("TEST-alice", "TEST-HUMAN-ASKED", false)));
+        when(sink.mention(ALICE)).thenReturn(java.util.Optional.of("@TEST-alice"));
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+
+        worker.prepare(prepare(false, 1));
+        worker.post(post("TEST-ANSWER"));
+
+        verify(sink).replyInThread(REPO, 7, THREAD, "@TEST-alice TEST-ANSWER");
+        IntegrationEvent.FollowUpGenerated generated = (IntegrationEvent.FollowUpGenerated) emitted.get(1);
+        assertEquals("@TEST-alice TEST-ANSWER", generated.answerText(), "the history shows what was posted");
+    }
+
+    /** A forge with no mention for this author (no login, no account id) posts the answer as it is. */
+    @Test
+    void anAuthorTheForgeCannotMentionGetsThePlainAnswer() {
+        threadIs(thread(new ThreadMessage("TEST-alice", "TEST-HUMAN-ASKED", false)));
+        when(sink.mention(ALICE)).thenReturn(java.util.Optional.empty());
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+
+        worker.prepare(prepare(false, 1));
+        worker.post(post("TEST-ANSWER"));
+
+        verify(sink).replyInThread(REPO, 7, THREAD, "TEST-ANSWER");
     }
 
     @Test

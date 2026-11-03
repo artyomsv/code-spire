@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * GitLab write adapter (SCM-MAPPING §4-§6). The PR summary is a merge-request
@@ -32,6 +33,9 @@ import java.util.Map;
  * other provider's events carry two permanently-null fields and put a GitLab-shaped type in the core.
  */
 public class GitLabCommentSink implements CommentSink, ThreadSource {
+
+    /** A GitLab username: letters, digits, dots, underscores and hyphens. */
+    private static final java.util.regex.Pattern LOGIN = java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
     // Bounds thread re-fetch on a pathological MR (100 notes/page × pages).
     private static final int MAX_THREAD_PAGES = 20;
@@ -58,6 +62,15 @@ public class GitLabCommentSink implements CommentSink, ThreadSource {
     public GitLabCommentSink(GitLabClient client, String botUsername) {
         this.client = client;
         this.brokeredBotUsername = botUsername;
+    }
+
+    /** A login mention: GitHub and GitLab link {@code @login} and notify that account. */
+    @Override
+    public Optional<String> mention(Author author) {
+        if (author == null || author.username() == null || !LOGIN.matcher(author.username()).matches()) {
+            return Optional.empty();
+        }
+        return Optional.of("@" + author.username());
     }
 
     @Override

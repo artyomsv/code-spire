@@ -760,7 +760,7 @@ class IntegrationSagaPolicyTest {
     void aPreparedHarnessReplyMarksTheReviewAnswering() {
         var prepare = new ActionCommand.PrepareHarnessReply(REPLY_REVIEW, new RepoRef("acme", "web"), 412L,
                 new ThreadRef("t-1"), "c-1", "scm-cred", false, 1, List.of(),
-                new dev.codespire.contract.command.ReplyRetry(1, 100L, 2.0));
+                new dev.codespire.contract.command.ReplyRetry(1, 100L, 2.0), null);
 
         List<Boolean> answeringCalls = answeringCallsFor(prepare);
 

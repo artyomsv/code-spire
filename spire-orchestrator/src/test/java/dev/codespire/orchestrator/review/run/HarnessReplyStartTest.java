@@ -74,6 +74,17 @@ class HarnessReplyStartTest {
         assertEquals(3, command.round());
         assertEquals(OTHERS, command.otherFindings());
         assertEquals(new ReplyRetry(4, 250, 3.0), command.retry(), "the conversation settings' retry");
+        assertEquals(Author.of("TEST-human", "TEST-alice", "TEST Alice"), command.replyAuthor(),
+                "whom the posted answer mentions");
+    }
+
+    /** The email is never put on a command: the mention needs the id and the login only. */
+    @Test
+    void aReplyAuthorNeverCarriesAnEmail() {
+        Author withEmail = new Author("TEST-human", "TEST-alice", "TEST Alice", "TEST-alice@example.invalid");
+
+        assertEquals(Author.of("TEST-human", "TEST-alice", "TEST Alice"), HarnessReplyStart.replyAuthor(withEmail));
+        assertEquals(null, HarnessReplyStart.replyAuthor(null));
     }
 
     @Test

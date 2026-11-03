@@ -173,7 +173,8 @@ public class ConversationSaga {
                 e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
                 workerCredentials.pack(answering.provider(), e.repo().workspace()), llm.packed(), botMentioned,
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
-                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()), others));
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()), others,
+                HarnessReplyStart.replyAuthor(e.author())));
     }
 
     /**
