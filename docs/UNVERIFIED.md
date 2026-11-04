@@ -85,7 +85,7 @@ agent answers in its checkout of the pull request's head, and the worker posts t
 cancels a reply run, a close does; a reply that ends with no answer says so under its thread (ADR-050, step 7).
 
 **What is proven, and how.** By unit tests over fakes: the start (`HarnessReplyStartTest`,
-`ConversationHarnessReplyTest`, `IntegrationSagaPolicyTest`), the worker's prepare and post (`HarnessReplyWorkerTest`),
+`ConversationHarnessReplyTest`, `IntegrationSagaPolicyTest`), the worker's prepare and post (`HarnessReplyWorkerPrepareTest`, `HarnessReplyWorkerPostTest`),
 the launch (`HarnessReplyLaunchTest`), the results (`HarnessReplyResultsTest`, `HarnessReviewResultsTest`), the
 charge identity (`ReviewRunChargesTest`, `ResultSagaPricingTest`), the thread file (`HarnessReviewInputFilesTest`),
 the prompt (`HarnessReplyPromptTest`), the slot round trip (`ReplyCallTest`) and the wire messages
