@@ -194,6 +194,45 @@ describe('leaving for the identity provider', () => {
     expect(assign).toHaveBeenCalledWith('/gw/auth/login');
   });
 
+  /**
+   * A login is a whole-window navigation, so the console that saw it start is cleared by it. The
+   * reason is kept in the tab's diagnostic log, which the next page load prints again.
+   */
+  it('records why it started a login, and where to', async () => {
+    const auth = await freshAuth();
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    auth.goToLogin('/gw', 'TEST-why');
+
+    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    expect(log.at(-1)).toMatchObject({ event: 'login', detail: '/gw/auth/login: TEST-why' });
+  });
+
+  it('records a login it did not start because the window was already leaving', async () => {
+    const auth = await freshAuth();
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    auth.goToFullLogin('TEST-first');
+    auth.goToLogin('/gw', 'TEST-second');
+
+    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    expect(log.map((e: { event: string }) => e.event)).toEqual(['login', 'login skipped']);
+  });
+
+  it('records a sign-out', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await auth.goToLogout();
+
+    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    expect(log.at(-1)).toMatchObject({ event: 'logout' });
+  });
+
   it('marks the departure before navigating, so failures on the way out are recognised', async () => {
     const auth = await freshAuth();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
