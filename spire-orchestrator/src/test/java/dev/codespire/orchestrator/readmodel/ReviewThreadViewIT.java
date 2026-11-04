@@ -36,6 +36,17 @@ class ReviewThreadViewIT {
         assertEquals(2, threads.turnCount(reviewId, t), "the control: a new answer is a new turn");
     }
 
+    /** A dead letter of answer A replayed after answer B still counts nothing: two answers are two turns. */
+    @Test
+    void anOlderAnswerReplayedAfterANewerOneIsNotCountedAgain() {
+        String reviewId = "review::artyomsv/spire-test#3710";
+        ThreadRef t = new ThreadRef("TEST-3710");
+        threads.bumpTurn(reviewId, t, "TEST-answer-A");
+        threads.bumpTurn(reviewId, t, "TEST-answer-B");
+        threads.bumpTurn(reviewId, t, "TEST-answer-A");
+        assertEquals(2, threads.turnCount(reviewId, t));
+    }
+
     @Test
     void markingAThreadOwnedMakesItOurs() {
         String reviewId = "review::artyomsv/spire-test#9";

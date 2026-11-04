@@ -32,24 +32,32 @@ public class ReviewThreadView {
     }
 
     /**
-     * Count the bot's answer {@code lastCommentId} as a turn of {@code thread}, once: the same answer counted again (a
+     * Count the bot's answer {@code lastCommentId} as a turn of {@code thread}, once ever: an answer counted before (a
      * resent {@code FollowUpPosted}, which the harness reply's worker sends until its events are known to have gone
-     * out) changes nothing (review of PR #371, code-quality/M-1).
+     * out, or a dead letter replayed after a later answer) changes nothing, not even the last answer. V110's receipt is
+     * written in the same statement as the count, so the two cannot disagree (review of PR #371, code-quality/M-1).
      */
     public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement("""
+                     WITH receipt AS (
+                         INSERT INTO review_thread_turn (review_id, thread_ref, comment_id)
+                         VALUES (?, ?, COALESCE(?, ''))
+                         ON CONFLICT DO NOTHING
+                         RETURNING 1
+                     )
                      INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id)
-                     VALUES (?, ?, 1, ?)
+                     SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM receipt)
                      ON CONFLICT (review_id, thread_ref)
-                     DO UPDATE SET turn_count = review_thread.turn_count
-                                       + CASE WHEN review_thread.last_comment_id IS NOT DISTINCT FROM EXCLUDED.last_comment_id
-                                              THEN 0 ELSE 1 END,
+                     DO UPDATE SET turn_count = review_thread.turn_count + 1,
                                    last_comment_id = EXCLUDED.last_comment_id
                      """)) {
             ps.setString(1, reviewId);
             ps.setString(2, thread.value());
             ps.setString(3, lastCommentId);
+            ps.setString(4, reviewId);
+            ps.setString(5, thread.value());
+            ps.setString(6, lastCommentId);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to bump thread turn count", e);

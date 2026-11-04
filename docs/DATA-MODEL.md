@@ -317,6 +317,10 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 `review_thread` (per conversation): `thread_id` TEXT PK (a `ThreadRef` value), `review_id` TEXT, `pr_id` BIGINT,
 `status` TEXT, `last_comment_id` TEXT, `updated_at`.
 
+`review_thread_turn` (**V110**, harness reviews step 7): `review_id` TEXT, `thread_ref` TEXT, `comment_id` TEXT,
+`counted_at` TIMESTAMPTZ, PK all three. One row per bot answer counted as a turn, written in the same statement that
+raises `review_thread.turn_count`, so a resent or replayed `FollowUpPosted` (A, B, A) never counts an answer twice.
+
 `review_finding` (the review output — the durable corpus analytics and learned memory read, P4 /
 ADR-027, **V36**): `id` BIGSERIAL PK, `review_id` TEXT, `round` INT, `commit_sha` TEXT, `path` TEXT,
 `start_line` INT, `end_line` INT, `severity` TEXT, `category` TEXT (nullable), `origin` TEXT

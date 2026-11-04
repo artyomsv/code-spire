@@ -58,6 +58,8 @@ class HarnessReplyWorkerTest {
     private final Map<String, String> slots = new HashMap<>();
     /** How many of the next emits fail, as a publish that times out after the post. */
     private int failingEmits;
+    /** How many of the next done marks fail, as a database outage after both publishes. */
+    private int failingDoneMarks;
     private CommentSink sink;
     private DiffSource diffs;
     private HarnessReplyWorker worker;
@@ -97,6 +99,10 @@ class HarnessReplyWorkerTest {
 
             @Override
             public void markPosted(String reviewId, String commit, String anchorKey, String postedRef) {
+                if (anchorKey.startsWith("harness:reply-done:") && failingDoneMarks > 0) {
+                    failingDoneMarks--;
+                    throw new IllegalStateException("TEST-database-down");
+                }
                 slots.put(commit + "/" + anchorKey, postedRef);
             }
 
@@ -313,6 +319,25 @@ class HarnessReplyWorkerTest {
         verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
         assertEquals(3, emitted.size(), "FollowUpGenerated twice, FollowUpPosted once, then nothing: " + emitted);
         assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(2));
+    }
+
+    /**
+     * Both publishes went out, then the done mark failed: the retry posts no second comment and sends both events
+     * again, which the orchestrator counts once per answer (ReviewThreadViewIT, review of PR #371, M-1).
+     */
+    @Test
+    void aDoneMarkThatFailsAfterBothPublishesSendsThemAgainWithOneComment() {
+        when(sink.replyInThread(eq(REPO), eq(7L), eq(THREAD), anyString()))
+                .thenReturn(new CommentRef("TEST-posted-9", THREAD, CommentKind.REPLY));
+        failingDoneMarks = 1;
+
+        assertThrows(IllegalStateException.class, () -> worker.post(post("TEST-ANSWER")));
+        worker.post(post("TEST-ANSWER"));
+        worker.post(post("TEST-ANSWER"));
+
+        verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
+        assertEquals(4, emitted.size(), "both events twice, then nothing once the done mark holds: " + emitted);
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(3));
     }
 
     /** Raw HTML in model text must not become markup; code keeps its "<" (review of PR #371, rules/H-1). */
