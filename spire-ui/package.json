@@ -13,7 +13,7 @@
   "dependencies": {
     "@tanstack/react-query": "5.104.5",
     "lucide-react": "^1.46.0",
-    "react": "19.3.0",
+    "react": "19.3.1",
     "react-dom": "19.3.0",
     "react-icons": "^5.7.0",
     "react-markdown": "^10.1.0",
