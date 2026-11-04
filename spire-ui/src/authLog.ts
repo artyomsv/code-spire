@@ -65,5 +65,5 @@ function withoutQuery(referrer: string): string {
  */
 export function recordPageLoad(navigationType: string, referrer: string): void {
   recordAuthEvent('page load', `${navigationType} from ${withoutQuery(referrer)}`);
-  console.info(`${CONSOLE_TAG} recent events`, readAuthLog());
+  console.info('[spire auth] recent events', readAuthLog());
 }
