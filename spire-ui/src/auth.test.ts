@@ -438,13 +438,50 @@ describe('establishing the other services sessions', () => {
    */
   it('does not navigate again once every lapsed prefix has been tried', async () => {
     const auth = await freshAuth();
-    sessionStorage.setItem('spire.session.attempted/gw', '1');
-    sessionStorage.setItem('spire.session.attempted/wk', '1');
+    sessionStorage.setItem('spire.session.attempted/gw', String(Date.now()));
+    sessionStorage.setItem('spire.session.attempted/wk', String(Date.now()));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
     const assign = stubLocation();
 
     expect(await auth.ensureServiceSessions()).toBe(false);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A mark is a guard against a reload loop, not a verdict for the life of the tab. A chained login
+   * that broke off before reaching a prefix (the gateway still starting after a stack restart) left
+   * that prefix marked with no session, and nothing but a later success ever cleared the mark: the
+   * attention panel said "the webhook gateway is not responding" while the gateway answered, and F5
+   * kept it, because sessionStorage outlives a reload. Once the attempt is old, the prefix is tried
+   * again.
+   */
+  it('tries a marked prefix again once its attempt is old', async () => {
+    const auth = await freshAuth();
+    const longAgo = Date.now() - auth.SESSION_RETRY_AFTER_MS - 1;
+    sessionStorage.setItem('spire.session.attempted/gw', String(longAgo));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
+    );
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+    expect(Number(sessionStorage.getItem('spire.session.attempted/gw'))).toBeGreaterThan(longAgo);
+  });
+
+  /** A mark from an older build holds no time. It reads as old, so it cannot strand a prefix either. */
+  it('tries a prefix again whose mark holds no time', async () => {
+    const auth = await freshAuth();
+    sessionStorage.setItem('spire.session.attempted/gw', '1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
+    );
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
   });
 
   /**
