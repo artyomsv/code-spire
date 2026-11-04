@@ -638,12 +638,12 @@ class ResultSagaRetryTest {
             }
         };
 
-        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1"));
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("mention-thread"), "answer-1", true));
         assertEquals(List.of("mention-thread"), ownedThreads, "the thread the bot spoke in becomes ours");
 
         // …but NOT the summary thread: owning that would make every later top-level PR comment engage.
         ownedThreads.clear();
-        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2"));
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("summary-1"), "answer-2", true));
         assertTrue(ownedThreads.isEmpty(), "the summary thread's scope is deliberately unchanged");
     }
 
@@ -700,7 +700,7 @@ class ResultSagaRetryTest {
             }
         };
 
-        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("t-1"), "c-1"));
+        saga.on(new FollowUpPosted(REVIEW_ID, new ThreadRef("t-1"), "c-1", true));
 
         assertEquals(List.of(false), answeringCalls,
                 "the bot's reply landing must clear the answering flag (and bump the live dashboard)");

@@ -90,7 +90,7 @@ describe('ReviewCostCard', () => {
     );
   });
 
-  it('labels an unmetered call as self-hosted rather than as free', () => {
+  it('labels an unmetered call as unmetered rather than as free', () => {
     render(
       <ReviewCostCard
         lines={[line({ costMillicents: 0, pricingMode: 'UNMETERED' })]}
@@ -99,10 +99,43 @@ describe('ReviewCostCard', () => {
     );
 
     const callBlock = document.querySelector('.usage-call') as HTMLElement;
-    expect(within(callBlock).getAllByText(/self-hosted/i).length).toBeGreaterThan(0);
-    // The call's own cost line must say "self-hosted", not a dollar figure — the total below it
+    expect(within(callBlock).getByText('unmetered')).toHaveClass('usage-cost');
+    // The call's own cost line must say "unmetered", not a dollar figure — the total below it
     // legitimately shows $0.000 (it really is free), so that check has to stay scoped to the call.
     expect(within(callBlock).queryByText(/\$0\.000/)).not.toBeInTheDocument();
+  });
+
+  /** A seat's call has four token lines; repeating its cost on each crowded the sidebar (live, PR #371). */
+  it('says an unmetered call is unmetered once, not on every token line', () => {
+    render(
+      <ReviewCostCard
+        lines={[
+          line({ tokenType: 'INPUT', costMillicents: 0, pricingMode: 'UNMETERED' }),
+          line({ tokenType: 'OUTPUT', costMillicents: 0, pricingMode: 'UNMETERED' }),
+        ]}
+        unpricedCalls={0}
+      />,
+    );
+
+    const callBlock = document.querySelector('.usage-call') as HTMLElement;
+    expect(within(callBlock).getAllByText(/unmetered/i)).toHaveLength(1);
+    expect(within(callBlock).getByText(/^Input: 1[^0-9]?000 tokens$/)).toBeInTheDocument();
+  });
+
+  /** A call mixing an unmetered line with a priced one still says which line is which. */
+  it('keeps each line cost when only some lines are unmetered', () => {
+    render(
+      <ReviewCostCard
+        lines={[
+          line({ tokenType: 'INPUT', costMillicents: 250, pricingMode: 'METERED' }),
+          line({ tokenType: 'OUTPUT', costMillicents: 0, pricingMode: 'UNMETERED' }),
+        ]}
+        unpricedCalls={0}
+      />,
+    );
+
+    expect(screen.getByText(/1[^0-9]?000 tokens · \$0\.003/)).toBeInTheDocument();
+    expect(screen.getByText(/1[^0-9]?000 tokens · unmetered/)).toBeInTheDocument();
   });
 
   it('renders an empty state rather than an empty card when no calls have happened yet', () => {

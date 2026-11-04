@@ -2297,3 +2297,22 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   head, a replayed finish fault, a stale round's late message, a seat refused mid re-review, a re-review on an API
   key, an over-cap answer, forks and replies are proven against fakes only. Record:
   [re-reviews on a harness acceptance](factory/HARNESS-REVIEWS-6-ACCEPTANCE.md). Next: step 7, replies on a harness.
+
+- **Harness reviews step 7: replies on a harness (2026-11-03, PR #371; live-proven, not merged).** A reply that the
+  conversation policy answers, on a repository that reviews with a harness, is one `FOLLOWUP` run per turn, with no
+  API fallback (ADR-050, "Step 7"). The review worker prepares (`PrepareHarnessReply` → `HarnessReplyPrepared`: the
+  thread fetched, "smart 1:1", the API path's `followup:<commentId>` claim, `/inputs/thread.md`), the orchestrator
+  launches the run under the API reply's own call slot (and sends none when that turn already has a run), and the
+  worker posts the answer (`PostHarnessReply` → `FollowUpGenerated` with no usage, `FollowUpPosted`). A push never
+  cancels or refuses a reply run, a close does; a reply that ends with no answer writes `FollowUpRefused` or
+  `FollowUpFailed` under its thread and clears "answering". The plan check found that a prepare redelivered after a
+  push would fund a second run whose charge the ledger drops, and that the summary thread's transcript has no path.
+  Ten guards were broken in one CI run (`acf4f4a9`, reverted) and each failed its named test. The live proof on
+  `spire-test` #97 (Codex `gpt-6-astra` on a seat) answered two replies in the 50% cap finding's thread, each by one
+  run in under a minute, charged once under `…|4446620058:<comment>|FOLLOWUP` at cost 0, calling `chatgpt.com`
+  only, with the turn count at 2. It found that the answer named its author as plain text, which notifies nobody;
+  `b74e02ac` opens every reply, API and harness, with the forge's own mention (`@login`, Bitbucket's
+  `@{account_id}`), and the second turn shows it. Left open: a push during a reply run, a refused seat, an over-cap
+  answer, a summary-thread reply and the GitLab and Bitbucket mentions are proven against fakes only. Record:
+  [replies on a harness acceptance](factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Next: step 3, the credential-injecting
+  proxy, then step 8, fork pull requests.

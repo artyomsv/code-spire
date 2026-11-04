@@ -33,6 +33,10 @@ import java.util.Optional;
  */
 public class GitHubCommentSink implements CommentSink, ThreadSource {
 
+    /** A GitHub login: letters, digits and single inner hyphens, as GitHubIngress reads a mention. */
+    private static final java.util.regex.Pattern LOGIN =
+            java.util.regex.Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?");
+
     private static final System.Logger LOG = System.getLogger(GitHubCommentSink.class.getName());
 
     // Bounds thread re-fetch on a pathological PR (100 comments/page × pages).
@@ -95,6 +99,15 @@ public class GitHubCommentSink implements CommentSink, ThreadSource {
     @Override
     public Optional<String> dismissOwnChangesRequested(RepoRef repo, long prId, String message) {
         return reviews.dismissChangesRequested(repo, prId, botLogin(), message);
+    }
+
+    /** A login mention: GitHub and GitLab link {@code @login} and notify that account. */
+    @Override
+    public Optional<String> mention(Author author) {
+        if (author == null || author.username() == null || !LOGIN.matcher(author.username()).matches()) {
+            return Optional.empty();
+        }
+        return Optional.of("@" + author.username());
     }
 
     @Override

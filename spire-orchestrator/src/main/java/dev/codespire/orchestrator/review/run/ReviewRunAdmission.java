@@ -21,8 +21,9 @@ import java.util.UUID;
  * review_run_superseded}). The check and the row commit together, and the command is sent after the commit.
  *
  * <p>Rounds, not commits: a forced re-run and a return to an earlier head are later rounds on a head seen before, and
- * are admitted; a call of the ended round, or an earlier one, is refused whenever it arrives. A reply carries the round
- * it was decided in, the current one, so an older supersede never refuses it.
+ * are admitted; a call of the ended round, or an earlier one, is refused whenever it arrives. A reply ({@code FOLLOWUP})
+ * answers a thread, not a round: an ended round never refuses it, as the API reply is answered after a push, and only a
+ * closed pull request does (harness reviews, step 7).
  */
 @ApplicationScoped
 public class ReviewRunAdmission {
@@ -32,7 +33,8 @@ public class ReviewRunAdmission {
 
     private static final String CANCELLED = """
             SELECT EXISTS (SELECT 1 FROM review_status WHERE review_id = ? AND pr_state <> 'OPEN')
-                OR EXISTS (SELECT 1 FROM review_run_superseded WHERE review_id = ? AND superseded_round >= ?)
+                OR (CAST(? AS TEXT) <> 'FOLLOWUP'
+                    AND EXISTS (SELECT 1 FROM review_run_superseded WHERE review_id = ? AND superseded_round >= ?))
             """;
 
     @Inject
@@ -80,8 +82,9 @@ public class ReviewRunAdmission {
     private static boolean cancelled(Connection c, ReviewRunBinding binding) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(CANCELLED)) {
             ps.setString(1, binding.reviewId());
-            ps.setString(2, binding.reviewId());
-            ps.setInt(3, binding.round());
+            ps.setString(2, binding.kind().name());
+            ps.setString(3, binding.reviewId());
+            ps.setInt(4, binding.round());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getBoolean(1);

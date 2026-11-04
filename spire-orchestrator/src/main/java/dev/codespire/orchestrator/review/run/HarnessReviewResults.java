@@ -29,9 +29,9 @@ import java.util.Optional;
  * the review's {@link ReviewRoundLock}: a result of an ended round is dropped, and a round that cannot be read is
  * thrown, never guessed (reviews of PR #368 and PR #370).
  *
- * <p>Never charged here: {@code ReviewRunCharges} already charged the run under the review's call slot. Follow-up
- * answers are only logged until step 7. The artifact's text is never logged: it is model output about the reviewed code
- * and may quote it (SECURITY.md).
+ * <p>Never charged here: {@code ReviewRunCharges} already charged the run under the review's call slot. A reply run's
+ * result goes to {@link HarnessReplyResults} with no round check: a reply answers a thread, not a round (step 7). The
+ * artifact's text is never logged: it is model output about the reviewed code and may quote it (SECURITY.md).
  */
 @ApplicationScoped
 public class HarnessReviewResults implements ReviewRunResults {
@@ -77,6 +77,10 @@ public class HarnessReviewResults implements ReviewRunResults {
     @Inject
     CommandsEmitter commands;
 
+    /** Where a reply run's result goes (harness reviews, step 7). */
+    @Inject
+    HarnessReplyResults replies;
+
     /**
      * The worker's finished answer, applied under the round lock on the saga's ordered consumer. The saga's commit guard
      * cannot tell a forced re-run's round from the one before it on the same head; the round check here does.
@@ -112,6 +116,7 @@ public class HarnessReviewResults implements ReviewRunResults {
     public void accept(RunResult result, ReviewRunBinding binding) {
         log(result, binding);
         if (binding.kind() == ReviewRunBinding.Kind.FOLLOWUP) {
+            replies.accept(result, binding);
             return;
         }
         if (!(result instanceof RunReviewArtifact) && !(result instanceof RunResult.RunFailed)) {

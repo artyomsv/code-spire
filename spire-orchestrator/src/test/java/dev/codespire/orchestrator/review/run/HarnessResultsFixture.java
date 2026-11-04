@@ -59,6 +59,9 @@ final class HarnessResultsFixture {
 
     final List<ActionCommand> finishes = new ArrayList<>();
 
+    /** What reached the reply results (harness reviews, step 7). */
+    final List<RunResult> replyResults = new ArrayList<>();
+
     static RunReviewArtifact answer(String text, ReviewRunBinding binding) {
         return new RunReviewArtifact(RUN_ID, binding, text, false, Map.of("INPUT", 1200L, "OUTPUT", 340L), 4, List.of());
     }
@@ -80,6 +83,13 @@ final class HarnessResultsFixture {
         results.maxReportedTokens = -1;
         results.credentials = credentials();
         results.commands = commands();
+        results.replies = new HarnessReplyResults() {
+            @Override
+            public void accept(RunResult result, ReviewRunBinding binding) {
+                steps.add("reply");
+                replyResults.add(result);
+            }
+        };
         return results;
     }
 

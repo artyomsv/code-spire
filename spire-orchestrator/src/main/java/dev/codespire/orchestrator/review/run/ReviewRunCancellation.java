@@ -48,7 +48,10 @@ public class ReviewRunCancellation {
     @Inject
     RunCommandEmitter emitter;
 
-    /** Cancel every live review run of {@code reviewId} in {@code supersededRound} or earlier: that round has ended. */
+    /**
+     * Cancel every live review run of {@code reviewId} in {@code supersededRound} or earlier: that round has ended. A
+     * reply run is not cancelled: it answers a thread, not a round (harness reviews, step 7).
+     */
     public void supersede(String reviewId, int supersededRound) {
         cancel(underLock(reviewId, supersededRound), "superseded: review round " + supersededRound + " was replaced");
     }

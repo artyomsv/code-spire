@@ -745,10 +745,35 @@ class IntegrationSagaPolicyTest {
      */
     @Test
     void authorReplied_setsAnsweringTrueWhenAFollowUpIsPlanned() {
-        List<Boolean> answeringCalls = new ArrayList<>();
-        String reviewId = "review::acme/web#412";
-        var followUp = new ActionCommand.AnswerFollowUp(reviewId, new RepoRef("acme", "web"), 412L,
+        var followUp = new ActionCommand.AnswerFollowUp(REPLY_REVIEW, new RepoRef("acme", "web"), 412L,
                 new ThreadRef("t-1"), "c-1", "why is this a bug?", "scm-cred", "llm-cred", false, 1, 100L, 2.0);
+
+        List<Boolean> answeringCalls = answeringCallsFor(followUp);
+
+        assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
+        assertEquals(List.of(true), answeringCalls,
+                "dispatching a follow-up flags the review as answering (and bumps the live dashboard)");
+    }
+
+    /** Harness reviews, step 7: a reply prepared for a harness run is an answer on its way, as an API one is. */
+    @Test
+    void aPreparedHarnessReplyMarksTheReviewAnswering() {
+        var prepare = new ActionCommand.PrepareHarnessReply(REPLY_REVIEW, new RepoRef("acme", "web"), 412L,
+                new ThreadRef("t-1"), "c-1", "scm-cred", false, 1, List.of(),
+                new dev.codespire.contract.command.ReplyRetry(1, 100L, 2.0), null);
+
+        List<Boolean> answeringCalls = answeringCallsFor(prepare);
+
+        assertEquals(List.of(prepare), emitted);
+        assertEquals(List.of(true), answeringCalls, "the responding pill shows while the reply run works");
+    }
+
+    private static final String REPLY_REVIEW = "review::acme/web#412";
+
+    /** A live review whose reply the conversation plans as {@code followUp}; the review's answering writes. */
+    private List<Boolean> answeringCallsFor(ActionCommand followUp) {
+        List<Boolean> answeringCalls = new ArrayList<>();
+        String reviewId = REPLY_REVIEW;
 
         IntegrationSaga saga = new IntegrationSaga();
         saga.reviewRunCancellation = new dev.codespire.orchestrator.review.run.NoReviewRunCancellation();
@@ -763,23 +788,42 @@ class IntegrationSagaPolicyTest {
                 emitted.add(command);
             }
         };
-        saga.reviewProviders = new ReviewProviderResolver() {
-            @Override
-            public Optional<ScmProvider> resolveForReview(String reviewId) {
-                return Optional.empty(); // no provider resolved -> isBotAuthored() is false, not a self-loop
-            }
-        };
+        saga.reviewProviders = noProvider();
         // Active: the reply path now consults the policy before planning a follow-up, so a fixture
         // that omits it no longer reaches the conversation at all. Left null this test NPE'd — which
         // is the honest signal that the gate genuinely covers this branch.
         saga.policy = policyMode(false);
-        saga.conversation = new ConversationSaga() {
+        saga.conversation = plannedAs(followUp);
+        saga.projection = liveReviewRecordingAnswering(answeringCalls);
+
+        saga.onRepository(new AuthorReplied(new RepoRef("acme", "web"), 412L, reviewId, new ThreadRef("t-1"), "c-1",
+                "why is this a bug?", Author.of("human-1", "alice", "Alice")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        return answeringCalls;
+    }
+
+    /** A conversation that plans {@code followUp} for every reply. */
+    private static ConversationSaga plannedAs(ActionCommand followUp) {
+        return new ConversationSaga() {
             @Override
             public Optional<ActionCommand> planFollowUp(AuthorReplied e) {
                 return Optional.of(followUp);
             }
         };
-        saga.projection = new dev.codespire.orchestrator.TestRepositoryProjection() {
+    }
+
+    /** No provider resolved, so isBotAuthored() is false: the reply is not a self-loop. */
+    private static ReviewProviderResolver noProvider() {
+        return new ReviewProviderResolver() {
+            @Override
+            public Optional<ScmProvider> resolveForReview(String reviewId) {
+                return Optional.empty();
+            }
+        };
+    }
+
+    /** A live review whose "answering" writes land in {@code answeringCalls}; the real one opens a database. */
+    private static ReviewProjection liveReviewRecordingAnswering(List<Boolean> answeringCalls) {
+        return new dev.codespire.orchestrator.TestRepositoryProjection() {
             /** The archival gate reads this before the reply is handled at all; this review is live. */
             @Override
             public boolean archived(String reviewId) {
@@ -795,13 +839,6 @@ class IntegrationSagaPolicyTest {
                 answeringCalls.add(answering);
             }
         };
-
-        saga.onRepository(new AuthorReplied(new RepoRef("acme", "web"), 412L, reviewId, new ThreadRef("t-1"), "c-1",
-                "why is this a bug?", Author.of("human-1", "alice", "Alice")), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-
-        assertEquals(1, emitted.size(), "the planned AnswerFollowUp is still emitted");
-        assertEquals(List.of(true), answeringCalls,
-                "dispatching a follow-up flags the review as answering (and bumps the live dashboard)");
     }
 
     @Test

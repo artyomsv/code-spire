@@ -5,6 +5,13 @@ import dev.codespire.contract.scm.ThreadRef;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
@@ -14,6 +21,9 @@ class ReviewThreadViewIT {
     @Inject
     ReviewThreadView threads;
 
+    @Inject
+    DataSource dataSource;
+
     @Test
     void turnCountStartsAtZeroAndBumps() {
         String reviewId = "review::artyomsv/spire-test#5";
@@ -22,6 +32,73 @@ class ReviewThreadViewIT {
         threads.bumpTurn(reviewId, t, "201");
         threads.bumpTurn(reviewId, t, "203");
         assertEquals(2, threads.turnCount(reviewId, t));
+    }
+
+    /** A resent FollowUpPosted names the same answer: it is one turn, not two (review of PR #371, M-1). */
+    @Test
+    void theSameAnswerCountedTwiceIsOneTurn() {
+        String reviewId = "review::artyomsv/spire-test#371";
+        ThreadRef t = new ThreadRef("TEST-371");
+        threads.bumpTurn(reviewId, t, "TEST-answer-1");
+        threads.bumpTurn(reviewId, t, "TEST-answer-1");
+        assertEquals(1, threads.turnCount(reviewId, t));
+        threads.bumpTurn(reviewId, t, "TEST-answer-2");
+        assertEquals(2, threads.turnCount(reviewId, t), "the control: a new answer is a new turn");
+    }
+
+    /** A dead letter of answer A replayed after answer B still counts nothing: two answers are two turns. */
+    @Test
+    void anOlderAnswerReplayedAfterANewerOneIsNotCountedAgain() {
+        String reviewId = "review::artyomsv/spire-test#3710";
+        ThreadRef t = new ThreadRef("TEST-3710");
+        threads.bumpTurn(reviewId, t, "TEST-answer-A");
+        threads.bumpTurn(reviewId, t, "TEST-answer-B");
+        threads.bumpTurn(reviewId, t, "TEST-answer-A");
+        assertEquals(2, threads.turnCount(reviewId, t));
+    }
+
+    /**
+     * An answer from before the receipts (a FollowUpPosted without countsTurn) is filed, never counted and never the
+     * last answer; its receipt also stops a later event that does claim to count it. A new answer still counts.
+     */
+    @Test
+    void aFiledAnswerNeverCountsAndNeverMovesTheLastAnswer() {
+        String reviewId = "review::TEST-WS/TEST-REPO#3712";
+        ThreadRef t = new ThreadRef("TEST-3712");
+        threads.bumpTurn(reviewId, t, "TEST-answer-A");
+
+        threads.fileAnswer(reviewId, t, "TEST-answer-old");
+
+        assertEquals(1, threads.turnCount(reviewId, t));
+        assertEquals("TEST-answer-A", lastAnswer(reviewId, t), "a filed answer is not the last one");
+        threads.bumpTurn(reviewId, t, "TEST-answer-old");
+        assertEquals(1, threads.turnCount(reviewId, t), "once filed, the answer counts nothing when it claims to");
+        threads.bumpTurn(reviewId, t, "TEST-answer-B");
+        assertEquals(2, threads.turnCount(reviewId, t), "the control: a new answer is a new turn");
+    }
+
+    @Test
+    void filingAnAnswerOpensNoThread() {
+        String reviewId = "review::TEST-WS/TEST-REPO#3713";
+        ThreadRef t = new ThreadRef("TEST-3713");
+
+        threads.fileAnswer(reviewId, t, "TEST-answer-old");
+
+        assertEquals(0, threads.turnCount(reviewId, t));
+        assertNull(lastAnswer(reviewId, t), "no review_thread row is written for a filed answer");
+    }
+
+    private String lastAnswer(String reviewId, ThreadRef thread) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT last_comment_id FROM review_thread WHERE review_id = ? AND thread_ref = ?")) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("could not read the thread's last answer", e);
+        }
     }
 
     @Test

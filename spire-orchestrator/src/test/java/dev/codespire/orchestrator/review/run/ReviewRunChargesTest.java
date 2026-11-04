@@ -120,6 +120,25 @@ class ReviewRunChargesTest {
         assertEquals(List.of(), recorded);
     }
 
+    /**
+     * Harness reviews, step 7: a reply run is charged under the API reply's own identity, its thread and turn, so a
+     * repository switching paths never charges one turn twice, and each turn is its own charge.
+     */
+    @Test
+    void aHarnessReplyIsChargedUnderItsTurn() {
+        String slot = CallRefs.followUpSlot("TEST-thread-1", "987654");
+        ReviewRunBinding reply = new ReviewRunBinding(CALL.reviewId(), ReviewRunBinding.Kind.FOLLOWUP, 7, CALL.commit(),
+                slot, 1);
+
+        charges().record(new RunReviewArtifact(RUN_ID, reply, "TEST-reply", false, Map.of("INPUT", 300L), 4, List.of()),
+                reply);
+
+        assertEquals(1, recorded.size());
+        assertEquals(ChargeKind.FOLLOWUP, recorded.getFirst().kind());
+        assertEquals(CallRefs.of(CALL.reviewId(), CallRefs.followUpSlot("TEST-thread-1", "987654"), ChargeKind.FOLLOWUP),
+                recorded.getFirst().callRef(), "the identity ResultSaga charges an API reply's FollowUpGenerated under");
+    }
+
     @Test
     void aFailedReviewRunWithTokensIsStillCharged() {
         ReviewRunBinding reconcile = new ReviewRunBinding(CALL.reviewId(), ReviewRunBinding.Kind.RECONCILE, 7, CALL.commit(), "TEST-slot", 1);

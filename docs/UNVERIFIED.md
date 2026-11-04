@@ -76,6 +76,63 @@ whose egress proxy log shows the upstream used.
 
 ---
 
+## Replies on a harness (harness reviews step 7, PR #371, 2026-11-03)
+
+**The claim.** On a repository that reviews with a harness, a reply the conversation policy answers is one `FOLLOWUP`
+run: the review worker prepares `/inputs/thread.md` (the anchor, the review's other findings, the conversation), the
+agent answers in its checkout of the pull request's head, and the worker posts the answer under the API path's own
+`followup:<commentId>` claim. Each turn is one run, charged once under the API reply's own identity; a push never
+cancels a reply run, a close does; a reply that ends with no answer says so under its thread (ADR-050, step 7).
+
+**What is proven, and how.** By unit tests over fakes: the start (`HarnessReplyStartTest`,
+`ConversationHarnessReplyTest`, `IntegrationSagaPolicyTest`), the worker's prepare and post (`HarnessReplyWorkerPrepareTest`, `HarnessReplyWorkerPostTest`),
+the launch (`HarnessReplyLaunchTest`), the results (`HarnessReplyResultsTest`, `HarnessReviewResultsTest`), the
+charge identity (`ReviewRunChargesTest`, `ResultSagaPricingTest`), the thread file (`HarnessReviewInputFilesTest`),
+the prompt (`HarnessReplyPromptTest`), the slot round trip (`ReplyCallTest`) and the wire messages
+(`HarnessReplyMessagesTest`). Against a real database: a supersede leaves a reply run alive and a close cancels it
+(`ReviewRunCancellationTest`), and admission admits a reply of an ended round and refuses one of a closed pull request
+(`ReviewRunDispatchRaceTest`). **The main path is proven live** (2026-11-03, docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md):
+on `spire-test` #97 two replies in one finding thread were each one `FOLLOWUP` run on a seat, answered in the
+thread in under a minute, charged once per turn under `…|<thread>:<comment>|FOLLOWUP` at cost 0, calling
+`chatgpt.com` only; the second answer opened with `@artyomsv`.
+
+**Why nothing catches the rest.**
+- **The "responding" flag can stay up.** The worker's quiet exits at prepare (a provider with no threads, a second
+  human with no mention, a comment already answered) emit nothing, so the flag stays up until the next review, as on
+  the API path. A refused, dropped or failed reply clears it.
+- **Two replies during one run get two answers.** The turn count rises only on `FollowUpPosted`, so a second reply in
+  the same thread while the first run works is decided on the old count and gets its own run. The API path has the
+  same window, about a minute; a harness widens it to minutes.
+- **A push during a reply run** is proven against the database only; no live run was superseded mid-answer.
+- **An answer from before the receipts never counts again, and may leave its thread one turn short.** Whether an
+  answer counted before the receipt table (V110) existed is named by nothing durable in every shape (an answer counted
+  before V24 has no row of its own; a count that committed before its row did not; a dead letter that reaches the
+  queue, or is replayed, after the deploy; a record Kafka redelivers during it; a count a replay had already inflated),
+  and its event can come back in any order. So the boundary is on the event: a `FollowUpPosted` emitted since the
+  receipts exist says `countsTurn`, one recorded before them does not, and `ResultSaga` files the latter under its
+  root (`ReviewThreadView.fileAnswer`) without counting it or moving the last answer. V110 to V112 still seed receipts
+  for the old answers they can name; V114 drops V113's id cutoff, which could only ever act on a new answer. The cost:
+  an old answer that was never counted, or one an old worker emits during a rolling deploy of this release, counts
+  nothing, so its thread may get one more answer before its cap, never one fewer. Not covered: a `PostHarnessReply`
+  resent by a new worker for an answer an old worker's event already counted would count it once more; no such
+  command exists before this release ships the harness reply worker. `ReviewThreadTurnUpgradeTest` runs V110 to V114
+  over history written at V109 (linked, dead-lettered, reversed-id and inflated threads) and files their answers in
+  every order; `ResultSagaTurnReceiptTest` holds the routing; `ReviewThreadTurnBackfillIT` runs V111 over seeded rows.
+- **The mention is proven live on GitHub only.** GitLab's `@username` and Bitbucket Cloud's `@{account_id}` are
+  proven by unit tests on the adapters; a repository's customized FOLLOWUP prompt that still asks the model to name
+  the author makes the answer name them twice.
+- **Paths not proven live.** A refused seat on a reply, an over-cap answer, a summary-thread reply (unless the proof
+  runs one), Bitbucket and GitLab replies on a harness, and a dead-lettered `PostHarnessReply` replayed.
+- **Thread text rests in plain text when dead-lettered.** `PrepareHarnessReply`, `HarnessReplyPrepared` and
+  `PostHarnessReply` carry finding and thread text, and the answer, as `AnswerFollowUp` already does; a dead-lettered
+  copy lands in `dlq_entry.payload` until it is discarded.
+
+**What evidence would settle it.** The step 7 live proof settled the main path (above). The rest needs: a push while a
+reply run works, a reply on a refused seat and on an API key, an over-cap answer, a reply on the summary thread, a
+reply on GitLab and on Bitbucket Cloud (their mentions), and a dead-lettered `PostHarnessReply` replayed.
+
+---
+
 ## Re-reviews on a harness (harness reviews step 6, PR #370, 2026-11-02)
 
 **The claim.** On a repository that reviews with a harness, every review runs on it: a re-review with open prior
@@ -103,7 +160,7 @@ with no duplicate. Egress was `chatgpt.com` only.
 - **Paths the live proof did not reach.** A re-review whose prior head is unreachable (the compare is null); a
   `/finding` filed while the run works; a seat refused during a re-review; a re-review on an API key; an over-cap
   answer or re-review; a finish with no stored numbering (its verdicts are not read); a cut `prior-findings.md` (the
-  tail's findings carry no verdict); forks and replies. Each is proven against fakes, or not at all.
+  tail's findings carry no verdict); forks. Each is proven against fakes, or not at all. Replies are step 7's entry.
 - **Only the Docker arm copies inputs.** Another runtime arm would have to copy them into its init container too;
   `RunUnitSpec` checks the wiring, not that an arm wrote anything.
 - **The context text rests in plain text in two places.** `HarnessReviewPrepared` (on `cs.results`) and

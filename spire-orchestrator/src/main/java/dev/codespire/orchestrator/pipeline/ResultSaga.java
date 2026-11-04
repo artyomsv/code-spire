@@ -9,6 +9,7 @@ import dev.codespire.contract.event.IntegrationEvent.FindingConfirmed;
 import dev.codespire.contract.event.IntegrationEvent.FindingRefused;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpGenerated;
 import dev.codespire.contract.event.IntegrationEvent.FollowUpPosted;
+import dev.codespire.contract.event.IntegrationEvent.HarnessReplyPrepared;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewFailed;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewGenerated;
 import dev.codespire.contract.event.IntegrationEvent.HarnessReviewPrepared;
@@ -144,6 +145,10 @@ public class ResultSaga {
      */
     @Inject
     dev.codespire.orchestrator.review.run.HarnessReviewResults harnessResults;
+
+    /** Dispatches a prepared reply's run (harness reviews, step 7). */
+    @Inject
+    dev.codespire.orchestrator.review.run.HarnessReplyLaunch harnessReplies;
 
     /** The phase a harness review's refusal and failure are recorded under. */
     public static final String HARNESS_PHASE = "harness-review";
@@ -340,7 +345,7 @@ public class ResultSaga {
                 // One conversation = one thread ref: count the turn on the ROOT, so a Bitbucket chain
                 // (a new comment id per turn) accumulates toward the turn cap like a GitHub thread.
                 ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
-                threads.bumpTurn(e.reviewId(), root, e.commentId());
+                countTurn(e, root);
                 // The bot has now spoken here, so this IS a bot conversation: a further reply must engage
                 // without needing another @-mention, which may be the only reason the thread started. Only
                 // the answer comment used to be marked, so a thread the bot joined by mention declined the
@@ -433,6 +438,8 @@ public class ResultSaga {
             // A harness failure names its round: a plain ReviewFailed of round 1 would fail round 2 on the same head
             // (review of PR #370, code-quality/H-1). Round lock, round and commit checks inside, as above.
             case HarnessReviewFailed e -> harnessResults.acceptFailed(e);
+            // No commit guard and no round lock: a reply answers a thread, not a round (harness reviews, step 7).
+            case HarnessReplyPrepared e -> harnessReplies.launch(e);
             case ReviewFailed e -> onReviewFailed(e);
             default -> LOG.debugf("No result reaction for %s", event.getClass().getSimpleName());
         }
@@ -872,6 +879,20 @@ public class ResultSaga {
         return ReviewProjection.STAGE_REVIEW; // generate / llm / unknown
     }
 
+    /**
+     * An answer posted since the turn receipts exist says so and is counted once, however often its event comes
+     * back. One recorded before them (no {@code countsTurn}) may or may not be in the count already, and nothing
+     * durable says which, so it is filed under the root and never counted: the thread may get one more answer
+     * before its cap, never one fewer (review of PR #371, code-quality/M-1).
+     */
+    private void countTurn(FollowUpPosted e, ThreadRef root) {
+        if (e.countsTurn()) {
+            threads.bumpTurn(e.reviewId(), root, e.commentId());
+        } else {
+            threads.fileAnswer(e.reviewId(), root, e.commentId());
+        }
+    }
+
     private String reviewIdOf(IntegrationEvent event) {
         return switch (event) {
             case DiffFetched e -> e.reviewId();
@@ -888,6 +909,7 @@ public class ResultSaga {
             case HarnessReviewPrepared e -> e.reviewId();
             case HarnessReviewGenerated e -> e.reviewId();
             case HarnessReviewFailed e -> e.reviewId();
+            case HarnessReplyPrepared e -> e.reviewId();
             default -> "";
         };
     }

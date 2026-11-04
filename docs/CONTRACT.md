@@ -430,7 +430,7 @@ Every event (integration or domain) is wrapped:
 | `ReviewFailed` | any worker | reviewId, commit, phase, error, retryable, attempt |
 | `CommentsPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, prId, commit, summaryCommentId, inline[]{commentId,path,line}, threadOutcomes[]? (thread resolution outcomes — ADR-019) |
 | `FollowUpGenerated` | `spire-review-worker` | reviewId, threadRef, answerText |
-| `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId |
+| `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId, countsTurn — true on every event emitted since the turn receipts (V110) exist, so the orchestrator counts the answer as a turn once; absent (false) on an event recorded before them, which is filed and never counted (ADR-050, step 7) |
 | `TurnCapNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`: the hand-off notice must not consume a conversation turn |
 | `ArchivedNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef? (null → top-level), commentId |
 | `FindingConfirmed` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`; links the confirmation back to the conversation root so a reply to it (on an SCM that threads by immediate parent) is still recognized |
@@ -438,6 +438,7 @@ Every event (integration or domain) is wrapped:
 | `HarnessReviewPrepared` | `spire-review-worker` | reviewId, prId, commit, round, kind (`REVIEW` or `RECONCILE`), inputs (`HarnessReviewInputs`: `context.md` and, on a re-review, `prior-findings.md`, at most 224 KiB in total, plain text, never a diff; `toString` prints sizes) — harness reviews, step 6 |
 | `HarnessReviewGenerated` | `spire-review-worker` | reviewId, prId, commit, round, result (`ReviewResult`), verdicts[] — the harness answer parsed by the API path's own parsers; applied as a `ReviewGenerated` with no `reconcileUsage`, since the run was charged once |
 | `HarnessReviewFailed` | `spire-review-worker` | reviewId, commit, round, phase (`harness-prepare` or `harness-finish`), error, retryable, credentialRejected — the worker could not prepare or finish a harness review; applied as a `ReviewFailed` (attempt 1) under the review's round lock only for its own round, so a late failure of an ended round never fails or retries the current one (review of PR #370) |
+| `HarnessReplyPrepared` | `spire-review-worker` | reviewId, prId, commit (the pull request's head the worker read, which the reply run checks out), threadRef (the conversation root), triggeringCommentId, round, inputs (`HarnessReviewInputs` holding `thread.md`: the anchor, the review's other findings and the thread, fenced, at most 96 KiB) — harness reviews, step 7 |
 
 > Only the **assembled context** is offloaded to the object store (encrypted, referenced by `contextRef`)
 > so events stay small. **Diffs are never stored** (re-fetched by commit); **findings** ride inline in
@@ -467,13 +468,15 @@ Every event (integration or domain) is wrapped:
 | `GatherContext` | `spire-context-worker` (fan-out) | reviewId, repo, prId, commit, **references** (`Set<String>`), contextCredential, **scmType** — the platform the review runs on, so a repo-relative reference (an issue number) is not resolved against the wrong host's same-named repo |
 | `GenerateReview` | `spire-review-worker` | reviewId, prId, commit, contextRef, attempt, providerOverride? (set by the fallback saga on retry; worker re-fetches the diff by commit), priorRun? (prior posted run's findings — ADR-019) |
 | `PostComments` | `spire-review-worker` | reviewId, repo, prId, commit, findings[] (inline — same `ReviewResult` as `ReviewGenerated`; findings are not stored as blobs, ADR-011), verdicts[]? (follow-up reconciliation verdicts — ADR-019), priorSummaryRef? (summary comment to update in place on follow-up review) |
-| `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |
+| `AnswerFollowUp` | `spire-review-worker` | reviewId, repo, prId, threadRef, question, replyAuthor? (the triggering comment's author, no email; the answer opens with the forge's mention of them) — the worker fetches the thread history from the SCM on demand (no blob; same re-fetch philosophy as diffs) |
 | `NotifyTurnCap` | `spire-review-worker` | reviewId, repo, prId, threadRef, turnCap — fixed-text hand-off notice, no LLM credential; the worker claims once per thread (the slot is the thread ref) so later replies to a capped thread post nothing |
 | `NotifyArchived` | `spire-review-worker` | reviewId, repo, prId, threadRef? (null → top-level PR comment) — fixed-text retirement notice, no LLM credential; claimed once per review (ADR-024) |
 | `ConfirmFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, severity, path, line — fixed-text confirmation that a `/finding` was filed, no LLM credential; claimed per triggering comment, so a second finding in one thread gets its own confirmation |
 | `RefuseFinding` | `spire-review-worker` | reviewId, repo, prId, threadRef — fixed-text refusal that a `/finding` had nowhere to anchor, no LLM credential; only emitted when there is a thread to reply into (a bare timeline note otherwise) |
 | `PrepareHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, contextRef?, scmCredential, priorRun?, round (from 1), kind — `RECONCILE` exactly when `priorRun` has findings, `REVIEW` otherwise, `FOLLOWUP` refused; `toString` prints neither the credential nor a finding |
 | `FinishHarnessReview` | `spire-review-worker` | reviewId, repo, prId, commit, round, kind, answerText? (null: the answer was over the cap), usage, scmCredential — `toString` prints the answer's length and never the answer or the credential |
+| `PrepareHarnessReply` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId (non-blank), scmCredential, mentioned, round (from 1), otherFindings[], retry (`ReplyRetry`: maxAttempts, backoffBaseMs, backoffFactor), replyAuthor? (the triggering comment's author, no email; the answer opens with the forge's mention of them) — a reply on a harness: the worker fetches the thread, applies "smart 1:1", claims `followup:<commentId>` and answers `HarnessReplyPrepared`; `toString` prints neither the credential nor a finding |
+| `PostHarnessReply` | `spire-review-worker` | reviewId, repo, prId, threadRef, triggeringCommentId, answerText (non-blank), scmCredential, retry — post-only: the reply run's answer, posted under the same claim and answered with `FollowUpGenerated` (no usage: `ReviewRunCharges` charged the run) and `FollowUpPosted`; `toString` prints the answer's length |
 
 **Record commands** (to the `ReviewLifecycle` decider — append *domain* events):
 
@@ -639,7 +642,7 @@ active `LlmProvider`/`DiffSource`. Adding a plugin = new bean, no core edit.
 | `cs.integration` | Retained legacy SCM ingress; new consumers dead-letter it with a provenance repair reason |
 | `cs.commands` | action + record commands |
 | `cs.events` | aggregate domain events |
-| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared`, `HarnessReviewGenerated` and `HarnessReviewFailed`, which carry a harness review's inputs, parsed answer and round-tagged failure). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
+| `cs.results` | worker-produced integration events (`DiffFetched`, `ContextRequested`, `ContextContributed`, `ContextAssembled`, `ReviewGenerated`, `ReviewFailed`, `CommentsPosted`, follow-ups, `HarnessReviewPrepared`, `HarnessReviewGenerated` and `HarnessReviewFailed`, which carry a harness review's inputs, parsed answer and round-tagged failure, and `HarnessReplyPrepared`, which carries a harness reply's `thread.md`). **Short retention** — carries source-quoting payloads without app-layer encryption (ADR-014) |
 | `cs.dlq` | dead-letters (after retry budget); surfaced on the dashboard with a replay action (FR-8) |
 
 Review lifecycle messages retain their existing `reviewId` ordering. Repository metadata and
