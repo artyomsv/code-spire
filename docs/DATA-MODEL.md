@@ -321,7 +321,8 @@ Built by consuming `cs.events` / `cs.results`; **no FK to the event store** (dec
 `counted_at` TIMESTAMPTZ, PK all three. One row per bot answer counted as a turn, written in the same statement that
 raises `review_thread.turn_count`, so a resent or replayed `FollowUpPosted` (A, B, A) never counts an answer twice.
 V110 records each thread's last answer counted before the table existed, and **V111** every earlier one, from the
-answer's own `review_thread` row (`root_ref`).
+answer's own `review_thread` row (`root_ref`). **V112** treats every `FollowUpPosted` still pending in `dlq_entry` as
+counted, since one that failed between the count and its row is named nowhere: its replay counts nothing.
 
 `review_finding` (the review output — the durable corpus analytics and learned memory read, P4 /
 ADR-027, **V36**): `id` BIGSERIAL PK, `review_id` TEXT, `round` INT, `commit_sha` TEXT, `path` TEXT,
