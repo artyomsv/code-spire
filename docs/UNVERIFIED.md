@@ -104,6 +104,12 @@ thread in under a minute, charged once per turn under `…|<thread>:<comment>|FO
   the same thread while the first run works is decided on the old count and gets its own run. The API path has the
   same window, about a minute; a harness widens it to minutes.
 - **A push during a reply run** is proven against the database only; no live run was superseded mid-answer.
+- **One kind of old turn can be counted twice.** V110 and V111 record every answer counted before the receipt table
+  existed that has durable evidence: its thread's last answer and every answer with its own linked row. An answer
+  whose count committed but whose own row did not (ResultSaga counts first, then links), and that was not its
+  thread's last answer, is named nowhere, so a replay of it after the migration counts once more. That needed a failure
+  between two writes of one handler before the migration ran. `ReviewThreadTurnBackfillIT` runs V111 over seeded
+  history; no test runs the migrations over a database that already holds the original V110.
 - **The mention is proven live on GitHub only.** GitLab's `@username` and Bitbucket Cloud's `@{account_id}` are
   proven by unit tests on the adapters; a repository's customized FOLLOWUP prompt that still asks the model to name
   the author makes the answer name them twice.
