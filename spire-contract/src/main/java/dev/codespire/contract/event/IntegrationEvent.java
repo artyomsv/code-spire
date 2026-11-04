@@ -371,7 +371,18 @@ public sealed interface IntegrationEvent {
                              ModelUsage usage, String triggeringCommentId) implements IntegrationEvent {
     }
 
-    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId) implements IntegrationEvent {
+    /**
+     * The bot's answer {@code commentId} was posted in {@code threadRef}.
+     *
+     * <p>{@code countsTurn} is true on every event a worker emits since the turn receipts (V110) exist, and the
+     * orchestrator then counts the answer as a turn once, whatever resends or replays follow. It is absent, so false,
+     * on an event recorded before them: whether such an answer was counted is named by nothing durable, and its
+     * replay can come back by any path in any order, so the orchestrator files it and counts nothing (review of PR
+     * #371, code-quality/M-1). A legacy answer never counted leaves its thread one answer before its cap, never one
+     * short. No shorter constructor: a site that forgets the flag must not compile into an uncounted answer.
+     */
+    record FollowUpPosted(String reviewId, ThreadRef threadRef, String commentId, boolean countsTurn)
+            implements IntegrationEvent {
     }
 
     /**

@@ -62,7 +62,7 @@ class HarnessReplyWorkerPostTest extends HarnessReplyWorkerFixture {
         assertNull(generated.usage(), "the run was charged by ReviewRunCharges, never again here");
         assertEquals(COMMENT, generated.triggeringCommentId());
         assertEquals("TEST-ANSWER", generated.answerText());
-        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(1));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9", true), emitted.get(1));
         assertEquals("TEST-posted-9", slots.get(THREAD.value() + "/" + KEY));
     }
 
@@ -125,7 +125,7 @@ class HarnessReplyWorkerPostTest extends HarnessReplyWorkerFixture {
         verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
         assertEquals(2, emitted.size(), emitted.toString());
         assertInstanceOf(IntegrationEvent.FollowUpGenerated.class, emitted.get(0));
-        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(1));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9", true), emitted.get(1));
     }
 
     /** The second of the two events failing is recovered the same way: both are sent again, one comment stays. */
@@ -151,7 +151,7 @@ class HarnessReplyWorkerPostTest extends HarnessReplyWorkerFixture {
 
         verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
         assertEquals(3, emitted.size(), "FollowUpGenerated twice, FollowUpPosted once, then nothing: " + emitted);
-        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(2));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9", true), emitted.get(2));
     }
 
     /**
@@ -170,7 +170,7 @@ class HarnessReplyWorkerPostTest extends HarnessReplyWorkerFixture {
 
         verify(sink, org.mockito.Mockito.times(1)).replyInThread(any(), anyLong(), any(), anyString());
         assertEquals(4, emitted.size(), "both events twice, then nothing once the done mark holds: " + emitted);
-        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9"), emitted.get(3));
+        assertEquals(new IntegrationEvent.FollowUpPosted(REVIEW_ID, THREAD, "TEST-posted-9", true), emitted.get(3));
     }
 
     /** Raw HTML in model text must not become markup; code keeps its "<" (review of PR #371, rules/H-1). */

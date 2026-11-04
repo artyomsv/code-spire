@@ -121,7 +121,7 @@ public class FollowUpWorker {
         // orchestrator's ledger identity cannot tell turn 2 of this thread from a redelivery of turn 1.
         results.emit(new FollowUpGenerated(command.reviewId(), command.threadRef(), result.answerText(),
                 result.usage(), command.triggeringCommentId()));
-        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId()));
+        results.emit(new FollowUpPosted(command.reviewId(), command.threadRef(), result.postedCommentId(), true));
     }
 
     /**

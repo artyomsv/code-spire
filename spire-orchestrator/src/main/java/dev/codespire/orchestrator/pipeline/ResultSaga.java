@@ -345,7 +345,7 @@ public class ResultSaga {
                 // One conversation = one thread ref: count the turn on the ROOT, so a Bitbucket chain
                 // (a new comment id per turn) accumulates toward the turn cap like a GitHub thread.
                 ThreadRef root = threads.rootOf(e.reviewId(), e.threadRef());
-                threads.bumpTurn(e.reviewId(), root, e.commentId());
+                countTurn(e, root);
                 // The bot has now spoken here, so this IS a bot conversation: a further reply must engage
                 // without needing another @-mention, which may be the only reason the thread started. Only
                 // the answer comment used to be marked, so a thread the bot joined by mention declined the
@@ -877,6 +877,20 @@ public class ResultSaga {
             return ReviewProjection.STAGE_COMMENTS;
         }
         return ReviewProjection.STAGE_REVIEW; // generate / llm / unknown
+    }
+
+    /**
+     * An answer posted since the turn receipts exist says so and is counted once, however often its event comes
+     * back. One recorded before them (no {@code countsTurn}) may or may not be in the count already, and nothing
+     * durable says which, so it is filed under the root and never counted: the thread may get one more answer
+     * before its cap, never one fewer (review of PR #371, code-quality/M-1).
+     */
+    private void countTurn(FollowUpPosted e, ThreadRef root) {
+        if (e.countsTurn()) {
+            threads.bumpTurn(e.reviewId(), root, e.commentId());
+        } else {
+            threads.fileAnswer(e.reviewId(), root, e.commentId());
+        }
     }
 
     private String reviewIdOf(IntegrationEvent event) {

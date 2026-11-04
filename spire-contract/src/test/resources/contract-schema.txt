@@ -9,7 +9,7 @@ DiffFetched(reviewId: java.lang.String, prId: long, commit: java.lang.String, ch
 FindingConfirmed(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 FindingRefused(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
 FollowUpGenerated(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, answerText: java.lang.String, usage: dev.codespire.contract.review.ModelUsage, triggeringCommentId: java.lang.String)
-FollowUpPosted(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String)
+FollowUpPosted(reviewId: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, commentId: java.lang.String, countsTurn: boolean)
 HarnessReplyPrepared(reviewId: java.lang.String, prId: long, commit: java.lang.String, threadRef: dev.codespire.contract.scm.ThreadRef, triggeringCommentId: java.lang.String, round: int, inputs: dev.codespire.contract.review.HarnessReviewInputs)
 HarnessReviewFailed(reviewId: java.lang.String, commit: java.lang.String, round: int, phase: java.lang.String, error: java.lang.String, retryable: boolean, credentialRejected: boolean)
 HarnessReviewGenerated(reviewId: java.lang.String, prId: long, commit: java.lang.String, round: int, result: dev.codespire.contract.review.ReviewResult, verdicts: java.util.List<dev.codespire.contract.review.FindingVerdict>)

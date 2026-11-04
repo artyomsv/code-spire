@@ -104,17 +104,20 @@ thread in under a minute, charged once per turn under `…|<thread>:<comment>|FO
   the same thread while the first run works is decided on the old count and gets its own run. The API path has the
   same window, about a minute; a harness widens it to minutes.
 - **A push during a reply run** is proven against the database only; no live run was superseded mid-answer.
-- **An old ambiguous replay may leave a thread one turn short.** V110 and V111 record every answer counted before the
-  receipt table existed that has durable evidence (its thread's last answer, every answer with its own linked row).
-  One whose count committed but whose row did not (ResultSaga counts first, then links) is named nowhere; it can only
-  have reached the dead-letter queue, so V112 treats every `FollowUpPosted` pending there as counted, and its replay
-  counts nothing. If one of those had not been counted, its thread is a turn short of the cap: the bot may answer once
-  more there. V113 closes the rest at run time: each thread keeps its greatest answer id at the deploy, and a first
-  receipt for a numeric id at or below it counts nothing (answers counted before V24 with no row of their own, a dead
-  letter that reaches the queue or is replayed after the deploy, a record Kafka redelivers during it). This rests on
-  each forge's comment ids only growing, within one thread's id sequence; a non-numeric id is not covered by it.
-  `ReviewThreadTurnUpgradeTest` runs V110 to V113 over history written at V109; `ReviewThreadTurnBackfillIT` runs V111
-  over seeded rows.
+- **An answer from before the receipts never counts again, and may leave its thread one turn short.** Whether an
+  answer counted before the receipt table (V110) existed is named by nothing durable in every shape (an answer counted
+  before V24 has no row of its own; a count that committed before its row did not; a dead letter that reaches the
+  queue, or is replayed, after the deploy; a record Kafka redelivers during it; a count a replay had already inflated),
+  and its event can come back in any order. So the boundary is on the event: a `FollowUpPosted` emitted since the
+  receipts exist says `countsTurn`, one recorded before them does not, and `ResultSaga` files the latter under its
+  root (`ReviewThreadView.fileAnswer`) without counting it or moving the last answer. V110 to V112 still seed receipts
+  for the old answers they can name; V114 drops V113's id cutoff, which could only ever act on a new answer. The cost:
+  an old answer that was never counted, or one an old worker emits during a rolling deploy of this release, counts
+  nothing, so its thread may get one more answer before its cap, never one fewer. Not covered: a `PostHarnessReply`
+  resent by a new worker for an answer an old worker's event already counted would count it once more; no such
+  command exists before this release ships the harness reply worker. `ReviewThreadTurnUpgradeTest` runs V110 to V114
+  over history written at V109 (linked, dead-lettered, reversed-id and inflated threads) and files their answers in
+  every order; `ResultSagaTurnReceiptTest` holds the routing; `ReviewThreadTurnBackfillIT` runs V111 over seeded rows.
 - **The mention is proven live on GitHub only.** GitLab's `@username` and Bitbucket Cloud's `@{account_id}` are
   proven by unit tests on the adapters; a repository's customized FOLLOWUP prompt that still asks the model to name
   the author makes the answer name them twice.

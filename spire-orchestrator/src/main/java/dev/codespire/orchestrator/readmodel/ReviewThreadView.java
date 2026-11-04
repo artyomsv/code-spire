@@ -31,39 +31,35 @@ public class ReviewThreadView {
         }
     }
 
+    /** The receipt (V110) and the count in one statement: the count moves only when the receipt is new. */
+    private static final String COUNT_TURN_SQL = """
+            WITH receipt AS (
+                INSERT INTO review_thread_turn (review_id, thread_ref, comment_id)
+                VALUES (?, ?, COALESCE(?, ''))
+                ON CONFLICT DO NOTHING
+                RETURNING 1
+            )
+            INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id)
+            SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM receipt)
+            ON CONFLICT (review_id, thread_ref)
+            DO UPDATE SET turn_count = review_thread.turn_count + 1, last_comment_id = EXCLUDED.last_comment_id
+            """;
+
+    private static final String FILE_ANSWER_SQL = """
+            INSERT INTO review_thread_turn (review_id, thread_ref, comment_id)
+            VALUES (?, ?, COALESCE(?, ''))
+            ON CONFLICT DO NOTHING
+            """;
+
     /**
      * Count the bot's answer {@code lastCommentId} as a turn of {@code thread}, once ever: an answer counted before (a
      * resent {@code FollowUpPosted}, which the harness reply's worker sends until its events are known to have gone
      * out, or a dead letter replayed after a later answer) changes nothing, not even the last answer. V110's receipt is
      * written in the same statement as the count, so the two cannot disagree (review of PR #371, code-quality/M-1).
-     *
-     * <p>An answer posted before the receipts existed may have left no receipt to find, so V113's per-thread cutoff
-     * decides it: a first receipt for a numeric id at or below the thread's greatest answer id at that deploy is an old
-     * answer, filed and not counted. Comment ids only grow, so every answer posted since counts. The cast sits inside
-     * the CASE, so a non-numeric id is never cast.
+     * Only an answer whose event says {@code countsTurn} comes here; {@link #fileAnswer} takes the rest.
      */
     public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("""
-                     WITH receipt AS (
-                         INSERT INTO review_thread_turn (review_id, thread_ref, comment_id)
-                         VALUES (?, ?, COALESCE(?, ''))
-                         ON CONFLICT DO NOTHING
-                         RETURNING review_id, thread_ref, comment_id
-                     ), counted AS (
-                         SELECT 1 FROM receipt r
-                         WHERE NOT EXISTS (
-                             SELECT 1 FROM review_thread_turn_cutoff cut
-                             WHERE cut.review_id = r.review_id AND cut.thread_ref = r.thread_ref
-                               AND CASE WHEN r.comment_id ~ '^[0-9]{1,30}$'
-                                        THEN r.comment_id::numeric <= cut.max_comment_id ELSE FALSE END)
-                     )
-                     INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id)
-                     SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM counted)
-                     ON CONFLICT (review_id, thread_ref)
-                     DO UPDATE SET turn_count = review_thread.turn_count + 1,
-                                   last_comment_id = EXCLUDED.last_comment_id
-                     """)) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(COUNT_TURN_SQL)) {
             ps.setString(1, reviewId);
             ps.setString(2, thread.value());
             ps.setString(3, lastCommentId);
@@ -73,6 +69,24 @@ public class ReviewThreadView {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to bump thread turn count", e);
+        }
+    }
+
+    /**
+     * File the receipt of an answer posted before the receipts existed, without counting it or moving the thread's
+     * last answer. Whether such an answer was counted is named by nothing durable, and its {@code FollowUpPosted} can
+     * come back by any path (a dead letter, a redelivery, a resend) in any order, so it never counts: the thread may
+     * get one more answer before its cap, never one fewer. The receipt makes a later event that does claim to count
+     * the same answer count nothing either.
+     */
+    public void fileAnswer(String reviewId, ThreadRef thread, String commentId) {
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(FILE_ANSWER_SQL)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, thread.value());
+            ps.setString(3, commentId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to file the answer's turn receipt", e);
         }
     }
 

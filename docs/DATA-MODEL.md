@@ -323,9 +323,11 @@ raises `review_thread.turn_count`, so a resent or replayed `FollowUpPosted` (A, 
 V110 records each thread's last answer counted before the table existed, and **V111** every earlier one, from the
 answer's own `review_thread` row (`root_ref`). **V112** treats every `FollowUpPosted` still pending in `dlq_entry` as
 counted, since one that failed between the count and its row is named nowhere: its replay counts nothing.
-**V113** `review_thread_turn_cutoff` (`review_id`, `thread_ref`, `max_comment_id` NUMERIC, PK the first two) holds each
-thread's greatest answer id at that deploy: a first receipt for a numeric id at or below it is an old answer, filed and
-not counted, whatever path brought it back. Comment ids only grow, so every answer posted since counts.
+Which other old answers may already be in the count is named nowhere, so the boundary is on the event: a
+`FollowUpPosted` emitted since the receipts exist says `countsTurn` and is counted once (`bumpTurn`); one recorded
+before them does not, and is filed here without a count or a change of `last_comment_id` (`fileAnswer`), whatever path
+brings it back and in whatever order. A receipt therefore means "seen", not "counted". **V113** created a per-thread
+greatest-answer-id cutoff, which the greatest surviving id could not establish; **V114** drops it.
 
 `review_finding` (the review output — the durable corpus analytics and learned memory read, P4 /
 ADR-027, **V36**): `id` BIGSERIAL PK, `review_id` TEXT, `round` INT, `commit_sha` TEXT, `path` TEXT,

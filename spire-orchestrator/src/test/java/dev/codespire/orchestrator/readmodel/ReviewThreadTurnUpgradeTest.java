@@ -21,19 +21,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The receipt migrations as an upgrade, in an isolated schema (the AccountWorkspaceDropMigrationTest pattern): history
- * is written at V109, before the receipt table exists, then V110 to V113 run and the real {@link ReviewThreadView}
- * replays old answers (review of PR #371, code-quality/M-1). Thread T counted A then B, each with its answer row; thread
- * U counted D then E, but D's answer row was never written and its FollowUpPosted waits in the dead-letter queue.
+ * is written at V109, before the receipt table exists, then V110 to V114 run and the real {@link ReviewThreadView}
+ * takes the old answers back as {@code ResultSaga} hands them to it (review of PR #371, code-quality/M-1): a
+ * {@code FollowUpPosted} recorded before the receipts has no {@code countsTurn} and is filed ({@code fileAnswer}); one
+ * posted since is counted ({@code bumpTurn}). Whatever an old thread's history looks like and in whatever order its
+ * answers come back, its count and last answer stay exactly as they were, and a new answer counts once.
  */
 @QuarkusTest
 class ReviewThreadTurnUpgradeTest {
 
     private static final String REVIEW = "review::TEST-UPGRADE/TEST-REPO#1";
-    private static final ThreadRef T = new ThreadRef("TEST-T");
-    private static final ThreadRef U = new ThreadRef("TEST-U");
-    private static final ThreadRef PRE_V24 = new ThreadRef("300");
-    private static final ThreadRef LATE = new ThreadRef("410");
-    private static final ThreadRef REPLAYED = new ThreadRef("500");
+    /** A then B, each with its own answer row: V111 finds both. */
+    private static final ThreadRef LINKED = new ThreadRef("TEST-T");
+    /** D then E; D's answer row was never written and its event waits in the dead-letter queue: V112 finds it. */
+    private static final ThreadRef DEAD_LETTERED = new ThreadRef("TEST-U");
+    /**
+     * Counted before V24, so no answer rows, and 320 was counted before the delayed 310: the last answer is the LOWER
+     * id, the shape V113's greatest-surviving-id cutoff got wrong (a replay of 320 counted a third turn).
+     */
+    private static final ThreadRef REVERSED = new ThreadRef("300");
+    /** Replays had already inflated the count: 610, 620, 610 counted three turns and left the last answer at 610. */
+    private static final ThreadRef INFLATED = new ThreadRef("600");
 
     @Inject
     DataSource dataSource;
@@ -57,72 +65,73 @@ class ReviewThreadTurnUpgradeTest {
     }
 
     @Test
-    void aLinkedOldAnswerReplayedCountsNothing() throws SQLException {
-        threads.bumpTurn(REVIEW, T, "TEST-A");
+    void aLinkedHistoryIsUnchangedByItsAnswersComingBackInAnyOrder() throws SQLException {
+        cameBack(LINKED, "TEST-B", "TEST-A", "TEST-B");
 
-        assertEquals(2, threads.turnCount(REVIEW, T));
-        assertEquals("TEST-B", lastAnswer(T), "the replay does not move the last answer back");
-    }
-
-    /** D left no row naming it; its dead letter, replayed, is treated as counted (V112). */
-    @Test
-    void anUnlinkedDeadLetteredAnswerReplayedCountsNothing() throws SQLException {
-        threads.bumpTurn(REVIEW, U, "TEST-D");
-
-        assertEquals(2, threads.turnCount(REVIEW, U));
-        assertEquals("TEST-E", lastAnswer(U));
+        assertUnchanged(LINKED, 2, "TEST-B");
     }
 
     @Test
-    void aNewAnswerAfterTheUpgradeIsANewTurn() {
-        threads.bumpTurn(REVIEW, T, "TEST-C");
+    void aDeadLetteredAnswerWithNoRowComingBackChangesNothing() throws SQLException {
+        cameBack(DEAD_LETTERED, "TEST-D", "TEST-E");
 
-        assertEquals(3, threads.turnCount(REVIEW, T));
+        assertUnchanged(DEAD_LETTERED, 2, "TEST-E");
     }
 
-    /**
-     * (a) Counted before V24, so neither A nor B has an answer row, and no dead letter: only the last answer is known.
-     * The per-thread cutoff (V113) stops A, B, A counting a third turn; a genuinely new answer still counts.
-     */
     @Test
-    void anUnlinkedAnswerFromBeforeV24CountsNothingAndANewOneCounts() throws SQLException {
-        threads.bumpTurn(REVIEW, PRE_V24, "310");
-        threads.bumpTurn(REVIEW, PRE_V24, "320");
-        threads.bumpTurn(REVIEW, PRE_V24, "310");
+    void aHigherIdThanTheLastAnswerComingBackChangesNothing() throws SQLException {
+        cameBack(REVERSED, "320", "310", "320");
 
-        assertEquals(2, threads.turnCount(REVIEW, PRE_V24));
-        assertEquals("320", lastAnswer(PRE_V24));
-        threads.bumpTurn(REVIEW, PRE_V24, "330");
-        assertEquals(3, threads.turnCount(REVIEW, PRE_V24), "posted after the deploy, so its id is above the cutoff");
+        assertUnchanged(REVERSED, 2, "310");
     }
 
-    /**
-     * (b) A's dead letter reaches dlq_entry only after the migration, and (c) another was already marked replayed
-     * before it: neither is in V112's snapshot, and the cutoff stops both counting again.
-     */
+    /** The count is preserved as it was, not repaired to the two answers it should have been. */
     @Test
-    void aDeadLetterThatArrivesLateOrWasAlreadyReplayedCountsNothing() throws SQLException {
-        exec("INSERT INTO dlq_entry (id, message_type, original_topic, payload) VALUES (gen_random_uuid(),"
-                + " 'FollowUpPosted', 'cs.results', '{\"type\":\"FollowUpPosted\",\"reviewId\":\"' || ? || '\","
-                + "\"threadRef\":{\"value\":\"410\"},\"commentId\":\"420\"}')");
+    void anAlreadyInflatedCountIsPreservedNotRepaired() throws SQLException {
+        cameBack(INFLATED, "620", "610", "620");
 
-        threads.bumpTurn(REVIEW, LATE, "420");
-        threads.bumpTurn(REVIEW, REPLAYED, "510");
+        assertUnchanged(INFLATED, 3, "610");
+    }
 
-        assertEquals(2, threads.turnCount(REVIEW, LATE));
-        assertEquals("430", lastAnswer(LATE));
-        assertEquals(2, threads.turnCount(REVIEW, REPLAYED));
-        assertEquals("530", lastAnswer(REPLAYED));
+    @Test
+    void aNewAnswerAfterTheUpgradeCountsOnceAndBecomesTheLast() throws SQLException {
+        cameBack(REVERSED, "320"); // an old answer may land first, as a replay would
+
+        threads.bumpTurn(REVIEW, REVERSED, "330");
+        threads.bumpTurn(REVIEW, REVERSED, "330"); // the harness worker resends until its events are known out
+
+        assertUnchanged(REVERSED, 3, "330");
+    }
+
+    /** The control: taken as a counting answer, the same old id counts again, so the tests above rest on the routing. */
+    @Test
+    void anOldAnswerTakenAsCountingWouldCountAgain() throws SQLException {
+        threads.bumpTurn(REVIEW, REVERSED, "320");
+
+        assertUnchanged(REVERSED, 3, "320");
+    }
+
+    /** Old answers back by any path, as ResultSaga files a FollowUpPosted that does not say countsTurn. */
+    private void cameBack(ThreadRef thread, String... answers) {
+        for (String answer : answers) {
+            threads.fileAnswer(REVIEW, thread, answer);
+        }
+    }
+
+    private void assertUnchanged(ThreadRef thread, int count, String last) throws SQLException {
+        assertEquals(count, threads.turnCount(REVIEW, thread), "the turn count of " + thread.value());
+        assertEquals(last, lastAnswer(thread), "the last answer of " + thread.value());
     }
 
     private org.flywaydb.core.api.configuration.FluentConfiguration flyway() {
         return Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema);
     }
 
-    /** What V109 knew: counts, last answers and answer rows, and one dead letter. No receipts: their table is V110's. */
+    /** What V109 knew: counts, last answers, answer rows and dead letters. No receipts: their table is V110's. */
     private void seed() throws SQLException {
-        exec("INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id, is_ours)"
-                + " VALUES (?, 'TEST-T', 2, 'TEST-B', TRUE), (?, 'TEST-U', 2, 'TEST-E', TRUE)");
+        exec("INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id, is_ours) VALUES"
+                + " (?, 'TEST-T', 2, 'TEST-B', TRUE), (?, 'TEST-U', 2, 'TEST-E', TRUE),"
+                + " (?, '300', 2, '310', TRUE), (?, '600', 3, '610', TRUE)");
         exec("INSERT INTO review_thread (review_id, thread_ref, root_ref, is_ours)"
                 + " VALUES (?, 'TEST-A', 'TEST-T', TRUE), (?, 'TEST-B', 'TEST-T', TRUE)");
         exec("INSERT INTO dlq_entry (id, message_type, original_topic, payload) VALUES (gen_random_uuid(), 'FollowUpPosted',"
@@ -130,16 +139,6 @@ class ReviewThreadTurnUpgradeTest {
                 + "\"threadRef\":{\"value\":\"TEST-U\"},\"commentId\":\"TEST-D\"}')");
         exec("INSERT INTO dlq_entry (id, message_type, original_topic, payload)"
                 + " VALUES (gen_random_uuid(), 'FollowUpPosted', 'cs.results', 'TEST-not-json ' || ?)");
-        seedNumericThreads();
-    }
-
-    /** Forge-shaped ids, which only grow: three threads that each counted two answers and recorded only the last. */
-    private void seedNumericThreads() throws SQLException {
-        exec("INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id, is_ours) VALUES"
-                + " (?, '300', 2, '320', TRUE), (?, '410', 2, '430', TRUE), (?, '500', 2, '530', TRUE)");
-        exec("INSERT INTO dlq_entry (id, message_type, original_topic, payload, status) VALUES (gen_random_uuid(),"
-                + " 'FollowUpPosted', 'cs.results', '{\"type\":\"FollowUpPosted\",\"reviewId\":\"' || ? || '\","
-                + "\"threadRef\":{\"value\":\"500\"},\"commentId\":\"510\"}', 'replayed')");
     }
 
     private void exec(String sql) throws SQLException {

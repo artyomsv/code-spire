@@ -430,7 +430,7 @@ Every event (integration or domain) is wrapped:
 | `ReviewFailed` | any worker | reviewId, commit, phase, error, retryable, attempt |
 | `CommentsPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, prId, commit, summaryCommentId, inline[]{commentId,path,line}, threadOutcomes[]? (thread resolution outcomes — ADR-019) |
 | `FollowUpGenerated` | `spire-review-worker` | reviewId, threadRef, answerText |
-| `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId |
+| `FollowUpPosted` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId, countsTurn — true on every event emitted since the turn receipts (V110) exist, so the orchestrator counts the answer as a turn once; absent (false) on an event recorded before them, which is filed and never counted (ADR-050, step 7) |
 | `TurnCapNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`: the hand-off notice must not consume a conversation turn |
 | `ArchivedNotified` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef? (null → top-level), commentId |
 | `FindingConfirmed` | `spire-review-worker` (via `CommentSink`) | reviewId, threadRef, commentId — deliberately not `FollowUpPosted`; links the confirmation back to the conversation root so a reply to it (on an SCM that threads by immediate parent) is still recognized |

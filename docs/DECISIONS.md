@@ -202,6 +202,16 @@ review behind an hour-long build would wait an hour.
   Its answer goes back to the worker as the post-only `PostHarnessReply`, which posts under the same claim and answers
   the existing `FollowUpGenerated` (with no usage) and `FollowUpPosted`, so the turn count, thread ownership and
   Bitbucket's thread-by-parent link work as for an API reply.
+- **A turn is counted once per answer, and only for an answer that says so.** The harness worker resends
+  `FollowUpPosted` until its events are known to have gone out, and a dead letter can be replayed after a later
+  answer, so `review_thread_turn` (V110) keeps one receipt per answer, written in the statement that raises the count.
+  An answer from before the receipts is a different problem: whether it was counted is named by nothing durable in
+  every history, and its event can come back by any path in any order, so no migration can list them. The event
+  carries the boundary instead: `FollowUpPosted.countsTurn` is true on everything emitted since, absent on
+  everything before, and `ResultSaga` files an old answer without counting it. The policy errs toward one turn too
+  few: an old answer never counted leaves its thread one answer before its cap, never one short. V113's per-thread
+  id cutoff, which inferred the boundary from the greatest surviving answer id, was wrong when a higher id was
+  counted before a lower one and is dropped by V114 (review of PR #371, code-quality/M-1).
 - **One run per turn, charged once.** The run's call slot is the API reply's own, `CallRefs.followUpSlot(thread,
   comment)`, so `ReviewRunCharges` charges it under the identity `ResultSaga` charges an API reply under, and each
   turn is its own run and charge. The claim at prepare reserves the slot without blocking a redelivery, and the run id
