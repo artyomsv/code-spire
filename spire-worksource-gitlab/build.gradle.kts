@@ -12,6 +12,6 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.wiremock:wiremock:3.13.2")
-    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.1")
+    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.4")
 }
 tasks.test { useJUnitPlatform() }
