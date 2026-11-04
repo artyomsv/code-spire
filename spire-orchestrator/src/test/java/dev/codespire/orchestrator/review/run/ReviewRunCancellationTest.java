@@ -94,6 +94,21 @@ class ReviewRunCancellationTest {
         assertEquals(Set.of(older), runIds());
     }
 
+    /**
+     * A reply answers a thread, not a round: a push while it runs would leave a person waiting with nothing said, and
+     * the API reply finishes after a push too (harness reviews, step 7). The review run of the same round is the
+     * control.
+     */
+    @Test
+    void aSupersedeNeverCancelsAReplyRun() {
+        String review = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));
+        reviewRun(new ReviewRunRow("FOLLOWUP", "running", OLD, 1));
+
+        cancellation.supersede(reviewId, 1);
+
+        assertEquals(Set.of(review), runIds());
+    }
+
     @Test
     void aClosedPullRequestCancelsEveryLiveReviewRun() {
         String review = reviewRun(new ReviewRunRow("REVIEW", "running", OLD, 1));

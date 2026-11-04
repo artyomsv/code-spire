@@ -15,12 +15,12 @@ final class DlqTopics {
 
     private static final Set<String> ACTION_COMMAND_TYPES = Set.of(
             "FetchDiff", "GatherContext", "GenerateReview", "PostComments", "AnswerFollowUp",
-            "PrepareHarnessReview", "FinishHarnessReview");
+            "PrepareHarnessReview", "FinishHarnessReview", "PrepareHarnessReply", "PostHarnessReply");
 
     private static final Set<String> RESULT_EVENT_TYPES = Set.of(
             "DiffFetched", "ContextAssembled", "ReviewGenerated", "CommentsPosted",
             "ReviewFailed", "FollowUpGenerated", "FollowUpPosted", "HarnessReviewPrepared", "HarnessReviewGenerated",
-            "HarnessReviewFailed");
+            "HarnessReviewFailed", "HarnessReplyPrepared");
 
     private static final Set<String> INGRESS_EVENT_TYPES = Set.of(
             "PullRequestEventReceived", "PullRequestClosed", "ManualCommandReceived",

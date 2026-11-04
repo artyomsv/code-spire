@@ -10,6 +10,8 @@ import dev.codespire.contract.command.ActionCommand.GenerateReview;
 import dev.codespire.contract.command.ActionCommand.NotifyArchived;
 import dev.codespire.contract.command.ActionCommand.NotifyTurnCap;
 import dev.codespire.contract.command.ActionCommand.PostComments;
+import dev.codespire.contract.command.ActionCommand.PostHarnessReply;
+import dev.codespire.contract.command.ActionCommand.PrepareHarnessReply;
 import dev.codespire.contract.command.ActionCommand.PrepareHarnessReview;
 import dev.codespire.contract.command.ActionCommand.RefuseFinding;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -43,6 +45,9 @@ public class CommandDispatcher {
     HarnessReviewWorker harnessReviewWorker;
 
     @Inject
+    HarnessReplyWorker harnessReplyWorker;
+
+    @Inject
     FollowUpWorker followUpWorker;
 
     @Incoming("commands-in")
@@ -66,6 +71,8 @@ public class CommandDispatcher {
                 case PostComments c -> reviewWorker.postComments(c);
                 case PrepareHarnessReview c -> harnessReviewWorker.prepare(c);
                 case FinishHarnessReview c -> harnessReviewWorker.finish(c);
+                case PrepareHarnessReply c -> harnessReplyWorker.prepare(c);
+                case PostHarnessReply c -> harnessReplyWorker.post(c);
                 case AnswerFollowUp c -> followUpWorker.answer(c);
                 case NotifyTurnCap c -> followUpWorker.notifyTurnCap(c);
                 case NotifyArchived c -> followUpWorker.notifyArchived(c);

@@ -143,16 +143,25 @@ class ReviewRunDispatchRaceTest {
     }
 
     /**
-     * A reply carries the round it was decided in, the current one, so a supersede of an earlier round never refuses it;
-     * a reply decided in the ended round is refused like that round's review.
+     * A reply answers a thread, not a round (harness reviews, step 7): a push that ends the round it was decided in
+     * never refuses it, as the API reply is answered after a push. The same round's review stays refused, the control.
      */
     @Test
-    void aReplyOfTheCurrentRoundIsAdmittedAfterAnOlderSupersede() {
+    void aReplyIsAdmittedAfterItsRoundWasSuperseded() {
         cancellation.supersede(reviewId, 1);
 
-        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(reply(2)));
-        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(reply(1)));
+        assertInstanceOf(ReviewRunDispatch.Dispatched.class, dispatch.dispatch(reply(1)));
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(request(HEAD, 1)));
         assertEquals(1, reviewLane.size());
+    }
+
+    /** A closed pull request still refuses a reply: nobody is waiting in a closed one's threads for a paid run. */
+    @Test
+    void aReplyOfAClosedPullRequestIsNotAdmitted() {
+        exec("UPDATE review_status SET pr_state = 'CLOSED' WHERE review_id = ?", reviewId);
+
+        assertEquals(new ReviewRunDispatch.Refused("review_run_cancelled"), dispatch.dispatch(reply(1)));
+        assertTrue(reviewLane.isEmpty());
     }
 
     /** The ended round is raised, never lowered: a supersede read late for an older round reopens nothing. */

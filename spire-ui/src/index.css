@@ -626,7 +626,7 @@
   .usage-calls { display: flex; flex-direction: column; }
   .usage-call { padding: 9px 0; border-bottom: 1px dashed var(--border); }
   .usage-call:first-child { padding-top: 0; }
-  .usage-call-top { display: flex; align-items: baseline; gap: 8px; }
+  .usage-call-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
   .usage-kind { position: relative; padding-left: 13px; font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
   .usage-kind::before {
     content: ''; position: absolute; left: 0; top: 6px;

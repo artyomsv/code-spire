@@ -212,11 +212,12 @@ public class FactoryRunProjection {
      * The live review runs of one review (harness reviews, step 4), for a cancel: every one, or only those of round
      * {@code upToRound} or earlier when it is not null (a supersede ends a round, never a commit, which a forced re-run
      * keeps). Live by the same rule a result projects by, so a run whose dispatch is still unresolved is cancelled too and
-     * never starts. A factory run of the same review (a fix) is never returned.
+     * never starts. A factory run of the same review (a fix) is never returned. A reply run ({@code FOLLOWUP}) answers a
+     * thread, not a round, so a supersede never returns it; a close does (harness reviews, step 7).
      */
     public List<String> liveReviewRuns(String reviewId, Integer upToRound) {
         String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP')"
-                + " AND (CAST(? AS INT) IS NULL OR review_round <= ?) AND " + LIVE;
+                + " AND (CAST(? AS INT) IS NULL OR (review_round <= ? AND kind <> 'FOLLOWUP')) AND " + LIVE;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, reviewId);
             ps.setObject(2, upToRound, java.sql.Types.INTEGER);
@@ -230,6 +231,26 @@ public class FactoryRunProjection {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("The live review runs of " + reviewId + " could not be read", e);
+        }
+    }
+
+    /**
+     * A review run of {@code reviewId} already recorded for {@code callSlot}, in any status (harness reviews, step 7): a
+     * reply's slot is its thread and turn, so a second prepare of one turn, after a push changed the head the run id
+     * carries, finds the first run here and sends none. A throw on a failed read: a guessed "none" would fund twice.
+     */
+    public Optional<String> reviewRunWithSlot(String reviewId, String callSlot) {
+        String sql = "SELECT run_id FROM factory_run WHERE review_id = ? AND review_call_slot = ?"
+                + " AND kind IN ('REVIEW', 'RECONCILE', 'FOLLOWUP') ORDER BY started_at LIMIT 1";
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, reviewId);
+            ps.setString(2, callSlot);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("The review runs of " + reviewId + " for call " + callSlot
+                    + " could not be read", e);
         }
     }
 

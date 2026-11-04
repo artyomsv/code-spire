@@ -353,6 +353,21 @@ class ResultSagaPricingTest {
     }
 
     /**
+     * Harness reviews, step 7: a harness reply's FollowUpGenerated carries no usage, because ReviewRunCharges charged the
+     * run under this same identity. The API reply in the same fixture, with usage, is the control.
+     */
+    @Test
+    void aHarnessFollowUpGeneratedIsNeverCharged() {
+        ResultSaga saga = sagaFor("TEST-MODEL", true);
+
+        saga.on(followUp("TEST-THREAD-7", "TEST-COMMENT-7", null));
+        assertEquals(0, projection.recordedCalls().size(), "the run was charged once, by ReviewRunCharges");
+
+        saga.on(followUp("TEST-THREAD-7", "TEST-COMMENT-8", ModelUsage.of("TEST-MODEL", 300_000, 150_000)));
+        assertEquals(1, projection.recordedCalls().size(), "the control: an API reply is charged here");
+    }
+
+    /**
      * Every turn of one conversation is its own paid call, so every turn needs its own ledger identity.
      *
      * <p>The worker claims per (thread, triggering comment) and permits turn 2 to spend; the

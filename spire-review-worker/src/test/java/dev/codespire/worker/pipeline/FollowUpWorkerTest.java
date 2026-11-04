@@ -132,11 +132,11 @@ class FollowUpWorkerTest {
 
     @Test
     void classifiesTransientVersusTerminalFailures() {
-        assertTrue(FollowUpWorker.isTransient(new GitHubApiException(503, "GET", "/user", "Unicorn")));
-        assertTrue(FollowUpWorker.isTransient(new GitHubApiException(429, "GET", "/x", "rate limited")));
-        assertTrue(FollowUpWorker.isTransient(new java.io.IOException("connection reset")));
-        assertFalse(FollowUpWorker.isTransient(new GitHubApiException(404, "GET", "/x", "not found")));
-        assertFalse(FollowUpWorker.isTransient(new IllegalStateException("boom")));
+        assertTrue(FollowUpRetry.isTransient(new GitHubApiException(503, "GET", "/user", "Unicorn")));
+        assertTrue(FollowUpRetry.isTransient(new GitHubApiException(429, "GET", "/x", "rate limited")));
+        assertTrue(FollowUpRetry.isTransient(new java.io.IOException("connection reset")));
+        assertFalse(FollowUpRetry.isTransient(new GitHubApiException(404, "GET", "/x", "not found")));
+        assertFalse(FollowUpRetry.isTransient(new IllegalStateException("boom")));
     }
 
     // --- prompt scope: the thread's own file, and the findings that belong elsewhere ---
@@ -216,6 +216,54 @@ class FollowUpWorkerTest {
     }
 
     // --- turn-cap hand-off notice ---
+
+    /** The API reply opens with the forge's mention of the comment's author, never one the model wrote. */
+    @Test
+    void anApiReplyOpensWithTheAuthorsMention() {
+        DiffSource diffs = mock(DiffSource.class);
+        CommentSink sink = mock(CommentSink.class);
+        LlmProvider llm = mock(LlmProvider.class);
+        RepoRef repo = new RepoRef("TEST-work", "app");
+        ThreadRef thread = new ThreadRef("100");
+        Author author = Author.of("TEST-id-9", "TEST-alice", "TEST Alice");
+        ThreadTranscript transcript = new ThreadTranscript(thread, "src/App.java", 42, "abc123",
+                List.of(new ThreadMessage("TEST-alice", "why?", false)));
+        when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123"))).thenReturn(new Diff("abc123", List.of(), false));
+        when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new Completion("Because the caller can pass null.", ModelUsage.of("m", 1, 1))));
+        when(sink.mention(author)).thenReturn(java.util.Optional.of("@TEST-alice"));
+        when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
+                .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
+
+        FollowUpWorker.FollowUpResult r = FollowUpWorker.answer(
+                new FollowUpWorker.AnswerCall(repo, 5L, thread, transcript, null, List.of(), author),
+                new FollowUpWorker.AnswerPorts(diffs, llm, new ModelParams("m", 0.2, null), sink));
+
+        verify(sink).replyInThread(repo, 5L, thread, "@TEST-alice Because the caller can pass null.");
+        assertEquals("@TEST-alice Because the caller can pass null.", r.answerText());
+    }
+
+    /** The API reply is escaped outside code too, as every posted comment is (review of PR #371, rules/H-1). */
+    @Test
+    void anApiReplyEscapesRawHtmlOutsideCode() {
+        DiffSource diffs = mock(DiffSource.class);
+        CommentSink sink = mock(CommentSink.class);
+        LlmProvider llm = mock(LlmProvider.class);
+        RepoRef repo = new RepoRef("TEST-work", "app");
+        ThreadRef thread = new ThreadRef("100");
+        ThreadTranscript transcript = new ThreadTranscript(thread, "src/App.java", 42, "abc123",
+                List.of(new ThreadMessage("TEST-alice", "why?", false)));
+        when(diffs.fetchDiff(eq(repo), eq(5L), eq("abc123"))).thenReturn(new Diff("abc123", List.of(), false));
+        when(llm.complete(any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new Completion("<img src=x> but `n < 2` is fine", ModelUsage.of("m", 1, 1))));
+        when(sink.replyInThread(eq(repo), eq(5L), eq(thread), anyString()))
+                .thenReturn(new CommentRef("900", thread, CommentKind.REPLY));
+
+        FollowUpWorker.answer(repo, 5L, thread, transcript, diffs, llm, new ModelParams("m", 0.2, null), sink, null,
+                List.of());
+
+        verify(sink).replyInThread(repo, 5L, thread, "&lt;img src=x> but `n < 2` is fine");
+    }
 
     private static final RepoRef CAP_REPO = new RepoRef("artyomsv", "spire-test");
     private static final ThreadRef CAP_THREAD = new ThreadRef("finding-1");

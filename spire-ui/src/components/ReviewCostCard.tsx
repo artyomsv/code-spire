@@ -3,6 +3,8 @@ import { formatEventTime } from '../format';
 import { formatCost } from '../money';
 import { TOKEN_TYPE_LABEL } from '../llmPricing';
 
+const UNMETERED = 'unmetered';
+
 const CALL_KIND_LABEL: Record<ChargeKind, string> = {
   REVIEW: 'Review',
   RECONCILE: 'Reconcile',
@@ -46,10 +48,15 @@ function knownCost(lines: ChargeLineView[]): number {
   return lines.reduce((sum, l) => sum + (l.costMillicents ?? 0), 0);
 }
 
-/** A call's headline cost: "self-hosted" rather than "$0.00" when every line asserts a zero, and
- *  flagged partial when any line in it could not be priced. */
+/** Every line asserts a zero: a self-hosted model, or a subscription seat that is not billed per token. */
+function isUnmetered(lines: ChargeLineView[]): boolean {
+  return lines.every((l) => l.pricingMode === 'UNMETERED');
+}
+
+/** A call's headline cost: "unmetered" rather than "$0.00" when every line asserts a zero, and
+ *  flagged partial when any line in it could not be priced. Short, so it fits the sidebar beside the kind and time. */
 function callCostText(lines: ChargeLineView[]): string {
-  if (lines.every((l) => l.pricingMode === 'UNMETERED')) return 'self-hosted (unmetered)';
+  if (isUnmetered(lines)) return UNMETERED;
   const amount = formatCost(knownCost(lines));
   return lines.some((l) => l.pricingMode === 'UNKNOWN') ? `${amount} (partial)` : amount;
 }
@@ -60,15 +67,17 @@ function callCostText(lines: ChargeLineView[]): string {
  * cases, which is what keeps a metered line that truncates to $0.0000 from reading as free.
  */
 function lineDetail(line: ChargeLineView): string {
-  if (line.pricingMode === 'UNMETERED') return 'self-hosted (unmetered)';
+  if (line.pricingMode === 'UNMETERED') return UNMETERED;
   if (line.pricingMode === 'UNKNOWN') return 'could not be priced';
   return formatCost(line.costMillicents);
 }
 
-function lineRow(line: ChargeLineView, i: number) {
+/** A token line; its cost is left out when the whole call is unmetered, since the call's own line already says so. */
+function lineRow(line: ChargeLineView, i: number, unmetered: boolean) {
   return (
     <div key={i} className="usage-tokens">
-      {TOKEN_TYPE_LABEL[line.tokenType]}: {line.tokens.toLocaleString()} tokens · {lineDetail(line)}
+      {TOKEN_TYPE_LABEL[line.tokenType]}: {line.tokens.toLocaleString()} tokens
+      {unmetered ? null : ` · ${lineDetail(line)}`}
     </div>
   );
 }
@@ -83,7 +92,7 @@ function callRow(call: Call) {
       </div>
       <div className="usage-call-meta">
         <div className="usage-model">{call.model}</div>
-        {call.lines.map(lineRow)}
+        {call.lines.map((line, i) => lineRow(line, i, isUnmetered(call.lines)))}
       </div>
     </div>
   );

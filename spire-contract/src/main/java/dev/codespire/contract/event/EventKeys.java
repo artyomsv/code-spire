@@ -33,6 +33,7 @@ public final class EventKeys {
             case IntegrationEvent.HarnessReviewPrepared e -> e.reviewId();
             case IntegrationEvent.HarnessReviewGenerated e -> e.reviewId();
             case IntegrationEvent.HarnessReviewFailed e -> e.reviewId();
+            case IntegrationEvent.HarnessReplyPrepared e -> e.reviewId();
         };
     }
 }

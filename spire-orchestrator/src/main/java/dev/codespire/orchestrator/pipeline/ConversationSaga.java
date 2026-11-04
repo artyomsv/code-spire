@@ -17,6 +17,7 @@ import dev.codespire.orchestrator.provider.ScmProvider;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
+import dev.codespire.orchestrator.review.run.HarnessReplyStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -64,6 +65,10 @@ public class ConversationSaga {
     @Inject
     dev.codespire.orchestrator.prompt.WorkerPromptTemplates promptTemplates;
 
+    /** Whether a reply is answered on its repository's harness (harness reviews, step 7). */
+    @Inject
+    HarnessReplyStart harnessReplies;
+
     /**
      * The command to emit for a non-bot reply, or empty when policy says stay quiet: an
      * {@code AnswerFollowUp} normally, or a one-off {@code NotifyTurnCap} on the turn that first
@@ -108,14 +113,48 @@ public class ConversationSaga {
         if (!decision.answer()) {
             return Optional.empty();
         }
+        return answerOnHarnessOrApi(e, new Answering(provider, target, botMentioned));
+    }
 
-        // Resolving the default credential also answers whether the model can be priced — the same
-        // pre-spend guard the review path applies, on a path that used to have none: an unpriceable
-        // model refused new reviews while an author replying in a live thread still made the bot spend,
-        // up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
-        // construction because the registry guard makes an unpriceable provider impossible; V30
-        // falsifies that, creating rateless models in SQL without passing through the registry at all.
-        // Resolved for the thread's review, so a reply spends the provider its review's repository names.
+    /** A reply policy says to answer: who answers it, the thread it goes to, and whether it mentioned the bot. */
+    private record Answering(ScmProvider provider, ThreadTarget target, boolean mentioned) {
+    }
+
+    /**
+     * On a harness repository a reply run answers, never the API (harness reviews, step 7). Decided before the API
+     * credential and the spend gate: a harness repository may have no API provider, and the run's funding applies the
+     * spend gate itself.
+     */
+    private Optional<ActionCommand> answerOnHarnessOrApi(AuthorReplied e, Answering answering) {
+        ThreadRef thread = answering.target().thread();
+        List<PriorFinding> others = findingsOwnedByOtherThreads(e.reviewId(), thread);
+        return switch (harnessReplies.start(new HarnessReplyStart.ReplyAsk(e, thread, answering.mentioned(), others))) {
+            case HarnessReplyStart.Preparing preparing -> {
+                LOG.infof("Answering reply on %s on its harness — thread %s, mentioned=%b", e.reviewId(),
+                        thread.value(), answering.mentioned());
+                yield Optional.of(preparing.command());
+            }
+            case HarnessReplyStart.Refused refused -> {
+                timeline.record("integration", "refused:AnswerFollowUp", e.reviewId(), refused.detail());
+                projection.appendEvent(e.reviewId(), "integration", "FollowUpRefused", refused.detail(),
+                        thread.value());
+                LOG.warnf("Follow-up refused for %s — %s", e.reviewId(), refused.detail());
+                yield Optional.empty();
+            }
+            case HarnessReplyStart.NotHarness ignored -> answerOnApi(e, answering, others);
+        };
+    }
+
+    /**
+     * Resolving the default credential also answers whether the model can be priced — the same
+     * pre-spend guard the review path applies, on a path that used to have none: an unpriceable
+     * model refused new reviews while an author replying in a live thread still made the bot spend,
+     * up to the turn cap or unbounded with an @-mention. ADR-023 argued this path was safe by
+     * construction because the registry guard makes an unpriceable provider impossible; V30
+     * falsifies that, creating rateless models in SQL without passing through the registry at all.
+     * Resolved for the thread's review, so a reply spends the provider its review's repository names.
+     */
+    private Optional<ActionCommand> answerOnApi(AuthorReplied e, Answering answering, List<PriorFinding> others) {
         DefaultLlm llm = workerLlmCredentials.resolveForReview(e.reviewId());
         if (!llm.isSpendable()) {
             skipUnspendable(e, llm);
@@ -126,16 +165,18 @@ public class ConversationSaga {
         // conversation path finite — hence AFTER that override, and after the free NotifyTurnCap above.
         dev.codespire.orchestrator.caps.SpendGate.Decision capped = spendGate.decide();
         if (capped.refused()) {
-            refuseFollowUp(e, target.thread(), capped.refusal());
+            refuseFollowUp(e, answering.target().thread(), capped.refusal());
             return Optional.empty();
         }
-        LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), target.thread().value(), botMentioned);
+        ThreadRef thread = answering.target().thread();
+        LOG.infof("Answering reply on %s — thread %s, mentioned=%b", e.reviewId(), thread.value(),
+                answering.mentioned());
         return Optional.of(new ActionCommand.AnswerFollowUp(
-                e.reviewId(), e.repo(), e.prId(), target.thread(), e.commentId(), e.text(),
-                workerCredentials.pack(provider, e.repo().workspace()), llm.packed(), botMentioned,
+                e.reviewId(), e.repo(), e.prId(), thread, e.commentId(), e.text(),
+                workerCredentials.pack(answering.provider(), e.repo().workspace()), llm.packed(), answering.mentioned(),
                 levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor(),
-                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()),
-                findingsOwnedByOtherThreads(e.reviewId(), target.thread())));
+                promptTemplates.forKind(dev.codespire.contract.llm.PromptKind.FOLLOWUP, e.repo()), others,
+                HarnessReplyStart.replyAuthor(e.author())));
     }
 
     /**

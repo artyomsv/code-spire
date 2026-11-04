@@ -35,6 +35,15 @@ class DlqTopicsTest {
         assertEquals("cs.results", DlqTopics.forType("HarnessReviewFailed"));
     }
 
+    @Test void harnessReplyCommandsReplayOntoCommands() {
+        assertEquals("cs.commands", DlqTopics.forType("PrepareHarnessReply"));
+        assertEquals("cs.commands", DlqTopics.forType("PostHarnessReply"));
+    }
+
+    @Test void harnessReplyPreparedReplaysOntoResults() {
+        assertEquals("cs.results", DlqTopics.forType("HarnessReplyPrepared"));
+    }
+
     @Test void registrationReplaysOntoItsRegistryTopic() {
         assertEquals("cs.registry-integration", DlqTopics.forType("RepositoryRegistration"));
     }

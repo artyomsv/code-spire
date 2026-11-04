@@ -8,9 +8,11 @@ Architecture decision records for Code Spire. Newest first.
 
 **Status:** step 4 of harness reviews, the plumbing, merged to master with PR #367, 2026-11-01. Step 5, first
 reviews (the "Step 5" part below), merged to master with PR #368 on 2026-11-02; its live proof was made on 2026-11-01 (docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md), and
-what it did not reach is proven by tests only (docs/UNVERIFIED.md). Step 6, re-reviews (the "Step 6" part below), is
-built on `feat/harness-reviews-6-re-reviews` (PR #370, not merged); its live proof was made on 2026-11-02 at `4a02f003`
-(docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md), and what it did not reach is proven by tests only (docs/UNVERIFIED.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+what it did not reach is proven by tests only (docs/UNVERIFIED.md). Step 6, re-reviews (the "Step 6" part below),
+merged to master with PR #370 on 2026-11-03; its live proof was made on 2026-11-02 at `4a02f003`
+(docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md), and what it did not reach is proven by tests only (docs/UNVERIFIED.md).
+Step 7, replies (the "Step 7" part below), is built on `feat/harness-reviews-7-replies` (PR #371, not merged); its live
+proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
@@ -47,7 +49,8 @@ review behind an hour-long build would wait an hour.
   advisory lock per review: `ReviewRunAdmission` refuses the run (`review_run_cancelled`) when `review_status.pr_state`
   is not `OPEN` or V108's `review_run_superseded` has ended its round or a later one, and inserts the row in the same
   transaction; the send follows the commit. Every call names its round (`ReviewRunBinding.round`, a reply the current
-  one). A close writes no record, because a reopened pull request keeps its review id.
+  one). A close writes no record, because a reopened pull request keeps its review id. Step 7 changes this for replies:
+  a supersede neither cancels nor refuses a reply run, only a close does (the "Step 7" part below).
 - **A review's wall clock** (`SPIRE_FACTORY_REVIEW_WALL_CLOCK_SECONDS`, default 900) may not exceed a build's;
   startup refuses otherwise, since the run-worker would refuse the unit after it was paid for.
 
@@ -128,7 +131,7 @@ review behind an hour-long build would wait an hour.
 - **Every review of a harness repository runs on it.** `HarnessReviewStart` no longer sends a re-review to the API: a
   repository whose "Review with" names a harness has no API path for reviews any more, first or later. A re-review
   whose prior run has open findings is one `RECONCILE` run; one with no open findings is a `REVIEW` run, as the API
-  path skips reconcile then, so an empty reconcile is never charged. Replies (`FOLLOWUP`) stay on the API until step 7.
+  path skips reconcile then, so an empty reconcile is never charged. Replies (`FOLLOWUP`) moved to the harness in step 7.
 - **The review worker prepares and finishes; the run worker runs.** On `ContextAssembled` the saga sends
   `PrepareHarnessReview` (the review's round, its kind, the prior run read once from the projection, and the
   reviewer's packed forge credential; with no credential the review is refused as `reviewer_credential_unavailable`
@@ -183,6 +186,56 @@ review behind an hour-long build would wait an hour.
   spend caps (`SpendWindow`), the review list's cost and unpriced-call count, and the cost attention rows filter on
   `subject_kind`, never the call kind. Only the review page's cost card names the kind, so a harness re-review shows
   one "Reconcile" call.
+
+**Step 7: replies on a harness** ([step 7 plan](superpowers/plans/2026-11-03-harness-reviews-7-replies.md),
+"Changes after the plan check" included).
+- **Every reply a harness repository answers runs on it.** `ConversationSaga` keeps every policy check (allowlist,
+  ownership or mention, level, turn cap, "smart 1:1" in the worker). After them `HarnessReplyStart` decides where the
+  answer comes from, before the API credential and the spend gate: a harness repository may have no API provider, and
+  the run's funding applies the spend gate itself. A fork, an unknown fork status, an unreadable round or a missing
+  reviewer credential refuses the reply; nothing falls back to the API.
+- **The worker prepares and posts; the run worker answers.** `PrepareHarnessReply` makes the worker fetch the thread,
+  apply "smart 1:1", claim the API path's own `followup:<commentId>` key, read the pull request's head and answer
+  `HarnessReplyPrepared` with `thread.md` (the anchor, the review's other findings and the conversation, fenced, cut
+  at 96 KiB). `HarnessReplyLaunch` composes the prompt (the repository's FOLLOWUP system text, a preamble that points
+  at `/inputs/thread.md` and the diff command, and the locked follow-up contract) and dispatches one `FOLLOWUP` run.
+  Its answer goes back to the worker as the post-only `PostHarnessReply`, which posts under the same claim and answers
+  the existing `FollowUpGenerated` (with no usage) and `FollowUpPosted`, so the turn count, thread ownership and
+  Bitbucket's thread-by-parent link work as for an API reply.
+- **A turn is counted once per answer, and only for an answer that says so.** The harness worker resends
+  `FollowUpPosted` until its events are known to have gone out, and a dead letter can be replayed after a later
+  answer, so `review_thread_turn` (V110) keeps one receipt per answer, written in the statement that raises the count.
+  An answer from before the receipts is a different problem: whether it was counted is named by nothing durable in
+  every history, and its event can come back by any path in any order, so no migration can list them. The event
+  carries the boundary instead: `FollowUpPosted.countsTurn` is true on everything emitted since, absent on
+  everything before, and `ResultSaga` files an old answer without counting it. The policy errs toward one turn too
+  few: an old answer never counted leaves its thread one answer before its cap, never one short. V113's per-thread
+  id cutoff, which inferred the boundary from the greatest surviving answer id, was wrong when a higher id was
+  counted before a lower one and is dropped by V114 (review of PR #371, code-quality/M-1).
+- **One run per turn, charged once.** The run's call slot is the API reply's own, `CallRefs.followUpSlot(thread,
+  comment)`, so `ReviewRunCharges` charges it under the identity `ResultSaga` charges an API reply under, and each
+  turn is its own run and charge. The claim at prepare reserves the slot without blocking a redelivery, and the run id
+  carries the head, so `HarnessReplyLaunch` first reads `factory_run` for a run of the same slot and sends none if
+  one exists: a second prepare after a push would otherwise fund a second run whose charge the ledger then drops.
+- **A reply answers a thread, not a round.** The run checks out the pull request's head the worker read, not the
+  thread's anchor commit, which a force-push can make unreachable; the prompt tells the agent the code may have
+  changed. A supersede never cancels a reply run and admission never refuses one for an ended round, as the API reply
+  is answered after a push; a closed pull request cancels and refuses it. Its result is applied with no round check.
+- **No silent ending.** A refused reply writes `FollowUpRefused` under the thread; a run that ends with nothing to post
+  (failed, cancelled, over the cap, no reviewer account) writes `FollowUpFailed`; both clear the "responding" flag.
+  The worker's quiet exits at prepare (no thread support, a second human with no mention, a comment already answered)
+  keep the API path's behaviour: the flag stays up until the next review.
+- **The answer mentions the person it answers.** On the live proof the bot named the author as plain text, which
+  notifies nobody, because the reply prompt forbids hand-written mentions (the syntax differs per forge, and a wrong
+  one fails to link or notifies the wrong account). Code Spire now opens every reply, API and harness, with the
+  forge's own mention of the triggering comment's author: `CommentSink.mention` gives `@login` on GitHub and GitLab
+  and `@{account_id}` on Bitbucket Cloud, or nothing when the author lacks that identity. `AnswerFollowUp` and
+  `PrepareHarnessReply` carry `replyAuthor` (never the email); the harness prepare stores the mention under
+  `harness:mention:<commentId>` for the post, since the run's result names only the thread and the turn. The FOLLOWUP
+  persona now says the mention is added and the model must not name or mention anyone; a repository's customized
+  FOLLOWUP prompt keeps its own text.
+- **No attention row for a reply.** A refused reply is said in its thread's history, as a reply the spend cap refuses
+  is; `REVIEW_HARNESS_REFUSED` speaks of a review that was not reviewed, which is false here.
 
 ---
 

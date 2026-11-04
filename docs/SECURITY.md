@@ -206,7 +206,10 @@ and LAND remain unavailable. [M3 acceptance](factory/M3-ACCEPTANCE.md) and the s
   encrypts then rests in Postgres in cleartext. `GET /api/dlq` is already admin-only because a dead-letter row carries the raw record. No mechanism closes
   it yet; it is recorded in docs/UNVERIFIED.md (harness reviews step 6). The prepared numbering of the prior
   findings and the finished outcome are stored in the review worker's `comment_idempotency` in plain text, as the
-  API path's stored review result already is.
+  API path's stored review result already is. Since step 7 a reply on a harness adds `PrepareHarnessReply`,
+  `HarnessReplyPrepared` (its `thread.md`, on `cs.results`) and `PostHarnessReply` (the answer, on `cs.commands`),
+  which carry finding and thread text as `AnswerFollowUp` and `FollowUpGenerated` already do; a dead-lettered copy
+  rests in `dlq_entry.payload` the same way.
 
 ## Secrets
 

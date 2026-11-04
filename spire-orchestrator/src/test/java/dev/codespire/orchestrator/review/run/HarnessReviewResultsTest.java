@@ -129,16 +129,20 @@ class HarnessReviewResultsTest {
         assertTrue(fixture.finishes.isEmpty(), fixture.finishes.toString());
     }
 
-    /** Replies take the harness in step 7; a follow-up answer is only logged here. */
+    /** Step 7: a reply run's answer and failure go to the reply results, with no round read and no finish. */
     @Test
-    void aFollowupResultIsOnlyLogged() {
+    void aFollowupResultGoesToTheReplyResults() {
         ReviewRunBinding followup = new ReviewRunBinding(REVIEW_ID, ReviewRunBinding.Kind.FOLLOWUP, 7, HEAD,
-                "TEST-thread|TEST-comment", 1);
+                "TEST-thread:TEST-comment", 1);
+        RunReviewArtifact reply = answer("TEST-reply", followup);
+        RunResult.RunFailed failure = failed("AGENT_FAILED");
 
         HarnessReviewResults results = fixture.results();
-        results.accept(answer("TEST-reply", followup), followup);
-        results.accept(failed("AGENT_FAILED"), followup);
+        results.accept(reply, followup);
+        results.accept(failure, followup);
 
+        assertEquals(List.of(reply, failure), fixture.replyResults);
+        assertEquals(List.of("reply", "reply"), fixture.steps, "a reply answers a thread, not a round: no lock, no read");
         assertTrue(fixture.finishes.isEmpty(), fixture.finishes.toString());
         assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
     }
