@@ -261,6 +261,25 @@ function attemptedKey(prefix: SessionPrefix): string {
 }
 
 /**
+ * How long a mark keeps a prefix from being tried again.
+ *
+ * <p>The mark exists to stop a reload loop: a prefix that refuses even right after its login would
+ * otherwise send the window round again on every load. It must not outlive that purpose. A chained
+ * login that broke off before reaching a prefix (the gateway still starting after a stack restart)
+ * leaves the prefix marked with no session, and a mark that never expires keeps it that way for the
+ * life of the tab: the attention panel reported the gateway as not responding while it answered, and
+ * F5 changed nothing, because sessionStorage outlives a reload. Two minutes bounds a misconfigured
+ * prefix to one login every two minutes and lets a broken-off one heal on its own.
+ */
+export const SESSION_RETRY_AFTER_MS = 2 * 60_000;
+
+/** Whether this prefix's login was started recently enough that trying again could loop. */
+function triedRecently(prefix: SessionPrefix): boolean {
+  const triedAt = Number(sessionStorage.getItem(attemptedKey(prefix)));
+  return Number.isFinite(triedAt) && Date.now() - triedAt < SESSION_RETRY_AFTER_MS;
+}
+
+/**
  * Make sure every service's session exists, once per tab.
  *
  * <p>Called after the dashboard learns it is signed in. Each sibling prefix is probed with a
@@ -302,7 +321,7 @@ export async function ensureServiceSessions(): Promise<boolean> {
       continue;
     }
     if (!isAuthFailure(res.status)) continue; // a real error is not ours to fix by logging in again
-    if (sessionStorage.getItem(attemptedKey(prefix))) continue; // already tried; do not loop
+    if (triedRecently(prefix)) continue; // just tried; do not loop
     lapsed.push(prefix);
   }
   if (lapsed.length === 0) return false;
@@ -316,7 +335,7 @@ export async function ensureServiceSessions(): Promise<boolean> {
   // services never got a session for the life of the tab, which the panel then reported as the service
   // being unreachable every 1.5s: a false outage standing in for a session nobody ever tried.
   if (!goToFullLogin()) return true; // the window is already leaving for a login or a logout
-  for (const prefix of lapsed) sessionStorage.setItem(attemptedKey(prefix), '1');
+  for (const prefix of lapsed) sessionStorage.setItem(attemptedKey(prefix), String(Date.now()));
   return true;
 }
 
