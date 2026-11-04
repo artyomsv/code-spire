@@ -36,6 +36,11 @@ public class ReviewThreadView {
      * resent {@code FollowUpPosted}, which the harness reply's worker sends until its events are known to have gone
      * out, or a dead letter replayed after a later answer) changes nothing, not even the last answer. V110's receipt is
      * written in the same statement as the count, so the two cannot disagree (review of PR #371, code-quality/M-1).
+     *
+     * <p>An answer posted before the receipts existed may have left no receipt to find, so V113's per-thread cutoff
+     * decides it: a first receipt for a numeric id at or below the thread's greatest answer id at that deploy is an old
+     * answer, filed and not counted. Comment ids only grow, so every answer posted since counts. The cast sits inside
+     * the CASE, so a non-numeric id is never cast.
      */
     public void bumpTurn(String reviewId, ThreadRef thread, String lastCommentId) {
         try (Connection c = dataSource.getConnection();
@@ -44,10 +49,17 @@ public class ReviewThreadView {
                          INSERT INTO review_thread_turn (review_id, thread_ref, comment_id)
                          VALUES (?, ?, COALESCE(?, ''))
                          ON CONFLICT DO NOTHING
-                         RETURNING 1
+                         RETURNING review_id, thread_ref, comment_id
+                     ), counted AS (
+                         SELECT 1 FROM receipt r
+                         WHERE NOT EXISTS (
+                             SELECT 1 FROM review_thread_turn_cutoff cut
+                             WHERE cut.review_id = r.review_id AND cut.thread_ref = r.thread_ref
+                               AND CASE WHEN r.comment_id ~ '^[0-9]{1,30}$'
+                                        THEN r.comment_id::numeric <= cut.max_comment_id ELSE FALSE END)
                      )
                      INSERT INTO review_thread (review_id, thread_ref, turn_count, last_comment_id)
-                     SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM receipt)
+                     SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM counted)
                      ON CONFLICT (review_id, thread_ref)
                      DO UPDATE SET turn_count = review_thread.turn_count + 1,
                                    last_comment_id = EXCLUDED.last_comment_id

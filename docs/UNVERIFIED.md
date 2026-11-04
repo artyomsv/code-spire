@@ -109,8 +109,11 @@ thread in under a minute, charged once per turn under `…|<thread>:<comment>|FO
   One whose count committed but whose row did not (ResultSaga counts first, then links) is named nowhere; it can only
   have reached the dead-letter queue, so V112 treats every `FollowUpPosted` pending there as counted, and its replay
   counts nothing. If one of those had not been counted, its thread is a turn short of the cap: the bot may answer once
-  more there. A record redelivered by Kafka during the deploy, rather than dead-lettered, is not covered.
-  `ReviewThreadTurnUpgradeTest` runs V110 to V112 over history written at V109; `ReviewThreadTurnBackfillIT` runs V111
+  more there. V113 closes the rest at run time: each thread keeps its greatest answer id at the deploy, and a first
+  receipt for a numeric id at or below it counts nothing (answers counted before V24 with no row of their own, a dead
+  letter that reaches the queue or is replayed after the deploy, a record Kafka redelivers during it). This rests on
+  each forge's comment ids only growing, within one thread's id sequence; a non-numeric id is not covered by it.
+  `ReviewThreadTurnUpgradeTest` runs V110 to V113 over history written at V109; `ReviewThreadTurnBackfillIT` runs V111
   over seeded rows.
 - **The mention is proven live on GitHub only.** GitLab's `@username` and Bitbucket Cloud's `@{account_id}` are
   proven by unit tests on the adapters; a repository's customized FOLLOWUP prompt that still asks the model to name
