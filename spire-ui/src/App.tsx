@@ -117,7 +117,7 @@ export default function App() {
    * having second thoughts. The session state was known before any of that; it simply was not used.
    */
   useEffect(() => {
-    if (needsLogin(me)) goToFullLogin();
+    if (needsLogin(me)) goToFullLogin('/api/me reports no session');
   }, [me]);
 
   /**
