@@ -12,6 +12,7 @@ import {
   takeReturnRoute,
   type Me,
 } from './auth';
+import { AUTH_LOG_KEY } from './authLog';
 
 const me = (over: Partial<Me> = {}): Me => ({
   authEnabled: true,
@@ -120,6 +121,27 @@ describe('apiFetch', () => {
     expect(assign).toHaveBeenCalledWith('/wk/auth/login');
   });
 
+  /**
+   * A refused path can carry a person's identity: unlinking an operator puts their OIDC subject in
+   * it. The sign-in log keeps entries across reloads and prints them, so it names the service and the
+   * status only, never the path.
+   */
+  it('logs a refusal by service and status, without the path that may name a person', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 499 }));
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await auth.apiFetch('/api/operator-identities/TEST-subject/GITHUB');
+
+    const stored = sessionStorage.getItem(AUTH_LOG_KEY) ?? '';
+    expect(stored).not.toContain('TEST-subject');
+    expect(JSON.parse(stored).at(-1)).toMatchObject({
+      event: 'login',
+      detail: '/api/auth/login?chain=1: a call to /api answered 499',
+    });
+  });
+
   /** A wrong-role refusal must NOT bounce to a login — logging in again changes nothing. */
   it('does not redirect on a forbidden response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 403 }));
@@ -192,6 +214,45 @@ describe('leaving for the identity provider', () => {
     auth.goToLogin('/gw');
 
     expect(assign).toHaveBeenCalledWith('/gw/auth/login');
+  });
+
+  /**
+   * A login is a whole-window navigation, so the console that saw it start is cleared by it. The
+   * reason is kept in the tab's diagnostic log, which the next page load prints again.
+   */
+  it('records why it started a login, and where to', async () => {
+    const auth = await freshAuth();
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    auth.goToLogin('/gw', 'TEST-why');
+
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
+    expect(log.at(-1)).toMatchObject({ event: 'login', detail: '/gw/auth/login: TEST-why' });
+  });
+
+  it('records a login it did not start because the window was already leaving', async () => {
+    const auth = await freshAuth();
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    auth.goToFullLogin('TEST-first');
+    auth.goToLogin('/gw', 'TEST-second');
+
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
+    expect(log.map((e: { event: string }) => e.event)).toEqual(['login', 'login skipped']);
+  });
+
+  it('records a sign-out', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await auth.goToLogout();
+
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
+    expect(log.at(-1)).toMatchObject({ event: 'logout' });
   });
 
   it('marks the departure before navigating, so failures on the way out are recognised', async () => {
@@ -438,13 +499,50 @@ describe('establishing the other services sessions', () => {
    */
   it('does not navigate again once every lapsed prefix has been tried', async () => {
     const auth = await freshAuth();
-    sessionStorage.setItem('spire.session.attempted/gw', '1');
-    sessionStorage.setItem('spire.session.attempted/wk', '1');
+    sessionStorage.setItem('spire.session.attempted/gw', String(Date.now()));
+    sessionStorage.setItem('spire.session.attempted/wk', String(Date.now()));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
     const assign = stubLocation();
 
     expect(await auth.ensureServiceSessions()).toBe(false);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A mark is a guard against a reload loop, not a verdict for the life of the tab. A chained login
+   * that broke off before reaching a prefix (the gateway still starting after a stack restart) left
+   * that prefix marked with no session, and nothing but a later success ever cleared the mark: the
+   * attention panel said "the webhook gateway is not responding" while the gateway answered, and F5
+   * kept it, because sessionStorage outlives a reload. Once the attempt is old, the prefix is tried
+   * again.
+   */
+  it('tries a marked prefix again once its attempt is old', async () => {
+    const auth = await freshAuth();
+    const longAgo = Date.now() - auth.SESSION_RETRY_AFTER_MS - 1;
+    sessionStorage.setItem('spire.session.attempted/gw', String(longAgo));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
+    );
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
+    expect(Number(sessionStorage.getItem('spire.session.attempted/gw'))).toBeGreaterThan(longAgo);
+  });
+
+  /** A mark from an older build holds no time. It reads as old, so it cannot strand a prefix either. */
+  it('tries a prefix again whose mark holds no time', async () => {
+    const auth = await freshAuth();
+    sessionStorage.setItem('spire.session.attempted/gw', '1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => Promise.resolve(url.startsWith('/gw') ? { ok: false, status: 499 } : okResponse)),
+    );
+    const assign = stubLocation();
+
+    expect(await auth.ensureServiceSessions()).toBe(true);
+    expect(assign).toHaveBeenCalledWith('/api/auth/login?chain=1');
   });
 
   /**

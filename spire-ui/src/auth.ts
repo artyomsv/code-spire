@@ -10,6 +10,8 @@
  * without a session.
  */
 
+import { recordAuthEvent } from './authLog';
+
 export interface Me {
   authEnabled: boolean;
   authenticated: boolean;
@@ -90,8 +92,8 @@ export function isLeavingForAuth(): boolean {
  *          login must consult this: losing the race means the attempt did **not** happen, and
  *          bookkeeping it as though it had is how a prefix gets retired without ever being tried.
  */
-export function goToLogin(prefix: SessionPrefix = '/api'): boolean {
-  return startLogin(prefix, false);
+export function goToLogin(prefix: SessionPrefix = '/api', reason = 'not stated'): boolean {
+  return startLogin(prefix, false, reason);
 }
 
 /**
@@ -111,8 +113,8 @@ export function goToLogin(prefix: SessionPrefix = '/api'): boolean {
  * is also what {@link ensureServiceSessions}'s probe reads — chaining that would make a healthy
  * service's answer depend on a later one.
  */
-export function goToFullLogin(): boolean {
-  return startLogin('/api', true);
+export function goToFullLogin(reason = 'not stated'): boolean {
+  return startLogin('/api', true, reason);
 }
 
 /**
@@ -158,11 +160,17 @@ export function takeReturnRoute(): string | null {
   return stored && /^#\/(?![/\\])/.test(stored) ? stored : null;
 }
 
-function startLogin(prefix: SessionPrefix, chained: boolean): boolean {
-  if (leavingForAuth) return false;
+/** Every login goes through here, so every login is logged with the reason its caller gave. */
+function startLogin(prefix: SessionPrefix, chained: boolean, reason: string): boolean {
+  const target = `${prefix}/auth/login${chained ? '?chain=1' : ''}`;
+  if (leavingForAuth) {
+    recordAuthEvent('login skipped', `${target}: ${reason} (the window is already leaving)`);
+    return false;
+  }
   leavingForAuth = true;
+  recordAuthEvent('login', `${target}: ${reason}`);
   rememberReturnRoute();
-  window.location.assign(`${prefix}/auth/login${chained ? '?chain=1' : ''}`);
+  window.location.assign(target);
   return true;
 }
 
@@ -207,6 +215,7 @@ export async function goToLogout(): Promise<void> {
   // page still has open fails on the way out. Marked first so those failures are recognised as this
   // logout rather than as an outage to report or a login to start.
   leavingForAuth = true;
+  recordAuthEvent('logout', 'the operator signed out');
 
   // The siblings first, because a session is per prefix (ADR-022) and clearing `/api` clears only
   // `/api`. Signing out used to leave both of the others live — the gateway went on answering its
@@ -249,8 +258,11 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
     // unchained navigation here won the race and each sibling was then discovered missing one page load
     // at a time — the three renders that read as the app restarting.
     const prefix = prefixFor(input);
-    if (prefix === '/api') goToFullLogin();
-    else goToLogin(prefix);
+    // The service and the status only: a path can name a person (an operator's OIDC subject when
+    // unlinking them), and the sign-in log keeps and prints its entries across reloads.
+    const reason = `a call to ${prefix} answered ${res.status}`;
+    if (prefix === '/api') goToFullLogin(reason);
+    else goToLogin(prefix, reason);
   }
   return res;
 }
@@ -258,6 +270,25 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
 /** Where the "we have already tried this prefix" mark lives. One key per prefix, per tab. */
 function attemptedKey(prefix: SessionPrefix): string {
   return `spire.session.attempted${prefix}`;
+}
+
+/**
+ * How long a mark keeps a prefix from being tried again.
+ *
+ * <p>The mark exists to stop a reload loop: a prefix that refuses even right after its login would
+ * otherwise send the window round again on every load. It must not outlive that purpose. A chained
+ * login that broke off before reaching a prefix (the gateway still starting after a stack restart)
+ * leaves the prefix marked with no session, and a mark that never expires keeps it that way for the
+ * life of the tab: the attention panel reported the gateway as not responding while it answered, and
+ * F5 changed nothing, because sessionStorage outlives a reload. Two minutes bounds a misconfigured
+ * prefix to one login every two minutes and lets a broken-off one heal on its own.
+ */
+export const SESSION_RETRY_AFTER_MS = 2 * 60_000;
+
+/** Whether this prefix's login was started recently enough that trying again could loop. */
+function triedRecently(prefix: SessionPrefix): boolean {
+  const triedAt = Number(sessionStorage.getItem(attemptedKey(prefix)));
+  return Number.isFinite(triedAt) && Date.now() - triedAt < SESSION_RETRY_AFTER_MS;
 }
 
 /**
@@ -302,7 +333,7 @@ export async function ensureServiceSessions(): Promise<boolean> {
       continue;
     }
     if (!isAuthFailure(res.status)) continue; // a real error is not ours to fix by logging in again
-    if (sessionStorage.getItem(attemptedKey(prefix))) continue; // already tried; do not loop
+    if (triedRecently(prefix)) continue; // just tried; do not loop
     lapsed.push(prefix);
   }
   if (lapsed.length === 0) return false;
@@ -315,8 +346,8 @@ export async function ensureServiceSessions(): Promise<boolean> {
   // loser's prefixes permanently — the next load saw the marks, skipped those prefixes, and those
   // services never got a session for the life of the tab, which the panel then reported as the service
   // being unreachable every 1.5s: a false outage standing in for a session nobody ever tried.
-  if (!goToFullLogin()) return true; // the window is already leaving for a login or a logout
-  for (const prefix of lapsed) sessionStorage.setItem(attemptedKey(prefix), '1');
+  if (!goToFullLogin(`no session for ${lapsed.join(' and ')}`)) return true; // the window is already leaving for a login or a logout
+  for (const prefix of lapsed) sessionStorage.setItem(attemptedKey(prefix), String(Date.now()));
   return true;
 }
 

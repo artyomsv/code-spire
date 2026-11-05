@@ -53,11 +53,11 @@ function parseFrame(data: string): { frame: unknown } | undefined {
  *
  * @returns 'reconnect' when the session is fine; 'handled' when a sign-in started or the screen went away.
  */
-async function diagnoseDrop(gone: () => boolean): Promise<'reconnect' | 'handled'> {
+async function diagnoseDrop(path: string, gone: () => boolean): Promise<'reconnect' | 'handled'> {
   const me = await fetchMe();
   if (gone()) return 'handled';
   if (needsLogin(me)) {
-    goToFullLogin();
+    goToFullLogin(`the socket ${path} closed and /api/me reports no session`);
     return 'handled';
   }
   if (await ensureServiceSessions()) return 'handled';
@@ -98,7 +98,7 @@ function runLiveSocket(path: string, callbacks: SocketWiring['callbacks'], repor
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   const gone = () => closed || isLeavingForAuth();
   const dropped = async () => {
-    if (await diagnoseDrop(gone) === 'handled') return;
+    if (await diagnoseDrop(path, gone) === 'handled') return;
     report({ status: 'down', closeReason: null });
     reconnectTimer = setTimeout(connect, RECONNECT_MS);
   };
