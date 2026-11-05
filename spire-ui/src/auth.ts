@@ -258,7 +258,9 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
     // unchained navigation here won the race and each sibling was then discovered missing one page load
     // at a time — the three renders that read as the app restarting.
     const prefix = prefixFor(input);
-    const reason = `${input.split('?')[0]} answered ${res.status}`;
+    // The service and the status only: a path can name a person (an operator's OIDC subject when
+    // unlinking them), and the sign-in log keeps and prints its entries across reloads.
+    const reason = `a call to ${prefix} answered ${res.status}`;
     if (prefix === '/api') goToFullLogin(reason);
     else goToLogin(prefix, reason);
   }
