@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_LOG_KEY, AUTH_LOG_MAX, readAuthLog, recordAuthEvent, recordPageLoad } from './authLog';
+import {
+  AUTH_LOG_KEY,
+  AUTH_LOG_MAX,
+  LEGACY_AUTH_LOG_KEY,
+  readAuthLog,
+  recordAuthEvent,
+  recordPageLoad,
+} from './authLog';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -55,15 +62,38 @@ describe('the sign-in diagnostic log', () => {
 });
 
 describe('recording a page load', () => {
-  /** The identity provider sends the code and state back in the query: neither may be stored. */
-  it('stores where the page came from without its query', () => {
-    silenceConsole();
-    recordPageLoad('navigate', 'http://localhost:34567/realms/TEST/auth?code=TEST-secret&state=TEST-state');
+  /**
+   * The origin only. The identity provider sends the code and state back in the query, and a path can
+   * name a person: neither may be stored or printed. Which service the page came from is the whole
+   * diagnostic value.
+   */
+  it('stores only the origin the page came from', () => {
+    const info = silenceConsole();
+    recordPageLoad('navigate', 'http://localhost:34567/u/TEST%40example.invalid/extra?code=TEST-secret#TEST-frag');
 
     const [entry] = readAuthLog();
     expect(entry.event).toBe('page load');
-    expect(entry.detail).toBe('navigate from http://localhost:34567/realms/TEST/auth');
-    expect(entry.detail).not.toContain('TEST-secret');
+    expect(entry.detail).toBe('navigate from http://localhost:34567');
+    const printed = JSON.stringify(info.mock.calls);
+    for (const leak of ['TEST%40example.invalid', 'TEST-secret', 'TEST-frag']) {
+      expect(sessionStorage.getItem(AUTH_LOG_KEY)).not.toContain(leak);
+      expect(printed).not.toContain(leak);
+    }
+  });
+
+  /**
+   * An earlier build stored referrer paths under the old key. Those entries are deleted on load,
+   * never read or printed again.
+   */
+  it('deletes the log an earlier build kept, without printing it', () => {
+    const info = silenceConsole();
+    sessionStorage.setItem(LEGACY_AUTH_LOG_KEY, JSON.stringify([{ at: 'TEST', event: 'page load', detail: 'TEST-old-path' }]));
+
+    recordPageLoad('navigate', '');
+
+    expect(sessionStorage.getItem(LEGACY_AUTH_LOG_KEY)).toBeNull();
+    expect(JSON.stringify(info.mock.calls)).not.toContain('TEST-old-path');
+    expect(AUTH_LOG_KEY).not.toBe(LEGACY_AUTH_LOG_KEY);
   });
 
   it('says so when the page came from nowhere', () => {

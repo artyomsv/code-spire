@@ -12,6 +12,7 @@ import {
   takeReturnRoute,
   type Me,
 } from './auth';
+import { AUTH_LOG_KEY } from './authLog';
 
 const me = (over: Partial<Me> = {}): Me => ({
   authEnabled: true,
@@ -133,7 +134,7 @@ describe('apiFetch', () => {
 
     await auth.apiFetch('/api/operator-identities/TEST-subject/GITHUB');
 
-    const stored = sessionStorage.getItem('spire.auth.log') ?? '';
+    const stored = sessionStorage.getItem(AUTH_LOG_KEY) ?? '';
     expect(stored).not.toContain('TEST-subject');
     expect(JSON.parse(stored).at(-1)).toMatchObject({
       event: 'login',
@@ -226,7 +227,7 @@ describe('leaving for the identity provider', () => {
 
     auth.goToLogin('/gw', 'TEST-why');
 
-    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
     expect(log.at(-1)).toMatchObject({ event: 'login', detail: '/gw/auth/login: TEST-why' });
   });
 
@@ -238,7 +239,7 @@ describe('leaving for the identity provider', () => {
     auth.goToFullLogin('TEST-first');
     auth.goToLogin('/gw', 'TEST-second');
 
-    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
     expect(log.map((e: { event: string }) => e.event)).toEqual(['login', 'login skipped']);
   });
 
@@ -250,7 +251,7 @@ describe('leaving for the identity provider', () => {
 
     await auth.goToLogout();
 
-    const log = JSON.parse(sessionStorage.getItem('spire.auth.log') ?? '[]');
+    const log = JSON.parse(sessionStorage.getItem(AUTH_LOG_KEY) ?? '[]');
     expect(log.at(-1)).toMatchObject({ event: 'logout' });
   });
 
