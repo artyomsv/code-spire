@@ -120,6 +120,27 @@ describe('apiFetch', () => {
     expect(assign).toHaveBeenCalledWith('/wk/auth/login');
   });
 
+  /**
+   * A refused path can carry a person's identity: unlinking an operator puts their OIDC subject in
+   * it. The sign-in log keeps entries across reloads and prints them, so it names the service and the
+   * status only, never the path.
+   */
+  it('logs a refusal by service and status, without the path that may name a person', async () => {
+    const auth = await freshAuth();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 499 }));
+    stubLocation();
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await auth.apiFetch('/api/operator-identities/TEST-subject/GITHUB');
+
+    const stored = sessionStorage.getItem('spire.auth.log') ?? '';
+    expect(stored).not.toContain('TEST-subject');
+    expect(JSON.parse(stored).at(-1)).toMatchObject({
+      event: 'login',
+      detail: '/api/auth/login?chain=1: a call to /api answered 499',
+    });
+  });
+
   /** A wrong-role refusal must NOT bounce to a login — logging in again changes nothing. */
   it('does not redirect on a forbidden response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 403 }));
