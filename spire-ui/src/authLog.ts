@@ -7,11 +7,16 @@
  * instead, and every page load prints it again, so the operator can open the console after the
  * reload and still see what started it.
  *
- * <p>Only reasons, paths and times are stored. A referrer is stored without its query, because the
- * identity provider's callback carries the authorization code and state there.
+ * <p>Only events, fixed reasons and times are stored. A referrer is reduced to its origin: the
+ * identity provider's callback carries the authorization code and state in the query, and a path can
+ * name a person. Which service the page came from is all the diagnosis needs.
  */
 
-export const AUTH_LOG_KEY = 'spire.auth.log';
+/** Versioned, so entries an earlier build stored with referrer paths are never read again. */
+export const AUTH_LOG_KEY = 'spire.auth.log.v2';
+
+/** The key an earlier build of this log used. Deleted on every page load, never read. */
+export const LEGACY_AUTH_LOG_KEY = 'spire.auth.log';
 
 /** Enough to cover a burst of reloads, small enough to read at a glance. */
 export const AUTH_LOG_MAX = 30;
@@ -46,14 +51,21 @@ export function recordAuthEvent(event: string, detail: string): void {
   }
 }
 
-/** The referrer's origin and path, or "(none)". */
-function withoutQuery(referrer: string): string {
+/** The referrer's origin only, or "(none)". */
+function originOf(referrer: string): string {
   if (!referrer) return '(none)';
   try {
-    const url = new URL(referrer);
-    return `${url.origin}${url.pathname}`;
+    return new URL(referrer).origin;
   } catch {
     return '(unreadable)';
+  }
+}
+
+function deleteLegacyLog(): void {
+  try {
+    sessionStorage.removeItem(LEGACY_AUTH_LOG_KEY);
+  } catch {
+    // Site data blocked: there is nothing stored to delete either.
   }
 }
 
@@ -64,6 +76,7 @@ function withoutQuery(referrer: string): string {
  * @param referrer where the page came from, as `document.referrer` reports it
  */
 export function recordPageLoad(navigationType: string, referrer: string): void {
-  recordAuthEvent('page load', `${navigationType} from ${withoutQuery(referrer)}`);
+  deleteLegacyLog();
+  recordAuthEvent('page load', `${navigationType} from ${originOf(referrer)}`);
   console.info('[spire auth] recent events', readAuthLog());
 }
