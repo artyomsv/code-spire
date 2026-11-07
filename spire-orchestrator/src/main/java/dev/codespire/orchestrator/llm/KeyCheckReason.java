@@ -1,65 +1,72 @@
 package dev.codespire.orchestrator.llm;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.codespire.secrets.SecretScrub;
-
 import java.io.IOException;
-import java.net.http.HttpResponse;
-import java.util.List;
-import java.util.regex.Pattern;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 /**
- * Why a provider refused a key check, in words an operator can act on.
+ * Why a key check failed, as one of a fixed set of reasons in the application's own words.
  *
- * <p>The provider's own {@code error.message} is the useful part: Anthropic refuses a user key that is
- * not scoped to a workspace with a 400 that says exactly that, and without it the dialog showed only
- * "(400)". OpenAI, Anthropic and Gemini all answer {@code {"error": {"message": ...}}}.
- *
- * <p>The message comes from outside, so it is cleaned before it is shown or stored: the submitted key
- * goes through the shared {@link SecretScrub} (its raw and URL-encoded forms), whitespace and control
- * characters collapse to one space, and the length is capped.
+ * <p>Provider text is never returned, stored or logged. It can echo part of the key or name an
+ * account, and this reason reaches the save dialog, the Check button, a warning log line and the
+ * provider's stored last check error. A provider answer is only RECOGNISED: Anthropic refuses a user
+ * key that is not scoped to a workspace with a 400 whose body says so, and that answer maps to
+ * {@link #WORKSPACE_REQUIRED}; everything else maps by status.
  */
-final class KeyCheckReason {
+enum KeyCheckReason {
 
-    /** The response body as text; a key check answer is small (a models list or an error). */
-    static final HttpResponse.BodyHandler<String> BODY = HttpResponse.BodyHandlers.ofString();
+    REJECTED("The LLM provider rejected the API key (HTTP %d). Check that the key is correct and active."),
+    WORKSPACE_REQUIRED("The LLM provider refused the key check (HTTP %d): this Anthropic key is not scoped to a"
+            + " workspace. Create the API key inside a workspace in the Anthropic Console."),
+    RATE_LIMITED("The LLM provider is rate limiting this key (HTTP %d). Try again later."),
+    PROVIDER_FAILING("The LLM provider is failing (HTTP %d). Try again later."),
+    REFUSED("The LLM provider refused the key check (HTTP %d). Check the base URL and the key."),
+    TIMEOUT("The LLM provider did not answer in time. Try again later."),
+    UNREACHABLE("Could not reach the LLM provider. Check the base URL and the network.");
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final int MAX_MESSAGE = 300;
-    private static final Pattern WHITESPACE_OR_CONTROL = Pattern.compile("[\\p{Cntrl}\\s]+");
+    /** How much of an error body is read to recognise it. A body past this is never read. */
+    static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
 
-    private KeyCheckReason() {
+    private static final String WORKSPACE_MARKER = "not scoped to a workspace";
+
+    private final String template;
+
+    KeyCheckReason(String template) {
+        this.template = template;
+    }
+
+    /** The operator-facing sentence. {@code status} is ignored by the reasons that carry none. */
+    String message(int status) {
+        return template.contains("%d") ? String.format(Locale.ROOT, template, status) : template;
     }
 
     /**
-     * @param status the provider's non-2xx status
-     * @param body   the provider's response body, possibly empty or not JSON
-     * @param apiKey the key that was checked; it never appears in the result
+     * The reason for a non-2xx answer.
+     *
+     * @param errorBody the answer's body, read here up to {@link #MAX_ERROR_BODY_BYTES} and then closed
      */
-    static String of(int status, String body, String apiKey) {
-        String headline = status == 401 || status == 403
-                ? "The LLM provider rejected the API key (HTTP " + status + ")"
-                : "The LLM provider refused the key check (HTTP " + status + ")";
-        String message = clean(providerMessage(body), apiKey);
-        return message.isEmpty() ? headline + "." : headline + ": " + message;
+    static KeyCheckReason forStatus(int status, InputStream errorBody) {
+        if (status == 401 || status == 403) {
+            return REJECTED;
+        }
+        if (status == 429) {
+            return RATE_LIMITED;
+        }
+        if (status >= 500) {
+            return PROVIDER_FAILING;
+        }
+        if (status == 400 && boundedText(errorBody).toLowerCase(Locale.ROOT).contains(WORKSPACE_MARKER)) {
+            return WORKSPACE_REQUIRED;
+        }
+        return REFUSED;
     }
 
-    private static String providerMessage(String body) {
-        if (body == null || body.isBlank()) {
+    private static String boundedText(InputStream body) {
+        try (InputStream in = body) {
+            return new String(in.readNBytes(MAX_ERROR_BODY_BYTES), StandardCharsets.UTF_8);
+        } catch (IOException unreadable) {
             return "";
         }
-        try {
-            JsonNode message = JSON.readTree(body).path("error").path("message");
-            return message.isTextual() ? message.asText() : "";
-        } catch (IOException notJson) {
-            return "";
-        }
-    }
-
-    private static String clean(String message, String apiKey) {
-        String withoutKey = SecretScrub.of(List.of(new SecretScrub.Credential(null, apiKey))).clean(message);
-        String oneLine = WHITESPACE_OR_CONTROL.matcher(withoutKey).replaceAll(" ").strip();
-        return oneLine.length() > MAX_MESSAGE ? oneLine.substring(0, MAX_MESSAGE) + "…" : oneLine;
     }
 }

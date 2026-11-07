@@ -6,10 +6,13 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 
 /**
@@ -25,28 +28,30 @@ public class LlmKeyValidator {
 
     private static final Logger LOG = Logger.getLogger(LlmKeyValidator.class);
 
+    /** How long a key check waits for the provider, to connect and to answer. */
+    static final Duration TIMEOUT = Duration.ofSeconds(10);
+
     private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(TIMEOUT)
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
     /**
-     * @throws BadRequestException whose plain-text body says why the key was refused, in the
-     *         provider's own words where it gave any. The body matters: the dialog shows it, and an
-     *         exception built from a bare message has none, which left the operator with "(400)".
+     * @throws BadRequestException whose plain-text body is a fixed {@link KeyCheckReason}. The body
+     *         matters: the dialog shows it, and an exception built from a bare message has none, which
+     *         left the operator with "(400)".
      */
     public void ping(String type, String baseUrl, String apiKey) {
-        HttpRequest request = authenticated(type, baseUrl, apiKey);
-        HttpResponse<String> response = send(request, request.uri());
-        if (response.statusCode() / 100 != 2) {
-            throw badRequest(KeyCheckReason.of(response.statusCode(), response.body(), apiKey));
+        Answer answer = call(authenticated(type, baseUrl, apiKey));
+        if (!answer.ok()) {
+            throw badRequest(answer.message());
         }
     }
 
     /** The per-type authenticated {@code /models} request. Key travels in a header, never the URL. */
     private HttpRequest authenticated(String type, String baseUrl, String apiKey) {
         URI uri = URI.create(trimTrailingSlash(baseUrl) + "/models");
-        HttpRequest.Builder req = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).GET();
+        HttpRequest.Builder req = HttpRequest.newBuilder(uri).timeout(TIMEOUT).GET();
         switch (type == null ? "" : type) {
             case "openai" -> req.header("Authorization", "Bearer " + apiKey);
             case "anthropic" -> req.header("x-api-key", apiKey).header("anthropic-version", "2023-06-01");
@@ -90,27 +95,53 @@ public class LlmKeyValidator {
         } catch (BadRequestException e) {
             return new CheckOutcome(false, 0, String.valueOf(e.getResponse().getEntity()));
         }
-        HttpResponse<String> response;
-        try {
-            response = http.send(request, KeyCheckReason.BODY);
-        } catch (Exception e) {
-            LOG.warnf(e, "LLM key check call failed for host %s", request.uri().getHost());
-            return new CheckOutcome(false, 0, "Could not reach the LLM provider.");
-        }
-        int status = response.statusCode();
-        if (status / 100 != 2) {
-            return new CheckOutcome(false, status, KeyCheckReason.of(status, response.body(), apiKey));
-        }
-        return new CheckOutcome(true, status, null);
+        Answer answer = call(request);
+        return new CheckOutcome(answer.ok(), answer.status(), answer.ok() ? null : answer.message());
     }
 
-    private HttpResponse<String> send(HttpRequest req, URI uri) {
+    /** One key check call: the status (0 when there was no answer) and, when it failed, why. */
+    private record Answer(int status, KeyCheckReason reason) {
+
+        boolean ok() {
+            return reason == null;
+        }
+
+        String message() {
+            return reason.message(status);
+        }
+    }
+
+    /**
+     * Sends the check. A successful body is closed unread (a models list is not needed, and closing
+     * cancels it); an error body is read only up to {@link KeyCheckReason#MAX_ERROR_BODY_BYTES}.
+     */
+    private Answer call(HttpRequest request) {
+        HttpResponse<InputStream> response;
         try {
-            return http.send(req, KeyCheckReason.BODY);
-        } catch (Exception e) {
-            // Generic message to the client; the exception stays server-side.
-            LOG.warnf(e, "LLM key validation call failed for host %s", uri.getHost());
-            throw badRequest("Could not reach the LLM provider to validate the key.");
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (HttpTimeoutException e) {
+            LOG.warnf(e, "LLM key check timed out for host %s", request.uri().getHost());
+            return new Answer(0, KeyCheckReason.TIMEOUT);
+        } catch (IOException e) {
+            LOG.warnf(e, "LLM key check call failed for host %s", request.uri().getHost());
+            return new Answer(0, KeyCheckReason.UNREACHABLE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Answer(0, KeyCheckReason.UNREACHABLE);
+        }
+        int status = response.statusCode();
+        if (status / 100 == 2) {
+            closeUnread(response.body());
+            return new Answer(status, null);
+        }
+        return new Answer(status, KeyCheckReason.forStatus(status, response.body()));
+    }
+
+    private static void closeUnread(InputStream body) {
+        try {
+            body.close();
+        } catch (IOException ignored) {
+            // The answer is already known; a failed close changes nothing about it.
         }
     }
 
