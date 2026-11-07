@@ -2,9 +2,11 @@ package dev.codespire.orchestrator.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.secrets.SecretScrub;
 
 import java.io.IOException;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.regex.Pattern;
 
 /**
@@ -15,8 +17,8 @@ import java.util.regex.Pattern;
  * "(400)". OpenAI, Anthropic and Gemini all answer {@code {"error": {"message": ...}}}.
  *
  * <p>The message comes from outside, so it is cleaned before it is shown or stored: the submitted key
- * and anything key-shaped are removed (OpenAI echoes part of a wrong key), control characters are
- * dropped and the length is capped.
+ * goes through the shared {@link SecretScrub} (its raw and URL-encoded forms), whitespace and control
+ * characters collapse to one space, and the length is capped.
  */
 final class KeyCheckReason {
 
@@ -25,10 +27,7 @@ final class KeyCheckReason {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_MESSAGE = 300;
-    private static final String REDACTED = "[redacted]";
-    /** Vendor key shapes: OpenAI and Anthropic {@code sk-…}, Gemini {@code AIza…}. */
-    private static final Pattern KEY_SHAPED = Pattern.compile("(sk-[A-Za-z0-9_*\\-]{6,}|AIza[A-Za-z0-9_\\-]{10,})");
-    private static final Pattern CONTROL = Pattern.compile("[\\p{Cntrl}\\s]+");
+    private static final Pattern WHITESPACE_OR_CONTROL = Pattern.compile("[\\p{Cntrl}\\s]+");
 
     private KeyCheckReason() {
     }
@@ -36,7 +35,7 @@ final class KeyCheckReason {
     /**
      * @param status the provider's non-2xx status
      * @param body   the provider's response body, possibly empty or not JSON
-     * @param apiKey the key that was checked, removed from the message wherever it appears
+     * @param apiKey the key that was checked; it never appears in the result
      */
     static String of(int status, String body, String apiKey) {
         String headline = status == 401 || status == 403
@@ -59,12 +58,8 @@ final class KeyCheckReason {
     }
 
     private static String clean(String message, String apiKey) {
-        String cleaned = message;
-        if (apiKey != null && !apiKey.isBlank()) {
-            cleaned = cleaned.replace(apiKey, REDACTED);
-        }
-        cleaned = KEY_SHAPED.matcher(cleaned).replaceAll(REDACTED);
-        cleaned = CONTROL.matcher(cleaned).replaceAll(" ").strip();
-        return cleaned.length() > MAX_MESSAGE ? cleaned.substring(0, MAX_MESSAGE) + "…" : cleaned;
+        String withoutKey = SecretScrub.of(List.of(new SecretScrub.Credential(null, apiKey))).clean(message);
+        String oneLine = WHITESPACE_OR_CONTROL.matcher(withoutKey).replaceAll(" ").strip();
+        return oneLine.length() > MAX_MESSAGE ? oneLine.substring(0, MAX_MESSAGE) + "…" : oneLine;
     }
 }

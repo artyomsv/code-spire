@@ -143,20 +143,23 @@ class LlmProviderResourceTest {
                 .body(equalTo("The LLM provider rejected the API key (HTTP 401): TEST-invalid x-api-key"));
     }
 
-    /** OpenAI echoes part of a wrong key in its message. Nothing key-shaped may come back out. */
+    /**
+     * A provider may echo the key it refused. The submitted key goes through the shared
+     * SecretScrub, so neither its raw nor its URL-encoded form comes back out.
+     */
     @Test
     void theProvidersMessageNeverCarriesTheKey() {
         llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(401)
                 .withHeader("Content-Type", "application/json")
-                .withBody("{\"error\":{\"message\":\"Incorrect API key provided: sk-TESTabcdef1234."
-                        + " Also TEST-secret-key-value.\"}}")));
+                .withBody("{\"error\":{\"message\":\"Incorrect API key provided: TEST-secret key/value,"
+                        + " sent as TEST-secret+key%2Fvalue.\"}}")));
 
-        String said = given().contentType("application/json").body(body("TEST-secret-key-value"))
+        String said = given().contentType("application/json").body(body("TEST-secret key/value"))
                 .when().post("/api/llm-providers")
                 .then().statusCode(400).extract().asString();
 
-        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret-key-value"), said);
-        org.junit.jupiter.api.Assertions.assertFalse(said.contains("sk-TESTabcdef1234"), said);
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret key/value"), said);
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret+key%2Fvalue"), said);
         org.junit.jupiter.api.Assertions.assertTrue(said.contains("Incorrect API key provided"), said);
     }
 
@@ -179,12 +182,12 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
         llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(403)
                 .withHeader("Content-Type", "application/json")
-                .withBody("{\"error\":{\"message\":\"TEST-key disabled\"}}")));
+                .withBody("{\"error\":{\"message\":\"TEST-access disabled\"}}")));
 
         given().when().post("/api/llm-providers/" + id + "/check")
                 .then().statusCode(200)
                 .body("ok", is(false))
-                .body("detail", equalTo("The LLM provider rejected the API key (HTTP 403): TEST-key disabled"));
+                .body("detail", equalTo("The LLM provider rejected the API key (HTTP 403): TEST-access disabled"));
     }
 
     @Test
