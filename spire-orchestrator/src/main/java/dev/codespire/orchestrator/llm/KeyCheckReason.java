@@ -1,8 +1,9 @@
 package dev.codespire.orchestrator.llm;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
@@ -10,9 +11,10 @@ import java.util.Locale;
  *
  * <p>Provider text is never returned, stored or logged. It can echo part of the key or name an
  * account, and this reason reaches the save dialog, the Check button, a warning log line and the
- * provider's stored last check error. A provider answer is only RECOGNISED: Anthropic refuses a user
- * key that is not scoped to a workspace with a 400 whose body says so, and that answer maps to
- * {@link #WORKSPACE_REQUIRED}; everything else maps by status.
+ * provider's stored last check error. One provider answer is RECOGNISED, never repeated: Anthropic
+ * refuses a user key that is not scoped to a workspace with a 400 in its own error shape, and that
+ * maps to {@link #WORKSPACE_REQUIRED}. Every other answer maps by status alone, and its body is not
+ * read at all ({@link #needsBody}).
  */
 enum KeyCheckReason {
 
@@ -25,9 +27,11 @@ enum KeyCheckReason {
     TIMEOUT("The LLM provider did not answer in time. Try again later."),
     UNREACHABLE("Could not reach the LLM provider. Check the base URL and the network.");
 
-    /** How much of an error body is read to recognise it. A body past this is never read. */
+    /** How much of an error body is read to recognise it. The rest is never read. */
     static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String ANTHROPIC = "anthropic";
     private static final String WORKSPACE_MARKER = "not scoped to a workspace";
 
     private final String template;
@@ -41,12 +45,17 @@ enum KeyCheckReason {
         return template.contains("%d") ? String.format(Locale.ROOT, template, status) : template;
     }
 
+    /** Whether this answer's body can change its reason, so whether it is worth reading at all. */
+    static boolean needsBody(String type, int status) {
+        return ANTHROPIC.equals(type) && status == 400;
+    }
+
     /**
      * The reason for a non-2xx answer.
      *
-     * @param errorBody the answer's body, read here up to {@link #MAX_ERROR_BODY_BYTES} and then closed
+     * @param body at most {@link #MAX_ERROR_BODY_BYTES} of it, and only when {@link #needsBody} said so
      */
-    static KeyCheckReason forStatus(int status, InputStream errorBody) {
+    static KeyCheckReason forStatus(String type, int status, byte[] body) {
         if (status == 401 || status == 403) {
             return REJECTED;
         }
@@ -56,17 +65,22 @@ enum KeyCheckReason {
         if (status >= 500) {
             return PROVIDER_FAILING;
         }
-        if (status == 400 && boundedText(errorBody).toLowerCase(Locale.ROOT).contains(WORKSPACE_MARKER)) {
+        if (needsBody(type, status) && isAnthropicWorkspaceRefusal(body)) {
             return WORKSPACE_REQUIRED;
         }
         return REFUSED;
     }
 
-    private static String boundedText(InputStream body) {
-        try (InputStream in = body) {
-            return new String(in.readNBytes(MAX_ERROR_BODY_BYTES), StandardCharsets.UTF_8);
-        } catch (IOException unreadable) {
-            return "";
+    /** Anthropic's error shape, {@code {"type":"error","error":{"message":...}}}, saying so in its message. */
+    private static boolean isAnthropicWorkspaceRefusal(byte[] body) {
+        try {
+            JsonNode root = JSON.readTree(body);
+            JsonNode message = root.path("error").path("message");
+            return "error".equals(root.path("type").asText())
+                    && message.isTextual()
+                    && message.asText().toLowerCase(Locale.ROOT).contains(WORKSPACE_MARKER);
+        } catch (IOException notJson) {
+            return false;
         }
     }
 }

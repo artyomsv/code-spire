@@ -6,14 +6,16 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Validates an LLM provider's key on save — a cheap authenticated request to the
@@ -42,7 +44,7 @@ public class LlmKeyValidator {
      *         left the operator with "(400)".
      */
     public void ping(String type, String baseUrl, String apiKey) {
-        Answer answer = call(authenticated(type, baseUrl, apiKey));
+        Answer answer = call(authenticated(type, baseUrl, apiKey), type);
         if (!answer.ok()) {
             throw badRequest(answer.message());
         }
@@ -95,7 +97,7 @@ public class LlmKeyValidator {
         } catch (BadRequestException e) {
             return new CheckOutcome(false, 0, String.valueOf(e.getResponse().getEntity()));
         }
-        Answer answer = call(request);
+        Answer answer = call(request, type);
         return new CheckOutcome(answer.ok(), answer.status(), answer.ok() ? null : answer.message());
     }
 
@@ -112,37 +114,42 @@ public class LlmKeyValidator {
     }
 
     /**
-     * Sends the check. A successful body is closed unread (a models list is not needed, and closing
-     * cancels it); an error body is read only up to {@link KeyCheckReason#MAX_ERROR_BODY_BYTES}.
+     * Sends the check under ONE deadline for headers and body together. The request timeout alone ends
+     * at the headers, so a body that stalled after them held the thread with no limit. On expiry the
+     * exchange is cancelled, not merely abandoned. A body is read only when its reason depends on it,
+     * and then only up to {@link KeyCheckReason#MAX_ERROR_BODY_BYTES}; every other body is cancelled
+     * unread ({@link BoundedBody}).
+     *
+     * <p>A failure is logged by its kind only. The HTTP client builds its exception text from bytes the
+     * provider sent, which can echo the key, so neither that text nor the throwable is logged.
      */
-    private Answer call(HttpRequest request) {
-        HttpResponse<InputStream> response;
+    private Answer call(HttpRequest request, String type) {
+        CompletableFuture<HttpResponse<byte[]>> pending = http.sendAsync(request, info -> new BoundedBody(
+                KeyCheckReason.needsBody(type, info.statusCode()) ? KeyCheckReason.MAX_ERROR_BODY_BYTES : 0));
+        HttpResponse<byte[]> response;
         try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (HttpTimeoutException e) {
-            LOG.warnf(e, "LLM key check timed out for host %s", request.uri().getHost());
-            return new Answer(0, KeyCheckReason.TIMEOUT);
-        } catch (IOException e) {
-            LOG.warnf(e, "LLM key check call failed for host %s", request.uri().getHost());
-            return new Answer(0, KeyCheckReason.UNREACHABLE);
+            response = pending.get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            pending.cancel(true);
+            return failed(request, KeyCheckReason.TIMEOUT, "deadline");
+        } catch (ExecutionException e) {
+            boolean timedOut = e.getCause() instanceof HttpTimeoutException;
+            return failed(request, timedOut ? KeyCheckReason.TIMEOUT : KeyCheckReason.UNREACHABLE,
+                    e.getCause() == null ? "unknown" : e.getCause().getClass().getSimpleName());
         } catch (InterruptedException e) {
+            pending.cancel(true);
             Thread.currentThread().interrupt();
-            return new Answer(0, KeyCheckReason.UNREACHABLE);
+            return failed(request, KeyCheckReason.UNREACHABLE, "interrupted");
         }
         int status = response.statusCode();
-        if (status / 100 == 2) {
-            closeUnread(response.body());
-            return new Answer(status, null);
-        }
-        return new Answer(status, KeyCheckReason.forStatus(status, response.body()));
+        return status / 100 == 2
+                ? new Answer(status, null)
+                : new Answer(status, KeyCheckReason.forStatus(type, status, response.body()));
     }
 
-    private static void closeUnread(InputStream body) {
-        try {
-            body.close();
-        } catch (IOException ignored) {
-            // The answer is already known; a failed close changes nothing about it.
-        }
+    private static Answer failed(HttpRequest request, KeyCheckReason reason, String kind) {
+        LOG.warnf("LLM key check to host %s failed (%s): %s", request.uri().getHost(), kind, reason.name());
+        return new Answer(0, reason);
     }
 
     private static BadRequestException badRequest(String reason) {
