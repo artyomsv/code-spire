@@ -111,6 +111,82 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(400);
     }
 
+    /**
+     * The dialog shows the response body, and an empty one left the operator with "(400)" and
+     * nothing to act on. Anthropic refused a user key with its reason in the body; it must reach
+     * the screen.
+     */
+    @Test
+    void aRefusedKeyCheckSaysWhyInTheProvidersOwnWords() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(400)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+                        + "\"message\":\"TEST-This API key is not scoped to a workspace.\"}}")));
+
+        given().contentType("application/json").body(body("TEST-key"))
+                .when().post("/api/llm-providers")
+                .then().statusCode(400)
+                .contentType(org.hamcrest.Matchers.containsString("text/plain"))
+                .body(equalTo("The LLM provider refused the key check (HTTP 400):"
+                        + " TEST-This API key is not scoped to a workspace."));
+    }
+
+    @Test
+    void aRejectedKeySaysSoAndWhy() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(401)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\":{\"message\":\"TEST-invalid x-api-key\"}}")));
+
+        given().contentType("application/json").body(body("TEST-key"))
+                .when().post("/api/llm-providers")
+                .then().statusCode(400)
+                .body(equalTo("The LLM provider rejected the API key (HTTP 401): TEST-invalid x-api-key"));
+    }
+
+    /** OpenAI echoes part of a wrong key in its message. Nothing key-shaped may come back out. */
+    @Test
+    void theProvidersMessageNeverCarriesTheKey() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(401)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\":{\"message\":\"Incorrect API key provided: sk-TESTabcdef1234."
+                        + " Also TEST-secret-key-value.\"}}")));
+
+        String said = given().contentType("application/json").body(body("TEST-secret-key-value"))
+                .when().post("/api/llm-providers")
+                .then().statusCode(400).extract().asString();
+
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret-key-value"), said);
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("sk-TESTabcdef1234"), said);
+        org.junit.jupiter.api.Assertions.assertTrue(said.contains("Incorrect API key provided"), said);
+    }
+
+    /** A body that is not the providers' JSON error shape (a proxy's HTML page) adds nothing. */
+    @Test
+    void aBodyWithNoMessageStillNamesTheStatus() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(502)
+                .withHeader("Content-Type", "text/html").withBody("<html>TEST-gateway</html>")));
+
+        given().contentType("application/json").body(body("TEST-key"))
+                .when().post("/api/llm-providers")
+                .then().statusCode(400)
+                .body(equalTo("The LLM provider refused the key check (HTTP 502)."));
+    }
+
+    /** The Check button and the attention row read the same reason. */
+    @Test
+    void theCheckButtonReportsTheProvidersReasonToo() {
+        String id = given().contentType("application/json").body(body("TEST-key"))
+                .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(403)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"error\":{\"message\":\"TEST-key disabled\"}}")));
+
+        given().when().post("/api/llm-providers/" + id + "/check")
+                .then().statusCode(200)
+                .body("ok", is(false))
+                .body("detail", equalTo("The LLM provider rejected the API key (HTTP 403): TEST-key disabled"));
+    }
+
     @Test
     void rejectsAnUnsupportedType() {
         var b = body("sk-good");
