@@ -9,19 +9,23 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
 
 /**
- * A response body read up to a byte limit, then cancelled.
+ * A response body kept up to a byte limit, and finished the moment it has the limit.
  *
- * <p>Cancelling the subscription is what releases the exchange: the client stops reading the body and
- * closes or returns the connection, so a large or never-ending body costs no more than the limit and
- * never holds a connection open. A limit of 0 cancels at once, for a body nobody needs. A body that
- * ends early, or breaks, completes with what arrived: the result is only a hint for classification.
+ * <p>Finishing early is what lets the caller go on without the rest of the body: the response is
+ * delivered as soon as this completes, and the caller then shuts its client down, which closes the
+ * connection and ends whatever the body still had to send. A limit of 0 finishes at once and asks for
+ * nothing, for a body nobody needs. Bytes past the limit are never kept. A body that ends early, or
+ * breaks, finishes with what arrived: the result is only a hint for classification.
+ *
+ * <p>It does not cancel its subscription. Cancelling from here, before or during the body, made the
+ * JDK client fail or hang the exchange instead of delivering the response; closing the client is the
+ * reliable way to stop a body.
  */
 final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
 
     private final int limit;
     private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     private final CompletableFuture<byte[]> result = new CompletableFuture<>();
-    private Flow.Subscription subscription;
 
     BoundedBody(int limit) {
         this.limit = limit;
@@ -29,9 +33,8 @@ final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
 
     @Override
     public void onSubscribe(Flow.Subscription subscription) {
-        this.subscription = subscription;
         if (limit == 0) {
-            finish();
+            result.complete(new byte[0]);
             return;
         }
         subscription.request(Long.MAX_VALUE);
@@ -48,7 +51,7 @@ final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
             item.get(chunk);
             bytes.write(chunk, 0, take);
             if (bytes.size() >= limit) {
-                finish();
+                result.complete(bytes.toByteArray());
             }
         }
     }
@@ -66,10 +69,5 @@ final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
     @Override
     public CompletionStage<byte[]> getBody() {
         return result;
-    }
-
-    private void finish() {
-        subscription.cancel();
-        result.complete(bytes.toByteArray());
     }
 }

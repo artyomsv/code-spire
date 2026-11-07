@@ -12,9 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The byte bound of a key check's error body, measured at the subscription (review of PR #393): the
- * reader cancels the moment it has its limit, without waiting for the body to end. A reader that took
- * everything and truncated afterwards would never cancel, and every case below would fail.
+ * The byte bound of a key check's error body (review of PR #393): the reader finishes the moment it
+ * has its limit, without waiting for the body to end, and keeps nothing past it. A reader that took
+ * everything and truncated afterwards would not be done before the body ended, and the first two cases
+ * would fail. It never cancels: the caller closes its client, which ends the body.
  */
 class BoundedBodyTest {
 
@@ -39,15 +40,15 @@ class BoundedBodyTest {
     }
 
     @Test
-    void stopsAndCancelsAtTheLimitWithoutWaitingForTheEnd() {
+    void finishesAtTheLimitWithoutWaitingForTheEnd() {
         BoundedBody body = new BoundedBody(10);
         Recorded subscription = new Recorded();
         body.onSubscribe(subscription);
 
         body.onNext(List.of(bytes(6, 'a'), bytes(6, 'b')));
 
-        assertEquals(1, subscription.cancels, "cancelled once, at the limit");
         assertTrue(body.getBody().toCompletableFuture().isDone(), "done before the body ended");
+        assertEquals(0, subscription.cancels, "the client is closed by the caller, not cancelled here");
         assertArrayEquals("aaaaaabbbb".getBytes(), body.getBody().toCompletableFuture().join());
     }
 
@@ -60,18 +61,17 @@ class BoundedBodyTest {
         body.onNext(List.of(bytes(4, 'a')));
         body.onNext(List.of(bytes(100, 'b')));
 
-        assertEquals(1, subscription.cancels);
         assertArrayEquals("aaaa".getBytes(), body.getBody().toCompletableFuture().join());
     }
 
-    /** A body nobody needs is cancelled before a byte is asked for. */
+    /** A body nobody needs finishes before a byte is asked for. */
     @Test
-    void aZeroLimitCancelsAtOnceAndAsksForNothing() {
+    void aZeroLimitFinishesAtOnceAndAsksForNothing() {
         BoundedBody body = new BoundedBody(0);
         Recorded subscription = new Recorded();
         body.onSubscribe(subscription);
 
-        assertEquals(1, subscription.cancels);
+        assertTrue(body.getBody().toCompletableFuture().isDone());
         assertEquals(0, subscription.requested);
         assertEquals(0, body.getBody().toCompletableFuture().join().length);
     }

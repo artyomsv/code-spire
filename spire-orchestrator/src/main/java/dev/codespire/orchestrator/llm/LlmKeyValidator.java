@@ -33,10 +33,17 @@ public class LlmKeyValidator {
     /** How long a key check waits for the provider, to connect and to answer. */
     static final Duration TIMEOUT = Duration.ofSeconds(10);
 
-    private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(TIMEOUT)
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
+    /**
+     * A client of its own per check, shut down when the check has its answer. Shutting it down closes
+     * the connection, which is what ends a body nobody reads or one that stalls; a shared client would
+     * keep that connection, and pool it for the next check.
+     */
+    private static HttpClient newClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(TIMEOUT)
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+    }
 
     /**
      * @throws BadRequestException whose plain-text body is a fixed {@link KeyCheckReason}. The body
@@ -116,15 +123,25 @@ public class LlmKeyValidator {
     /**
      * Sends the check under ONE deadline for headers and body together. The request timeout alone ends
      * at the headers, so a body that stalled after them held the thread with no limit. On expiry the
-     * exchange is cancelled, not merely abandoned. A body is read only when its reason depends on it,
-     * and then only up to {@link KeyCheckReason#MAX_ERROR_BODY_BYTES}; every other body is cancelled
-     * unread ({@link BoundedBody}).
+     * client is shut down, which closes the exchange rather than abandoning it. A body is read only
+     * when its reason depends on it, and then only up to {@link KeyCheckReason#MAX_ERROR_BODY_BYTES};
+     * every other body is not read at all ({@link BoundedBody}), and its connection closes with the
+     * client.
      *
      * <p>A failure is logged by its kind only. The HTTP client builds its exception text from bytes the
      * provider sent, which can echo the key, so neither that text nor the throwable is logged.
      */
     private Answer call(HttpRequest request, String type) {
-        CompletableFuture<HttpResponse<byte[]>> pending = http.sendAsync(request, info -> new BoundedBody(
+        HttpClient client = newClient();
+        try {
+            return await(client, request, type);
+        } finally {
+            client.shutdownNow();
+        }
+    }
+
+    private Answer await(HttpClient client, HttpRequest request, String type) {
+        CompletableFuture<HttpResponse<byte[]>> pending = client.sendAsync(request, info -> new BoundedBody(
                 KeyCheckReason.needsBody(type, info.statusCode()) ? KeyCheckReason.MAX_ERROR_BODY_BYTES : 0));
         HttpResponse<byte[]> response;
         try {
