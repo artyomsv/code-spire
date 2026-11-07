@@ -2,6 +2,8 @@ package dev.codespire.orchestrator.llm;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
 import java.net.URI;
@@ -28,10 +30,17 @@ public class LlmKeyValidator {
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
-    /** @throws BadRequestException with a generic message if the key/model is rejected or unreachable. */
+    /**
+     * @throws BadRequestException whose plain-text body says why the key was refused, in the
+     *         provider's own words where it gave any. The body matters: the dialog shows it, and an
+     *         exception built from a bare message has none, which left the operator with "(400)".
+     */
     public void ping(String type, String baseUrl, String apiKey) {
         HttpRequest request = authenticated(type, baseUrl, apiKey);
-        interpret(send(request, request.uri()));
+        HttpResponse<String> response = send(request, request.uri());
+        if (response.statusCode() / 100 != 2) {
+            throw badRequest(KeyCheckReason.of(response.statusCode(), response.body(), apiKey));
+        }
     }
 
     /** The per-type authenticated {@code /models} request. Key travels in a header, never the URL. */
@@ -42,7 +51,7 @@ public class LlmKeyValidator {
             case "openai" -> req.header("Authorization", "Bearer " + apiKey);
             case "anthropic" -> req.header("x-api-key", apiKey).header("anthropic-version", "2023-06-01");
             case "gemini" -> req.header("x-goog-api-key", apiKey);
-            default -> throw new BadRequestException("Unsupported LLM provider type '" + type + "'");
+            default -> throw badRequest("Unsupported LLM provider type '" + type + "'");
         }
         return req.build();
     }
@@ -79,43 +88,35 @@ public class LlmKeyValidator {
         try {
             request = authenticated(type, baseUrl, apiKey);
         } catch (BadRequestException e) {
-            return new CheckOutcome(false, 0, e.getMessage());
+            return new CheckOutcome(false, 0, String.valueOf(e.getResponse().getEntity()));
         }
-        int status;
+        HttpResponse<String> response;
         try {
-            status = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            response = http.send(request, KeyCheckReason.BODY);
         } catch (Exception e) {
             LOG.warnf(e, "LLM key check call failed for host %s", request.uri().getHost());
             return new CheckOutcome(false, 0, "Could not reach the LLM provider.");
         }
-        if (status == 401 || status == 403) {
-            return new CheckOutcome(false, status,
-                    "The LLM provider rejected the API key (HTTP " + status + ").");
-        }
+        int status = response.statusCode();
         if (status / 100 != 2) {
-            return new CheckOutcome(false, status,
-                    "The LLM provider returned an unexpected status (" + status + ").");
+            return new CheckOutcome(false, status, KeyCheckReason.of(status, response.body(), apiKey));
         }
         return new CheckOutcome(true, status, null);
     }
 
-    private int send(HttpRequest req, URI uri) {
+    private HttpResponse<String> send(HttpRequest req, URI uri) {
         try {
-            return http.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
+            return http.send(req, KeyCheckReason.BODY);
         } catch (Exception e) {
-            // Generic message to the client (no upstream echo); detail stays server-side.
+            // Generic message to the client; the exception stays server-side.
             LOG.warnf(e, "LLM key validation call failed for host %s", uri.getHost());
-            throw new BadRequestException("Could not reach the LLM provider to validate the key");
+            throw badRequest("Could not reach the LLM provider to validate the key.");
         }
     }
 
-    private void interpret(int status) {
-        if (status == 401 || status == 403) {
-            throw new BadRequestException("The LLM provider rejected the API key");
-        }
-        if (status / 100 != 2) {
-            throw new BadRequestException("The LLM provider returned an unexpected status (" + status + ")");
-        }
+    private static BadRequestException badRequest(String reason) {
+        return new BadRequestException(Response.status(Response.Status.BAD_REQUEST)
+                .type(MediaType.TEXT_PLAIN).entity(reason).build());
     }
 
     private static String trimTrailingSlash(String s) {
