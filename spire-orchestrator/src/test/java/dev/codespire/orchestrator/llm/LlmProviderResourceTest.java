@@ -111,73 +111,116 @@ class LlmProviderResourceTest {
                 .when().post("/api/llm-providers").then().statusCode(400);
     }
 
-    /**
-     * The dialog shows the response body, and an empty one left the operator with "(400)" and
-     * nothing to act on. Anthropic refused a user key with its reason in the body; it must reach
-     * the screen.
-     */
-    @Test
-    void aRefusedKeyCheckSaysWhyInTheProvidersOwnWords() {
-        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(400)
-                .withHeader("Content-Type", "application/json")
-                .withBody("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
-                        + "\"message\":\"TEST-This API key is not scoped to a workspace.\"}}")));
-
-        given().contentType("application/json").body(body("TEST-key"))
+    /** What the key check says, from a stubbed {@code /models} answer. */
+    private String keyCheckSays(int status, String contentType, String body) {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(status)
+                .withHeader("Content-Type", contentType).withBody(body)));
+        return given().contentType("application/json").body(body("TEST-key"))
                 .when().post("/api/llm-providers")
                 .then().statusCode(400)
                 .contentType(org.hamcrest.Matchers.containsString("text/plain"))
-                .body(equalTo("The LLM provider refused the key check (HTTP 400):"
-                        + " TEST-This API key is not scoped to a workspace."));
-    }
-
-    @Test
-    void aRejectedKeySaysSoAndWhy() {
-        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(401)
-                .withHeader("Content-Type", "application/json")
-                .withBody("{\"error\":{\"message\":\"TEST-invalid x-api-key\"}}")));
-
-        given().contentType("application/json").body(body("TEST-key"))
-                .when().post("/api/llm-providers")
-                .then().statusCode(400)
-                .body(equalTo("The LLM provider rejected the API key (HTTP 401): TEST-invalid x-api-key"));
+                .extract().asString();
     }
 
     /**
-     * A provider may echo the key it refused. The submitted key goes through the shared
-     * SecretScrub, so neither its raw nor its URL-encoded form comes back out.
+     * The dialog shows the response body, and an empty one left the operator with "(400)". Anthropic
+     * refuses a user key that is not scoped to a workspace; that answer is recognised and told in
+     * the application's own words.
      */
     @Test
-    void theProvidersMessageNeverCarriesTheKey() {
-        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(401)
-                .withHeader("Content-Type", "application/json")
-                .withBody("{\"error\":{\"message\":\"Incorrect API key provided: TEST-secret key/value,"
-                        + " sent as TEST-secret+key%2Fvalue.\"}}")));
+    void anAnthropicUserKeyIsToldToUseAWorkspaceKey() {
+        String said = keyCheckSays(400, "application/json",
+                "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+                        + "\"message\":\"TEST-This API key is not scoped to a workspace, so add a header.\"}}");
 
-        String said = given().contentType("application/json").body(body("TEST-secret key/value"))
-                .when().post("/api/llm-providers")
-                .then().statusCode(400).extract().asString();
-
-        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret key/value"), said);
-        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-secret+key%2Fvalue"), said);
-        org.junit.jupiter.api.Assertions.assertTrue(said.contains("Incorrect API key provided"), said);
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.WORKSPACE_REQUIRED.message(400), said);
+        org.junit.jupiter.api.Assertions.assertTrue(said.contains("inside a workspace"), said);
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-"), said);
     }
 
-    /** A body that is not the providers' JSON error shape (a proxy's HTML page) adds nothing. */
     @Test
-    void aBodyWithNoMessageStillNamesTheStatus() {
-        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(502)
-                .withHeader("Content-Type", "text/html").withBody("<html>TEST-gateway</html>")));
+    void aRejectedKeySaysSo() {
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.REJECTED.message(401),
+                keyCheckSays(401, "application/json", "{\"error\":{\"message\":\"TEST-invalid x-api-key\"}}"));
+    }
+
+    @Test
+    void aRateLimitedKeySaysSo() {
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.RATE_LIMITED.message(429),
+                keyCheckSays(429, "application/json", "{}"));
+    }
+
+    @Test
+    void aFailingProviderSaysSo() {
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.PROVIDER_FAILING.message(502),
+                keyCheckSays(502, "text/html", "<html>TEST-gateway</html>"));
+    }
+
+    @Test
+    void anyOtherRefusalNamesTheStatusOnly() {
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.REFUSED.message(404),
+                keyCheckSays(404, "application/json", "{\"error\":{\"message\":\"TEST-not found\"}}"));
+    }
+
+    /**
+     * Provider text is never returned: it may echo part of the key or name an account, and the reason
+     * is also logged and stored as the provider's last check error.
+     */
+    @Test
+    void theProvidersOwnTextNeverComesBack() {
+        String said = keyCheckSays(401, "application/json",
+                "{\"error\":{\"message\":\"TEST-secret-***3456 for TEST-account@example.invalid\"}}");
+
+        org.junit.jupiter.api.Assertions.assertFalse(said.contains("TEST-"), said);
+    }
+
+    /**
+     * An error body is read only up to a bound: a workspace marker placed past it is never seen, so
+     * a huge body cannot fill the heap on its way to a short message.
+     */
+    @Test
+    void anErrorBodyIsReadOnlyUpToItsBound() {
+        String padding = "x".repeat(KeyCheckReason.MAX_ERROR_BODY_BYTES + 1024);
+        String said = keyCheckSays(400, "text/plain", padding + " not scoped to a workspace");
+
+        org.junit.jupiter.api.Assertions.assertEquals(KeyCheckReason.REFUSED.message(400), said);
+    }
+
+    /** A large models list is not needed and is not read; the key still saves. */
+    @Test
+    void aLargeSuccessfulAnswerStillSaves() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"data\":[\"" + "m".repeat(4 * 1024 * 1024) + "\"]}")));
+
+        given().contentType("application/json").body(body("TEST-key"))
+                .when().post("/api/llm-providers").then().statusCode(201);
+    }
+
+    @Test
+    void anUnreachableProviderSaysSo() {
+        var b = body("TEST-key");
+        b.put("baseUrl", "http://localhost:1"); // nothing listens on port 1
+        given().contentType("application/json").body(b)
+                .when().post("/api/llm-providers")
+                .then().statusCode(400)
+                .body(equalTo(KeyCheckReason.UNREACHABLE.message(0)));
+    }
+
+    @Test
+    void aProviderThatDoesNotAnswerInTimeSaysSo() {
+        llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(200)
+                .withFixedDelay((int) LlmKeyValidator.TIMEOUT.toMillis() + 1500)));
 
         given().contentType("application/json").body(body("TEST-key"))
                 .when().post("/api/llm-providers")
                 .then().statusCode(400)
-                .body(equalTo("The LLM provider refused the key check (HTTP 502)."));
+                .body(equalTo(KeyCheckReason.TIMEOUT.message(0)));
     }
 
-    /** The Check button and the attention row read the same reason. */
+    /** The Check button, its log line and the stored last error read the same fixed reason. */
     @Test
-    void theCheckButtonReportsTheProvidersReasonToo() {
+    void theCheckButtonReportsTheSameFixedReason() {
         String id = given().contentType("application/json").body(body("TEST-key"))
                 .when().post("/api/llm-providers").then().statusCode(201).extract().path("id");
         llm.stubFor(get(urlEqualTo("/models")).willReturn(aResponse().withStatus(403)
@@ -187,7 +230,7 @@ class LlmProviderResourceTest {
         given().when().post("/api/llm-providers/" + id + "/check")
                 .then().statusCode(200)
                 .body("ok", is(false))
-                .body("detail", equalTo("The LLM provider rejected the API key (HTTP 403): TEST-access disabled"));
+                .body("detail", equalTo(KeyCheckReason.REJECTED.message(403)));
     }
 
     @Test
