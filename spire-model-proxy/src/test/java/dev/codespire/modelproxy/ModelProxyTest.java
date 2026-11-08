@@ -154,14 +154,17 @@ class ModelProxyTest {
     void aDotSegmentCannotEscapeAnAllowedPath() throws Exception {
         ModelProxy proxy = start(apiKeyRoute(upstreamOrigin()), log);
 
-        for (String target : List.of("/v1/responses/../files", "/v1/responses%2F..%2Ffiles", "/v1/%2e%2e/files",
-                "//v1/responses")) {
+        for (String target : List.of("/v1/responses/../files", "/v1/responses%2F..%2Ffiles", "/v1/%2e%2e/files")) {
             assertEquals(403, rawStatus(proxy, "GET " + target + " HTTP/1.1\r\nHost: model\r\n"), target);
         }
-        // The JDK server itself rejects a backslash in the request target as a malformed URI (400)
-        // before any handler runs; either way it never reaches the vendor.
-        int backslash = rawStatus(proxy, "GET /v1\\responses HTTP/1.1\r\nHost: model\r\n");
-        assertTrue(backslash == 400 || backslash == 403, "a backslash got " + backslash);
+        // The JDK server itself may answer these two 400 before any handler runs (a leading // was
+        // measured at 400 in CI on JDK 25; a backslash is a malformed URI to it). The proxy's
+        // own guard refuses both too (PathGuardTest); here what matters is that neither reaches the
+        // vendor, whichever layer refuses it.
+        for (String target : List.of("//v1/responses", "/v1\\responses")) {
+            int status = rawStatus(proxy, "GET " + target + " HTTP/1.1\r\nHost: model\r\n");
+            assertTrue(status == 400 || status == 403, target + " got " + status);
+        }
         assertEquals(0, hits.get());
     }
 
