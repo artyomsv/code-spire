@@ -416,10 +416,11 @@ mp:
   spire:
     run:
       publisher-image: spire-publisher:latest
+      # Quoted: a bare OFF is YAML's boolean false, which no enum converts from.
       # Off: no CI runner holds the locally built model proxy image, and the startup check would refuse every suite.
       # The proxied unit is asserted by the builder's and the launcher's unit tests, and the runtime's Docker tests.
       credential-proxy:
-        mode: OFF
+        mode: "OFF"
     encryption:
       # Test-only AES-GCM keyset (not a secret) — the same one the orchestrator's and the review
       # worker's test profiles use, so a worker test can open a credential the orchestrator packed.
