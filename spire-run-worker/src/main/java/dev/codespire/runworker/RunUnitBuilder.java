@@ -282,7 +282,7 @@ public class RunUnitBuilder {
         HarnessInvocation placeholders = invocation(command, topology, ModelProxyEnvironment.placeholders(harnessEnv),
                 true);
         Optional<CredentialRoute> route = proxies(topology) ? adapter.credentialRoute(placeholders) : Optional.empty();
-        HarnessInvocation invocation = route.isPresent() ? placeholders
+        HarnessInvocation invocation = route.isPresent() ? invocation(command, topology, harnessEnv, true)
                 : invocation(command, topology, harnessEnv, false);
 
         Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
