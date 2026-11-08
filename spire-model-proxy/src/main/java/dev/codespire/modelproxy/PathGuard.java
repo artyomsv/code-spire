@@ -34,7 +34,7 @@ final class PathGuard {
     }
 
     private static boolean isPlain(String rawPath) {
-        if (rawPath == null || !rawPath.startsWith("/") || rawPath.contains("..") || rawPath.contains("//")) {
+        if (rawPath == null || !rawPath.startsWith("/") || rawPath.contains("//")) {
             return false;
         }
         for (int i = 0; i < rawPath.length(); i++) {
