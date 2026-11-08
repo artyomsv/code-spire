@@ -127,14 +127,20 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
           ──operator────────────────► disabled
 ```
 
-> **Both provider-driven arrows are DESIGN, not delivered behaviour.** Nothing in the shipped
-> pipeline emits a credential refusal or a distinct rate limit: a refused key arrives as
-> `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores rather than resting a good key
-> on every provider blip. So both transitions are taken by an operator today, through
+> **The rate-limit arrow is DESIGN, not delivered behaviour, and the 401 arrow is delivered for
+> model-proxied units only.** Nothing in the shipped pipeline emits a distinct rate limit. In a unit
+> whose credential sits in a model proxy (harness review units under the default
+> `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`, harness reviews step 3), a failed run whose model proxy saw
+> a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails as
+> `CREDENTIAL_REJECTED`, and `RunCredentialFeedback` marks the pool member rejected; a 403 is not a
+> rejection and marks nothing. In an unproxied unit (factory builds by default) nothing emits a
+> credential refusal: a refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately
+> ignores rather than resting a good key on every provider blip. So the rate-limit arrow, and the 401
+> arrow for unproxied units, are taken by an operator today, through
 > `POST /api/harness-credentials/{id}/rest` and `/clear-rejection`. `spire-arch`'s
-> `CredentialRefusalHasNoProducerTest` was deleted when the first producer arrived (harness reviews
-> step 3): a model-proxied unit reports `CREDENTIAL_REJECTED` on a 401 to a model call, so the refusal
-> arrow is automatic there; every other unit and the rate-limit arrow are still taken by an operator. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close it.
+> `CredentialRefusalHasNoProducerTest` was deleted with the first producer. The worker half is proven by
+> `RunLauncherModelProxyTest`, the orchestrator half (marking the member) by `RunResultSagaTest`; no live
+> run has produced it yet. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close the rest.
 
 Four rules:
 
@@ -194,6 +200,17 @@ Codex subscription auth is an `auth.json` blob obtained once by an interactive l
 performs that login; Code Spire stores the result in the **existing** encrypted registry (Tink
 AES-256-GCM with AAD binding) and injects a copy per run. It expires, so the pool needs a refresh
 path.
+
+**A model-proxied unit's agent holds no credential at all** (harness reviews step 3, ADR-050). Under
+`SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (the default: review-lane units only) or `ALL` (factory
+builds too), the harness adapter is handed placeholder values and points its model client at
+`http://spire-model:8080`, a per-run model proxy (`spire-model-proxy`) on the unit's own network. For
+Codex that is a custom provider and, on a seat, a generated placeholder `auth.json`. The model proxy
+holds the real credential (an API key, or only a seat's access token and account id, never its
+`id_token` or the whole sign-in file), drops every credential header the agent sends, injects the real
+one, lets through only the harness's declared model paths and reaches the vendor through the unit's
+egress proxy. A harness with no declared credential route runs unproxied, with the real credential, as
+before; today only Codex declares one. The topology is in `RUN-TOPOLOGY.md` §6B.
 
 ### 3.4 The machine account's credential — one, not two
 
@@ -379,6 +396,12 @@ Two properties this preserves. The model endpoint, the git host and the forge AP
 allowed, because a run cannot function without them and nothing is learned by discovering that. And
 `report` mode is never the default for a repository that has an allowlist — a repository that has been
 observed does not silently fall back to open egress.
+
+A model-proxied unit (harness reviews step 3, `RUN-TOPOLOGY.md` §6B.1) always **enforces**, whatever the
+global mode: its only outbound caller is the model proxy, whose hosts are the harness's declared ones, and
+a host it calls outside them fails the run as blocked egress. The model proxy adds a narrower check of its
+own, by path: a model path the harness does not declare is refused there and fails the run as
+`BLOCKED_EGRESS` with `model path <path> refused`.
 
 ## 6. Implementation order and why
 

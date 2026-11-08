@@ -2316,3 +2316,27 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   answer, a summary-thread reply and the GitLab and Bitbucket mentions are proven against fakes only. Record:
   [replies on a harness acceptance](factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Next: step 3, the credential-injecting
   proxy, then step 8, fork pull requests.
+
+- **Harness reviews step 3: the agent holds a placeholder, a model proxy adds the credential (2026-11-09, PR #394; not
+  merged, live acceptance pending).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
+  Under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (the default; `OFF` and `ALL` too) the run worker hands the harness
+  adapter placeholders, and Codex points a custom provider at `http://spire-model:8080` (on a seat, with a generated
+  placeholder `auth.json`). A per-run model proxy (`spire-model-proxy`, a JDK-only process in a container sandboxed
+  like the egress proxy) holds the API key, or only a seat's access token and account id, drops every credential
+  header the agent sends, injects the real one, forwards only the declared model paths and reaches the vendor through
+  the egress proxy. The agent's network holds the agent and the model proxy; a second internal network holds the
+  model proxy and the egress proxy, which for a proxied unit always enforces. The model proxy's log, one line per
+  request, gives `CREDENTIAL_REJECTED` its first producer: a failed run with a 401 on a model call marks the pool
+  member, and `CredentialRefusalHasNoProducerTest` is deleted; a 403 marks nothing; a refused path is
+  `BLOCKED_EGRESS`. A missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. The plan check found that the
+  agent could still reach the egress proxy on the shared network, that a 403 would retire a healthy seat for good, that
+  the JVM ignores `SSL_CERT_FILE`, that dot-segment and encoded paths could escape a prefix, and that the adapter was
+  handed the real secret; each is fixed in the plan. During the build the proxy was found ending a broken stream
+  cleanly (it now drops the connection) and a missing image stopping the whole review lane (now only proxied runs
+  fail). Seven guards were broken, one mutant pull request each (#395 to #401, closed): every mutant failed CI, six
+  of them in the test named for the guard. The seventh, flushing a stream only at its end, was caught by
+  `aMidStreamResetIsNotAcleanEnd` but not by `aStreamIsPassedOnAsItArrives`, whose five-second bound starts only
+  after the request returns, and the request itself waits for the vendor's ten-second release. Left open: no live run yet; WebSocket upgrades, `oaiusercontent.com`, the placeholder `auth.json`
+  and `ALL` mode are unmeasured; a 403's failure detail names no path; the image is not on GHCR
+  (docs/UNVERIFIED.md, the step 3 entry). Next: the live acceptance with the operator, then PR 3b (Claude Code on an
+  API key).

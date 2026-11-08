@@ -108,7 +108,8 @@ spire:
     # step 3): OFF, REVIEWS (default: harness review units) or ALL (factory builds too). A proxied unit's agent holds a
     # placeholder; the model proxy injects the key, or a seat's access token and account id, and lets through only the
     # harness's declared model paths. It needs the egress proxy: with egress off no unit is proxied and the worker
-    # warns at startup. The image is built locally (spire-model-proxy) without it, proxied runs fail as IMAGE_UNAVAILABLE.
+    # warns at startup. The image (spire-model-proxy) is built locally; when it is missing, the worker logs it at startup
+    # and every proxied run fails as IMAGE_UNAVAILABLE, while unproxied runs are untouched.
     credential-proxy:
       mode: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:REVIEWS}
       image: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:spire-model-proxy:latest}

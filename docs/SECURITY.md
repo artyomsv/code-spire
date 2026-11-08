@@ -326,7 +326,7 @@ A run is an init clone, an agent, and a publisher sidecar. The split IS the cont
 | Container | Holds | Cannot reach |
 |---|---|---|
 | init | the SCM credential | the handoff; it exits before the agent starts |
-| agent | the model key | any git credential — it physically cannot push |
+| agent | the model key, or a placeholder in a model-proxied unit (review runs by default) | any git credential — it physically cannot push |
 | publisher | the SCM write credential | the workspace; `/handoff` is mounted read-only |
 
 Work leaves the agent only as a git bundle on `/handoff`. The publisher gates it
@@ -378,6 +378,29 @@ change is dropped. Only hosts and ports are kept, never a URL's path or user inf
 network and the proxy carry the run's label, and destroy, held teardown and the orphan watchdog
 remove them with the unit.
 
+### On review runs the agent holds a placeholder (harness reviews step 3)
+
+The agent still runs model output with a shell, and the egress proxy keeps it from sending what it holds
+anywhere undeclared, but a declared model host is exactly where a stolen key works. So under
+`spire.run.credential-proxy.mode` `REVIEWS` (the default: review-lane units) or `ALL`, a unit's agent is
+handed **placeholder** credential values, and the real one goes to a per-run model proxy (`spire-model-proxy`)
+in its own container. The agent's network holds only the agent and the model proxy, and the model proxy reaches the
+egress proxy on a second internal network the agent is not on, so the agent has no way out but the model proxy. The
+model proxy drops every credential header the agent sends, injects the real one, forwards only the harness's declared
+model paths (a path with `..`, `%` escapes or reserved characters is refused before matching), refuses methods
+other than GET and POST, absolute-form targets and upgrades, and replaces a 401 or 403 body (OpenAI's 401 echoes part
+of the refused key) and strips `set-cookie` and `www-authenticate`. For a seat it holds only the access token and
+the account id, never the `id_token` (with its email claims) or the refresh token. Its log line names the method, the
+path and the status only. Its container is sandboxed like the egress proxy's, mounts nothing of the unit's, and
+carries the credential in its environment only, never a label. The egress proxy of a proxied unit always enforces the
+harness's hosts, even when the global mode is `report`.
+
+What this does not remove: the agent can still spend the credential through the model proxy, on the declared paths,
+for as long as the run lasts; it just cannot carry it out. `docker inspect` of the model proxy prints the
+credential, as it printed the agent's before. A harness that declares no credential route (today every harness but
+Codex), and every factory build under `REVIEWS`, still hands the agent the real credential. None of it has a live
+proof yet (`docs/UNVERIFIED.md`, the step 3 entry).
+
 ### What is NOT mitigated, stated rather than implied
 
 - **Docker socket access is root-equivalent on the host.** The run worker drives the daemon
@@ -386,7 +409,7 @@ remove them with the unit.
 - **Egress is only partly restricted on the Docker arm.** The agent is behind its proxy (above), but
   `report` is the default and lets every host through until enforce is switched on. Enforce is global,
   with no per-repository extra hosts yet, so it is meant first for review runs and not for factory
-  builds that need package registries. Codex's declared hosts are not yet measured. The verify check
+  builds that need package registries. A model-proxied unit enforces whatever the mode (above). The verify check
   containers and the operator's sign-in container are still on the default bridge. In report mode a
   plain-HTTP request may name any port, because tinyproxy restricts ports for CONNECT only. Tracked in
   `techdebt/spire-runtime-docker/2-3-a-run-unit-has-no-network-so-it-is-neither-isolated-nor-reachable.md`

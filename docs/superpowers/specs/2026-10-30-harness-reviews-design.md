@@ -218,8 +218,14 @@ reviewed on that harness and payment (attention warning names why).
 - *Charges.* `RunKind` gains REVIEW, RECONCILE and FOLLOWUP (schema CHECK too); run-plane charging skips them; review
   charges carry `credential_ref` and are priced unmetered on a seat. Review results are taken before
   `RunResultSaga`'s pull-request step.
-- *A refused seat is classified.* Codex's login failure (exit 120) becomes `CREDENTIAL_REJECTED`, which marks the pool;
-  a harness review's retry budget is 1, so a refused seat is not retried as full runs.
+- *A refused credential is classified.* (Corrected in step 3: an earlier draft said Codex's login failure, exit 120,
+  becomes `CREDENTIAL_REJECTED`. It never did: 120 is the code the agent's own login step exits with when
+  `codex login` fails or the sign-in file cannot be written, and `CodexAdapter` maps it to `HARNESS_EXIT_NONZERO`
+  ("the harness never ran"), which marks nothing.) In a
+  model-proxied unit, a failed run whose model proxy saw a 401 on a model call path (`/v1/responses`,
+  `/backend-api/codex/responses`) becomes `CREDENTIAL_REJECTED`, which marks the pool member; a 403 does not. An
+  unproxied unit still has no producer (`docs/UNVERIFIED.md` §A1). A harness review's retry budget is 1, so a refused
+  credential is not retried as full runs.
 - *Fork clone.* Init fetches the pull request ref with a refspec, checks out the head, and keeps the base under its own
   ref.
 - *Also:* a deterministic run id (review, commit, run) so redelivery dedups on `run_claim`; context goes to the agent

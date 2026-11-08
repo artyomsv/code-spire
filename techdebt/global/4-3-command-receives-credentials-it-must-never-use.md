@@ -32,3 +32,13 @@ then argv, or argv builders outside the SPI.
 - Split the type so the unsafe version cannot be written: `command()` takes a credential-free view
   (`runId`, `prompt`, `workspacePath`, `model`, `wallClock`) and the credential map stays on the
   `environment()` path only.
+
+## Narrowed (harness reviews step 3, PR #394, 2026-11-09)
+
+In a model-proxied unit (review-lane units under the default `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`, every unit
+under `ALL`) the adapter is never handed the real credential: `RunUnitBuilder` builds the invocation from placeholder
+values (`ModelProxyEnvironment.placeholders`), and `RunUnitBuilderTest.aReviewRunIsProxied` and
+`aSeatReviewRunHandsTheProxyOnlyTheTokenAndAccount` fail if any invocation the arm sees holds it. So an arm that
+copied a credential into argv there would leak only a placeholder. The issue stands for unproxied units (factory
+builds under `REVIEWS`) and for any harness that declares no credential route, which is handed the real credential as
+before.

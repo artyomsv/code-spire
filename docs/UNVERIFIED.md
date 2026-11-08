@@ -33,6 +33,54 @@ evidence would settle it**.
 
 ---
 
+## Model proxy for run credentials (harness reviews step 3, PR #394, 2026-11-09)
+
+**The claim.** In a model-proxied unit (review-lane units under the default `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`,
+every unit under `ALL`) the agent holds only placeholder credentials and reaches only the model proxy; the model
+proxy holds the real API key, or a seat's access token and account id, injects it, lets through only the harness's
+declared model paths, and reaches the vendor through an egress proxy that enforces. A 401 on a model call fails the
+run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it as `BLOCKED_EGRESS`
+(docs/factory/RUN-TOPOLOGY.md §6B.1).
+
+**Why nothing catches it today.**
+- **No live run yet.** The live acceptance (a review on an API key, one on a seat, a long seat review that compacts,
+  and a rejected key) is pending; it is run with the operator after the final review. Until then everything below is
+  proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s busybox upstream and the run worker's
+  fakes only.
+- **The placeholder `auth.json` is unmeasured.** A seat's agent gets a generated sign-in file (`last_refresh` and
+  `exp` in 2100, plan `plus`, no email claim). Whether Codex accepts it, and never tries to refresh it, is unknown
+  until the live seat run.
+- **WebSocket upgrades and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy refuses an
+  upgrade (501), and a seat's content hosts are not declared. If a Codex release moves its model stream to a
+  WebSocket, or a long seat run fetches from a content host, the run fails; no run has shown either.
+- **`ALL` mode is not proven live**, and in `ALL` mode a held factory unit's retained spec (Tink-encrypted) would
+  carry `SPIRE_MODEL_SECRET`, the real credential, for as long as the unit is held.
+- **A harness with no route runs unproxied silently.** Under `REVIEWS` a review on a harness that declares no
+  credential route gets the real credential in its agent, with no log line saying so. Only Codex declares one;
+  Claude Code and opencode arrive in later PRs.
+- **A 403 names no path.** A run that failed after a 403 keeps the adapter's own cause and detail, so the failure
+  does not say which model path was forbidden.
+- **Some refusals leave no line.** A request the JDK HTTP server rejects before the proxy's handler runs (a `//` or a
+  backslash target, a `CONNECT`) is refused, but the model proxy report has no line for it, so a run failing that
+  way is not explained as `BLOCKED_EGRESS`.
+- **Every image lookup failure reads as a missing image.** The worker's check before the unit is created reports
+  any failure to describe or pull `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, a daemon outage included, as
+  `IMAGE_UNAVAILABLE`.
+- **The image is not on GHCR**, and only the Docker arm builds the topology (there is no Kubernetes arm).
+- **Streaming has one discriminating test, not two.** With the per-read flush removed (mutant PR #397),
+  `aStreamIsPassedOnAsItArrives` still passed: its five-second bound starts after `send` returns, and `send` itself
+  waits out the vendor's ten-second release. Only `aMidStreamResetIsNotAcleanEnd` failed.
+- **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
+  half as many concurrent proxied units as unproxied ones; no test runs near the bound.
+
+**What evidence would settle it.** The step 3 live acceptance on `spire-test` (pending): an API-key review and a seat
+review posted, `docker inspect` of each agent showing no credential, the agent network without the egress proxy, the
+model proxy log naming only the declared paths, `run_egress` naming only the declared host, a long seat review that
+compacts with no new path or host, and a rejected `TEST-` key failing as `CREDENTIAL_REJECTED` with its pool member
+marked.
+
+---
+
 ## Run egress proxy (harness reviews PR 2, 2026-11-01)
 
 **The claim.** On the Docker arm, a run unit's agent reaches the network only through its per-run egress
@@ -849,9 +897,10 @@ starting to resolve, which no source scan can see.
 **The claim.** `harness_credential` has two exhaustion states: a rate limit that heals itself, and a
 rejection that needs an operator. Both were described as implemented.
 
-**Why nothing catches it.** Nothing in the pipeline emits `CREDENTIAL_REJECTED`. The harness tier's
-failure vocabulary has no credential value, the publisher's has none, and nothing aliases onto it. A
-refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores — so the
+**Why nothing catches it (in an unproxied unit).** In a unit whose agent holds the real credential
+(factory builds by default, and any harness that declares no credential route), nothing emits
+`CREDENTIAL_REJECTED`. The harness tier's failure vocabulary has no credential value, the publisher's
+has none, and nothing aliases onto it. A refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores — so the
 pool hands the dead key back out on its next turn. V52's own header calls this *"how a pool quietly
 stops rotating while looking healthy"*, written in the change that shipped it. The test passed
 because it constructed the wire string by hand.
@@ -864,9 +913,10 @@ guess and retire nothing in production.
 **Guarded by** nothing any more: `spire-arch`'s `CredentialRefusalHasNoProducerTest` failed the build when a
 producer appeared, and was deleted with the first one (harness reviews step 3). **Narrowed:** a unit whose
 credential sits in a model proxy (harness review units by default) now reports `CREDENTIAL_REJECTED` when
-the model proxy saw a 401 on a model call path and the agent failed (`ModelProxyResults`), and
-`RunResultSagaTest` proves it marks the run's pool member. That 401 is proven against fakes only; an
-unproxied unit (factory builds by default) still has no producer.
+the model proxy saw a 401 on a model call path and the agent failed (`ModelProxyResults`). The worker
+half is proven by `RunLauncherModelProxyTest`, the orchestrator half (marking the run's pool member) by
+`RunResultSagaTest`; both run against fakes, and no live run has produced it yet (the live acceptance of
+step 3 is pending). An unproxied unit still has no producer.
 
 **Tracked in** `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 
