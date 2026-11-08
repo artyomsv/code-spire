@@ -15,14 +15,14 @@ import java.util.UUID;
  * <p><b>One producer exists, and only on a proxied unit.</b> Since harness reviews step 3 the run
  * worker's {@code ModelProxyResults} reports {@link RunFailureCause#CREDENTIAL_REJECTED} when the
  * unit's model proxy saw the vendor answer 401 on a model call path ({@code /v1/responses},
- * {@code /backend-api/codex/responses}) and the agent then failed. A 401 elsewhere and every 403 are
+ * the seat's responses path) and the agent then failed. A 401 elsewhere and every 403 are
  * deliberately not a refusal: a 403 can be a challenge or an entitlement answer, and a mark keeps a
  * member out until an operator replaces it. {@code RunResultSagaTest} proves a review run's refusal
  * reaches the pool member its {@code factory_run} row names.
  *
  * <p>An unproxied unit (a factory build while {@code spire.run.credential-proxy.mode} is REVIEWS, or
  * any unit with the mode OFF or egress off) still has no producer: there a provider refusing a key
- * surfaces as the harness's own failure ({@code HARNESS_EXIT_NONZERO} for Codex, or
+ * surfaces as the harness's own failure ({@code HARNESS_EXIT_NONZERO} for the first arm, or
  * {@code PROVIDER_ERROR} → {@code MODEL_UNAVAILABLE}), which by the rule below marks nothing, and the
  * dead key stays in rotation. See
  * {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}.

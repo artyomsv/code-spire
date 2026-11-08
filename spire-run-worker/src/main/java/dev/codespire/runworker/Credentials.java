@@ -127,8 +127,8 @@ public class Credentials {
 
     /**
      * The two values of a sign-in file a model proxy injects (harness reviews step 3): {@code tokens.access_token} and
-     * {@code tokens.account_id}, measured on codex-cli 0.156.1 as the orchestrator's {@code SignInFiles} reads them.
-     * Never the whole file: its {@code id_token} carries the account's email claims, and {@code docker inspect} prints
+     * {@code tokens.account_id}, as the orchestrator's {@code SignInFiles} reads them.
+     * Never the whole file: its {@code id_token} carries the account's email claims, and inspecting a container prints
      * a container's environment.
      */
     record SeatToken(String accessToken, String accountId) {

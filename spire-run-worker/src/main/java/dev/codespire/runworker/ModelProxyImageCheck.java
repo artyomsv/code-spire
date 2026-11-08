@@ -70,7 +70,7 @@ public class ModelProxyImageCheck {
     private IllegalStateException refusal(String problem) {
         return new IllegalStateException("spire.run.credential-proxy.image (" + VARIABLE + ") " + problem
                 + ": the model proxy holds the credential of every " + mode + " run unit, so they cannot start"
-                + " without it. Build it with ./gradlew :spire-model-proxy:installDist && docker build -t"
-                + " spire-model-proxy:latest spire-model-proxy, or set SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF.");
+                + " without it. Build the spire-model-proxy image (deploy/.env.example says how),"
+                + " or set SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF.");
     }
 }
