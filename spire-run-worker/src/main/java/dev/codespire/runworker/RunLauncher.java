@@ -131,6 +131,12 @@ public class RunLauncher {
             // would be rejected identically, and retrying a malformed dispatch is a loop.
             return failure(command, "BAD_COMMAND", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        // A proxied unit whose model proxy image is missing fails here, before anything exists: its lane stops, the
+        // worker does not (ModelProxyImageCheck only logs it at startup).
+        java.util.Optional<String> missing = ModelProxyResults.imageMissing(runtime, unit);
+        if (missing.isPresent()) {
+            return failure(command, RunFailureCause.IMAGE_UNAVAILABLE.name(), missing.orElseThrow());
+        }
 
         RunHandle handle;
         long activeStarted = System.nanoTime();

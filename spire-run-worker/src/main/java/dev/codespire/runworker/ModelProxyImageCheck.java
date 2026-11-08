@@ -13,9 +13,11 @@ import org.jboss.logging.Logger;
 import java.util.function.Supplier;
 
 /**
- * Refuses to start a worker whose proxied units could not start their model proxy, like {@link PublisherImageCheck}
- * does for the publisher. The image is built locally and is not on a registry yet, so a deployment that upgraded
- * without building it would otherwise fail its first review run, after the review was dispatched.
+ * Says at startup when proxied units could not start their model proxy. The image is built locally and is not on a
+ * registry yet, so a deployment that upgraded without building it would otherwise learn of it from its first failed
+ * review run. A missing image stops the proxied lane, not the worker: it is logged at ERROR naming
+ * {@value #VARIABLE}, builds run on, and each proxied run fails as {@code IMAGE_UNAVAILABLE} before anything is
+ * created ({@link ModelProxyResults#imageMissing}). An unset image is a configuration fault and still refuses startup.
  *
  * <p>With {@code spire.run.egress.mode=off} no unit is proxied (a model proxy reaches its vendor only through the
  * unit's egress proxy), so the image is not looked at and one WARN names both settings instead: the operator asked for
@@ -45,7 +47,7 @@ public class ModelProxyImageCheck {
         verify(runtimes::get);
     }
 
-    /** Throws when a proxied unit could not start its model proxy; reads the runtime only when one could be built. */
+    /** Logs when a proxied unit could not start its model proxy; reads the runtime only when one could be built. */
     void verify(Supplier<RunRuntime> runtime) {
         if (mode == CredentialProxyMode.OFF) {
             return;
@@ -62,8 +64,12 @@ public class ModelProxyImageCheck {
         try {
             runtime.get().describeImage(image);
         } catch (RuntimeException e) {
-            throw refusal("names " + image + ", which this worker's runtime cannot find or pull ("
-                    + e.getClass().getSimpleName() + ")");
+            // Logged, not thrown: the lane stops, the worker does not. Every proxied run fails as IMAGE_UNAVAILABLE
+            // naming the variable (ModelProxyResults.imageMissing) while builds run on. No stack and no message: a
+            // pull's message can quote a registry reply.
+            LOG.errorf("spire.run.credential-proxy.image (%s) names %s, which this worker's runtime cannot find or"
+                    + " pull, so every %s run unit will fail as IMAGE_UNAVAILABLE until it is built (deploy/.env.example"
+                    + " says how) or SPIRE_RUN_CREDENTIAL_PROXY_MODE is OFF", VARIABLE, image, mode);
         }
     }
 

@@ -39,6 +39,27 @@ final class ModelProxyResults {
         }
     }
 
+    /**
+     * Why a unit's model proxy cannot start, asked BEFORE the unit is created: the runtime would otherwise find out
+     * after init had cloned, leaving a half-built unit behind and reporting a runtime fault. Empty for a unit with no
+     * model proxy, which is never held up by its image. The image is looked up with the same pull a run uses.
+     */
+    static Optional<String> imageMissing(RunRuntime runtime, dev.codespire.runtime.RunUnitSpec unit) {
+        if (unit == null || unit.modelProxy() == null) {
+            return Optional.empty();
+        }
+        String image = unit.modelProxy().image();
+        try {
+            runtime.describeImage(image);
+            return Optional.empty();
+        } catch (RuntimeException e) {
+            // The exception's class, never its message: a pull's message can quote a registry reply.
+            return Optional.of("the model proxy image " + image + " (" + ModelProxyImageCheck.VARIABLE
+                    + ") cannot be found or pulled (" + e.getClass().getSimpleName() + "); build it, or set"
+                    + " SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF");
+        }
+    }
+
     /** The cause and detail of a failed run the model proxy explains, or empty when it explains nothing. */
     static Optional<Explained> explain(ModelProxyReport report, String agentDetail) {
         if (report.rejected() > 0) {
