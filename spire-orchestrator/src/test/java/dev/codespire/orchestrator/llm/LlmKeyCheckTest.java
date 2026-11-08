@@ -245,7 +245,11 @@ class LlmKeyCheckTest {
     private static void readRequestHead(InputStream in) throws IOException {
         int matched = 0;
         byte[] end = {'\r', '\n', '\r', '\n'};
-        for (int b = in.read(); b != -1 && matched < end.length; b = in.read()) {
+        while (matched < end.length) {
+            int b = in.read(); // read only while the head is unfinished: the request has no body to wait for
+            if (b == -1) {
+                return;
+            }
             matched = b == end[matched] ? matched + 1 : (b == '\r' ? 1 : 0);
         }
     }
