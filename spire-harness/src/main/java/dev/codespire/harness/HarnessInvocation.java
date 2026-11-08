@@ -15,7 +15,8 @@ import java.util.Objects;
  */
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
-                                Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance) {
+                                Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance,
+                                boolean credentialProxied) {
 
     /** A run at the model's own thinking level: every caller written before levels existed (M3.5 part M). */
     public HarnessInvocation(String runId, String prompt, String workspacePath,
@@ -27,6 +28,25 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
     public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
                              Map<String, String> credentials, Duration wallClock, String reasoningEffort) {
         this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED);
+    }
+
+    /** A run that talks to the vendor itself: every caller written before the model proxy existed. */
+    public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
+                             Map<String, String> credentials, Duration wallClock, String reasoningEffort,
+                             ProjectGuidance projectGuidance) {
+        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, projectGuidance, false);
+    }
+
+    /**
+     * The same invocation, run behind the unit's model proxy or not. Every component is named here once, so one
+     * added later fails to compile here rather than being dropped.
+     *
+     * <p>Proxied, the credential map holds placeholders under the same keys (the model proxy holds the real secret),
+     * and the arm builds its command for {@link CredentialRoute#AGENT_FACING_ORIGIN}.
+     */
+    public HarnessInvocation withCredentialProxied(boolean proxied) {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                projectGuidance, proxied);
     }
 
     /**
@@ -112,6 +132,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
                 + ", model=" + model
                 + ", reasoningEffort=" + reasoningEffort
                 + ", projectGuidance=" + projectGuidance
+                + ", credentialProxied=" + credentialProxied
                 + ", workspacePath=" + workspacePath
                 + ", wallClock=" + wallClock
                 + ", credentials=" + credentials.keySet() + " (values redacted)"

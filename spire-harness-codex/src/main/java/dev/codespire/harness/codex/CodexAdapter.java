@@ -3,6 +3,7 @@ package dev.codespire.harness.codex;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.harness.CredentialRoute;
 import dev.codespire.harness.EnvironmentPolicy;
 import dev.codespire.harness.FailureCause;
 import dev.codespire.harness.HarnessAdapter;
@@ -92,6 +93,18 @@ public final class CodexAdapter implements HarnessAdapter {
      */
     private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com");
 
+    /** What a proxied run's credential values are: the worker keeps the keys and replaces the values. */
+    public static final String PLACEHOLDER = "TEST-PLACEHOLDER";
+
+    /**
+     * The variable a proxied key run's provider reads its key from. It holds {@link #PLACEHOLDER}; the model proxy
+     * drops the header the agent sends and injects the real key.
+     */
+    public static final String PLACEHOLDER_VARIABLE = "SPIRE_MODEL_PLACEHOLDER";
+
+    /** The model provider a proxied run defines for itself, so Codex's own {@code openai} provider is never used. */
+    public static final String PROVIDER_ID = "spire";
+
     @Override
     public HarnessType type() {
         return HarnessType.CODEX;
@@ -156,6 +169,7 @@ public final class CodexAdapter implements HarnessAdapter {
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
+                + modelProxy(invocation)
                 + extraCallsOff(invocation)
                 + projectGuidance(invocation)
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
@@ -175,18 +189,59 @@ public final class CodexAdapter implements HarnessAdapter {
      * a key today — what it cannot hold is a refresh token, because none was ever sent.
      */
     private static String login(HarnessInvocation invocation) {
-        if (invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)) {
+        if (isSeat(invocation)) {
+            // A proxied seat writes PlaceholderSignIn's file through the same step: environment() puts it there.
             return "mkdir -p \"$HOME/.codex\" && (umask 077 && printenv " + SIGN_IN_VARIABLE
                     + " > \"$HOME/.codex/auth.json\") || exit " + LOGIN_FAILED + "; "
                     + "unset " + SIGN_IN_VARIABLE + "; ";
+        }
+        if (invocation.credentialProxied()) {
+            // The provider below reads its placeholder key from the environment; no auth.json is needed (spike).
+            return "";
         }
         return "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
                 + " || exit " + LOGIN_FAILED + "; ";
     }
 
+    private static boolean isSeat(HarnessInvocation invocation) {
+        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN);
+    }
+
     /** The flags that switch off what a run never needs; a seat run also switches off apps. */
     private static String extraCallsOff(HarnessInvocation invocation) {
-        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
+        return isSeat(invocation) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
+    }
+
+    /**
+     * Nothing for a run that talks to the vendor itself; for a proxied one, a provider of its own pointed at the model
+     * proxy. Measured against codex-cli 0.156.1 in the 2026-11-07 spike: a key run needs the provider's base URL
+     * {@code /v1}, its key variable and the responses wire API; a seat run the base URL {@code /backend-api/codex},
+     * {@code requires_openai_auth} (so the sign-in file is read) and the top-level {@code chatgpt_base_url}. The string
+     * values are TOML, hence the double quotes inside the single ones, as for the thinking level.
+     */
+    private static String modelProxy(HarnessInvocation invocation) {
+        if (!invocation.credentialProxied()) {
+            return "";
+        }
+        String provider = "model_providers." + PROVIDER_ID + ".";
+        String origin = CredentialRoute.AGENT_FACING_ORIGIN;
+        String common = setting("model_provider", PROVIDER_ID)
+                + setting(provider + "name", PROVIDER_ID)
+                + setting(provider + "wire_api", "responses");
+        if (isSeat(invocation)) {
+            return common
+                    + setting(provider + "base_url", origin + "/backend-api/codex")
+                    + " -c " + provider + "requires_openai_auth=true"
+                    + setting("chatgpt_base_url", origin + "/backend-api/");
+        }
+        return common
+                + setting(provider + "base_url", origin + "/v1")
+                + setting(provider + "env_key", PLACEHOLDER_VARIABLE);
+    }
+
+    /** One {@code -c key="value"} override, quoted for the shell line. */
+    private static String setting(String key, String value) {
+        return " -c " + quoted(key + "=\"" + value + "\"", key);
     }
 
     /** Nothing for a run that follows the repository's guidance; the zero budget for one that must not. */
@@ -235,6 +290,9 @@ public final class CodexAdapter implements HarnessAdapter {
         // process reads. Everything else in the map still goes through the policy, which is where
         // a name that would relocate the config or hijack the child is refused.
         Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
+        if (invocation.credentialProxied()) {
+            return proxiedEnvironment(invocation, credentials);
+        }
         String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
         if (apiKey != null) {
             credentials.put(API_KEY_VARIABLE, apiKey);
@@ -244,6 +302,49 @@ public final class CodexAdapter implements HarnessAdapter {
             credentials.put(SIGN_IN_VARIABLE, signIn);
         }
         return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
+    }
+
+    /**
+     * A proxied run's environment, built without reading the model credential's value: the worker hands placeholders
+     * under the neutral keys, and neither is forwarded. A seat gets {@link PlaceholderSignIn}'s file; a key run gets
+     * {@link #PLACEHOLDER} under the variable its provider reads.
+     */
+    private static Map<String, String> proxiedEnvironment(HarnessInvocation invocation,
+                                                          Map<String, String> credentials) {
+        credentials.remove(HarnessInvocation.CREDENTIAL);
+        credentials.remove(HarnessInvocation.SIGN_IN);
+        Map<String, String> reserved = new java.util.LinkedHashMap<>(OWN_SETTINGS);
+        if (isSeat(invocation)) {
+            reserved.put(SIGN_IN_VARIABLE, PlaceholderSignIn.file());
+        } else {
+            reserved.put(PLACEHOLDER_VARIABLE, PLACEHOLDER);
+        }
+        return EnvironmentPolicy.merge(credentials, reserved);
+    }
+
+    /**
+     * The model proxy's route for a proxied run, per payment, from the 2026-11-07 spike (codex-cli 0.156.1, every
+     * request through the proxy with a placeholder only):
+     *
+     * <ul>
+     *   <li>a key run called {@code POST /v1/responses} only; {@code /v1/models} is the model list the same provider
+     *       may read, so both match exactly and nothing else does;</li>
+     *   <li>a seat run called {@code GET /backend-api/codex/models}, {@code POST /backend-api/codex/responses}
+     *       (compaction too), {@code GET /backend-api/wham/accounts/check} and {@code GET
+     *       /backend-api/wham/settings/user}: the two prefixes, and no redirect.</li>
+     * </ul>
+     */
+    @Override
+    public Optional<CredentialRoute> credentialRoute(HarnessInvocation invocation) {
+        if (!invocation.credentialProxied()) {
+            return Optional.empty();
+        }
+        if (isSeat(invocation)) {
+            return Optional.of(new CredentialRoute("https://chatgpt.com", CredentialRoute.Injection.CHATGPT_SEAT,
+                    java.util.Set.of(), List.of("/backend-api/codex/", "/backend-api/wham/")));
+        }
+        return Optional.of(new CredentialRoute("https://api.openai.com", CredentialRoute.Injection.BEARER,
+                java.util.Set.of("/v1/responses", "/v1/models"), List.of()));
     }
 
     /**
