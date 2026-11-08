@@ -428,4 +428,47 @@ class RunResultSagaTest {
 
         assertEquals(List.of("project", "charge"), order);
     }
+
+    /**
+     * The seam the deleted CredentialRefusalHasNoProducerTest asked for (harness reviews step 3): the run worker reports
+     * CREDENTIAL_REJECTED for a proxied review unit whose model call answered 401, and the REAL feedback marks the
+     * member the run's factory_run row names. Only its two database reads are faked.
+     */
+    @Test
+    void aReviewRunsRefusedCredentialMarksThePoolMember() {
+        java.util.UUID member = java.util.UUID.fromString("00000000-0000-4000-8000-0000000000a1");
+        List<String> reads = new ArrayList<>();
+        List<java.util.UUID> marked = new ArrayList<>();
+        RecordingProjection projection = new RecordingProjection() {
+            /** factory_run.harness_credential_id; the real method reads the row. */
+            @Override
+            public Optional<java.util.UUID> harnessCredentialOf(String runId) {
+                reads.add(runId);
+                return Optional.of(member);
+            }
+        };
+        projection.kind = RunKind.REVIEW;
+        projection.binding = REVIEW_CALL;
+        RunResultSaga saga = saga(projection);
+        RunCredentialFeedback feedback = new RunCredentialFeedback();
+        feedback.projection = projection;
+        feedback.pool = new HarnessCredentialPool() {
+            /** The real one updates harness_credential. */
+            @Override
+            public boolean markRejected(java.util.UUID id) {
+                marked.add(id);
+                return true;
+            }
+        };
+        saga.credentials = feedback;
+
+        RunResult refused = new RunResult.RunFailed(RUN_ID, "CREDENTIAL_REJECTED",
+                "the model vendor refused the run's credential", false, Map.of("INPUT", 5L), List.of());
+        saga.on(refused);
+
+        assertEquals(List.of(RUN_ID), reads);
+        assertEquals(List.of(member), marked);
+        assertEquals(List.of(refused), ((RecordingReviewResults) saga.reviewResults).accepted,
+                "the refusal still reaches the review as its failure");
+    }
 }
