@@ -84,3 +84,16 @@ secretGroup = 1
   """
   regexTarget = "match"
   regexes = ['''Zx9Qv-Kp3Rw-Ln7Bd-Tq2Ms''']
+
+  [[rules.allowlists]]
+  description = """
+  A fake OpenAI-shaped key, present only in this repository's HISTORY (PR #393, first test commit).
+
+  A key-check test stubbed a provider message that echoes a wrong key, and wrote it as `sk-TEST…` so the
+  test could assert a key-shaped token never reached the screen. The `sk-` prefix put `TEST` mid-token,
+  so the TEST-/CANARY- allowlist above did not match it. The next commit replaced it with a value that
+  follows the convention, so the working tree contains no such value. Allowlisted by the literal VALUE,
+  per the rule at the top of this file. Removable once that history is squashed or expired.
+  """
+  regexTarget = "match"
+  regexes = ['''sk-TESTabcdef1234''']
