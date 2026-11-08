@@ -156,7 +156,7 @@ public record RunUnitSpec(String runId,
     private Placement placementOf(ContainerSpec container) {
         if (modelProxy != null && container == modelProxy) return Placement.BEHIND_EGRESS;
         if (container != agent) return Placement.OUTSIDE;
-        return modelProxy != null ? Placement.TRUST_ONLY : Placement.BEHIND_EGRESS;
+        return Placement.BEHIND_EGRESS;
     }
 
     /**
