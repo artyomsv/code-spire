@@ -42,7 +42,7 @@ final class Injector {
         Map<String, List<String>> outgoing = new LinkedHashMap<>();
         incoming.forEach((name, values) -> {
             String lower = name.toLowerCase(Locale.ROOT);
-            if (CREDENTIAL_HEADERS.contains(lower) || TRANSPORT_HEADERS.contains(lower)
+            if (TRANSPORT_HEADERS.contains(lower)
                     || namedByConnection.contains(lower)) {
                 return;
             }
