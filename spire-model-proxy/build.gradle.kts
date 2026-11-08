@@ -32,4 +32,9 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+    // CI is where these tests run; a failure's message (the status and the path that got it) must
+    // reach the job log, which keeps no report.
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
