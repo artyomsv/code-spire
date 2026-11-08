@@ -49,7 +49,7 @@ final class ModelProxyLogParser {
             requests++;
             String path = request.group(2);
             String outcome = request.group(3);
-            if (UNAUTHORIZED.equals(outcome) && ModelProxyReport.MODEL_CALL_PATHS.contains(path)) {
+            if ((UNAUTHORIZED.equals(outcome) || "403".equals(outcome)) && ModelProxyReport.MODEL_CALL_PATHS.contains(path)) {
                 rejected++;
             } else if (REFUSED.equals(outcome) && refused.size() < MAX_REFUSED_PATHS) {
                 refused.add(path);
