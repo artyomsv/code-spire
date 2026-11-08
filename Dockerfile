@@ -35,6 +35,7 @@ COPY spire-harness/build.gradle.kts spire-harness/
 COPY spire-harness-codex/build.gradle.kts spire-harness-codex/
 COPY spire-http/build.gradle.kts spire-http/
 COPY spire-llm/build.gradle.kts spire-llm/
+COPY spire-model-proxy/build.gradle.kts spire-model-proxy/
 COPY spire-orchestrator/build.gradle.kts spire-orchestrator/
 COPY spire-publisher/build.gradle.kts spire-publisher/
 COPY spire-review-worker/build.gradle.kts spire-review-worker/
