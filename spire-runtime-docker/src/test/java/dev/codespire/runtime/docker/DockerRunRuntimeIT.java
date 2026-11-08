@@ -70,6 +70,31 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 .awaitImageId();
     }
 
+    /** The model proxy under a tag of these tests' own, so a deployment's {@code latest} is never replaced. */
+    private static final String MODEL_PROXY_IMAGE = "spire-model-proxy:TEST-it";
+
+    /**
+     * The model proxy image, built from spire-model-proxy's Dockerfile and its installed distribution (the test task
+     * depends on {@code :spire-model-proxy:installDist}). Through the docker CLI rather than docker-java, because the
+     * module's .dockerignore admits the distribution by a negated pattern, and the CLI is what applies it as a
+     * deployment's build does.
+     */
+    @org.junit.jupiter.api.BeforeAll
+    static void buildTheModelProxyImage() throws Exception {
+        String root = System.getProperty("spire.repoRoot");
+        if (root == null || root.isBlank()) {
+            throw new IllegalStateException("spire.repoRoot is unset — see spire-runtime-docker/build.gradle.kts");
+        }
+        Process build = new ProcessBuilder("docker", "build", "-q", "-t", MODEL_PROXY_IMAGE,
+                Path.of(root, "spire-model-proxy").toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(build.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        if (!build.waitFor(10, java.util.concurrent.TimeUnit.MINUTES) || build.exitValue() != 0) {
+            throw new IllegalStateException("building " + MODEL_PROXY_IMAGE + " failed: " + output);
+        }
+    }
+
     private final List<RunHandle> started = new CopyOnWriteArrayList<>();
 
     @AfterEach
@@ -952,6 +977,203 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         assertTrue(hadNetwork, "the held unit must have had its network, or the check below checks nothing");
         assertTrue(labelledNetworks("run_egress_held").isEmpty(), "a network outlived its held unit");
         assertTrue(proxyOf("run_egress_held").isEmpty(), "the proxy outlived its held unit");
+    }
+
+    /** Answers every GET and POST with the status in TEST_STATUS and a body the agent can recognise. */
+    private static final String UPSTREAM_STUB = String.join("\n",
+            "import http.server, os",
+            "STATUS = int(os.environ['TEST_STATUS'])",
+            "class Stub(http.server.BaseHTTPRequestHandler):",
+            "    def answer(self):",
+            "        self.rfile.read(int(self.headers.get('Content-Length') or 0))",
+            "        body = b'TEST-UPSTREAM-ANSWER'",
+            "        self.send_response(STATUS)",
+            "        self.send_header('Content-Length', str(len(body)))",
+            "        self.end_headers()",
+            "        self.wfile.write(body)",
+            "    do_GET = answer",
+            "    do_POST = answer",
+            "http.server.ThreadingHTTPServer(('', 80), Stub).serve_forever()");
+
+    private static final String UPSTREAM_IMAGE = "python:3.13-alpine";
+
+    /**
+     * A plain-HTTP stand-in for the model vendor on the default bridge, reached by address like {@link #startTarget}.
+     * The model proxy reaches it only through the egress proxy, which is what these tests are about.
+     */
+    private String startUpstream(int status) {
+        runtime.ensureImage(UPSTREAM_IMAGE);
+        String id = runtime.client().createContainerCmd(UPSTREAM_IMAGE)
+                .withEnv("TEST_STATUS=" + status)
+                .withCmd("python", "-c", UPSTREAM_STUB)
+                .exec().getId();
+        targets.add(id);
+        runtime.client().startContainerCmd(id).exec();
+        return runtime.client().inspectContainerCmd(id).exec()
+                .getNetworkSettings().getNetworks().get("bridge").getIpAddress();
+    }
+
+    private static final String MODEL_SECRET = "TEST-SECRET-MODEL-PROXY";
+
+    /** A unit whose agent runs {@code agentScript} beside a model proxy forwarding /v1/responses to the upstream. */
+    private RunUnitSpec proxiedUnit(String id, String agentScript, String upstream, EgressPolicy egress) {
+        ContainerSpec modelProxy = new ContainerSpec(MODEL_PROXY_IMAGE, List.of(), Map.of(
+                "SPIRE_MODEL_UPSTREAM", "http://" + upstream,
+                "SPIRE_MODEL_INJECTION", "BEARER",
+                "SPIRE_MODEL_PATHS_EXACT", "/v1/responses",
+                "SPIRE_MODEL_SECRET", MODEL_SECRET,
+                "SPIRE_MODEL_ALLOW_PLAINTEXT_UPSTREAM", "true"), List.of());
+        return egressUnit(id, agentScript, egress).withModelProxy(modelProxy);
+    }
+
+    /** One model call, printed as a verdict: REACHED only when the upstream's own answer came back. */
+    private static String modelCall(String label, String url) {
+        return "if wget -Y off -T 10 -q -O - --post-data '{}' " + url + " 2>/dev/null | grep -q TEST-UPSTREAM-ANSWER; "
+                + "then echo " + label + "-REACHED; else echo " + label + "-FAILED; fi; ";
+    }
+
+    private static final String MODEL_CALL = modelCall("MODEL", RunUnitSpec.MODEL_PROXY_ADDRESS + "/v1/responses");
+
+    private static final String REACHED_MODEL = "MODEL-REACHED";
+
+    private Container modelProxyOf(String runId) {
+        return runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId,
+                        DockerRunRuntime.ROLE_LABEL, ModelProxyContainer.ROLE))
+                .exec().getFirst();
+    }
+
+    @Test
+    void theModelProxyJoinsTheAgentAndModelNetworksOnly() {
+        String runId = "run_model_networks";
+        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+
+        var networks = networksOf(runId, ModelProxyContainer.ROLE);
+        String agentNetwork = DockerRunNetworks.agentNetworkName(runId);
+        assertEquals(java.util.Set.of(agentNetwork, DockerRunNetworks.modelNetworkName(runId)), networks.keySet(),
+                "the model proxy must be on the agent's network and the model network, never on the default bridge");
+        assertTrue(networks.get(agentNetwork).getAliases().contains(RunUnitSpec.MODEL_PROXY_ALIAS),
+                "the agent finds the model proxy by its alias: " + networks.get(agentNetwork).getAliases());
+        assertEquals(java.util.Set.of(agentNetwork), networksOf(runId, "agent").keySet(),
+                "the agent stays on its own network alone");
+    }
+
+    @Test
+    void theEgressProxyIsNotOnTheAgentNetwork() {
+        String runId = "run_model_egress_net";
+        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+
+        assertEquals(java.util.Set.of("bridge", DockerRunNetworks.modelNetworkName(runId)),
+                networksOf(runId, DockerRunNetworks.PROXY).keySet(),
+                "with a model proxy, only the model proxy may reach the egress proxy");
+    }
+
+    @Test
+    void theModelProxyIsSandboxedAndItsSecretIsNoLabel() {
+        String runId = "run_model_sandbox";
+        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+
+        var inspected = runtime.client().inspectContainerCmd(modelProxyOf(runId).getId()).exec();
+        var host = inspected.getHostConfig();
+        assertEquals(ModelProxyContainer.MEMORY_BYTES, host.getMemory());
+        assertEquals(ModelProxyContainer.NANO_CPUS, host.getNanoCPUs());
+        assertEquals(ModelProxyContainer.PIDS_LIMIT, host.getPidsLimit());
+        assertEquals(Boolean.TRUE, host.getReadonlyRootfs());
+        assertTrue(List.of(host.getCapDrop()).contains(com.github.dockerjava.api.model.Capability.ALL));
+        assertTrue(host.getSecurityOpts().contains("no-new-privileges"));
+        assertFalse(inspected.getConfig().getLabels().values().stream().anyMatch(value -> value.contains(MODEL_SECRET)),
+                "a credential never goes in a label: " + inspected.getConfig().getLabels().keySet());
+    }
+
+    @Test
+    void theAgentReachesOnlyTheModelProxy() {
+        String upstream = startUpstream(200);
+        String probeEgress = "OUT=$(wget -Y off -T 5 -O /dev/null " + EgressPolicy.PROXY_ADDRESS + "/ 2>&1); "
+                + "case \"$OUT\" in *'bad address'*|*'timed out'*|*'refused'*|*'unreachable'*) echo EGRESS-UNREACHABLE;; "
+                + "*) echo \"EGRESS-ANSWERED $OUT\";; esac; ";
+        RunHandle handle = start(proxiedUnit("run_model_reach",
+                "env | grep -i '_proxy' || echo NO-PROXY-VARIABLES; " + MODEL_CALL + probeEgress
+                        + modelCall("OUTSIDE", "http://" + upstream + "/v1/responses"),
+                upstream, new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+
+        assertTrue(agent.contains("NO-PROXY-VARIABLES"), "a proxied agent is handed no proxy: " + agent);
+        assertTrue(agent.contains(REACHED_MODEL), "the agent must reach the vendor through the model proxy: " + agent);
+        assertTrue(agent.contains("EGRESS-UNREACHABLE"), "the agent must not reach the egress proxy: " + agent);
+        assertTrue(agent.contains("OUTSIDE-FAILED"), "the agent must reach nothing outside: " + agent);
+    }
+
+    @Test
+    void theModelProxysTrafficIsRecordedByTheEgressProxy() {
+        String upstream = startUpstream(200);
+        RunHandle handle = start(proxiedUnit("run_model_recorded", MODEL_CALL, upstream,
+                new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+        List<EgressAttempt> egress = runtime.egressOf(handle);
+
+        assertTrue(agent.contains(REACHED_MODEL), agent.toString());
+        assertTrue(egress.contains(new EgressAttempt(upstream, 80, true)), diagnosis(egress, "run_model_recorded"));
+        assertEquals(new dev.codespire.runtime.ModelProxyReport(1, 0, List.of()), runtime.modelProxyOf(handle));
+    }
+
+    @Test
+    void aProxiedUnitEnforcesEvenWhenTheGlobalModeIsReport() {
+        // REPORT with no declared host would let everything through; a proxied unit's egress proxy enforces the
+        // spec's hosts whatever the mode, so the upstream, not declared, is refused.
+        String upstream = startUpstream(200);
+        RunHandle handle = start(proxiedUnit("run_model_enforced", MODEL_CALL, upstream, REPORT));
+
+        List<String> agent = agentLog(handle);
+        runtime.salvage(handle);
+        List<EgressAttempt> egress = runtime.egressOf(handle);
+
+        assertTrue(agent.contains("MODEL-FAILED"), "an undeclared host must not answer: " + agent);
+        assertTrue(egress.contains(new EgressAttempt(upstream, 80, false)),
+                "the refusal is recorded: " + diagnosis(egress, "run_model_enforced"));
+    }
+
+    @Test
+    void theReportCountsARejectedModelCall() {
+        String upstream = startUpstream(401);
+        RunHandle handle = start(proxiedUnit("run_model_rejected", MODEL_CALL, upstream,
+                new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+
+        agentLog(handle);
+        runtime.salvage(handle);
+
+        dev.codespire.runtime.ModelProxyReport report = runtime.modelProxyOf(handle);
+        assertEquals(1, report.rejected(), "a 401 on the model call is a refused credential: " + report);
+        assertEquals(1, report.requests(), report.toString());
+    }
+
+    @Test
+    void destroyRemovesTheModelProxyAndBothNetworks() {
+        String runId = "run_model_destroy";
+        RunHandle handle = start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+        runtime.salvage(handle);
+        assertEquals(2, labelledNetworks(runId).size(), "the unit must have both networks: " + labelledNetworks(runId));
+
+        new DockerRunRuntime().destroy(handle);
+
+        assertTrue(labelledNetworks(runId).isEmpty(), "both networks must go with the unit");
+        assertTrue(runtime.client().listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId)).exec().isEmpty(),
+                "and every container, the model proxy included");
+    }
+
+    @Test
+    void cancelStopsTheModelProxy() {
+        String runId = "run_model_cancel";
+        RunHandle handle = start(proxiedUnit(runId, "sleep 300", startUpstream(200), REPORT));
+
+        runtime.cancel(handle);
+
+        assertEquals(Boolean.FALSE, runtime.client().inspectContainerCmd(modelProxyOf(runId).getId()).exec()
+                .getState().getRunning(), "the model proxy holds the credential and must stop with the run");
     }
 
     @Test

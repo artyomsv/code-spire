@@ -48,4 +48,7 @@ tasks.test {
     // DockerRunRuntimeIT builds the egress proxy image from deploy/egress, as a deployment would; handed in
     // explicitly rather than guessed from the working directory, the same property spire-agent-image uses.
     systemProperty("spire.repoRoot", rootProject.projectDir.absolutePath)
+    // DockerRunRuntimeIT builds the model proxy image from spire-model-proxy's Dockerfile, whose context is the
+    // installed distribution.
+    dependsOn(":spire-model-proxy:installDist")
 }
