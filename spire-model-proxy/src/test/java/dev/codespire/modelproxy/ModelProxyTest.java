@@ -200,7 +200,10 @@ class ModelProxyTest {
 
         int status = rawStatus(proxy, "CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n");
 
-        assertEquals(501, status);
+        // Measured in CI on JDK 25: the JDK server closes the connection without an answer (-1) before
+        // any handler runs; the target has no path for it to match a context with. The handler's own
+        // 501 for CONNECT stays as a second line in case a later JDK lets the request through.
+        assertTrue(status == -1 || status == 501, "CONNECT got " + status);
         assertEquals(0, hits.get());
     }
 

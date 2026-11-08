@@ -34,7 +34,8 @@ import java.util.concurrent.Executors;
  * process forwards each allowed request to the vendor with the run's real credential.
  *
  * <p>Its stdout is its report, one line per request: {@code spire-model <METHOD> <path> -> <status>}
- * or {@code -> refused}. The line names the method, the normalized path and the status only. Never a
+ * , {@code -> refused}, or {@code -> aborted} for a response that broke after its headers were sent.
+ * The line names the method, the normalized path and the status only. Never a
  * header value, a body, a query or an exception message: a message can carry the URI, and the
  * query with it. Each line is written before the agent can see the end of its response, so a reader
  * that saw the response sees the line.
@@ -45,6 +46,7 @@ public final class ModelProxy {
     private static final int CHUNK_BYTES = 8 * 1024;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final String REFUSED = "refused";
+    private static final String ABORTED = "aborted";
     private static final int BAD_GATEWAY = 502;
 
     /** Replaces a 401/403 body: OpenAI's 401 echoes part of the key it refused. */
@@ -124,6 +126,7 @@ public final class ModelProxy {
 
     private void handle(HttpExchange exchange) {
         RequestLine line = new RequestLine(exchange, log);
+        boolean headersSent = false;
         try {
             OptionalInt refusal = refusal(exchange);
             Optional<String> path = refusal.isPresent()
@@ -138,9 +141,36 @@ public final class ModelProxy {
             forward(exchange, line);
         } catch (IOException | RuntimeException failed) {
             // Deliberately unlogged: an exception message can carry the URI, and the query with it.
-            failSafely(exchange, line);
+            headersSent = exchange.getResponseCode() != -1;
+            if (headersSent) {
+                abort(line);
+            }
+            badGateway(exchange, line);
         } finally {
-            exchange.close();
+            if (!headersSent) {
+                exchange.close();
+            }
+        }
+    }
+
+    /**
+     * Ends a response whose headers were already sent, without ending it cleanly.
+     *
+     * <p>Closing the exchange would write the chunked body's terminating chunk, and the agent would
+     * read a truncated answer as a complete one. Leaving it unclosed and throwing out of the handler
+     * makes the JDK server drop the connection instead, so the agent sees the stream break. The
+     * exception carries no message and no stack trace; the server logs it at TRACE only.
+     */
+    private static void abort(RequestLine line) {
+        line.write(ABORTED);
+        throw new AbortedResponse();
+    }
+
+    /** Thrown out of the handler to make the server drop the connection; see {@link #abort}. */
+    private static final class AbortedResponse extends RuntimeException {
+
+        AbortedResponse() {
+            super(null, null, false, false);
         }
     }
 
@@ -250,13 +280,8 @@ public final class ModelProxy {
         exchange.getResponseBody().write(body);
     }
 
-    /** A 502 when nothing was sent yet; otherwise the status already sent stands. */
-    private static void failSafely(HttpExchange exchange, RequestLine line) {
-        int sent = exchange.getResponseCode();
-        if (sent != -1) {
-            line.write(String.valueOf(sent));
-            return;
-        }
+    /** A 502 for a request that failed before any of its response was sent. */
+    private static void badGateway(HttpExchange exchange, RequestLine line) {
         line.write(String.valueOf(BAD_GATEWAY));
         try {
             exchange.getResponseHeaders().clear();
