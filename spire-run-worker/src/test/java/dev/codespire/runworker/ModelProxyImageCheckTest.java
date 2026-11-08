@@ -12,8 +12,6 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The model proxy image is built locally and on no registry yet, so a worker without it must not start proxying. */
 class ModelProxyImageCheckTest {
@@ -47,14 +45,15 @@ class ModelProxyImageCheckTest {
         return check;
     }
 
+    /**
+     * A missing image stops the proxied lane, not the worker: builds run on, and each proxied run fails as
+     * IMAGE_UNAVAILABLE naming the variable (RunLauncherModelProxyTest). Startup only logs it, at ERROR.
+     */
     @Test
-    void aMissingImageStopsTheLaneNamingTheVariable() {
-        IllegalStateException refusal = assertThrows(IllegalStateException.class,
-                () -> check(CredentialProxyMode.REVIEWS, EgressPolicy.Mode.REPORT).verify(runtime));
+    void aMissingImageDoesNotStopTheWorker() {
+        assertDoesNotThrow(() -> check(CredentialProxyMode.REVIEWS, EgressPolicy.Mode.REPORT).verify(runtime));
 
-        assertTrue(refusal.getMessage().contains("SPIRE_RUN_CREDENTIAL_PROXY_IMAGE"), refusal.getMessage());
-        assertTrue(refusal.getMessage().contains(IMAGE), refusal.getMessage());
-        assertEquals(List.of(IMAGE), images.described);
+        assertEquals(List.of(IMAGE), images.described, "the image was looked for");
     }
 
     @Test
