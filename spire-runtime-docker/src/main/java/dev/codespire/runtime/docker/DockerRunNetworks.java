@@ -105,13 +105,18 @@ final class DockerRunNetworks {
             return;
         }
         String modelNetwork = createNetwork(modelNetworkName(spec.runId()), labels);
-        startEgressProxy(spec, new EgressPolicy(EgressPolicy.Mode.ENFORCE, spec.egress().hosts()), modelNetwork, labels);
+        String egressProxy = startEgressProxy(spec, new EgressPolicy(EgressPolicy.Mode.ENFORCE, spec.egress().hosts()), modelNetwork, labels);
+        client.connectToNetworkCmd()
+                .withNetworkId(agentNetwork)
+                .withContainerId(egressProxy)
+                .withContainerNetwork(new ContainerNetwork().withAliases(EgressPolicy.PROXY_ALIAS))
+                .exec();
         String modelProxy = modelProxies.create(spec, modelNetwork, agentNetwork, roleLabels(labels, ModelProxyContainer.ROLE));
         modelProxies.start(modelProxy);
     }
 
     /** The egress proxy, open to {@code network}'s subnet alone and found there by its alias. */
-    private void startEgressProxy(RunUnitSpec spec, EgressPolicy egress, String network, Map<String, String> labels) {
+    private String startEgressProxy(RunUnitSpec spec, EgressPolicy egress, String network, Map<String, String> labels) {
         String proxy = proxies.create(spec, egress, subnetOf(network), roleLabels(labels, PROXY));
         client.connectToNetworkCmd()
                 .withNetworkId(network)
@@ -119,6 +124,7 @@ final class DockerRunNetworks {
                 .withContainerNetwork(new ContainerNetwork().withAliases(EgressPolicy.PROXY_ALIAS))
                 .exec();
         proxies.start(proxy);
+        return proxy;
     }
 
     private static Map<String, String> roleLabels(Map<String, String> labels, String role) {
