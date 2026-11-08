@@ -1,5 +1,6 @@
 package dev.codespire.harness.codex;
 
+import dev.codespire.harness.CredentialRoute;
 import dev.codespire.harness.FailureCause;
 import dev.codespire.harness.HarnessCapabilities;
 import dev.codespire.harness.HarnessInvocation;
@@ -133,6 +134,102 @@ class CodexAdapterTest {
             Set<String> hosts = adapter.egressHosts(paid);
             assertFalse(hosts.isEmpty(), "an arm that declares nothing refuses its own model in enforce mode");
             assertFalse(hosts.contains("auth.openai.com"), hosts.toString());
+        }
+    }
+
+    // ---- the model proxy --------------------------------------------------------------------
+
+    private static HarnessInvocation proxied(String credentialKey) {
+        return new HarnessInvocation("run_abc", "review the change", "/workspace", "gpt-5.6",
+                Map.of(credentialKey, CodexAdapter.PLACEHOLDER), Duration.ofMinutes(30)).withCredentialProxied(true);
+    }
+
+    /**
+     * A key run talks to the model proxy through a provider of its own whose key is a placeholder variable, measured
+     * against codex-cli 0.156.1 in the 2026-11-07 spike: no login is needed, so none is run.
+     */
+    @Test
+    void aProxiedApiKeyRunTalksToTheModelProxy() {
+        String script = script(adapter.command(proxied(HarnessInvocation.CREDENTIAL)));
+
+        assertTrue(script.contains(" -c 'model_provider=\"spire\"'"), script);
+        assertTrue(script.contains(" -c 'model_providers.spire.base_url=\"http://spire-model:8080/v1\"'"), script);
+        assertTrue(script.contains(" -c 'model_providers.spire.env_key=\"SPIRE_MODEL_PLACEHOLDER\"'"), script);
+        assertTrue(script.contains(" -c 'model_providers.spire.wire_api=\"responses\"'"), script);
+        assertTrue(script.contains(" -c 'model_providers.spire.name=\"spire\"'"), script);
+        assertTrue(script.startsWith("exec codex exec "), script);
+        assertFalse(script.contains("codex login"), script);
+        assertFalse(script.contains("requires_openai_auth"), script);
+        assertFalse(script.contains("chatgpt_base_url"), script);
+        assertTrue(script.contains(" -c features.plugins=false -c analytics.enabled=false"), script);
+        assertTrue(script.indexOf("model_provider=") < script.indexOf(" -C "), script);
+    }
+
+    /** A seat run signs in with a placeholder file and reaches the ChatGPT backend through the model proxy. */
+    @Test
+    void aProxiedSeatRunUsesAPlaceholderSignIn() {
+        HarnessInvocation seat = proxied(HarnessInvocation.SIGN_IN);
+        String script = script(adapter.command(seat));
+
+        assertTrue(script.contains(" -c 'chatgpt_base_url=\"http://spire-model:8080/backend-api/\"'"), script);
+        assertTrue(script.contains(" -c 'model_provider=\"spire\"'"), script);
+        assertTrue(script.contains(
+                " -c 'model_providers.spire.base_url=\"http://spire-model:8080/backend-api/codex\"'"), script);
+        assertTrue(script.contains(" -c model_providers.spire.requires_openai_auth=true"), script);
+        assertTrue(script.contains(" -c 'model_providers.spire.wire_api=\"responses\"'"), script);
+        assertTrue(script.contains(" -c features.apps=false"), script);
+        assertTrue(script.contains("umask 077 && printenv CODEX_SIGN_IN_FILE > \"$HOME/.codex/auth.json\""), script);
+        assertTrue(script.contains("unset CODEX_SIGN_IN_FILE; exec codex exec"), script);
+        assertFalse(script.contains("env_key"), script);
+        assertFalse(script.contains("--with-api-key"), script);
+        assertEquals(PlaceholderSignIn.file(), adapter.environment(seat).get("CODEX_SIGN_IN_FILE"));
+    }
+
+    /** Placeholders in, placeholders and fixed settings out: nothing in the environment is a credential. */
+    @Test
+    void aProxiedRunsEnvironmentHoldsOnlyPlaceholders() {
+        assertEquals(Map.of("CODEX_QUIET_MODE", "1", "SPIRE_MODEL_PLACEHOLDER", "TEST-PLACEHOLDER"),
+                adapter.environment(proxied(HarnessInvocation.CREDENTIAL)));
+        assertEquals(Map.of("CODEX_QUIET_MODE", "1", "CODEX_SIGN_IN_FILE", PlaceholderSignIn.file()),
+                adapter.environment(proxied(HarnessInvocation.SIGN_IN)));
+    }
+
+    /** The paths the 2026-11-07 spike saw, and no others; an unproxied run declares no route. */
+    @Test
+    void theRoutePerPayment() {
+        assertEquals(java.util.Optional.of(new CredentialRoute("https://api.openai.com", CredentialRoute.Injection.BEARER,
+                        Set.of("/v1/responses", "/v1/models"), List.of())),
+                adapter.credentialRoute(proxied(HarnessInvocation.CREDENTIAL)));
+        assertEquals(java.util.Optional.of(new CredentialRoute("https://chatgpt.com",
+                        CredentialRoute.Injection.CHATGPT_SEAT, Set.of(),
+                        List.of("/backend-api/codex/", "/backend-api/wham/"))),
+                adapter.credentialRoute(proxied(HarnessInvocation.SIGN_IN)));
+        assertTrue(adapter.credentialRoute(invocation()).isEmpty());
+        assertTrue(adapter.credentialRoute(signedIn()).isEmpty());
+        assertEquals("http://spire-model:8080", CredentialRoute.AGENT_FACING_ORIGIN);
+    }
+
+    /** Today's argv and environment, byte for byte, for a run that is not proxied. */
+    @Test
+    void anUnproxiedRunIsUnchanged() {
+        HarnessInvocation key = new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
+                Map.of(HarnessInvocation.CREDENTIAL, "TEST-key"), Duration.ofMinutes(30));
+        HarnessInvocation seat = new HarnessInvocation("run_abc", "fix the bug", "/workspace", "gpt-5.6",
+                Map.of(HarnessInvocation.SIGN_IN, "TEST-sign-in"), Duration.ofMinutes(30));
+        String tail = "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check --model 'gpt-5.6'"
+                + " -c features.plugins=false -c analytics.enabled=false";
+
+        for (HarnessInvocation plain : List.of(key, key.withCredentialProxied(false))) {
+            assertEquals(List.of("sh", "-c", "printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null"
+                    + " || exit 120; " + tail + " -C '/workspace' -"), adapter.command(plain));
+            assertEquals(Map.of("OPENAI_API_KEY", "TEST-key", "CODEX_QUIET_MODE", "1"), adapter.environment(plain));
+        }
+        for (HarnessInvocation plain : List.of(seat, seat.withCredentialProxied(false))) {
+            assertEquals(List.of("sh", "-c", "mkdir -p \"$HOME/.codex\" && (umask 077 && printenv CODEX_SIGN_IN_FILE"
+                    + " > \"$HOME/.codex/auth.json\") || exit 120; unset CODEX_SIGN_IN_FILE; " + tail
+                    + " -c features.apps=false -C '/workspace' -"), adapter.command(plain));
+            assertEquals(Map.of("CODEX_SIGN_IN_FILE", "TEST-sign-in", "CODEX_QUIET_MODE", "1"),
+                    adapter.environment(plain));
         }
     }
 
