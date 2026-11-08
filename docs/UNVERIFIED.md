@@ -861,8 +861,13 @@ container's actual output and exit code. Then the mapping is written *from the o
 harness adapter. Guessing the pattern is worse than the gap: it would pass a test built from the same
 guess and retire nothing in production.
 
-**Guarded by** `spire-arch`'s `CredentialRefusalHasNoProducerTest`, which fails the build when a
-producer appears — that red is the signal to remove it and correct the three documents.
+**Guarded by** nothing any more: `spire-arch`'s `CredentialRefusalHasNoProducerTest` failed the build when a
+producer appeared, and was deleted with the first one (harness reviews step 3). **Narrowed:** a unit whose
+credential sits in a model proxy (harness review units by default) now reports `CREDENTIAL_REJECTED` when
+the model proxy saw a 401 on a model call path and the agent failed (`ModelProxyResults`), and
+`RunResultSagaTest` proves it marks the run's pool member. That 401 is proven against fakes only; an
+unproxied unit (factory builds by default) still has no producer.
+
 **Tracked in** `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 
 ### A2. The rate-limit half has no producer either

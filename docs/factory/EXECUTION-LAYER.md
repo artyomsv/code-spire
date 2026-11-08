@@ -132,8 +132,9 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
 > `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores rather than resting a good key
 > on every provider blip. So both transitions are taken by an operator today, through
 > `POST /api/harness-credentials/{id}/rest` and `/clear-rejection`. `spire-arch`'s
-> `CredentialRefusalHasNoProducerTest` fails the build when a producer appears — that red is the
-> signal to delete this note. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close it.
+> `CredentialRefusalHasNoProducerTest` was deleted when the first producer arrived (harness reviews
+> step 3): a model-proxied unit reports `CREDENTIAL_REJECTED` on a 401 to a model call, so the refusal
+> arrow is automatic there; every other unit and the rate-limit arrow are still taken by an operator. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close it.
 
 Four rules:
 

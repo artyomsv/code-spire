@@ -10,6 +10,7 @@ import dev.codespire.harness.TerminalOutcome;
 import dev.codespire.harness.UsageReport;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.ModelProxyReport;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunUnitSpec;
@@ -66,10 +67,10 @@ public class RunLauncher {
 
     /**
      * Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit, and what the
-     * unit's egress proxy saw.
+     * unit's egress proxy and model proxy saw.
      */
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization,
-                            List<RunResult.EgressAttempt> egress) {
+                            List<RunResult.EgressAttempt> egress, ModelProxyReport modelProxy) {
     }
 
     /**
@@ -242,13 +243,14 @@ public class RunLauncher {
             awaitBriefly(agentStream, publisherStream);
             LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
             List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
+            ModelProxyReport modelProxy = ModelProxyResults.read(runtime, handle);
             // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
             // exit, so a push the publisher already reported is still a push. This used to build a
             // bare failure that carried the ref in its detail TEXT only, so the run's record had no
             // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
             // also gives a gate refusal and a forge rejection their own outcomes on this path.
             return EgressResults.attach(unobserved(command, adapter, new Observed(seen, outcome,
-                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), egress)), egress);
+                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), egress, modelProxy)), egress);
         }
         // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
         // whatever was read still decide the result, and the unit is still destroyed.
@@ -264,7 +266,8 @@ public class RunLauncher {
 
         // After salvage, when the proxy has seen everything the agent asked for, and before destroy removes it.
         List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
-        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, egress), work != null);
+        ModelProxyReport modelProxy = ModelProxyResults.read(runtime, handle);
+        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, egress, modelProxy), work != null);
         if (work != null && result instanceof RunResult.RunFinished finished && !finished.refused()
                 && !finished.agentUnobserved()) {
             if (finished.pushedRef() != null) {
@@ -331,12 +334,18 @@ public class RunLauncher {
     }
 
     /**
-     * A run the AGENT failed: when the egress proxy refused a host, that refusal is the likely reason and the cause
-     * says so, naming the host. Only here: a publisher failure, a gate refusal or a push keeps its own outcome, with
+     * A run the AGENT failed: when the model proxy saw a refused credential or an undeclared path, or the egress proxy
+     * refused a host, that is the likely reason and the cause says so ({@link ModelProxyResults}). Only here: a publisher failure, a gate refusal or a push keeps its own outcome, with
      * the refused hosts beside it on the result.
      */
     private RunResult.RunFailed agentFailure(RunCommand.ExecuteRun command, String cause, String detail,
                                              Observed observed) {
+        // The model proxy first: a refused credential or an undeclared model path explains the failure more exactly
+        // than a refused host, and a refused credential is what marks the pool member (harness reviews step 3).
+        java.util.Optional<ModelProxyResults.Explained> explained = ModelProxyResults.explain(observed.modelProxy(), detail);
+        if (explained.isPresent()) {
+            return failure(command, explained.orElseThrow().cause().name(), explained.orElseThrow().detail());
+        }
         List<String> refused = EgressResults.refusedHosts(observed.egress());
         if (refused.isEmpty()) {
             return failure(command, cause, detail);

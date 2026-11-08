@@ -125,6 +125,38 @@ public class Credentials {
         node.forEach(child -> collect(child, secrets));
     }
 
+    /**
+     * The two values of a sign-in file a model proxy injects (harness reviews step 3): {@code tokens.access_token} and
+     * {@code tokens.account_id}, measured on codex-cli 0.156.1 as the orchestrator's {@code SignInFiles} reads them.
+     * Never the whole file: its {@code id_token} carries the account's email claims, and {@code docker inspect} prints
+     * a container's environment.
+     */
+    record SeatToken(String accessToken, String accountId) {
+
+        /** Never prints a value: this record holds a live seat's token. */
+        @Override
+        public String toString() {
+            return "SeatToken[***]";
+        }
+    }
+
+    /** Refuses a file without both values, quoting nothing of it: the plaintext is the credential. */
+    static SeatToken seatToken(String file) {
+        com.fasterxml.jackson.databind.JsonNode tokens;
+        try {
+            tokens = JSON.readTree(file).path("tokens");
+        } catch (JsonProcessingException unreadable) {
+            throw new IllegalArgumentException("the run's sign-in file is not JSON, so its seat cannot be proxied");
+        }
+        String access = tokens.path("access_token").asText("");
+        String account = tokens.path("account_id").asText("");
+        if (access.isBlank() || account.isBlank()) {
+            throw new IllegalArgumentException("the run's sign-in file has no tokens.access_token or no"
+                    + " tokens.account_id, so its seat cannot be proxied");
+        }
+        return new SeatToken(access, account);
+    }
+
     /** Short enough to cover an account id, long enough to leave a word like "chatgpt" alone. */
     private static final int SHORTEST_SCRUBBED_VALUE = 16;
 

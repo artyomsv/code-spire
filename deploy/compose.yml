@@ -214,6 +214,10 @@ services:
       # Required, no default: the worker refuses to start without it, because a run unit with
       # no publisher is a run whose work can never leave the sandbox.
       SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:?set in .env}
+      # Which run units hold their model credential in a model proxy (OFF, REVIEWS, ALL), and its image: the
+      # worker refuses to start without the image while the mode is not OFF. See deploy/.env.example.
+      SPIRE_RUN_CREDENTIAL_PROXY_MODE: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:-REVIEWS}
+      SPIRE_RUN_CREDENTIAL_PROXY_IMAGE: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:-spire-model-proxy:latest}
       # The daemon this worker places run units on. Left at the mounted socket below; set it
       # to a remote daemon and the mount can go, which is the cheapest way to stop this
       # container being root on THIS host.

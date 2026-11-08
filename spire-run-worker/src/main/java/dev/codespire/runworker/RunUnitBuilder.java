@@ -1,6 +1,7 @@
 package dev.codespire.runworker;
 
 import dev.codespire.contract.command.RunCommand;
+import dev.codespire.harness.CredentialRoute;
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessInvocation;
 import dev.codespire.harness.PromptDelivery;
@@ -20,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Turns a command into the three-container run unit of ADR-039.
@@ -29,7 +31,8 @@ import java.util.Map;
  *
  * <ul>
  *   <li>the agent gets the model credential and the workspace, and NO write credential — so it
- *       physically cannot push, gate or no gate;</li>
+ *       physically cannot push, gate or no gate. In a proxied unit (harness reviews step 3) it holds a
+ *       placeholder instead, and only the model proxy beside it holds the credential;</li>
  *   <li>the publisher gets the write credential and the gate's rules, and NOT the workspace — so it
  *       can never reach agent-authored git config or hooks;</li>
  *   <li>{@code /handoff} is writable by the agent and read-only to the publisher;</li>
@@ -72,6 +75,17 @@ public class RunUnitBuilder {
      */
     @ConfigProperty(name = "spire.run.egress.mode")
     EgressPolicy.Mode egressMode;
+
+    /**
+     * Which units hold their model credential in a model proxy (harness reviews step 3). OFF until configuration says
+     * otherwise, so a builder made by hand in a test builds today's unit; the deployment's default is REVIEWS.
+     */
+    @ConfigProperty(name = "spire.run.credential-proxy.mode")
+    CredentialProxyMode credentialProxyMode = CredentialProxyMode.OFF;
+
+    /** The model proxy's image; {@link ModelProxyImageCheck} refuses to start a worker that cannot run it. */
+    @ConfigProperty(name = "spire.run.credential-proxy.image")
+    String modelProxyImage;
 
     /** An agent can write an object bomb; the publisher refuses one larger than this. */
     static final long BUNDLE_MAX_BYTES = 256L * 1024 * 1024;
@@ -263,10 +277,13 @@ public class RunUnitBuilder {
         }
         ContainerSpec init = new ContainerSpec(publisherImage, List.of("spire-clone"), Map.copyOf(initEnv), initMounts);
 
-        HarnessInvocation invocation = new HarnessInvocation(command.runId(),
-                topology.prompt(command.prompt()),
-                "/workspace", command.model(), harnessEnv,
-                Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort(), topology.guidance());
+        // The adapter is asked for a route holding placeholders only, so it cannot leak what it was never handed. An arm
+        // with no route runs as before, with the real credential.
+        HarnessInvocation placeholders = invocation(command, topology, ModelProxyEnvironment.placeholders(harnessEnv),
+                true);
+        Optional<CredentialRoute> route = proxies(topology) ? adapter.credentialRoute(placeholders) : Optional.empty();
+        HarnessInvocation invocation = route.isPresent() ? placeholders
+                : invocation(command, topology, harnessEnv, false);
 
         Map<String, String> agentEnv = new LinkedHashMap<>(adapter.environment(invocation));
         agentEnv.put("SPIRE_BASE_COMMIT", command.baseCommit());
@@ -299,9 +316,30 @@ public class RunUnitBuilder {
 
         EgressPolicy egress = egressMode == EgressPolicy.Mode.OFF ? EgressPolicy.OFF
                 : new EgressPolicy(egressMode, adapter.egressHosts(invocation));
-        return new RunUnitSpec(command.runId(), init, agent, publisher,
+        RunUnitSpec unit = new RunUnitSpec(command.runId(), init, agent, publisher,
                 enterprise.environment(), egress,
                 MEMORY_BYTES, NANO_CPUS, DISK_BYTES, Duration.ofSeconds(command.maxWallClockSeconds()));
+        if (route.isEmpty()) {
+            return unit;
+        }
+        // The real credential's only destination in a proxied unit: the model proxy's own environment.
+        return unit.withModelProxy(new ContainerSpec(modelProxyImage, List.of(),
+                ModelProxyEnvironment.of(route.orElseThrow(), harnessEnv), List.of()));
+    }
+
+    /**
+     * Whether this unit's model credential is held by a model proxy, before the harness says whether it can run behind
+     * one: the configured mode names its kind, and the egress proxy is on (the model proxy's only way out).
+     */
+    private boolean proxies(Topology topology) {
+        return credentialProxyMode.appliesTo(topology == Topology.REVIEW) && egressMode != EgressPolicy.Mode.OFF;
+    }
+
+    private static HarnessInvocation invocation(RunCommand.ExecuteRun command, Topology topology,
+                                                Map<String, String> credentials, boolean proxied) {
+        return new HarnessInvocation(command.runId(), topology.prompt(command.prompt()), "/workspace", command.model(),
+                credentials, Duration.ofSeconds(command.maxWallClockSeconds()), command.reasoningEffort(),
+                topology.guidance(), proxied);
     }
 
     /** Reuse the retained unit's topology; decrypt only the current SCM credential, never a harness key. */
