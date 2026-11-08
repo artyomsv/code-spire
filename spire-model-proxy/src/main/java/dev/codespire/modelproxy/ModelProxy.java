@@ -254,8 +254,8 @@ public final class ModelProxy {
         byte[] chunk = new byte[CHUNK_BYTES];
         for (int read = body.read(chunk); read != -1; read = body.read(chunk)) {
             out.write(chunk, 0, read);
-            out.flush();
         }
+        out.flush();
         // Before the close that ends the chunked body, so the line precedes the response's end.
         line.write(String.valueOf(status));
     }
