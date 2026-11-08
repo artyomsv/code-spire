@@ -39,11 +39,11 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
 
     /**
      * The images a run unit is made of. Not every Dockerfile in the repository: the service images
-     * are ours to configure and an operator never derives from them, whereas these two are handed
-     * to an operator as a base.
+     * are ours to configure and an operator never derives from them, whereas these are what a run
+     * unit is made of (the model proxy runs beside the agent in a review unit).
      */
     private static final List<String> RUN_UNIT_IMAGES =
-            List.of("deploy/agent/codex/Dockerfile", "spire-publisher/Dockerfile");
+            List.of("deploy/agent/codex/Dockerfile", "spire-publisher/Dockerfile", "spire-model-proxy/Dockerfile");
 
     /**
      * Names that change TLS or routing for every process in the container.
