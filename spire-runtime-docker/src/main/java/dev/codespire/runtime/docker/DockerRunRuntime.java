@@ -301,6 +301,9 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // Before the agent exists, so its first call already has somewhere to go. Labelled like the volumes,
             // so destroy and the watchdog find the network and the proxy by the run id alone.
             ensureImage(networks.image());
+            // A model proxy too (harness reviews step 3): on the model network with the egress proxy, which then
+            // enforces the spec's hosts whatever its mode, and on the agent's network as spire-model.
+            if (spec.modelProxy() != null) ensureImage(spec.modelProxy().image());
             networks.open(spec, volumeLabels);
         }
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER, binding, null);
@@ -809,7 +812,8 @@ public final class DockerRunRuntime implements PublicationRuntime {
         }
         for (Container container : containersOf(handle.runId())) {
             String role = container.getLabels().get(ROLE_LABEL);
-            if (DELIVERY.equals(role) || VERIFY.equals(role) || DockerRunNetworks.PROXY.equals(role)) {
+            if (DELIVERY.equals(role) || VERIFY.equals(role) || DockerRunNetworks.PROXY.equals(role)
+                    || ModelProxyContainer.ROLE.equals(role)) {
                 killQuietly(container.getId());
             }
         }
@@ -942,14 +946,23 @@ public final class DockerRunRuntime implements PublicationRuntime {
     /**
      * The agent is gone, so its way out closes. A held unit is kept for days; a proxy left running with it would be
      * an open door into nothing and a process to account for. Its log stays readable after it stops.
+     *
+     * <p>The model proxy first, and for a stronger reason: it holds the model credential, and nothing needs it once the
+     * agent is gone.
      */
     private void stopProxy(RunHandle handle) {
+        containerOf(handle.runId(), ModelProxyContainer.ROLE).ifPresent(this::stopQuietly);
         containerOf(handle.runId(), DockerRunNetworks.PROXY).ifPresent(this::stopQuietly);
     }
 
     @Override
     public List<dev.codespire.runtime.EgressAttempt> egressOf(RunHandle handle) {
         return networks.egressOf(handle.runId());
+    }
+
+    @Override
+    public dev.codespire.runtime.ModelProxyReport modelProxyOf(RunHandle handle) {
+        return networks.modelProxyOf(handle.runId());
     }
 
     /**

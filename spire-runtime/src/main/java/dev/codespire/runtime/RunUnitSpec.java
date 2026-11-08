@@ -28,6 +28,12 @@ import java.util.Set;
  * {@link EgressPolicy}. It has no defaulting constructor for the same reason: {@link EgressPolicy#OFF} is said
  * out loud. Only a unit stored before the field existed reads back without one, and then as OFF, which is how it ran.
  *
+ * <p>{@code modelProxy} is the unit's model proxy, or null for a unit without one (harness reviews step 3). It holds
+ * the real model credential; the agent beside it holds a placeholder and reaches it at {@link #MODEL_PROXY_ADDRESS}.
+ * Only the model proxy is behind the egress proxy then: the agent gets the deployment's trust and no proxy at all, and
+ * its network leads nowhere but to the model proxy. So a model proxy needs an egress network, and it mounts nothing
+ * of the unit's (the runtime gives it the host trust mounts, read-only, as every container).
+ *
  * <p><b>{@code diskBytes} is a limit like the other two, and it is stated in the SPI rather than
  * left to each arm, because the portable answer differs per arm while the guarantee must not.</b>
  * Memory, CPU and process count were bounded and disk was not, so one {@code fallocate} from an
@@ -60,15 +66,33 @@ import java.util.Set;
  */
 public record RunUnitSpec(String runId,
                           ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
-                          EnterpriseEnvironment enterprise, EgressPolicy egress,
+                          EnterpriseEnvironment enterprise, EgressPolicy egress, ContainerSpec modelProxy,
                           long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock,
                           UnitInputs inputs) {
+
+    /** The name the agent of a proxied unit reaches its model proxy by, on the unit's agent network. */
+    public static final String MODEL_PROXY_ALIAS = "spire-model";
+
+    /** The model proxy's listening port, the image contract's. */
+    public static final int MODEL_PROXY_PORT = 8080;
+
+    /** Where a harness adapter points the agent's model provider in a proxied unit. */
+    public static final String MODEL_PROXY_ADDRESS = "http://" + MODEL_PROXY_ALIAS + ":" + MODEL_PROXY_PORT;
+
+    /** A unit with no model proxy; {@link #withModelProxy} adds one. */
+    public RunUnitSpec(String runId, ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
+                       EnterpriseEnvironment enterprise, EgressPolicy egress,
+                       long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock, UnitInputs inputs) {
+        this(runId, init, agent, publisher, enterprise, egress, null, memoryBytes, nanoCpus, diskBytes, wallClock,
+                inputs);
+    }
 
     /** A unit with no inputs: every build unit, and a held build's unit stored before inputs existed. */
     public RunUnitSpec(String runId, ContainerSpec init, ContainerSpec agent, ContainerSpec publisher,
                        EnterpriseEnvironment enterprise, EgressPolicy egress,
                        long memoryBytes, long nanoCpus, long diskBytes, Duration wallClock) {
-        this(runId, init, agent, publisher, enterprise, egress, memoryBytes, nanoCpus, diskBytes, wallClock, null);
+        this(runId, init, agent, publisher, enterprise, egress, null, memoryBytes, nanoCpus, diskBytes, wallClock,
+                null);
     }
 
     public RunUnitSpec {
@@ -98,7 +122,8 @@ public record RunUnitSpec(String runId,
             throw new IllegalArgumentException("a run unit needs a wall clock, was: " + wallClock);
         }
         requireContainment(agent, publisher);
-        requireNoEnvironmentCollision(enterprise, egress, init, agent, publisher);
+        if (modelProxy != null) requireModelProxyPlacement(egress, modelProxy);
+        requireNoEnvironmentCollision(enterprise, egress, init, agent, publisher, modelProxy);
         requireHostPathsDoNotShadowVolumes(enterprise, init, agent, publisher);
         if (inputs != null) inputs.requireReachOnlyInitAndAgent(init, agent, publisher);
     }
@@ -114,19 +139,37 @@ public record RunUnitSpec(String runId,
      * <p>With the agent behind its egress proxy, the agent gets the deployment's trust and NOT its proxy: every
      * proxy variable names the egress proxy, and nothing is exempt from it (an empty {@code NO_PROXY}). The egress
      * proxy chains to the corporate proxy itself. The other containers get the deployment's environment whole.
+     *
+     * <p>With a model proxy, the model proxy is the container behind the egress proxy and gets those variables; the
+     * agent gets the deployment's trust only, since nothing a proxy variable could name is reachable from its network.
      */
     public Map<String, String> environmentFor(ContainerSpec container) {
         Objects.requireNonNull(container, "container");
         Map<String, String> merged = new LinkedHashMap<>(container.environment());
-        merged.putAll(deploymentEnvironment(enterprise, egress, container == agent));
+        merged.putAll(deploymentEnvironment(enterprise, egress, placementOf(container)));
         return Map.copyOf(merged);
     }
 
-    /** What the deployment adds to one container: all of it, or for a proxied agent its trust and the egress proxy. */
+    /** Where a container sits relative to the egress proxy, which decides what the deployment adds to it. */
+    private enum Placement { OUTSIDE, BEHIND_EGRESS, TRUST_ONLY }
+
+    private Placement placementOf(ContainerSpec container) {
+        if (modelProxy != null && container == modelProxy) return Placement.BEHIND_EGRESS;
+        if (container != agent) return Placement.OUTSIDE;
+        return modelProxy != null ? Placement.TRUST_ONLY : Placement.BEHIND_EGRESS;
+    }
+
+    /**
+     * What the deployment adds to one container: all of it; its trust alone for the agent beside a model proxy; or
+     * its trust and the egress proxy for the one container behind it.
+     */
     private static Map<String, String> deploymentEnvironment(EnterpriseEnvironment enterprise, EgressPolicy egress,
-                                                             boolean isAgent) {
-        if (!isAgent || !egress.proxiesTheAgent()) {
+                                                             Placement placement) {
+        if (placement == Placement.OUTSIDE || !egress.proxiesTheAgent()) {
             return enterprise.environment();
+        }
+        if (placement == Placement.TRUST_ONLY) {
+            return enterprise.trustEnvironment();
         }
         Map<String, String> applied = new LinkedHashMap<>(enterprise.trustEnvironment());
         for (String name : List.of("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")) {
@@ -139,25 +182,31 @@ public record RunUnitSpec(String runId,
 
     /** Rebuild with another init container, enumerating the components once. */
     public RunUnitSpec withInit(ContainerSpec container) {
-        return new RunUnitSpec(runId, container, agent, publisher, enterprise, egress,
+        return new RunUnitSpec(runId, container, agent, publisher, enterprise, egress, modelProxy,
                 memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with another agent container, enumerating the components once. */
     public RunUnitSpec withAgent(ContainerSpec container) {
-        return new RunUnitSpec(runId, init, container, publisher, enterprise, egress,
+        return new RunUnitSpec(runId, init, container, publisher, enterprise, egress, modelProxy,
                 memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with another publisher, enumerating the components once. */
     public RunUnitSpec withPublisher(ContainerSpec container) {
-        return new RunUnitSpec(runId, init, agent, container, enterprise, egress,
+        return new RunUnitSpec(runId, init, agent, container, enterprise, egress, modelProxy,
+                memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
+    }
+
+    /** Rebuild with another model proxy, or none, enumerating the components once. */
+    public RunUnitSpec withModelProxy(ContainerSpec container) {
+        return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, container,
                 memoryBytes, nanoCpus, diskBytes, wallClock, inputs);
     }
 
     /** Rebuild with other inputs, enumerating the components once. */
     public RunUnitSpec withInputs(UnitInputs replacement) {
-        return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress,
+        return new RunUnitSpec(runId, init, agent, publisher, enterprise, egress, modelProxy,
                 memoryBytes, nanoCpus, diskBytes, wallClock, replacement);
     }
 
@@ -196,6 +245,24 @@ public record RunUnitSpec(String runId,
     }
 
     /**
+     * A model proxy reaches the vendor only through the unit's egress proxy, on a network the agent is not on. With
+     * egress off there is neither, so it would have no way out and the agent's every model call would fail naming
+     * nothing. It holds the credential, so it mounts nothing of the unit's: not the workspace the agent writes, not
+     * the handoff, not the inputs.
+     */
+    private static void requireModelProxyPlacement(EgressPolicy egress, ContainerSpec modelProxy) {
+        if (!egress.proxiesTheAgent()) {
+            throw new IllegalArgumentException("a model proxy reaches its vendor through the unit's egress proxy, and"
+                    + " this unit's egress is OFF; set SPIRE_RUN_EGRESS_MODE to report or enforce, or build the unit"
+                    + " without a model proxy");
+        }
+        if (!modelProxy.mounts().isEmpty()) {
+            throw new IllegalArgumentException("the model proxy holds the model credential and may mount nothing of"
+                    + " the unit's, was: " + modelProxy.mounts());
+        }
+    }
+
+    /**
      * A deployment-wide variable may not silently replace a container's own.
      *
      * <p>The two are set by different people — the operator's proxy configuration against the
@@ -215,10 +282,15 @@ public record RunUnitSpec(String runId,
      */
     private static void requireNoEnvironmentCollision(EnterpriseEnvironment enterprise, EgressPolicy egress,
                                                       ContainerSpec init, ContainerSpec agent,
-                                                      ContainerSpec publisher) {
-        refuseCollision(deploymentEnvironment(enterprise, egress, false), init, "init");
-        refuseCollision(deploymentEnvironment(enterprise, egress, true), agent, "agent");
-        refuseCollision(deploymentEnvironment(enterprise, egress, false), publisher, "publisher");
+                                                      ContainerSpec publisher, ContainerSpec modelProxy) {
+        refuseCollision(deploymentEnvironment(enterprise, egress, Placement.OUTSIDE), init, "init");
+        refuseCollision(deploymentEnvironment(enterprise, egress,
+                modelProxy == null ? Placement.BEHIND_EGRESS : Placement.TRUST_ONLY), agent, "agent");
+        refuseCollision(deploymentEnvironment(enterprise, egress, Placement.OUTSIDE), publisher, "publisher");
+        if (modelProxy != null) {
+            refuseCollision(deploymentEnvironment(enterprise, egress, Placement.BEHIND_EGRESS), modelProxy,
+                    "model proxy");
+        }
     }
 
     /**

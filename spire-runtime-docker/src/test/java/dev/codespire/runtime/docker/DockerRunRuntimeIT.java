@@ -1015,6 +1015,10 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     private static final String MODEL_SECRET = "TEST-SECRET-MODEL-PROXY";
 
+    /** Report mode with one declared host, which a proxied unit's egress proxy enforces anyway. */
+    private static final EgressPolicy PROXIED_REPORT =
+            new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of("declared.example.invalid"));
+
     /** A unit whose agent runs {@code agentScript} beside a model proxy forwarding /v1/responses to the upstream. */
     private RunUnitSpec proxiedUnit(String id, String agentScript, String upstream, EgressPolicy egress) {
         ContainerSpec modelProxy = new ContainerSpec(MODEL_PROXY_IMAGE, List.of(), Map.of(
@@ -1046,7 +1050,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theModelProxyJoinsTheAgentAndModelNetworksOnly() {
         String runId = "run_model_networks";
-        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
 
         var networks = networksOf(runId, ModelProxyContainer.ROLE);
         String agentNetwork = DockerRunNetworks.agentNetworkName(runId);
@@ -1061,7 +1065,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theEgressProxyIsNotOnTheAgentNetwork() {
         String runId = "run_model_egress_net";
-        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
 
         assertEquals(java.util.Set.of("bridge", DockerRunNetworks.modelNetworkName(runId)),
                 networksOf(runId, DockerRunNetworks.PROXY).keySet(),
@@ -1071,7 +1075,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theModelProxyIsSandboxedAndItsSecretIsNoLabel() {
         String runId = "run_model_sandbox";
-        start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
 
         var inspected = runtime.client().inspectContainerCmd(modelProxyOf(runId).getId()).exec();
         var host = inspected.getHostConfig();
@@ -1122,10 +1126,11 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     @Test
     void aProxiedUnitEnforcesEvenWhenTheGlobalModeIsReport() {
-        // REPORT with no declared host would let everything through; a proxied unit's egress proxy enforces the
-        // spec's hosts whatever the mode, so the upstream, not declared, is refused.
+        // REPORT would let everything through; a proxied unit's egress proxy enforces the spec's hosts whatever the
+        // mode, so the upstream, not among them, is refused.
         String upstream = startUpstream(200);
-        RunHandle handle = start(proxiedUnit("run_model_enforced", MODEL_CALL, upstream, REPORT));
+        RunHandle handle = start(proxiedUnit("run_model_enforced", MODEL_CALL, upstream,
+                new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of("declared.example.invalid"))));
 
         List<String> agent = agentLog(handle);
         runtime.salvage(handle);
@@ -1153,7 +1158,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void destroyRemovesTheModelProxyAndBothNetworks() {
         String runId = "run_model_destroy";
-        RunHandle handle = start(proxiedUnit(runId, "true", startUpstream(200), REPORT));
+        RunHandle handle = start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
         runtime.salvage(handle);
         assertEquals(2, labelledNetworks(runId).size(), "the unit must have both networks: " + labelledNetworks(runId));
 
@@ -1168,7 +1173,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void cancelStopsTheModelProxy() {
         String runId = "run_model_cancel";
-        RunHandle handle = start(proxiedUnit(runId, "sleep 300", startUpstream(200), REPORT));
+        RunHandle handle = start(proxiedUnit(runId, "sleep 300", startUpstream(200), PROXIED_REPORT));
 
         runtime.cancel(handle);
 

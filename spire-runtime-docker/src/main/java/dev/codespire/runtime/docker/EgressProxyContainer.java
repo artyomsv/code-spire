@@ -41,10 +41,6 @@ final class EgressProxyContainer {
 
     private static final Duration PROXY_POLL = Duration.ofMillis(100);
 
-    /** The port as /proc/net/tcp prints it (8888 is 22B8); tinyproxy binds every address, so either table. */
-    private static final String LISTENING_PROBE = "grep -qi '" + String.format(":%04X ", EgressPolicy.PROXY_PORT)
-            + "' /proc/net/tcp /proc/net/tcp6 2>/dev/null";
-
     /** A read of an exited container's log is finite; this bounds one the daemon is slow to finish. */
     private static final Duration LOG_READ_TIMEOUT = Duration.ofSeconds(30);
 
@@ -61,10 +57,15 @@ final class EgressProxyContainer {
         return image;
     }
 
-    /** Creates the unit's proxy on the default bridge, configured for this run. Not started. */
-    String create(RunUnitSpec spec, String subnet, Map<String, String> labels) {
+    /**
+     * Creates the unit's proxy on the default bridge, configured for this run. Not started.
+     *
+     * @param egress what the proxy enforces: the spec's own, or for a unit with a model proxy its hosts in ENFORCE
+     * @param subnet the one network whose containers may use the proxy
+     */
+    String create(RunUnitSpec spec, EgressPolicy egress, String subnet, Map<String, String> labels) {
         String name = DockerRunNetworks.proxyName(spec.runId());
-        removeStale(name);
+        removeStale(client, name);
         HostConfig host = HostConfig.newHostConfig()
                 .withMemory(PROXY_MEMORY_BYTES)
                 .withNanoCPUs(PROXY_NANO_CPUS)
@@ -78,15 +79,15 @@ final class EgressProxyContainer {
         return client.createContainerCmd(image)
                 .withName(name)
                 .withEnv(List.of(
-                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(spec.egress(), spec.enterprise(), subnet),
-                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(spec.egress())))
+                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(egress, spec.enterprise(), subnet),
+                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(egress)))
                 .withLabels(labels)
                 .withHostConfig(host)
                 .exec().getId();
     }
 
     /** A proxy left by an earlier attempt of the same run, which would hold the name. Only ever this run's. */
-    private void removeStale(String name) {
+    static void removeStale(DockerClient client, String name) {
         try {
             client.removeContainerCmd(name).withForce(true).exec();
         } catch (NotFoundException absent) {
@@ -103,32 +104,42 @@ final class EgressProxyContainer {
      * reported with the last lines of its own log, which name the directive.
      */
     void start(String proxy) {
-        client.startContainerCmd(proxy).exec();
-        long deadline = System.nanoTime() + PROXY_START_TIMEOUT.toNanos();
+        startAndAwaitListening(client, proxy, EgressPolicy.PROXY_PORT, "the egress proxy", PROXY_START_TIMEOUT);
+    }
+
+    /**
+     * Starts a unit's sidecar and waits until it listens on {@code port}, or reports, with the last lines of its own
+     * log, why it exited first. Shared with the model proxy, whose image has the same shell and no probe either.
+     */
+    static void startAndAwaitListening(DockerClient client, String container, int port, String what, Duration timeout) {
+        client.startContainerCmd(container).exec();
+        long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {
-            var state = client.inspectContainerCmd(proxy).exec().getState();
+            var state = client.inspectContainerCmd(container).exec().getState();
             if (!Boolean.TRUE.equals(state.getRunning())) {
-                throw new IllegalStateException("the egress proxy exited before it listened (exit "
-                        + state.getExitCodeLong() + "): " + String.join(" | ", logOf(proxy, 20, 4096)));
+                throw new IllegalStateException(what + " exited before it listened (exit "
+                        + state.getExitCodeLong() + "): " + String.join(" | ", logOf(client, container, 20, 4096)));
             }
-            if (listening(proxy)) {
+            if (listening(client, container, port)) {
                 return;
             }
             try {
                 Thread.sleep(PROXY_POLL.toMillis());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted waiting for the egress proxy", e);
+                throw new IllegalStateException("interrupted waiting for " + what, e);
             }
         }
-        throw new IllegalStateException("the egress proxy did not listen within " + PROXY_START_TIMEOUT);
+        throw new IllegalStateException(what + " did not listen within " + timeout);
     }
 
-    private boolean listening(String proxy) {
+    /** The port as /proc/net/tcp prints it (8888 is 22B8); either table, since a server may bind either family. */
+    private static boolean listening(DockerClient client, String container, int port) {
+        String probe = "grep -qi '" + String.format(":%04X ", port) + "' /proc/net/tcp /proc/net/tcp6 2>/dev/null";
         try {
-            String exec = client.execCreateCmd(proxy).withCmd("sh", "-c", LISTENING_PROBE).exec().getId();
-            try (ResultCallback.Adapter<Frame> probe = client.execStartCmd(exec).exec(new ResultCallback.Adapter<Frame>())) {
-                probe.awaitCompletion(5, TimeUnit.SECONDS);
+            String exec = client.execCreateCmd(container).withCmd("sh", "-c", probe).exec().getId();
+            try (ResultCallback.Adapter<Frame> run = client.execStartCmd(exec).exec(new ResultCallback.Adapter<Frame>())) {
+                run.awaitCompletion(5, TimeUnit.SECONDS);
             }
             Long exit = client.inspectExecCmd(exec).exec().getExitCodeLong();
             return exit != null && exit == 0;
@@ -142,11 +153,11 @@ final class EgressProxyContainer {
 
     /** The whole log of a proxy, bounded in characters: what {@link ProxyLogParser} reads. */
     List<String> logOf(String proxy) {
-        return logOf(proxy, Integer.MAX_VALUE, ProxyLogParser.MAX_LOG_CHARS);
+        return logOf(client, proxy, Integer.MAX_VALUE, ProxyLogParser.MAX_LOG_CHARS);
     }
 
     /** A container's log lines, bounded in characters, and to the last {@code tail} lines when that is finite. */
-    private List<String> logOf(String container, int tail, int maxChars) {
+    static List<String> logOf(DockerClient client, String container, int tail, int maxChars) {
         StringBuilder log = new StringBuilder();
         ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
             @Override

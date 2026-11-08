@@ -7,6 +7,7 @@ import com.github.dockerjava.api.model.ContainerNetwork;
 import com.github.dockerjava.api.model.Network;
 import dev.codespire.runtime.EgressAttempt;
 import dev.codespire.runtime.EgressPolicy;
+import dev.codespire.runtime.ModelProxyReport;
 import dev.codespire.runtime.RunUnitSpec;
 
 import java.util.ArrayList;
@@ -26,6 +27,10 @@ import java.util.Map;
  * network under the alias {@link EgressPolicy#PROXY_ALIAS} before it starts, so the agent finds it by that name
  * through Docker's embedded DNS. init and the publisher stay on the default bridge as before: they run our own code
  * with the forge credential and never share the agent's network.
+ *
+ * <p><b>With a model proxy</b> (harness reviews step 3) the agent's network holds the agent and the model proxy, and a
+ * second internal network, the model network, holds the model proxy and the egress proxy. The agent's one reachable
+ * peer is then {@code spire-model}, which holds the credential the agent does not; see {@link #open}.
  *
  * <p><b>What the proxy is told</b> is {@link TinyproxyConfig}'s; <b>what it saw</b> is {@link ProxyLogParser}'s.
  *
@@ -50,12 +55,15 @@ final class DockerRunNetworks {
 
     private final EgressProxyContainer proxies;
 
+    private final ModelProxyContainer modelProxies;
+
     /** Whether this daemon has been seen to support the isolated gateway; asked once. */
     private volatile boolean engineChecked;
 
     DockerRunNetworks(DockerClient client, String image) {
         this.client = client;
         this.proxies = new EgressProxyContainer(client, image);
+        this.modelProxies = new ModelProxyContainer(client);
     }
 
     /** The unit's internal network: the agent and the proxy, nothing else. */
@@ -68,6 +76,11 @@ final class DockerRunNetworks {
         return DockerRunRuntime.volumeName(runId, "proxy");
     }
 
+    /** A proxied unit's second internal network: the model proxy and the egress proxy, never the agent. */
+    static String modelNetworkName(String runId) {
+        return DockerRunRuntime.volumeName(runId, "model");
+    }
+
     String image() {
         return proxies.image();
     }
@@ -76,22 +89,42 @@ final class DockerRunNetworks {
      * Creates the unit's internal network and starts its proxy on it. Called before the agent exists, so the agent's
      * first call already has somewhere to go.
      *
-     * @param labels the run's labels (its id, and the hold for a held unit), set on the network and the proxy alike;
-     *               the proxy also gets its role
+     * <p>A unit with a model proxy gets a second internal network, the model network, and the egress proxy joins that
+     * one instead of the agent's: the agent's network holds the agent and the model proxy, the model network the
+     * model proxy and the egress proxy, so only the model proxy can reach {@link EgressPolicy#PROXY_ALIAS}. Its egress
+     * proxy enforces the spec's hosts whatever the spec's mode, since those hosts are the harness's measured route.
+     *
+     * @param labels the run's labels (its id, and the hold for a held unit), set on the networks and the proxies
+     *               alike; each proxy also gets its role
      */
     void open(RunUnitSpec spec, Map<String, String> labels) {
         requireIsolatedGatewaySupport();
-        String network = createNetwork(agentNetworkName(spec.runId()), labels);
-        String subnet = subnetOf(network);
-        Map<String, String> proxyLabels = new LinkedHashMap<>(labels);
-        proxyLabels.put(DockerRunRuntime.ROLE_LABEL, PROXY);
-        String proxy = proxies.create(spec, subnet, proxyLabels);
+        String agentNetwork = createNetwork(agentNetworkName(spec.runId()), labels);
+        if (spec.modelProxy() == null) {
+            startEgressProxy(spec, spec.egress(), agentNetwork, labels);
+            return;
+        }
+        String modelNetwork = createNetwork(modelNetworkName(spec.runId()), labels);
+        startEgressProxy(spec, new EgressPolicy(EgressPolicy.Mode.ENFORCE, spec.egress().hosts()), modelNetwork, labels);
+        String modelProxy = modelProxies.create(spec, modelNetwork, agentNetwork, roleLabels(labels, ModelProxyContainer.ROLE));
+        modelProxies.start(modelProxy);
+    }
+
+    /** The egress proxy, open to {@code network}'s subnet alone and found there by its alias. */
+    private void startEgressProxy(RunUnitSpec spec, EgressPolicy egress, String network, Map<String, String> labels) {
+        String proxy = proxies.create(spec, egress, subnetOf(network), roleLabels(labels, PROXY));
         client.connectToNetworkCmd()
                 .withNetworkId(network)
                 .withContainerId(proxy)
                 .withContainerNetwork(new ContainerNetwork().withAliases(EgressPolicy.PROXY_ALIAS))
                 .exec();
         proxies.start(proxy);
+    }
+
+    private static Map<String, String> roleLabels(Map<String, String> labels, String role) {
+        Map<String, String> withRole = new LinkedHashMap<>(labels);
+        withRole.put(DockerRunRuntime.ROLE_LABEL, role);
+        return withRole;
     }
 
     /**
@@ -164,6 +197,18 @@ final class DockerRunNetworks {
             return List.of();
         }
         return ProxyLogParser.parse(proxies.logOf(proxy.getFirst().getId()));
+    }
+
+    /** What the unit's model proxy saw, read once and never followed. {@link ModelProxyReport#NONE} without one. */
+    ModelProxyReport modelProxyOf(String runId) {
+        var proxy = client.listContainersCmd().withShowAll(true)
+                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId,
+                        DockerRunRuntime.ROLE_LABEL, ModelProxyContainer.ROLE))
+                .exec();
+        if (proxy.isEmpty()) {
+            return ModelProxyReport.NONE;
+        }
+        return modelProxies.reportOf(proxy.getFirst().getId());
     }
 
     /** Every network labelled with this run, removed. Called after the unit's containers are gone. */
