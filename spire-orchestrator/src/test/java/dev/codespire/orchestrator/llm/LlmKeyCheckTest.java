@@ -184,7 +184,10 @@ class LlmKeyCheckTest {
         llm.stubFor(get(urlEqualTo("/models")).willReturn(
                 answer(403, "application/json", "{\"error\":{\"message\":\"TEST-access disabled\"}}")));
 
-        given().when().post("/api/llm-providers/" + id + "/check").then().statusCode(200);
+        given().when().post("/api/llm-providers/" + id + "/check")
+                .then().statusCode(200)
+                .body("ok", org.hamcrest.Matchers.is(false))
+                .body("detail", org.hamcrest.Matchers.equalTo(KeyCheckReason.REJECTED.message(403)));
 
         assertEquals(KeyCheckReason.REJECTED.message(403),
                 registry.get(UUID.fromString(id)).orElseThrow().lastCheckError());
