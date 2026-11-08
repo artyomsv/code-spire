@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -168,6 +169,41 @@ class ModelProxyTest {
         assertEquals(0, hits.get());
     }
 
+    /**
+     * The discriminating half: on a prefix route every one of these starts with an allowed prefix, so
+     * only the guard's check of the raw path stands between it and the vendor.
+     */
+    @Test
+    void aDotSegmentCannotEscapeAnAllowedPrefix() throws Exception {
+        ModelProxy proxy = start(seatRoute(upstreamOrigin()), log);
+
+        for (String target : List.of("/backend-api/codex/../../v1/files", "/backend-api/codex/%2e%2e/x",
+                "/backend-api/codex/%2F..%2Fx", "/backend-api/codex//x")) {
+            assertEquals(403, rawStatus(proxy, "GET " + target + " HTTP/1.1\r\nHost: model\r\n"), target);
+        }
+        assertEquals(0, hits.get());
+    }
+
+    @Test
+    void anAbsoluteFormTargetIsRefused() throws Exception {
+        ModelProxy proxy = start(apiKeyRoute(upstreamOrigin()), log);
+
+        int status = rawStatus(proxy, "GET http://other.example/v1/responses HTTP/1.1\r\nHost: other.example\r\n");
+
+        assertEquals(403, status);
+        assertEquals(0, hits.get());
+    }
+
+    @Test
+    void aConnectIsRefused() throws Exception {
+        ModelProxy proxy = start(apiKeyRoute(upstreamOrigin()), log);
+
+        int status = rawStatus(proxy, "CONNECT api.openai.com:443 HTTP/1.1\r\nHost: api.openai.com:443\r\n");
+
+        assertEquals(501, status);
+        assertEquals(0, hits.get());
+    }
+
     @Test
     void anApiKeyRouteMatchesExactly() throws Exception {
         ModelProxy proxy = start(apiKeyRoute(upstreamOrigin()), log);
@@ -239,6 +275,31 @@ class ModelProxyTest {
                 release.countDown();
             }
             assertEquals("data: TEST-2\n\n", new String(body.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * A vendor that dies mid-stream must reach the agent as a broken response. Ending the chunked body
+     * cleanly would hand the agent a truncated answer that reads as complete.
+     */
+    @Test
+    void aMidStreamResetIsNotAcleanEnd() throws Exception {
+        CountDownLatch firstEventRead = new CountDownLatch(1);
+        try (ServerSocket vendor = new ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())) {
+            Thread.ofVirtual().start(() -> oneEventThenReset(vendor, firstEventRead));
+            ModelProxy proxy = start(apiKeyRoute("http://127.0.0.1:" + vendor.getLocalPort()), log);
+
+            HttpResponse<InputStream> response = client.send(HttpRequest.newBuilder(at(proxy, "/v1/responses"))
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofInputStream());
+            assertEquals(200, response.statusCode());
+            try (InputStream body = response.body()) {
+                assertEquals("data: TEST-1\n\n", readEvent(body));
+                firstEventRead.countDown();
+
+                assertThrows(IOException.class, body::readAllBytes,
+                        "the agent must see the stream break, not a clean end of a truncated body");
+            }
+            assertEquals(List.of("spire-model POST /v1/responses -> aborted"), logged().lines().toList());
         }
     }
 
@@ -361,7 +422,8 @@ class ModelProxyTest {
         exchange.close();
     }
 
-    /** Sends a hand-written request head, for targets an HTTP client refuses to send; returns the status. */
+    /** Sends a hand-written request head, for targets an HTTP client refuses to send; returns the status,
+     * or -1 when the server closed the connection without one. */
     private static int rawStatus(ModelProxy proxy, String head) throws IOException {
         try (Socket socket = new Socket("127.0.0.1", proxy.port())) {
             socket.setSoTimeout(10_000);
@@ -370,7 +432,8 @@ class ModelProxyTest {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
             String statusLine = reader.readLine();
-            return Integer.parseInt(statusLine.split(" ")[1]);
+            // -1: the server closed the connection without answering.
+            return statusLine == null ? -1 : Integer.parseInt(statusLine.split(" ")[1]);
         }
     }
 
@@ -393,6 +456,34 @@ class ModelProxyTest {
     }
 
     /** Accepts each connection, reads the request head, and resets it (linger 0 sends an RST). */
+    /**
+     * A hand-written vendor: answers one connection with a chunked 200 holding one event, waits until
+     * the agent has read that event, then resets the connection (linger 0 sends an RST).
+     */
+    private static void oneEventThenReset(ServerSocket server, CountDownLatch firstEventRead) {
+        try (Socket socket = server.accept()) {
+            InputStream in = socket.getInputStream();
+            ByteArrayOutputStream head = new ByteArrayOutputStream();
+            while (!head.toString(StandardCharsets.ISO_8859_1).endsWith("\r\n\r\n")) {
+                int next = in.read();
+                if (next == -1) {
+                    return;
+                }
+                head.write(next);
+            }
+            OutputStream out = socket.getOutputStream();
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    + "e\r\ndata: TEST-1\n\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+            out.flush();
+            firstEventRead.await(10, TimeUnit.SECONDS);
+            socket.setSoLinger(true, 0);
+        } catch (IOException closed) {
+            // The test is over or the proxy hung up; either way there is nothing left to serve.
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private static void resetEveryConnection(ServerSocket server) {
         while (!server.isClosed()) {
             try (Socket socket = server.accept()) {

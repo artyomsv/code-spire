@@ -49,7 +49,7 @@ class PathGuardTest {
                 "/v1/%2E%2E/files", "/v1/responses%2F..%2Ffiles", "/v1/responses%2f", "/v1/responses%5c",
                 "/v1%5Cresponses", "//v1/responses", "/v1//responses", "/v1\\responses", "/v1/./responses",
                 "/backend-api/codex/../../v1/files", "/backend-api/codex/./x", "/backend-api/codex/%2e%2e/x",
-                "/backend-api/codex/a;b", "/backend-api/codex/a b")) {
+                "/backend-api/codex/a;b", "/backend-api/codex/a b", "/backend-api/codex//x")) {
             assertEquals(Optional.empty(), PathGuard.allowed(raw, raw.startsWith("/backend") ? SEAT : API_KEY),
                     raw + " must be refused");
         }
