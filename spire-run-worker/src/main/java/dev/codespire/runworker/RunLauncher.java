@@ -306,7 +306,7 @@ public class RunLauncher {
             // The same branch for a review's answer (harness reviews, step 4): its unit is destroyed below like a draft's.
             result = new ReadOnlyResults(failures, review).of(result, outcome, wallSecondsSince(activeStarted));
         }
-        result = EgressResults.attach(result, egress);
+        result = EgressResults.attach(result, sidecars.egress());
 
         // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
         // can read what the agent was doing — throwing that away is the loss salvage prevents.
