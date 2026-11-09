@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.IntPredicate;
 
 /**
  * Takes the credential out of a body as it streams to the agent: every occurrence of the secret, and of a seat's
@@ -42,15 +43,19 @@ final class EchoMask {
     byte[] next(byte[] chunk, int length) {
         byte[] pending = Arrays.copyOf(held, held.length + length);
         System.arraycopy(chunk, 0, pending, held.length, length);
-        return pass(pending, true);
+        return mask(pending, at -> beginsAnEcho(pending, at));
     }
 
     /** The end of the body: what was held goes too, an echo in it masked. */
     byte[] finish() {
-        return pass(held, false);
+        return mask(held, at -> false);
     }
 
-    private byte[] pass(byte[] pending, boolean moreToCome) {
+    /**
+     * Masks {@code pending} from its start, stopping where {@code holdFrom} says the rest may still become an echo;
+     * what is left is held for the next call.
+     */
+    private byte[] mask(byte[] pending, IntPredicate holdFrom) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(pending.length);
         int at = 0;
         while (at < pending.length) {
@@ -58,7 +63,7 @@ final class EchoMask {
             if (echo > 0) {
                 out.writeBytes(WITHHELD_BYTES);
                 at += echo;
-            } else if (moreToCome && beginsAnEcho(pending, at)) {
+            } else if (holdFrom.test(at)) {
                 break;
             } else {
                 out.write(pending[at++]);
