@@ -32,6 +32,10 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+    // The JDK server reads its request-time bound once, in seconds, before any server exists; production's 30
+    // (ServerLimits) would make each admission test wait 30 s, so the test JVM runs with 2. ServerLimitsTest checks
+    // that this is set, and that production's values are what ServerLimits declares.
+    systemProperty("sun.net.httpserver.maxReqTime", "2")
     // CI is where these tests run; a failure's message (the status and the path that got it) must
     // reach the job log, which keeps no report.
     testLogging {

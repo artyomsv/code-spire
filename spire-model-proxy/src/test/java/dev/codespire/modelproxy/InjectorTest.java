@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class InjectorTest {
 
+    private static final Credential KEY = new Credential(Injection.BEARER, "TEST-secret-key", null);
+
     /** What an agent might send: its placeholder credentials, ordinary headers, and transport headers. */
     private static Map<String, List<String>> incoming() {
         Map<String, List<String>> headers = new LinkedHashMap<>();
@@ -33,12 +35,13 @@ class InjectorTest {
         headers.put("Accept", List.of("text/event-stream"));
         headers.put("Content-type", List.of("application/json"));
         headers.put("Openai-beta", List.of("responses=experimental"));
+        headers.put("Accept-Encoding", List.of("gzip, br"));
         return headers;
     }
 
     @Test
     void aBearerReplacesEveryCredentialTheAgentSent() {
-        Map<String, List<String>> out = Injector.outgoing(incoming(), Injection.BEARER, "TEST-secret-key", null);
+        Map<String, List<String>> out = Injector.outgoing(incoming(), KEY);
 
         assertEquals(List.of("Bearer TEST-secret-key"), out.get("authorization"));
         assertNull(out.get("x-api-key"));
@@ -50,7 +53,7 @@ class InjectorTest {
     @Test
     void anXApiKeySendsNoAuthorization() {
         Map<String, List<String>> out =
-                Injector.outgoing(incoming(), Injection.X_API_KEY, "TEST-secret-key", null);
+                Injector.outgoing(incoming(), new Credential(Injection.X_API_KEY, "TEST-secret-key", null));
 
         assertEquals(List.of("TEST-secret-key"), out.get("x-api-key"));
         assertNull(out.get("authorization"));
@@ -60,7 +63,7 @@ class InjectorTest {
     @Test
     void aSeatSendsItsAccessTokenAndItsAccount() {
         Map<String, List<String>> out =
-                Injector.outgoing(incoming(), Injection.CHATGPT_SEAT, "TEST-access", "TEST-account");
+                Injector.outgoing(incoming(), new Credential(Injection.CHATGPT_SEAT, "TEST-access", "TEST-account"));
 
         assertEquals(List.of("Bearer TEST-access"), out.get("authorization"));
         assertEquals(List.of("TEST-account"), out.get("chatgpt-account-id"));
@@ -69,7 +72,7 @@ class InjectorTest {
 
     @Test
     void transportAndRestrictedHeadersAreNeverCopied() {
-        Map<String, List<String>> out = Injector.outgoing(incoming(), Injection.BEARER, "TEST-secret-key", null);
+        Map<String, List<String>> out = Injector.outgoing(incoming(), KEY);
 
         for (String name : List.of("host", "content-length", "transfer-encoding", "connection", "keep-alive",
                 "expect", "upgrade", "te", "x-hop")) {
@@ -79,7 +82,7 @@ class InjectorTest {
 
     @Test
     void ordinaryHeadersPassUnderLowerCaseNames() {
-        Map<String, List<String>> out = Injector.outgoing(incoming(), Injection.BEARER, "TEST-secret-key", null);
+        Map<String, List<String>> out = Injector.outgoing(incoming(), KEY);
 
         assertEquals(List.of("text/event-stream"), out.get("accept"));
         assertEquals(List.of("application/json"), out.get("content-type"));
@@ -94,10 +97,18 @@ class InjectorTest {
         headers.put("authorization", List.of("Bearer TEST-PLACEHOLDER-2"));
         headers.put("COOKIE", List.of("TEST-cookie=1"));
 
-        Map<String, List<String>> out = Injector.outgoing(headers, Injection.BEARER, "TEST-secret-key", null);
+        Map<String, List<String>> out = Injector.outgoing(headers, KEY);
 
         assertEquals(List.of("Bearer TEST-secret-key"), out.get("authorization"));
         assertFalse(out.containsKey("cookie"));
         assertEquals(1, out.keySet().stream().filter(n -> n.equalsIgnoreCase("authorization")).count());
+    }
+
+    /** The answer is searched for an echo of the credential, which a compressed body would hide. */
+    @Test
+    void theVendorIsAlwaysAskedForAnUnencodedAnswer() {
+        Map<String, List<String>> out = Injector.outgoing(incoming(), KEY);
+
+        assertEquals(List.of("identity"), out.get("accept-encoding"));
     }
 }

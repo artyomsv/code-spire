@@ -56,6 +56,20 @@ class PathGuardTest {
     }
 
     @Test
+    void anAllowedPathIsLoggedAsTheRouteThatAllowedIt() {
+        assertEquals("/v1/responses", PathGuard.logged("/v1/responses", API_KEY));
+        assertEquals("/backend-api/codex/*", PathGuard.logged("/backend-api/codex/responses", SEAT));
+        assertEquals("/backend-api/wham/*", PathGuard.logged("/backend-api/wham/users/TEST-jane.doe", SEAT));
+        assertEquals("/backend-api/codex/*", PathGuard.logged("/backend-api/codex/" + "a".repeat(5000), SEAT));
+    }
+
+    @Test
+    void aPathTheRouteDoesNotAllowHasNoLoggedForm() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> PathGuard.logged("/v1/files", API_KEY));
+    }
+
+    @Test
     void aPathThatIsNotAnAbsolutePathIsRefused() {
         assertEquals(Optional.empty(), PathGuard.allowed(null, API_KEY));
         assertEquals(Optional.empty(), PathGuard.allowed("", API_KEY));

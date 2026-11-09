@@ -25,12 +25,33 @@ final class PathGuard {
             return Optional.of(rawPath);
         }
         for (String prefix : route.pathPrefixes()) {
-            String boundary = prefix.endsWith("/") ? prefix : prefix + "/";
-            if (rawPath.startsWith(boundary)) {
+            if (rawPath.startsWith(boundaryOf(prefix))) {
                 return Optional.of(rawPath);
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * What the report line names for an allowed path: the exact path the route declares, or the prefix it matched
+     * followed by {@code *}. Never the agent's own suffix, which may name a person or hold a value, and never longer
+     * than what the route itself declares.
+     */
+    static String logged(String allowedPath, ProxyRoute route) {
+        if (route.exactPaths().contains(allowedPath)) {
+            return allowedPath;
+        }
+        for (String prefix : route.pathPrefixes()) {
+            String boundary = boundaryOf(prefix);
+            if (allowedPath.startsWith(boundary)) {
+                return boundary + "*";
+            }
+        }
+        throw new IllegalArgumentException("the route does not allow this path, so it has no logged form");
+    }
+
+    private static String boundaryOf(String prefix) {
+        return prefix.endsWith("/") ? prefix : prefix + "/";
     }
 
     private static boolean isPlain(String rawPath) {
