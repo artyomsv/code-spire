@@ -173,6 +173,7 @@ class RunUnitBuilderModelProxyTest {
     @Test
     void theHarnessAndTheRuntimeAgreeOnTheModelProxyAddress() {
         assertEquals(RunUnitSpec.MODEL_PROXY_ADDRESS, dev.codespire.harness.CredentialRoute.AGENT_FACING_ORIGIN);
+    }
 
     private RunCommand.ExecuteRun command() {
         return new RunCommand.ExecuteRun(RUN_ID,
