@@ -49,8 +49,9 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   model proxy log was read for #99 and #100 and named only declared paths; #98's was not captured (its egress record
   shows `chatgpt.com` only). A key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its pool member
   (#99, run 1). Codex accepted the placeholder `auth.json` and made no refresh call (no `auth.openai.com`). What
-  follows was not reached live and is proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s
-  `python:3.13-alpine` upstream and the run worker's fakes only.
+  follows was not reached live and is proven against the model proxy's in-process tests (`ModelProxy*Test` over
+  `ProxyTestSupport`'s local upstream), `DockerRunRuntimeIT`'s `python:3.13-alpine` upstream and the run worker's
+  fakes only.
 - **Compaction through the proxy is proven by the spike only.** The long seat review (#100) ran at about 38k context
   per call and did not compact. Remote compaction through the same path was forced in the 2026-11-07/08 spike
   (`model_auto_compact_token_limit`), not in a live review run.
@@ -79,6 +80,27 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   JDK 25 that is a `//` target (400, measured in CI), a backslash target (a malformed URI to the server; the test
   accepts 400 or 403) and a `CONNECT`, which the server closes without an answer (measured in CI) (`aConnectIsRefused` pins -1 or 501). Should a later JDK pass a `CONNECT` through, the
   handler answers 501 and writes a `refused` line.
+- **The answer is cleaned of exact echoes only (review of PR #394, security/H-1).** Response headers are an
+  allowlist, `Location` never passes, an encoded body is refused (502), and every body is streamed through `EchoMask`,
+  which replaces the whole secret and a seat's account id, split across chunks or not (`ModelProxyResponseTest`,
+  `EchoMaskTest`). A fragment of the secret, or the secret in another encoding (percent- or base64-encoded), is not
+  caught; only the 401 and 403 bodies, where OpenAI quotes a key's last characters, are replaced whole. No live vendor
+  was seen to echo a credential, and whether Codex needs a response header the allowlist leaves out was not measured:
+  the live acceptance predates the allowlist.
+- **The limits are proven against local fakes only (review of PR #394, security/M-1).** 8 requests at once (503
+  past it), an 8 MiB request body (413), 10 minutes for the vendor's headers and between body bytes, 60 minutes per
+  response, and the JDK server's 30 s for a request's head and body (`ModelProxyAdmissionTest`,
+  `ModelProxyDeadlineTest`; the test JVM runs the 30 s bound at 2 s, `ServerLimitsTest`). Whether a live Codex
+  review's largest request stays under 8 MiB, and whether a reasoning model ever pauses a stream for 10 minutes, is
+  not measured.
+- **The report names routes, not paths (review of PR #394, security/M-2).** A refused request is logged as
+  `<refused>`, so a `BLOCKED_EGRESS` detail no longer says which undeclared path a harness called; an operator
+  diagnosing a new harness path reads it from a test run, not from the run record. The container's log is rotated at
+  three files of 2 MiB, so a run of more than about 100,000 requests loses its oldest lines.
+- **The vendor connection has no destination-address policy (review of PR #394, security/M-3, deferred).** An allowed
+  vendor hostname that resolved to a loopback, link-local or private address would be connected to; TLS hostname
+  verification still keeps the credential from a wrong address.
+  `techdebt/spire-model-proxy/3-3-the-vendor-connection-has-no-destination-address-policy.md` holds the fix.
 - **Every image lookup failure reads as a missing image.** The worker's check before the unit is created reports
   any failure to describe or pull `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, a daemon outage included, as
   `IMAGE_UNAVAILABLE`.
