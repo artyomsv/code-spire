@@ -464,12 +464,21 @@ model network (internal):            model proxy ── egress proxy ("spire-egr
   hosts whatever the global egress mode, so `report` does not open a proxied unit.
 
 The model proxy writes one line per request, `spire-model <METHOD> <path> -> <status|refused|aborted>`, and nothing
-else about it. The worker reads that log once the agent is gone (`ModelProxyReport`) and uses it only for a run that
+else about it. `aborted` means the response did not finish: the vendor failed mid-response, or the client hung up
+before the body ended. The live acceptance saw the second twice, on `GET /backend-api/codex/models` in a run that
+succeeded (`spire-test` #100, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md), so an `aborted` line alone is no
+failure. The worker reads that log once the agent is gone (`ModelProxyReport`) and uses it only for a run that
 failed anyway: a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails the run as
 `CREDENTIAL_REJECTED`, which marks the pool member; a refused path fails it as `BLOCKED_EGRESS` with
 `model path <path> refused`; a 403 keeps the adapter's own cause (and names no path). Before the unit is created the
 worker looks the image up; a missing one fails a proxied run as `IMAGE_UNAVAILABLE`, naming
 `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, and leaves unproxied runs alone. The worker also logs a missing image at startup.
+
+The runtime starts the model proxy and waits up to 120 s for it to listen before the agent starts (the egress proxy
+waits 20 s). It listened in about 2 s in the live acceptance; once it was running and not seen listening within the
+earlier 30 s, cause unknown, and the run failed `RUNTIME_UNAVAILABLE` with nothing more to say. A sidecar that exits
+first or never listens now fails the run with its state, exit code and OOMKilled flag, and the last 20 lines (at most
+2 KiB) of its own log: for the model proxy, request lines and start-up refusals that name a variable, never a value.
 
 The adapter declares the route (`HarnessAdapter.credentialRoute`); a harness that declares none runs unproxied with
 the real credential, as before. Today only Codex declares one: a custom model provider at `http://spire-model:8080`

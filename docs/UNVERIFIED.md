@@ -43,17 +43,29 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 (docs/factory/RUN-TOPOLOGY.md §6B.1).
 
 **Why nothing catches it today.**
-- **No live run yet.** The live acceptance (a review on an API key, one on a seat, a long seat review that compacts,
-  and a rejected key) is pending; it is run with the operator after the final review. Until then everything below is
-  proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s `python:3.13-alpine` upstream and the run worker's
-  fakes only.
-- **The placeholder `auth.json` is not proven in a live run.** A seat's agent gets a generated sign-in file
-  (`last_refresh` and `exp` in 2100, plan `plus`, no email claim). Its shape comes from the 2026-11-07 spike
-  against codex-cli 0.156.1 (`PlaceholderSignIn`). That Codex accepts it, and makes no refresh call, in a live
-  proxied review run is unverified until the live seat run.
-- **WebSocket upgrades and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy refuses an
-  upgrade (501), and a seat's content hosts are not declared. If a Codex release moves its model stream to a
-  WebSocket, or a long seat run fetches from a content host, the run fails; no run has shown either.
+- **Live once, on one harness (2026-11-09, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md).** On `spire-test` with
+  Codex `gpt-6-astra` (codex-cli 0.156.1) a seat review (#98), an API-key review (#99, run 3) and a long seat review
+  (#100, 40 files) were posted with no credential in the agent, the model proxy naming only declared paths and
+  `run_egress` only the declared host; a key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its pool member
+  (#99, run 1). Codex accepted the placeholder `auth.json` and made no refresh call (no `auth.openai.com`). What
+  follows was not reached live and is proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s
+  `python:3.13-alpine` upstream and the run worker's fakes only.
+- **Compaction through the proxy is proven by the spike only.** The long seat review (#100) ran at about 38k context
+  per call and did not compact. Remote compaction through the same path was forced in the 2026-11-07/08 spike
+  (`model_auto_compact_token_limit`), not in a live review run.
+- **WebSocket upgrades, redirects and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy
+  refuses an upgrade (501), and a seat's content hosts are not declared. No live run showed a redirect, a content host
+  or a WebSocket. If a Codex release moves its model stream to a WebSocket, or a long seat run fetches from a content
+  host, the run fails.
+- **One start was not seen listening, cause unknown.** In the live acceptance #99 run 2 failed `RUNTIME_UNAVAILABLE`,
+  "the model proxy did not listen within PT30S": the container kept running with no output and no request, while the
+  same image listened in about 2 s in the runs before and after it and in about 3.4 s measured with the same limits;
+  the host was busy with other stacks. Not reproduced. The wait is now 120 s, and a timeout reports the container's
+  state, exit code, OOMKilled flag and the last 20 lines (at most 2 KiB) of its log
+  (`SidecarStartFailureTest`; `DockerRunRuntimeIT` for an exit); whether 120 s is enough on such a host is unproven.
+- **`aborted` is not a failure signal.** An `-> aborted` line means the response did not finish, whether the vendor
+  failed or the client hung up; #100 showed two on `GET /backend-api/codex/models` in a run that succeeded. Nothing
+  reads `aborted` as a cause.
 - **`ALL` mode is not proven live**, and in `ALL` mode a held factory unit's retained spec (Tink-encrypted) would
   carry `SPIRE_MODEL_SECRET`, the real credential, for as long as the unit is held.
 - **A harness with no route runs unproxied silently.** Under `REVIEWS` a review on a harness that declares no
@@ -73,11 +85,10 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 - **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
   half as many concurrent proxied units as unproxied ones; no test runs near the bound.
 
-**What evidence would settle it.** The step 3 live acceptance on `spire-test` (pending): an API-key review and a seat
-review posted, `docker inspect` of each agent showing no credential, the agent network without the egress proxy, the
-model proxy log naming only the declared paths, `run_egress` naming only the declared host, a long seat review that
-compacts with no new path or host, and a rejected `TEST-` key failing as `CREDENTIAL_REJECTED` with its pool member
-marked.
+**What evidence would settle it.** The live acceptance settled the main claim for Codex on an API key and a seat.
+Still open: a seat review that compacts with no new path or host, a seat whose token the vendor refuses failing as
+`CREDENTIAL_REJECTED`, a model proxy start on a busy host within the 120 s wait (or a timeout whose detail explains
+it), `ALL` mode, and each later harness's route when it arrives.
 
 ---
 
@@ -102,7 +113,8 @@ not declare.
   `chatgpt.com`, so the three `sdmntpr*.oaiusercontent.com` content hosts were dropped; the step 5 live proof
   re-checks it in report mode. No run has been made in enforce mode: which paths a long run adds (remote
   compaction) is not settled, so enforce may still refuse a host Codex needs and fail the run as
-  `BLOCKED_EGRESS`.
+  `BLOCKED_EGRESS`. (Since step 3 a model-proxied review unit's egress proxy enforces; its live runs on
+  2026-11-09 called only the declared host and did not compact, see the model proxy entry above.)
 - **Not every container is isolated.** Verify check containers and the operator's sign-in container
   are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request
   may name any port, because tinyproxy restricts ports for CONNECT only.
@@ -915,8 +927,12 @@ producer appeared, and was deleted with the first one (harness reviews step 3). 
 credential sits in a model proxy (harness review units by default) now reports `CREDENTIAL_REJECTED` when
 the model proxy saw a 401 on a model call path and the agent failed (`ModelProxyResults`). The worker
 half is proven by `RunLauncherModelProxyTest`, the orchestrator half (marking the run's pool member) by
-`RunResultSagaTest`; both run against fakes, and no live run has produced it yet (the live acceptance of
-step 3 is pending). An unproxied unit still has no producer.
+`RunResultSagaTest`. **Proven live once, for an API key** (2026-11-09,
+docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md): the stored key `factory-openai` was invalid at OpenAI, and review run
+`review-99-517cb4764848-60948e1e:1` on `spire-test` failed `CREDENTIAL_REJECTED` after six `POST /v1/responses -> 401`
+lines, and the pool member was marked `rejected_at` 2026-11-09 11:58:13 UTC. A seat's refusal
+(`/backend-api/codex/responses -> 401`) has no live run and is proven against fakes only. An unproxied unit still has
+no producer.
 
 **Tracked in** `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 

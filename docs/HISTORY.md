@@ -2318,7 +2318,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   proxy, then step 8, fork pull requests.
 
 - **Harness reviews step 3: the agent holds a placeholder, a model proxy adds the credential (2026-11-09, PR #394; not
-  merged, live acceptance pending).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
+  merged, live-proven 2026-11-09 in [the step 3 acceptance](factory/HARNESS-REVIEWS-3-ACCEPTANCE.md)).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
   Under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (the default; `OFF` and `ALL` too) the run worker hands the harness
   adapter placeholders, and Codex points a custom provider at `http://spire-model:8080` (on a seat, with a generated
   placeholder `auth.json`). A per-run model proxy (`spire-model-proxy`, a JDK-only process in a container sandboxed
@@ -2337,11 +2337,17 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   of them in the test named for the guard. The seventh, flushing a stream only at its end, was caught by
   `aMidStreamResetIsNotAcleanEnd` but not by `aStreamIsPassedOnAsItArrives`, whose five-second bound started only
   after the request returned, while the request itself waited for the vendor's ten-second release. The test now
-  awaits the response and its first event within the bound, and the same mutant re-run (#402, closed) fails it. Left
-  open: no live run yet; WebSocket upgrades, `oaiusercontent.com`, the placeholder `auth.json`
-  and `ALL` mode are unmeasured; a 403's failure detail names no path; the image is not on GHCR
-  (docs/UNVERIFIED.md, the step 3 entry). Next: the live acceptance with the operator, then PR 3b (Claude Code on an
-  API key). Upgrading: the run worker now defaults to `REVIEWS` and compose does not build the image, so before
+  awaits the response and its first event within the bound, and the same mutant re-run (#402, closed) fails it. The
+  live acceptance on `spire-test` (Codex `gpt-6-astra`) posted a seat review (#98), an API-key review (#99) and a long
+  seat review (#100, 40 files) with no credential in the agent and only the declared paths and host; Codex accepted
+  the placeholder `auth.json` with no refresh call; a key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its
+  pool member, the cause's first live producer. #100 did not compact (about 38k context per call), and its two
+  `aborted` model-list reads in a successful run showed that `aborted` covers a client hanging up too. One model proxy
+  start (#99 run 2) was running and not seen listening within 30 s, cause unknown and not reproduced; the fix round
+  raised the wait to 120 s and made a sidecar's start failure say its state, exit code, OOMKilled flag and the last
+  20 lines (at most 2 KiB) of its log (`SidecarStartFailure`). Left open: live compaction, a seat's refusal, WebSocket
+  upgrades, redirects, `oaiusercontent.com` and `ALL` mode are unmeasured; a 403's failure detail names no path; the
+  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). Next: PR 3b (Claude Code on an API key). Upgrading: the run worker now defaults to `REVIEWS` and compose does not build the image, so before
   upgrading run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
   (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;
   otherwise every Codex review fails `IMAGE_UNAVAILABLE`.

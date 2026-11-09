@@ -13,8 +13,8 @@ merged to master with PR #370 on 2026-11-03; its live proof was made on 2026-11-
 (docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md), and what it did not reach is proven by tests only (docs/UNVERIFIED.md).
 Step 7, replies (the "Step 7" part below), merged to master with PR #371 on 2026-11-04 as `88d5f745`; its live
 proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Step 3, the credential proxy (the "Step 3"
-part below), is built on `feat/harness-reviews-3-credential-proxy` (PR #394, not merged); its live acceptance is
-pending. Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+part below), is built on `feat/harness-reviews-3-credential-proxy` (PR #394, not merged); its live proof was made on
+2026-11-09 (docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a

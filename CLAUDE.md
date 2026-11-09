@@ -168,7 +168,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
 - **Harness reviews, steps 3 to 7: review runs, first reviews, re-reviews, replies and the credential proxy** (steps 4
   to 7 on master with PRs #367, #368, #370 and #371, live-proven 2026-11-01 to 2026-11-03 in
   docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md, docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md and
-  docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; step 3 on PR #394, not merged, live acceptance pending; ADR-050, design
+  docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; step 3 on PR #394, not merged, live-proven 2026-11-09 in docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md; ADR-050, design
   docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
@@ -213,8 +213,12 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   internal network through an egress proxy that always enforces. A 401 on a model call fails the run as
   `CREDENTIAL_REJECTED` (its first producer) and marks the pool member; a 403 does not; a refused path is
   `BLOCKED_EGRESS`; a missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. Only Codex declares a route;
-  any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401); no live run yet (docs/UNVERIFIED.md, the step
-  3 entry; docs/factory/RUN-TOPOLOGY.md §6B.1).
+  any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401). Live on `spire-test` (Codex `gpt-6-astra`,
+  2026-11-09): #98 on a seat and #99 on an API key were reviewed with no credential in the agent and only the declared
+  paths and host; #100 (40 files) on a seat did not compact (compaction is proven by the spike only); a key OpenAI
+  refused failed `CREDENTIAL_REJECTED` and marked its pool member. One model proxy start was not seen listening within
+  30 s (cause unknown); the wait is now 120 s and a timeout reports the container's state and log tail
+  (docs/UNVERIFIED.md, the step 3 entry; docs/factory/RUN-TOPOLOGY.md §6B.1).
 
 **Limits that remain:**
 
