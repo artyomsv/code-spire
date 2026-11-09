@@ -389,9 +389,17 @@ egress proxy on a second internal network the agent is not on, so the agent has 
 model proxy drops every credential header the agent sends, injects the real one, forwards only the harness's declared
 model paths (a path with `..`, `%` escapes or reserved characters is refused before matching), refuses methods
 other than GET and POST, absolute-form targets and upgrades, and replaces a 401 or 403 body (OpenAI's 401 echoes part
-of the refused key) and strips `set-cookie` and `www-authenticate`. For a seat it holds only the access token and
-the account id, never the `id_token` (with its email claims) or the refresh token. Its log line names the method, the
-path and the status only. Its container is sandboxed like the egress proxy's, mounts nothing of the unit's, and
+of the refused key). Every other answer is passed on failing closed: response headers are an allowlist and a listed
+header carrying the credential is dropped, `Location` never passes, the vendor is asked for an unencoded body and an
+encoded one is refused, and every body is streamed through a mask that replaces the secret and a seat's account id,
+however the chunks split them (review of PR #394, security/H-1). A fragment of the secret, or the secret in another
+encoding, is not caught. Requests are bounded in number, size and time, and so is the vendor's answer
+(`RUN-TOPOLOGY.md` §6B.1). For a seat it holds only the access token and the account id, never the `id_token` (with
+its email claims) or the refresh token. Its log line names the method, the route the guard matched (or
+`<refused>`) and the status only, never the agent's path. It connects to the vendor by hostname through the egress
+proxy; no step checks the address the name resolves to, and TLS hostname verification is what keeps the credential
+from a wrong address
+(`techdebt/spire-model-proxy/3-3-the-vendor-connection-has-no-destination-address-policy.md`). Its container is sandboxed like the egress proxy's, mounts nothing of the unit's, and
 carries the credential in its environment only, never a label. The egress proxy of a proxied unit always enforces the
 harness's hosts, even when the global mode is `report`.
 

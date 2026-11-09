@@ -401,7 +401,7 @@ A model-proxied unit (harness reviews step 3, `RUN-TOPOLOGY.md` §6B.1) always *
 global mode: its only outbound caller is the model proxy, whose hosts are the harness's declared ones, and
 a host it calls outside them fails the run as blocked egress. The model proxy adds a narrower check of its
 own, by path: a model path the harness does not declare is refused there and fails the run as
-`BLOCKED_EGRESS` with `model path <path> refused`.
+`BLOCKED_EGRESS`; its log names such a request `<refused>`, never its path.
 
 ## 6. Implementation order and why
 

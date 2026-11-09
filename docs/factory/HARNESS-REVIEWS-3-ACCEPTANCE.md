@@ -113,3 +113,8 @@ operator then added `openai-api` and erased `factory-openai`. This is the first 
 - **No Claude Code subscription run**, by standing rule; Claude Code declares no credential route yet.
 - **The start miss is unexplained.** Whether 120 s is enough on a busy host is unproven (docs/UNVERIFIED.md, the step 3
   entry).
+- **The review of PR #394 changed the proxy after these runs.** Response headers became an allowlist, `Location` is
+  never passed, an encoded body is refused, every body is masked for an echo of the credential, requests and answers
+  are bounded, and the log names a route (`/backend-api/codex/*`) or `<refused>` instead of the agent's path (the
+  model call keeps its name). None of that ran live here: the four checks above predate it, and their log excerpts
+  show the earlier full paths. It is proven against local fakes only (docs/UNVERIFIED.md, the step 3 entry).

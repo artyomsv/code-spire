@@ -452,25 +452,40 @@ model network (internal):            model proxy ── egress proxy ("spire-egr
 - The **model proxy** is on both. It drops every credential header the agent sends (`Authorization`, `x-api-key`,
   `chatgpt-account-id`, `Cookie`, `Proxy-Authorization`), injects the real one (a bearer API key, an `x-api-key`, or a
   seat's access token with its account id), and forwards only the route's paths: exact paths for an API key
-  (`/v1/responses`, `/v1/models`), whole-segment prefixes for a seat (`/backend-api/codex/`, `/backend-api/wham/`). A
+  (`/v1/responses`, `/v1/models`), whole-segment prefixes for a seat (`/backend-api/codex/`, `/backend-api/wham/`),
+  with the seat's model call `/backend-api/codex/responses` also named exactly. A
   path with `..`, a `.` segment, `//`, a backslash, a `%` escape or any reserved character is refused before matching.
   It refuses methods other than GET and POST (405), an absolute-form target (403) and an upgrade or `CONNECT` (501). A
-  401 or 403 from the vendor reaches the agent with a fixed body and without `set-cookie` or `www-authenticate`. A
-  vendor failing mid-stream breaks the agent's connection rather than ending the body cleanly. It reaches the vendor
+  401 or 403 from the vendor reaches the agent with a fixed body. Every other answer is passed on failing closed
+  (review of PR #394, security/H-1): only an allowlist of headers (`content-type`, `cache-control`, `retry-after`,
+  `retry-after-ms`, the request ids, `openai-model`, `openai-version`, `openai-processing-ms` and the `x-ratelimit-`
+  and `x-codex-` families), and of those none whose value holds the credential; never `location`; the vendor is asked
+  for `Accept-Encoding: identity` and an encoded body is refused with a 502; and every body, whatever its status,
+  streams through a mask that replaces the secret and a seat's account id with `spire-model-withheld`, split across
+  chunks or not, holding back only a tail that may begin one. A vendor failing mid-stream breaks the agent's
+  connection rather than ending the body cleanly. It reaches the vendor
   over HTTP/1.1 through `HTTPS_PROXY`, trusting the deployment's bundle. Its sandbox matches the egress proxy's:
   `cap-drop ALL`, `no-new-privileges`, a read-only root with an 8 MiB `/tmp`, 192 MiB, half a CPU and 64 pids. It
   mounts nothing of the unit's, and the credential is an environment variable of that container only, never a label.
+- **What a request may cost** (review of PR #394, security/M-1): 8 requests at once (a ninth is answered 503); an
+  8 MiB request body, read whole before the vendor is contacted (a declared or counted excess is answered 413); a
+  request's head and body within 30 s of its first byte, at most 100 headers in 64 KiB, and 32 open connections (the
+  JDK server's bounds); 10 minutes for the vendor's response headers, 10 minutes between two bytes of its body and
+  60 minutes for one response (a stalled or endless body breaks the agent's response). The run's wall clock, which
+  kills the whole unit, stays the outer bound.
 - The **egress proxy** is on the model network only, and for a proxied unit it **enforces** the harness's declared
   hosts whatever the global egress mode, so `report` does not open a proxied unit.
 
-The model proxy writes one line per request, `spire-model <METHOD> <path> -> <status|refused|aborted>`, and nothing
-else about it. `aborted` means the response did not finish: the vendor failed mid-response, or the client hung up
-before the body ended. The live acceptance saw the second twice, on `GET /backend-api/codex/models` in a run that
-succeeded (`spire-test` #100, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md), so an `aborted` line alone is no
+The model proxy writes one line per request, `spire-model <METHOD> <route> -> <status|refused|aborted>`, and nothing
+else about it. The route is never the agent's target (review of PR #394, security/M-2): it is the exact path the
+route declares, a declared prefix and `*` (`/backend-api/codex/*`), or `<refused>` for every refused request; the
+line is bounded to visible ASCII where it is written, and the container's log is rotated at three files of 2 MiB. `aborted` means the response did not finish: the vendor failed mid-response, or the client hung up
+before the body ended, or a request whose body never arrived. The live acceptance saw the second twice, on
+`GET /backend-api/codex/models` in a run that succeeded (`spire-test` #100, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md), so an `aborted` line alone is no
 failure. The worker reads that log once the agent is gone (`ModelProxyReport`) and uses it only for a run that
 failed anyway: a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails the run as
-`CREDENTIAL_REJECTED`, which marks the pool member; a refused path fails it as `BLOCKED_EGRESS` with
-`model path <path> refused`; a 403 keeps the adapter's own cause (and names no path). Before the unit is created the
+`CREDENTIAL_REJECTED`, which marks the pool member; a refused request fails it as `BLOCKED_EGRESS`, the detail
+saying the model proxy refused a request the harness does not declare (`<refused>`, never the path); a 403 keeps the adapter's own cause (and names no path). Before the unit is created the
 worker looks the image up; a missing one fails a proxied run as `IMAGE_UNAVAILABLE`, naming
 `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, and leaves unproxied runs alone. The worker also logs a missing image at startup.
 
