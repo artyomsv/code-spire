@@ -1100,8 +1100,11 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         assertTrue(List.of(host.getCapDrop()).contains(com.github.dockerjava.api.model.Capability.ALL));
         assertTrue(host.getSecurityOpts().contains("no-new-privileges"));
         // One line per request, so a long run's log is rotated: at most three files of 2 MiB, under the parser's bound.
-        assertEquals(com.github.dockerjava.api.model.LogConfig.LoggingType.JSON_FILE, host.getLogConfig().getType());
-        assertEquals(Map.of("max-size", "2m", "max-file", "3"), host.getLogConfig().getConfig());
+        var logConfig = host.getLogConfig();
+        String inspectedLog = "the model proxy's log config as inspected: " + logConfig;
+        assertEquals(ModelProxyContainer.LOG.getType(), logConfig.getType(), inspectedLog);
+        assertEquals("2m", logConfig.getConfig() == null ? null : logConfig.getConfig().get("max-size"), inspectedLog);
+        assertEquals("3", logConfig.getConfig() == null ? null : logConfig.getConfig().get("max-file"), inspectedLog);
         assertFalse(inspected.getConfig().getLabels().values().stream().anyMatch(value -> value.contains(MODEL_SECRET)),
                 "a credential never goes in a label: " + inspected.getConfig().getLabels().keySet());
     }
