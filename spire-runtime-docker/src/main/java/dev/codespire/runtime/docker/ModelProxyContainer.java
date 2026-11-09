@@ -39,7 +39,7 @@ final class ModelProxyContainer {
     static final String TMPFS = "rw,nosuid,nodev,noexec,size=8m";
 
     /** How long a starting model proxy may take to listen: a JVM start, well under a second on a warm host. */
-    private static final Duration START_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration START_TIMEOUT = Duration.ofSeconds(30);
 
     private final DockerClient client;
 

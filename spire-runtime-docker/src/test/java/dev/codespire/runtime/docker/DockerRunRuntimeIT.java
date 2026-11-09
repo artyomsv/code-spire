@@ -1155,6 +1155,31 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         assertEquals(1, report.requests(), report.toString());
     }
 
+    /**
+     * A model proxy that refuses its route exits at once; the run's failure detail says so with its state and the
+     * refusal line, which names the variable and never a value (live acceptance of harness reviews step 3).
+     */
+    @Test
+    void aModelProxyThatRefusesItsRouteIsReportedWithItsStateAndRefusal() {
+        String runId = "run_model_refused_route";
+        ContainerSpec invalid = new ContainerSpec(MODEL_PROXY_IMAGE, List.of(), Map.of(
+                "SPIRE_MODEL_UPSTREAM", "http://127.0.0.1",
+                "SPIRE_MODEL_INJECTION", "BEARER",
+                "SPIRE_MODEL_PATHS_EXACT", "v1/responses",
+                "SPIRE_MODEL_SECRET", MODEL_SECRET,
+                "SPIRE_MODEL_ALLOW_PLAINTEXT_UPSTREAM", "true"), List.of());
+        started.add(new RunHandle(runId, "unknown"));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> runtime.create(egressUnit(runId, "true", PROXIED_REPORT).withModelProxy(invalid)));
+
+        String detail = failure.getMessage();
+        assertTrue(detail.contains("the model proxy"), detail);
+        assertTrue(detail.contains("state exited"), detail);
+        assertTrue(detail.contains("SPIRE_MODEL_PATHS_EXACT holds an entry that does not start with /"), detail);
+        assertFalse(detail.contains(MODEL_SECRET), "a failure detail never carries the credential");
+    }
+
     @Test
     void destroyRemovesTheModelProxyAndBothNetworks() {
         String runId = "run_model_destroy";
