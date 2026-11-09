@@ -17,8 +17,11 @@ import java.util.Set;
  */
 final class CodexModelProxy {
 
+    /** What a proxied run's credential values are: the worker keeps the keys and replaces the values. */
+    static final String PLACEHOLDER = "TEST-PLACEHOLDER";
+
     /**
-     * The variable a proxied key run's provider reads its key from. It holds {@link CodexAdapter#PLACEHOLDER}; the
+     * The variable a proxied key run's provider reads its key from. It holds {@link CodexModelProxy#PLACEHOLDER}; the
      * model proxy drops the header the agent sends and injects the real key.
      */
     static final String PLACEHOLDER_VARIABLE = "SPIRE_MODEL_PLACEHOLDER";
@@ -48,7 +51,7 @@ final class CodexModelProxy {
         String common = setting("model_provider", PROVIDER_ID)
                 + setting(provider + "name", PROVIDER_ID)
                 + setting(provider + "wire_api", "responses");
-        if (CodexAdapter.isSeat(invocation)) {
+        if (CodexLogin.isSeat(invocation)) {
             return common
                     + setting(provider + "base_url", origin + "/backend-api/codex")
                     + " -c " + provider + "requires_openai_auth=true"
@@ -62,17 +65,17 @@ final class CodexModelProxy {
     /**
      * A proxied run's environment, built without reading the model credential's value: the worker hands placeholders
      * under the neutral keys, and neither is forwarded. A seat gets {@link PlaceholderSignIn}'s file; a key run gets
-     * {@link CodexAdapter#PLACEHOLDER} under the variable its provider reads.
+     * {@link CodexModelProxy#PLACEHOLDER} under the variable its provider reads.
      */
     static Map<String, String> environment(HarnessInvocation invocation) {
         Map<String, String> credentials = new LinkedHashMap<>(invocation.credentials());
         credentials.remove(HarnessInvocation.CREDENTIAL);
         credentials.remove(HarnessInvocation.SIGN_IN);
         Map<String, String> reserved = new LinkedHashMap<>(CodexAdapter.OWN_SETTINGS);
-        if (CodexAdapter.isSeat(invocation)) {
-            reserved.put(CodexAdapter.SIGN_IN_VARIABLE, PlaceholderSignIn.file());
+        if (CodexLogin.isSeat(invocation)) {
+            reserved.put(CodexLogin.SIGN_IN_VARIABLE, PlaceholderSignIn.file());
         } else {
-            reserved.put(PLACEHOLDER_VARIABLE, CodexAdapter.PLACEHOLDER);
+            reserved.put(PLACEHOLDER_VARIABLE, PLACEHOLDER);
         }
         return EnvironmentPolicy.merge(credentials, reserved);
     }
@@ -94,7 +97,7 @@ final class CodexModelProxy {
         if (!invocation.credentialProxied()) {
             return Optional.empty();
         }
-        if (CodexAdapter.isSeat(invocation)) {
+        if (CodexLogin.isSeat(invocation)) {
             return Optional.of(new CredentialRoute("https://chatgpt.com", CredentialRoute.Injection.CHATGPT_SEAT,
                     Set.of(SEAT_MODEL_CALL), List.of("/backend-api/codex/", "/backend-api/wham/")));
         }

@@ -69,7 +69,7 @@ public final class PlaceholderSignIn {
         auth.put("chatgpt_account_id", ACCOUNT_ID);
         auth.put("chatgpt_plan_type", "plus");
         auth.put("chatgpt_user_id", "user-TEST-PLACEHOLDER");
-        return encode(write(header)) + "." + encode(write(payload)) + "." + encode(CodexAdapter.PLACEHOLDER);
+        return encode(write(header)) + "." + encode(write(payload)) + "." + encode(CodexModelProxy.PLACEHOLDER);
     }
 
     private static String encode(String text) {

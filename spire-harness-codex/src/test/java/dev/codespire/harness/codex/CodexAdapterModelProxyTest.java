@@ -20,7 +20,7 @@ class CodexAdapterModelProxyTest {
 
     private static HarnessInvocation proxied(String credentialKey) {
         return new HarnessInvocation("run_abc", "review the change", "/workspace", "gpt-5.6",
-                Map.of(credentialKey, CodexAdapter.PLACEHOLDER), Duration.ofMinutes(30)).proxied();
+                Map.of(credentialKey, CodexModelProxy.PLACEHOLDER), Duration.ofMinutes(30)).proxied();
     }
 
     /**

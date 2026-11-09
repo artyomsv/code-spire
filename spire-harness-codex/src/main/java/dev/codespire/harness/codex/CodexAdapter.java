@@ -50,25 +50,6 @@ public final class CodexAdapter implements HarnessAdapter {
     /** What this arm sets itself. A credential of the same name is a collision, not an override. */
     static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
 
-    /** What the Codex process reads its key from. Vendor knowledge, and this arm's alone. */
-    private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
-
-    /**
-     * Where the sign-in file waits for the login step to write it (M3.5 part F). This arm's own name: the
-     * script below reads it once, writes the file Codex reads, and unsets it before Codex starts.
-     */
-    static final String SIGN_IN_VARIABLE = "CODEX_SIGN_IN_FILE";
-
-    /**
-     * The exit code the login step uses when it cannot authenticate, so a run that never reached
-     * the model is not reported as one the model failed to answer.
-     *
-     * <p>Chosen outside sysexits (64-78), outside the shell's reserved codes (126-165), and outside
-     * what codex itself returns (1 for an error, 101 for a panic), so it cannot be confused with a
-     * code the harness produced after login succeeded.
-     */
-    private static final int LOGIN_FAILED = 120;
-
     /**
      * Codex's calls a run never needs, switched off for every run. Measured live on the dev stack on 2026-11-01 (design
      * "After step 2"): plugins call {@code github.com}, {@code api.github.com} and {@code chatgpt.com}, and analytics
@@ -92,9 +73,6 @@ public final class CodexAdapter implements HarnessAdapter {
      * where no {@code oaiusercontent.com} content host was called; the step 5 live proof re-checks it in report mode.
      */
     private static final java.util.Set<String> SEAT_HOSTS = java.util.Set.of("chatgpt.com");
-
-    /** What a proxied run's credential values are: the worker keeps the keys and replaces the values. */
-    public static final String PLACEHOLDER = "TEST-PLACEHOLDER";
 
     @Override
     public HarnessType type() {
@@ -158,7 +136,7 @@ public final class CodexAdapter implements HarnessAdapter {
      */
     @Override
     public List<String> command(HarnessInvocation invocation) {
-        String script = login(invocation)
+        String script = CodexLogin.script(invocation)
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
@@ -170,39 +148,9 @@ public final class CodexAdapter implements HarnessAdapter {
         return List.of("sh", "-c", script);
     }
 
-    /**
-     * How this run signs Codex in: a key piped into {@code --with-api-key}, or a sign-in file written
-     * where Codex reads one.
-     *
-     * <p>The file is written because no login flag takes it. {@code --with-access-token} was the plan and
-     * refuses a ChatGPT access token (measured 2026-09-25, codex-cli 0.156.1: design §5.3); the file,
-     * with its refresh token emptied by the orchestrator, is accepted and runs. Written owner-only
-     * ({@code umask 077}), and the variable that carried it is unset before Codex starts, so the process
-     * that runs ticket text does not also inherit it. The agent can still read the file, as it can read
-     * a key today — what it cannot hold is a refresh token, because none was ever sent.
-     */
-    private static String login(HarnessInvocation invocation) {
-        if (isSeat(invocation)) {
-            // A proxied seat writes PlaceholderSignIn's file through the same step: environment() puts it there.
-            return "mkdir -p \"$HOME/.codex\" && (umask 077 && printenv " + SIGN_IN_VARIABLE
-                    + " > \"$HOME/.codex/auth.json\") || exit " + LOGIN_FAILED + "; "
-                    + "unset " + SIGN_IN_VARIABLE + "; ";
-        }
-        if (invocation.credentialProxied()) {
-            // The provider below reads its placeholder key from the environment; no auth.json is needed (spike).
-            return "";
-        }
-        return "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
-                + " || exit " + LOGIN_FAILED + "; ";
-    }
-
-    static boolean isSeat(HarnessInvocation invocation) {
-        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN);
-    }
-
     /** The flags that switch off what a run never needs; a seat run also switches off apps. */
     private static String extraCallsOff(HarnessInvocation invocation) {
-        return isSeat(invocation) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
+        return CodexLogin.isSeat(invocation) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
     }
 
     /** Nothing for a run that follows the repository's guidance; the zero budget for one that must not. */
@@ -256,11 +204,11 @@ public final class CodexAdapter implements HarnessAdapter {
         Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
         String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
         if (apiKey != null) {
-            credentials.put(API_KEY_VARIABLE, apiKey);
+            credentials.put(CodexLogin.API_KEY_VARIABLE, apiKey);
         }
         String signIn = credentials.remove(HarnessInvocation.SIGN_IN);
         if (signIn != null) {
-            credentials.put(SIGN_IN_VARIABLE, signIn);
+            credentials.put(CodexLogin.SIGN_IN_VARIABLE, signIn);
         }
         return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
     }
@@ -434,7 +382,7 @@ public final class CodexAdapter implements HarnessAdapter {
         if (exitCode == 0) {
             return TerminalOutcome.success("codex exec completed");
         }
-        if (exitCode == LOGIN_FAILED) {
+        if (exitCode == CodexLogin.LOGIN_FAILED) {
             // Distinct from every other failure and from "the model said nothing": the harness
             // never started, so nothing about the model or the work item is implicated. The first
             // live dispatch spent its diagnosis on the model because this case had no name.
