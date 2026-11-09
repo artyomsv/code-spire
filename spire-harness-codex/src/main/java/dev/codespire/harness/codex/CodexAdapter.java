@@ -102,6 +102,9 @@ public final class CodexAdapter implements HarnessAdapter {
      */
     public static final String PLACEHOLDER_VARIABLE = "SPIRE_MODEL_PLACEHOLDER";
 
+    /** A seat's model call, named exactly in its route as well as under its prefix. */
+    private static final String SEAT_MODEL_CALL = "/backend-api/codex/responses";
+
     /** The model provider a proxied run defines for itself, so Codex's own {@code openai} provider is never used. */
     public static final String PROVIDER_ID = "spire";
 
@@ -331,7 +334,9 @@ public final class CodexAdapter implements HarnessAdapter {
      *       may read, so both match exactly and nothing else does;</li>
      *   <li>a seat run called {@code GET /backend-api/codex/models}, {@code POST /backend-api/codex/responses}
      *       (compaction too), {@code GET /backend-api/wham/accounts/check} and {@code GET
-     *       /backend-api/wham/settings/user}: the two prefixes, and no redirect.</li>
+     *       /backend-api/wham/settings/user}: the two prefixes, and no redirect. The model call is named exactly
+     *       as well, so the model proxy logs it by name and a 401 on it marks the seat; the proxy logs every other
+     *       seat path by its prefix only.</li>
      * </ul>
      */
     @Override
@@ -341,7 +346,7 @@ public final class CodexAdapter implements HarnessAdapter {
         }
         if (isSeat(invocation)) {
             return Optional.of(new CredentialRoute("https://chatgpt.com", CredentialRoute.Injection.CHATGPT_SEAT,
-                    java.util.Set.of(), List.of("/backend-api/codex/", "/backend-api/wham/")));
+                    java.util.Set.of(SEAT_MODEL_CALL), List.of("/backend-api/codex/", "/backend-api/wham/")));
         }
         return Optional.of(new CredentialRoute("https://api.openai.com", CredentialRoute.Injection.BEARER,
                 java.util.Set.of("/v1/responses", "/v1/models"), List.of()));
