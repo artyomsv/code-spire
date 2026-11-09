@@ -126,16 +126,23 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         //                 be; "/" would hand it everything mounted.
         requireArgumentSafe(model, "model");
         requireArgumentSafe(workspacePath, "workspacePath");
-        // An arm places the level inside its own configuration syntax, so the shape is fixed here: a
-        // short lower-case word can close no quote and name no second key. The vendor does not check
-        // it (measured 2026-09-22), so a wrong word would run rather than fail.
-        reasoningEffort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
-        if (reasoningEffort != null && !reasoningEffort.matches("[a-z]{1,16}")) {
-            throw new IllegalArgumentException("reasoningEffort must be a short lower-case word, was: " + reasoningEffort);
-        }
+        reasoningEffort = normalisedEffort(reasoningEffort);
         if (!workspacePath.startsWith("/")) {
             throw new IllegalArgumentException("workspacePath must be absolute, was: " + workspacePath);
         }
+    }
+
+    /**
+     * An arm places the level inside its own configuration syntax, so the shape is fixed here: a short lower-case word
+     * can close no quote and name no second key. The vendor does not check it (measured 2026-09-22), so a wrong word
+     * would run rather than fail. Blank is none.
+     */
+    private static String normalisedEffort(String reasoningEffort) {
+        String effort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
+        if (effort != null && !effort.matches("[a-z]{1,16}")) {
+            throw new IllegalArgumentException("reasoningEffort must be a short lower-case word, was: " + effort);
+        }
+        return effort;
     }
 
     private static void requireArgumentSafe(String value, String field) {

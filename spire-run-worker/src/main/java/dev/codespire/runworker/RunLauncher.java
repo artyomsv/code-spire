@@ -211,7 +211,7 @@ public class RunLauncher {
         }
     }
 
-    /** The run being launched: its command, which unit it is ({@code wrapper}, as {@link #launch} says), its harness. */
+    /** The run being launched: its command, which unit it is ({@code wrapper}, as launch says), its harness. */
     private record Launch(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter,
                           RunObserver observer) {
         /** The held build, or null for every other unit. */

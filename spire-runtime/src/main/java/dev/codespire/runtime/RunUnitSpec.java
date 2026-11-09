@@ -103,11 +103,7 @@ public record RunUnitSpec(String runId,
             egress = EgressPolicy.OFF;
         }
         Objects.requireNonNull(wallClock, "wallClock");
-        if (memoryBytes <= 0 || nanoCpus <= 0 || diskBytes <= 0) {
-            throw new IllegalArgumentException(
-                    "a run unit needs real limits; unlimited is not a limit (memory=" + memoryBytes
-                            + ", nanoCpus=" + nanoCpus + ", disk=" + diskBytes + ")");
-        }
+        requireRealLimits(memoryBytes, nanoCpus, diskBytes);
         if (runId.isBlank()) {
             // Every container and volume is labelled with it, so a blank one makes a unit
             // undiscoverable: the watchdog cannot attribute it and destroy targets nothing.
@@ -123,6 +119,14 @@ public record RunUnitSpec(String runId,
         deployment.requireNoAgentSideCollision(agent, modelProxy);
         requireHostPathsDoNotShadowVolumes(enterprise, init, agent, publisher);
         if (inputs != null) inputs.requireReachOnlyInitAndAgent(init, agent, publisher);
+    }
+
+    private static void requireRealLimits(long memoryBytes, long nanoCpus, long diskBytes) {
+        if (memoryBytes <= 0 || nanoCpus <= 0 || diskBytes <= 0) {
+            throw new IllegalArgumentException(
+                    "a run unit needs real limits; unlimited is not a limit (memory=" + memoryBytes
+                            + ", nanoCpus=" + nanoCpus + ", disk=" + diskBytes + ")");
+        }
     }
 
     /**
