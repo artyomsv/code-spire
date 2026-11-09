@@ -45,8 +45,9 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 **Why nothing catches it today.**
 - **Live once, on one harness (2026-11-09, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md).** On `spire-test` with
   Codex `gpt-6-astra` (codex-cli 0.156.1) a seat review (#98), an API-key review (#99, run 3) and a long seat review
-  (#100, 40 files) were posted with no credential in the agent, the model proxy naming only declared paths and
-  `run_egress` only the declared host; a key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its pool member
+  (#100, 40 files) were posted with no credential in the agent and `run_egress` naming only the declared host. The
+  model proxy log was read for #99 and #100 and named only declared paths; #98's was not captured (its egress record
+  shows `chatgpt.com` only). A key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its pool member
   (#99, run 1). Codex accepted the placeholder `auth.json` and made no refresh call (no `auth.openai.com`). What
   follows was not reached live and is proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s
   `python:3.13-alpine` upstream and the run worker's fakes only.

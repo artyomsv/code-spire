@@ -215,7 +215,8 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   `BLOCKED_EGRESS`; a missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. Only Codex declares a route;
   any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401). Live on `spire-test` (Codex `gpt-6-astra`,
   2026-11-09): #98 on a seat and #99 on an API key were reviewed with no credential in the agent and only the declared
-  paths and host; #100 (40 files) on a seat did not compact (compaction is proven by the spike only); a key OpenAI
+  host in the egress record. The model proxy log was read for #99 and #100 and named only declared paths; #98's was
+  not captured. #100 (40 files) on a seat did not compact (compaction is proven by the spike only); a key OpenAI
   refused failed `CREDENTIAL_REJECTED` and marked its pool member. One model proxy start was not seen listening within
   30 s (cause unknown); the wait is now 120 s and a timeout reports the container's state and log tail
   (docs/UNVERIFIED.md, the step 3 entry; docs/factory/RUN-TOPOLOGY.md §6B.1).

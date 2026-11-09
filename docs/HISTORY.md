@@ -2339,7 +2339,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   after the request returned, while the request itself waited for the vendor's ten-second release. The test now
   awaits the response and its first event within the bound, and the same mutant re-run (#402, closed) fails it. The
   live acceptance on `spire-test` (Codex `gpt-6-astra`) posted a seat review (#98), an API-key review (#99) and a long
-  seat review (#100, 40 files) with no credential in the agent and only the declared paths and host; Codex accepted
+  seat review (#100, 40 files) with no credential in the agent and only the declared host in the egress record. The
+  model proxy log was read for #99 and #100 and named only declared paths; #98's was not captured. Codex accepted
   the placeholder `auth.json` with no refresh call; a key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its
   pool member, the cause's first live producer. #100 did not compact (about 38k context per call), and its two
   `aborted` model-list reads in a successful run showed that `aborted` covers a client hanging up too. One model proxy
@@ -2347,7 +2348,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   raised the wait to 120 s and made a sidecar's start failure say its state, exit code, OOMKilled flag and the last
   20 lines (at most 2 KiB) of its log (`SidecarStartFailure`). Left open: live compaction, a seat's refusal, WebSocket
   upgrades, redirects, `oaiusercontent.com` and `ALL` mode are unmeasured; a 403's failure detail names no path; the
-  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). Next: PR 3b (Claude Code on an API key). Upgrading: the run worker now defaults to `REVIEWS` and compose does not build the image, so before
-  upgrading run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
+  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). Next: PR 3b (Claude Code on an API key).
+
+  Upgrading: the run worker now defaults to `REVIEWS`, and compose does not build the image. Before upgrading, run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
   (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;
   otherwise every Codex review fails `IMAGE_UNAVAILABLE`.
