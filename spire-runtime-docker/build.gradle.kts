@@ -51,4 +51,8 @@ tasks.test {
     // DockerRunRuntimeIT builds the model proxy image from spire-model-proxy's Dockerfile, whose context is the
     // installed distribution.
     dependsOn(":spire-model-proxy:installDist")
+    // CI keeps no test report, so a failure's message (what the daemon actually returned) must reach the job log.
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
