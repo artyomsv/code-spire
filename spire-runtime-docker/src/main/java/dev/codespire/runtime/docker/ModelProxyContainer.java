@@ -3,6 +3,7 @@ package dev.codespire.runtime.docker;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.LogConfig;
 import dev.codespire.runtime.ContainerSpec;
 import dev.codespire.runtime.ModelProxyReport;
 import dev.codespire.runtime.RunUnitSpec;
@@ -46,6 +47,15 @@ final class ModelProxyContainer {
      */
     static final Duration START_TIMEOUT = Duration.ofSeconds(120);
 
+    /**
+     * Its log, one line per request, rotated: at most three files of 2 MiB (about 100,000 lines), which stays under
+     * {@link ModelProxyLogParser#MAX_LOG_CHARS} when read back. The json-file driver keeps rotated files readable
+     * through {@code docker logs}, so a run of ordinary length is read whole; a run past that loses its oldest lines
+     * rather than the host's disk.
+     */
+    static final LogConfig LOG =
+            new LogConfig(LogConfig.LoggingType.JSON_FILE, Map.of("max-size", "2m", "max-file", "3"));
+
     private final DockerClient client;
 
     ModelProxyContainer(DockerClient client) {
@@ -75,6 +85,7 @@ final class ModelProxyContainer {
                 .withReadonlyRootfs(true)
                 .withTmpFs(Map.of("/tmp", TMPFS))
                 .withNetworkMode(modelNetwork)
+                .withLogConfig(LOG)
                 // Its log is read after the agent has gone; destroy removes it.
                 .withAutoRemove(false);
         List<String> env = new ArrayList<>();

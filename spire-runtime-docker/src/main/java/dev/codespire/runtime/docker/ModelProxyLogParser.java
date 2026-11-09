@@ -11,12 +11,14 @@ import java.util.regex.Pattern;
 /**
  * The model proxy's log, read back as a {@link ModelProxyReport}.
  *
- * <p>The proxy writes one line per request, {@code spire-model <METHOD> <path> -> <status|refused|aborted>}, with the
- * method and path reduced to visible ASCII and at most 256 characters each (spire-model-proxy's {@code RequestLine}).
- * The path is still the agent's choice, so the line is matched whole and strictly, anything else in the log (the
- * proxy's own startup refusal, a JVM message) is ignored, and what reading the log costs is bounded like the egress
- * proxy's ({@link ProxyLogParser}): {@link #MAX_LOG_CHARS} in all, {@link #MAX_LINE_CHARS} a line, and
- * {@link #MAX_REFUSED_PATHS} distinct refused paths.
+ * <p>The proxy writes one line per request, {@code spire-model <METHOD> <route> -> <status|refused|aborted>}
+ * (spire-model-proxy's {@code RequestLine}). The route is never the agent's path: it is the exact path the route
+ * declares ({@code /v1/responses}, which {@link ModelProxyReport#MODEL_CALL_PATHS} names), a declared prefix and
+ * {@code *} ({@code /backend-api/codex/*}), or {@code <refused>} for every refused request, so a refused "path" in
+ * the report is that token. The method stays the agent's, reduced to visible ASCII and 16 characters, so the line is
+ * matched whole and strictly, anything else in the log (the proxy's own startup refusal, a JVM message) is ignored,
+ * and what reading the log costs is bounded like the egress proxy's ({@link ProxyLogParser}): {@link #MAX_LOG_CHARS}
+ * in all, {@link #MAX_LINE_CHARS} a line, and {@link #MAX_REFUSED_PATHS} distinct refused paths.
  */
 final class ModelProxyLogParser {
 

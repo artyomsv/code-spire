@@ -9,12 +9,16 @@ import java.util.Set;
  *
  * <p>{@code rejected} counts a 401 on a model call path only. A 401 elsewhere (a seat's account check) or any 403 (a
  * challenge, an entitlement answer) is not a refused credential, and marking a pool member on one would retire a
- * healthy seat until an operator replaces it. {@code refusedPaths} are the distinct paths the model proxy refused
- * before contacting the vendor, the ones the harness did not declare.
+ * healthy seat until an operator replaces it. {@code refusedPaths} are the distinct targets the model proxy refused
+ * before contacting the vendor, as it logs them: a fixed token ({@code <refused>}), never the target the agent sent,
+ * which may name a person or hold a value.
  */
 public record ModelProxyReport(int requests, int rejected, List<String> refusedPaths) {
 
-    /** The paths whose 401 means the vendor refused the injected credential. */
+    /**
+     * The routes whose 401 means the vendor refused the injected credential. The model proxy logs a declared exact path
+     * by name, so a harness names its model call exactly (Codex's seat route does, beside its prefix).
+     */
     public static final Set<String> MODEL_CALL_PATHS = Set.of("/v1/responses", "/backend-api/codex/responses");
 
     /** A unit with no model proxy, or one whose log could not be read. */

@@ -15,7 +15,8 @@ import java.util.Optional;
  * <p>Like {@link EgressResults}, it decides the cause only for a run that failed anyway, and it comes first: a 401 on a
  * model call is the vendor refusing the credential, and {@code CREDENTIAL_REJECTED} is what marks that member of the
  * harness credential pool ({@code RunCredentialFeedback}). A refused path is a harness calling something its arm does
- * not declare. A 403 is neither: it can be a challenge or an entitlement answer, the run keeps the adapter's own cause
+ * not declare; the proxy logs it as a fixed token, never its target, and that token is what the detail names. A 403
+ * is neither: it can be a challenge or an entitlement answer, the run keeps the adapter's own cause
  * and detail, and marking would retire a healthy seat until an operator replaces it.
  */
 final class ModelProxyResults {
@@ -73,8 +74,8 @@ final class ModelProxyResults {
         }
         String named = String.join(", ", refused.subList(0, Math.min(PATHS_NAMED, refused.size())));
         String more = refused.size() > PATHS_NAMED ? " and " + (refused.size() - PATHS_NAMED) + " more" : "";
-        return Optional.of(new Explained(RunFailureCause.BLOCKED_EGRESS, "model path " + named + more
-                + " refused, which the harness does not declare; then: " + agentDetail));
+        return Optional.of(new Explained(RunFailureCause.BLOCKED_EGRESS, "the model proxy refused a request the"
+                + " harness does not declare (" + named + more + "); then: " + agentDetail));
     }
 
     record Explained(RunFailureCause cause, String detail) {
