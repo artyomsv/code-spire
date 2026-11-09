@@ -439,28 +439,8 @@ class RunResultSagaTest {
         java.util.UUID member = java.util.UUID.fromString("00000000-0000-4000-8000-0000000000a1");
         List<String> reads = new ArrayList<>();
         List<java.util.UUID> marked = new ArrayList<>();
-        RecordingProjection projection = new RecordingProjection() {
-            /** factory_run.harness_credential_id; the real method reads the row. */
-            @Override
-            public Optional<java.util.UUID> harnessCredentialOf(String runId) {
-                reads.add(runId);
-                return Optional.of(member);
-            }
-        };
-        projection.kind = RunKind.REVIEW;
-        projection.binding = REVIEW_CALL;
-        RunResultSaga saga = saga(projection);
-        RunCredentialFeedback feedback = new RunCredentialFeedback();
-        feedback.projection = projection;
-        feedback.pool = new HarnessCredentialPool() {
-            /** The real one updates harness_credential. */
-            @Override
-            public boolean markRejected(java.util.UUID id) {
-                marked.add(id);
-                return true;
-            }
-        };
-        saga.credentials = feedback;
+        RunResultSaga saga = saga(reviewProjectionNaming(member, reads));
+        saga.credentials = feedbackMarkingInto(marked, saga);
 
         RunResult refused = new RunResult.RunFailed(RUN_ID, "CREDENTIAL_REJECTED",
                 "the model vendor refused the run's credential", false, Map.of("INPUT", 5L), List.of());
@@ -470,5 +450,33 @@ class RunResultSagaTest {
         assertEquals(List.of(member), marked);
         assertEquals(List.of(refused), ((RecordingReviewResults) saga.reviewResults).accepted,
                 "the refusal still reaches the review as its failure");
+    }
+
+    /** A review run's projection whose factory_run row names {@code member}; the real method reads the row. */
+    private static RecordingProjection reviewProjectionNaming(java.util.UUID member, List<String> reads) {
+        RecordingProjection projection = new RecordingProjection() {
+            @Override
+            public Optional<java.util.UUID> harnessCredentialOf(String runId) {
+                reads.add(runId);
+                return Optional.of(member);
+            }
+        };
+        projection.kind = RunKind.REVIEW;
+        projection.binding = REVIEW_CALL;
+        return projection;
+    }
+
+    /** The REAL feedback over the saga's projection, its pool's one write recorded; the real one updates the row. */
+    private static RunCredentialFeedback feedbackMarkingInto(List<java.util.UUID> marked, RunResultSaga saga) {
+        RunCredentialFeedback feedback = new RunCredentialFeedback();
+        feedback.projection = saga.projection;
+        feedback.pool = new HarnessCredentialPool() {
+            @Override
+            public boolean markRejected(java.util.UUID id) {
+                marked.add(id);
+                return true;
+            }
+        };
+        return feedback;
     }
 }

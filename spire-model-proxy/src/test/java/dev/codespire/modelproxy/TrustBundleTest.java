@@ -36,36 +36,14 @@ class TrustBundleTest {
 
     private static final String BODY = "TEST-BEHIND-THE-CORPORATE-CA";
 
+    private static final String PASSWORD = "TEST-keystore-password";
+
     @Test
     void aBundleInSslCertFileIsTrusted(@TempDir Path dir) throws Exception {
         Path keystore = dir.resolve("server.p12");
         Path pem = dir.resolve("ca.crt");
-        String password = "TEST-keystore-password";
-        run(dir, "keytool", "-genkeypair", "-alias", "spire", "-keyalg", "RSA", "-keysize", "2048",
-                "-dname", "CN=localhost", "-validity", "1", "-storetype", "PKCS12",
-                "-keystore", keystore.toString(), "-storepass", password, "-keypass", password,
-                "-ext", "SAN=dns:localhost,ip:127.0.0.1");
-        run(dir, "keytool", "-exportcert", "-rfc", "-alias", "spire",
-                "-keystore", keystore.toString(), "-storepass", password, "-file", pem.toString());
-
-        KeyStore store = KeyStore.getInstance("PKCS12");
-        try (InputStream in = Files.newInputStream(keystore)) {
-            store.load(in, password.toCharArray());
-        }
-        KeyManagerFactory keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        keys.init(store, password.toCharArray());
-        SSLContext serverContext = SSLContext.getInstance("TLS");
-        serverContext.init(keys.getKeyManagers(), null, null);
-
-        HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setHttpsConfigurator(new HttpsConfigurator(serverContext));
-        server.createContext("/probe", exchange -> {
-            byte[] body = BODY.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
-        server.start();
+        generateCertificate(dir, keystore, pem);
+        HttpsServer server = serverPresenting(keystore);
         try {
             URI probe = URI.create("https://127.0.0.1:" + server.getAddress().getPort() + "/probe");
 
@@ -78,6 +56,38 @@ class TrustBundleTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    /** A self-signed certificate for localhost in {@code keystore}, and the same certificate as PEM in {@code pem}. */
+    private static void generateCertificate(Path dir, Path keystore, Path pem) throws Exception {
+        run(dir, "keytool", "-genkeypair", "-alias", "spire", "-keyalg", "RSA", "-keysize", "2048",
+                "-dname", "CN=localhost", "-validity", "1", "-storetype", "PKCS12",
+                "-keystore", keystore.toString(), "-storepass", PASSWORD, "-keypass", PASSWORD,
+                "-ext", "SAN=dns:localhost,ip:127.0.0.1");
+        run(dir, "keytool", "-exportcert", "-rfc", "-alias", "spire",
+                "-keystore", keystore.toString(), "-storepass", PASSWORD, "-file", pem.toString());
+    }
+
+    /** An HTTPS server on loopback presenting the keystore's certificate and answering {@code /probe}. */
+    private static HttpsServer serverPresenting(Path keystore) throws Exception {
+        KeyStore store = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(keystore)) {
+            store.load(in, PASSWORD.toCharArray());
+        }
+        KeyManagerFactory keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        keys.init(store, PASSWORD.toCharArray());
+        SSLContext serverContext = SSLContext.getInstance("TLS");
+        serverContext.init(keys.getKeyManagers(), null, null);
+        HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setHttpsConfigurator(new HttpsConfigurator(serverContext));
+        server.createContext("/probe", exchange -> {
+            byte[] body = BODY.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return server;
     }
 
     @Test

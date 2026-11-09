@@ -131,12 +131,8 @@ public class RunLauncher {
             // would be rejected identically, and retrying a malformed dispatch is a loop.
             return failure(command, "BAD_COMMAND", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
-        // A proxied unit whose model proxy image is missing fails here, before anything exists: its lane stops, the
-        // worker does not (ModelProxyImageCheck only logs it at startup).
-        java.util.Optional<String> missing = ModelProxyResults.imageMissing(runtime, unit);
-        if (missing.isPresent()) {
-            return failure(command, RunFailureCause.IMAGE_UNAVAILABLE.name(), missing.orElseThrow());
-        }
+        RunResult.RunFailed unstartable = modelProxyImageMissing(command, unit);
+        if (unstartable != null) return unstartable;
 
         RunHandle handle;
         long activeStarted = System.nanoTime();
@@ -164,6 +160,16 @@ public class RunLauncher {
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
         announce(command, handle, watchers);
         return observe(command, adapter, handle, watchers, wrapper, activeStarted);
+    }
+
+    /**
+     * A proxied unit whose model proxy image is missing fails before anything exists, as IMAGE_UNAVAILABLE: its lane
+     * stops, the worker does not ({@link ModelProxyImageCheck} only logs it at startup). Null when it can start.
+     */
+    private RunResult.RunFailed modelProxyImageMissing(RunCommand.ExecuteRun command, RunUnitSpec unit) {
+        return ModelProxyResults.imageMissing(runtime, unit)
+                .map(missing -> failure(command, RunFailureCause.IMAGE_UNAVAILABLE.name(), missing))
+                .orElse(null);
     }
 
     private RunUnitSpec topology(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter) {
@@ -248,15 +254,15 @@ public class RunLauncher {
             // follow stream on a container that is still running would otherwise never end.
             awaitBriefly(agentStream, publisherStream);
             LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
-            List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
-            ModelProxyReport modelProxy = ModelProxyResults.read(runtime, handle);
+            SidecarRecords sidecars = SidecarRecords.read(runtime, handle, failures.scrubFor(command));
             // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
             // exit, so a push the publisher already reported is still a push. This used to build a
             // bare failure that carried the ref in its detail TEXT only, so the run's record had no
             // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
             // also gives a gate refusal and a forge rejection their own outcomes on this path.
             return EgressResults.attach(unobserved(command, adapter, new Observed(seen, outcome,
-                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), egress, modelProxy)), egress);
+                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), sidecars.egress(),
+                    sidecars.modelProxy())), sidecars.egress());
         }
         // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
         // whatever was read still decide the result, and the unit is still destroyed.
@@ -271,9 +277,9 @@ public class RunLauncher {
         }
 
         // After salvage, when the proxy has seen everything the agent asked for, and before destroy removes it.
-        List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
-        ModelProxyReport modelProxy = ModelProxyResults.read(runtime, handle);
-        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, egress, modelProxy), work != null);
+        SidecarRecords sidecars = SidecarRecords.read(runtime, handle, failures.scrubFor(command));
+        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, sidecars.egress(),
+                sidecars.modelProxy()), work != null);
         if (work != null && result instanceof RunResult.RunFinished finished && !finished.refused()
                 && !finished.agentUnobserved()) {
             if (finished.pushedRef() != null) {
@@ -341,8 +347,8 @@ public class RunLauncher {
 
     /**
      * A run the AGENT failed: when the model proxy saw a refused credential or an undeclared path, or the egress proxy
-     * refused a host, that is the likely reason and the cause says so ({@link ModelProxyResults}). Only here: a publisher failure, a gate refusal or a push keeps its own outcome, with
-     * the refused hosts beside it on the result.
+     * refused a host, that is the likely reason and the cause says so ({@link ModelProxyResults}). Only here: a
+     * publisher failure, a gate refusal or a push keeps its own outcome, with the refused hosts beside it on the result.
      */
     private RunResult.RunFailed agentFailure(RunCommand.ExecuteRun command, String cause, String detail,
                                              Observed observed) {
