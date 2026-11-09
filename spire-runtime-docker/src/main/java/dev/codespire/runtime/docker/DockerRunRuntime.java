@@ -297,15 +297,7 @@ public final class DockerRunRuntime implements PublicationRuntime {
                     + " for run " + spec.runId() + initReport(initId));
         }
 
-        if (spec.egress().proxiesTheAgent()) {
-            // Before the agent exists, so its first call already has somewhere to go. Labelled like the volumes,
-            // so destroy and the watchdog find the network and the proxy by the run id alone.
-            ensureImage(networks.image());
-            // A model proxy too (harness reviews step 3): on the model network with the egress proxy, which then
-            // enforces the spec's hosts whatever its mode, and on the agent's network as spire-model.
-            if (spec.modelProxy() != null) ensureImage(spec.modelProxy().image());
-            networks.open(spec, volumeLabels);
-        }
+        if (spec.egress().proxiesTheAgent()) openNetworks(spec, volumeLabels);
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER, binding, null);
         String agentId = createContainer(spec, spec.agent(), AGENT, binding, null);
         // Publisher first, but ONLY as a defensive habit — nothing depends on it. The handoff is a
@@ -318,6 +310,18 @@ public final class DockerRunRuntime implements PublicationRuntime {
         client.startContainerCmd(agentId).exec();
 
         return new RunHandle(spec.runId(), agentId);
+    }
+
+    /**
+     * The unit's networks and sidecars, before the agent exists, so its first call already has somewhere to go. Labelled
+     * like the volumes, so destroy and the watchdog find the networks and the proxies by the run id alone. A model
+     * proxy too (harness reviews step 3): on the model network with the egress proxy, which then enforces the spec's
+     * hosts whatever its mode, and on the agent's network as spire-model.
+     */
+    private void openNetworks(RunUnitSpec spec, Map<String, String> labels) {
+        ensureImage(networks.image());
+        if (spec.modelProxy() != null) ensureImage(spec.modelProxy().image());
+        networks.open(spec, labels);
     }
 
     /** Volume names are derived from the run id so a discovered orphan's volumes are findable. */

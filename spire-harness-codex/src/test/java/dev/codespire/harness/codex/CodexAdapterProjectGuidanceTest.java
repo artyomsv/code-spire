@@ -49,7 +49,7 @@ class CodexAdapterProjectGuidanceTest {
 
     private static HarnessInvocation invocation(HarnessInvocation.ProjectGuidance guidance) {
         return new HarnessInvocation("run_abc", "review the change", "/workspace", "gpt-5.6",
-                Map.of(HarnessInvocation.CREDENTIAL, "sk-secret"), Duration.ofMinutes(30), null, guidance);
+                Map.of(HarnessInvocation.CREDENTIAL, "sk-secret"), Duration.ofMinutes(30), null).withProjectGuidance(guidance);
     }
 
     private static String script(List<String> argv) {

@@ -24,7 +24,7 @@ class RunUnitSpecInputsTest {
     /** A review unit as harness reviews step 6 builds it: init writes /inputs, the agent reads it, the publisher has none. */
     private static RunUnitSpec withInputs(ContainerSpec init, ContainerSpec agent, ContainerSpec publisher) {
         return new RunUnitSpec("run_1", init, agent, publisher, EnterpriseEnvironment.NONE, EgressPolicy.OFF,
-                1024, 1024, 1024, Duration.ofMinutes(1), INPUTS);
+                1024, 1024, 1024, Duration.ofMinutes(1)).withInputs(INPUTS);
     }
 
     private static ContainerSpec initWritingInputs() {

@@ -101,20 +101,27 @@ final class DockerRunNetworks {
         requireIsolatedGatewaySupport();
         String agentNetwork = createNetwork(agentNetworkName(spec.runId()), labels);
         if (spec.modelProxy() == null) {
-            startEgressProxy(spec, spec.egress(), agentNetwork, labels);
+            startEgressProxy(spec, new EgressOn(spec.egress(), agentNetwork), labels);
             return;
         }
         String modelNetwork = createNetwork(modelNetworkName(spec.runId()), labels);
-        startEgressProxy(spec, new EgressPolicy(EgressPolicy.Mode.ENFORCE, spec.egress().hosts()), modelNetwork, labels);
-        String modelProxy = modelProxies.create(spec, modelNetwork, agentNetwork, roleLabels(labels, ModelProxyContainer.ROLE));
+        EgressPolicy enforced = new EgressPolicy(EgressPolicy.Mode.ENFORCE, spec.egress().hosts());
+        startEgressProxy(spec, new EgressOn(enforced, modelNetwork), labels);
+        String modelProxy = modelProxies.create(spec, new ModelProxyContainer.Networks(modelNetwork, agentNetwork),
+                roleLabels(labels, ModelProxyContainer.ROLE));
         modelProxies.start(modelProxy);
     }
 
-    /** The egress proxy, open to {@code network}'s subnet alone and found there by its alias. */
-    private void startEgressProxy(RunUnitSpec spec, EgressPolicy egress, String network, Map<String, String> labels) {
-        String proxy = proxies.create(spec, egress, subnetOf(network), roleLabels(labels, PROXY));
+    /** What an egress proxy enforces, and the one network it serves. */
+    private record EgressOn(EgressPolicy egress, String network) {
+    }
+
+    /** The egress proxy, open to its network's subnet alone and found there by its alias. */
+    private void startEgressProxy(RunUnitSpec spec, EgressOn on, Map<String, String> labels) {
+        String proxy = proxies.create(spec, new EgressProxyContainer.Placement(on.egress(), subnetOf(on.network())),
+                roleLabels(labels, PROXY));
         client.connectToNetworkCmd()
-                .withNetworkId(network)
+                .withNetworkId(on.network())
                 .withContainerId(proxy)
                 .withContainerNetwork(new ContainerNetwork().withAliases(EgressPolicy.PROXY_ALIAS))
                 .exec();

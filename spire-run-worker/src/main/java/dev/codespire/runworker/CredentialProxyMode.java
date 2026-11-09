@@ -16,8 +16,13 @@ public enum CredentialProxyMode {
     /** Every unit is proxied, factory builds included. */
     ALL;
 
-    /** Whether a unit of this kind is proxied under this mode, before the egress mode and the harness have their say. */
-    boolean appliesTo(boolean reviewRun) {
-        return this == ALL || this == REVIEWS && reviewRun;
+    /** Whether a harness review's unit is proxied under this mode, before the egress mode and the harness say. */
+    boolean proxiesReviewUnits() {
+        return this != OFF;
+    }
+
+    /** Whether any other unit (a factory build or draft) is proxied under this mode, likewise. */
+    boolean proxiesBuildUnits() {
+        return this == ALL;
     }
 }

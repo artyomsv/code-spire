@@ -58,8 +58,15 @@ final class ModelProxyContainer {
 
     private final DockerClient client;
 
+    private final Sidecars sidecars;
+
     ModelProxyContainer(DockerClient client) {
         this.client = client;
+        this.sidecars = new Sidecars(client);
+    }
+
+    /** The two internal networks a model proxy sits on: the model network (its way out) and the agent's. */
+    record Networks(String model, String agent) {
     }
 
     /** The unit's model proxy container. */
@@ -68,15 +75,30 @@ final class ModelProxyContainer {
     }
 
     /**
-     * Creates the model proxy on {@code modelNetwork}, where the egress proxy is its way out, and joins it to
-     * {@code agentNetwork} under its alias. Not started.
+     * Creates the model proxy on the model network, where the egress proxy is its way out, and joins it to the agent's
+     * network under its alias. Not started.
      */
-    String create(RunUnitSpec spec, String modelNetwork, String agentNetwork, Map<String, String> labels) {
+    String create(RunUnitSpec spec, Networks networks, Map<String, String> labels) {
         ContainerSpec proxy = spec.modelProxy();
         String name = containerName(spec.runId());
-        EgressProxyContainer.removeStale(client, name);
-        HostConfig host = HostConfig.newHostConfig()
-                .withBinds(DockerRunRuntime.bindsOf(spec.runId(), spec.hostMounts(), proxy))
+        sidecars.removeStale(name);
+        List<String> env = new ArrayList<>();
+        spec.environmentFor(proxy).forEach((variable, value) -> env.add(variable + "=" + value));
+        var create = client.createContainerCmd(proxy.image())
+                .withName(name)
+                .withEnv(env)
+                .withLabels(labels)
+                .withHostConfig(hostConfig(spec, networks.model()));
+        if (!proxy.argv().isEmpty()) create.withCmd(proxy.argv());
+        if (proxy.entrypoint() != null) create.withEntrypoint(proxy.entrypoint());
+        String id = create.exec().getId();
+        joinAgentNetwork(id, networks.agent());
+        return id;
+    }
+
+    private static HostConfig hostConfig(RunUnitSpec spec, String modelNetwork) {
+        return HostConfig.newHostConfig()
+                .withBinds(DockerRunRuntime.bindsOf(spec.runId(), spec.hostMounts(), spec.modelProxy()))
                 .withMemory(MEMORY_BYTES)
                 .withNanoCPUs(NANO_CPUS)
                 .withPidsLimit(PIDS_LIMIT)
@@ -88,34 +110,26 @@ final class ModelProxyContainer {
                 .withLogConfig(LOG)
                 // Its log is read after the agent has gone; destroy removes it.
                 .withAutoRemove(false);
-        List<String> env = new ArrayList<>();
-        spec.environmentFor(proxy).forEach((variable, value) -> env.add(variable + "=" + value));
-        var create = client.createContainerCmd(proxy.image())
-                .withName(name)
-                .withEnv(env)
-                .withLabels(labels)
-                .withHostConfig(host);
-        if (!proxy.argv().isEmpty()) create.withCmd(proxy.argv());
-        if (proxy.entrypoint() != null) create.withEntrypoint(proxy.entrypoint());
-        String id = create.exec().getId();
+    }
+
+    private void joinAgentNetwork(String id, String agentNetwork) {
         client.connectToNetworkCmd()
                 .withNetworkId(agentNetwork)
                 .withContainerId(id)
                 .withContainerNetwork(new com.github.dockerjava.api.model.ContainerNetwork()
                         .withAliases(RunUnitSpec.MODEL_PROXY_ALIAS))
                 .exec();
-        return id;
     }
 
     /** Starts it and waits until it listens, so the agent's first model call has somewhere to go. */
     void start(String id) {
-        EgressProxyContainer.startAndAwaitListening(client, id, RunUnitSpec.MODEL_PROXY_PORT, "the model proxy",
-                START_TIMEOUT);
+        sidecars.startAndAwaitListening(
+                new Sidecars.Start(id, RunUnitSpec.MODEL_PROXY_PORT, "the model proxy", START_TIMEOUT));
     }
 
     /** What the model proxy saw, from its whole log, bounded like the egress proxy's. */
     ModelProxyReport reportOf(String id) {
         return ModelProxyLogParser.parse(
-                EgressProxyContainer.logOf(client, id, Integer.MAX_VALUE, ModelProxyLogParser.MAX_LOG_CHARS));
+                sidecars.logOf(id, Sidecars.LogBound.whole(ModelProxyLogParser.MAX_LOG_CHARS)));
     }
 }

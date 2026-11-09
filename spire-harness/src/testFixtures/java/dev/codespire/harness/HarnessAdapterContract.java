@@ -110,9 +110,9 @@ public abstract class HarnessAdapterContract {
     void aProxiedRunNeverNeedsTheRealSecret() {
         String realLooking = "TEST-real-looking-secret-0123456789";
         for (String key : List.of(HarnessInvocation.CREDENTIAL, HarnessInvocation.SIGN_IN)) {
-            HarnessInvocation real = invocation("do the work", Map.of(key, realLooking)).withCredentialProxied(true);
+            HarnessInvocation real = invocation("do the work", Map.of(key, realLooking)).proxied();
             HarnessInvocation placeholder = invocation("do the work", Map.of(key, "TEST-PLACEHOLDER"))
-                    .withCredentialProxied(true);
+                    .proxied();
             if (adapter().credentialRoute(real).isEmpty()) {
                 continue;
             }

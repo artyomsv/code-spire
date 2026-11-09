@@ -16,7 +16,7 @@ import java.util.Objects;
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
                                 Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance,
-                                boolean credentialProxied) {
+                                CredentialHolder credentialHolder) {
 
     /** A run at the model's own thinking level: every caller written before levels existed (M3.5 part M). */
     public HarnessInvocation(String runId, String prompt, String workspacePath,
@@ -24,29 +24,52 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         this(runId, prompt, workspacePath, model, credentials, wallClock, null);
     }
 
-    /** A run that loads the repository's own guidance: every caller written before {@link ProjectGuidance} existed. */
+    /**
+     * A run that loads the repository's own guidance and talks to the vendor itself: every caller written before
+     * {@link ProjectGuidance} and the model proxy existed. {@link #withProjectGuidance} and {@link #proxied} change
+     * either.
+     */
     public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
                              Map<String, String> credentials, Duration wallClock, String reasoningEffort) {
-        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED);
+        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED,
+                CredentialHolder.AGENT);
     }
 
-    /** A run that talks to the vendor itself: every caller written before the model proxy existed. */
-    public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
-                             Map<String, String> credentials, Duration wallClock, String reasoningEffort,
-                             ProjectGuidance projectGuidance) {
-        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, projectGuidance, false);
+    /** Where the run's model credential is held. */
+    public enum CredentialHolder {
+        /** The agent holds it and talks to the vendor itself: every run before the model proxy. */
+        AGENT,
+        /**
+         * The unit's model proxy holds it: the credential map holds placeholders under the same keys, and the arm
+         * builds its command for {@link CredentialRoute#AGENT_FACING_ORIGIN}.
+         */
+        MODEL_PROXY
+    }
+
+    /** Whether the unit's model proxy holds the credential rather than the agent. */
+    public boolean credentialProxied() {
+        return credentialHolder == CredentialHolder.MODEL_PROXY;
     }
 
     /**
-     * The same invocation, run behind the unit's model proxy or not. Every component is named here once, so one
-     * added later fails to compile here rather than being dropped.
-     *
-     * <p>Proxied, the credential map holds placeholders under the same keys (the model proxy holds the real secret),
-     * and the arm builds its command for {@link CredentialRoute#AGENT_FACING_ORIGIN}.
+     * The same invocation run behind the unit's model proxy. Every component is named here once, so one added later
+     * fails to compile here rather than being dropped.
      */
-    public HarnessInvocation withCredentialProxied(boolean proxied) {
+    public HarnessInvocation proxied() {
         return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
-                projectGuidance, proxied);
+                projectGuidance, CredentialHolder.MODEL_PROXY);
+    }
+
+    /** The same invocation with its credential in the agent; every component named once, as in {@link #proxied}. */
+    public HarnessInvocation direct() {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                projectGuidance, CredentialHolder.AGENT);
+    }
+
+    /** The same invocation with another guidance setting; every component named once, as in {@link #proxied}. */
+    public HarnessInvocation withProjectGuidance(ProjectGuidance guidance) {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                guidance, credentialHolder);
     }
 
     /**
@@ -85,6 +108,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         Objects.requireNonNull(prompt, "prompt");
         Objects.requireNonNull(wallClock, "wallClock");
         Objects.requireNonNull(projectGuidance, "projectGuidance");
+        Objects.requireNonNull(credentialHolder, "credentialHolder");
         credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
 
         // model and workspacePath both become argv elements, so their shape is checked here once
@@ -132,7 +156,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
                 + ", model=" + model
                 + ", reasoningEffort=" + reasoningEffort
                 + ", projectGuidance=" + projectGuidance
-                + ", credentialProxied=" + credentialProxied
+                + ", credentialHolder=" + credentialHolder
                 + ", workspacePath=" + workspacePath
                 + ", wallClock=" + wallClock
                 + ", credentials=" + credentials.keySet() + " (values redacted)"

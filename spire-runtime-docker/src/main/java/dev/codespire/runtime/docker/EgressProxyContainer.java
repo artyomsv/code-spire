@@ -1,21 +1,14 @@
 package dev.codespire.runtime.docker;
 
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.async.ResultCallback;
-import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Capability;
-import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.RunUnitSpec;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The egress proxy container itself: created with its rendered configuration, started, waited on until it listens,
@@ -39,17 +32,24 @@ final class EgressProxyContainer {
     /** How long a starting proxy may take to listen; tinyproxy takes milliseconds. */
     private static final Duration PROXY_START_TIMEOUT = Duration.ofSeconds(20);
 
-    private static final Duration PROXY_POLL = Duration.ofMillis(100);
-
-    /** A read of an exited container's log is finite; this bounds one the daemon is slow to finish. */
-    private static final Duration LOG_READ_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * What the proxy enforces and for whom.
+     *
+     * @param egress what the proxy enforces: the spec's own, or for a unit with a model proxy its hosts in ENFORCE
+     * @param subnet the one network whose containers may use the proxy
+     */
+    record Placement(EgressPolicy egress, String subnet) {
+    }
 
     private final DockerClient client;
+
+    private final Sidecars sidecars;
 
     private final String image;
 
     EgressProxyContainer(DockerClient client, String image) {
         this.client = client;
+        this.sidecars = new Sidecars(client);
         this.image = image;
     }
 
@@ -57,15 +57,10 @@ final class EgressProxyContainer {
         return image;
     }
 
-    /**
-     * Creates the unit's proxy on the default bridge, configured for this run. Not started.
-     *
-     * @param egress what the proxy enforces: the spec's own, or for a unit with a model proxy its hosts in ENFORCE
-     * @param subnet the one network whose containers may use the proxy
-     */
-    String create(RunUnitSpec spec, EgressPolicy egress, String subnet, Map<String, String> labels) {
+    /** Creates the unit's proxy on the default bridge, configured for this run. Not started. */
+    String create(RunUnitSpec spec, Placement placement, Map<String, String> labels) {
         String name = DockerRunNetworks.proxyName(spec.runId());
-        removeStale(client, name);
+        sidecars.removeStale(name);
         HostConfig host = HostConfig.newHostConfig()
                 .withMemory(PROXY_MEMORY_BYTES)
                 .withNanoCPUs(PROXY_NANO_CPUS)
@@ -79,121 +74,27 @@ final class EgressProxyContainer {
         return client.createContainerCmd(image)
                 .withName(name)
                 .withEnv(List.of(
-                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(egress, spec.enterprise(), subnet),
-                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(egress)))
+                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(placement.egress(), spec.enterprise(),
+                                placement.subnet()),
+                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(placement.egress())))
                 .withLabels(labels)
                 .withHostConfig(host)
                 .exec().getId();
     }
 
-    /** A proxy left by an earlier attempt of the same run, which would hold the name. Only ever this run's. */
-    static void removeStale(DockerClient client, String name) {
-        try {
-            client.removeContainerCmd(name).withForce(true).exec();
-        } catch (NotFoundException absent) {
-            // the ordinary case
-        }
-    }
-
     /**
      * Starts the proxy and waits until it is listening. The agent starts the moment this returns, and a harness whose
-     * first call meets a refused connection fails the run on a race with nothing to do with the run.
-     *
-     * <p>Read from {@code /proc/net/tcp} inside the proxy, because the image has no probe of its own and this needs
-     * none: a listening socket on the port is the fact. A proxy that exits instead (a configuration it refused) is
-     * reported with the last lines of its own log, which name the directive.
+     * first call meets a refused connection fails the run on a race with nothing to do with the run. A proxy that
+     * exits instead (a configuration it refused) is reported with the last lines of its own log, which name the
+     * directive.
      */
     void start(String proxy) {
-        startAndAwaitListening(client, proxy, EgressPolicy.PROXY_PORT, "the egress proxy", PROXY_START_TIMEOUT);
-    }
-
-    /**
-     * Starts a unit's sidecar and waits until it listens on {@code port}. Shared with the model proxy, whose image has
-     * the same shell and no probe either. Whether it exited first or never listened, the failure says its state and
-     * the last lines of its own log ({@link SidecarStartFailure}), so a timeout explains itself as an exit does.
-     */
-    static void startAndAwaitListening(DockerClient client, String container, int port, String what, Duration timeout) {
-        client.startContainerCmd(container).exec();
-        long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
-            var state = client.inspectContainerCmd(container).exec().getState();
-            if (!Boolean.TRUE.equals(state.getRunning())) {
-                throw startFailure(client, container, what + " exited before it listened");
-            }
-            if (listening(client, container, port)) {
-                return;
-            }
-            try {
-                Thread.sleep(PROXY_POLL.toMillis());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted waiting for " + what, e);
-            }
-        }
-        throw startFailure(client, container, what + " did not listen within " + timeout);
-    }
-
-    /** The failure, with the container's state read now and the bounded tail of its log. */
-    private static IllegalStateException startFailure(DockerClient client, String container, String headline) {
-        SidecarStartFailure.State state;
-        try {
-            state = SidecarStartFailure.State.of(client.inspectContainerCmd(container).exec().getState());
-        } catch (RuntimeException uninspectable) {
-            state = SidecarStartFailure.State.of(null);
-        }
-        List<String> log;
-        try {
-            log = logOf(client, container, SidecarStartFailure.TAIL_LINES, SidecarStartFailure.TAIL_CHARS);
-        } catch (RuntimeException unreadable) {
-            // The failure is still the start's; an unreadable log must not replace it with its own.
-            log = List.of("(log unreadable: " + unreadable.getClass().getSimpleName() + ")");
-        }
-        return new IllegalStateException(SidecarStartFailure.detail(headline, state, log));
-    }
-
-    /** The port as /proc/net/tcp prints it (8888 is 22B8); either table, since a server may bind either family. */
-    private static boolean listening(DockerClient client, String container, int port) {
-        String probe = "grep -qi '" + String.format(":%04X ", port) + "' /proc/net/tcp /proc/net/tcp6 2>/dev/null";
-        try {
-            String exec = client.execCreateCmd(container).withCmd("sh", "-c", probe).exec().getId();
-            try (ResultCallback.Adapter<Frame> run = client.execStartCmd(exec).exec(new ResultCallback.Adapter<Frame>())) {
-                run.awaitCompletion(5, TimeUnit.SECONDS);
-            }
-            Long exit = client.inspectExecCmd(exec).exec().getExitCodeLong();
-            return exit != null && exit == 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        } catch (IOException | RuntimeException notYet) {
-            return false;
-        }
+        sidecars.startAndAwaitListening(
+                new Sidecars.Start(proxy, EgressPolicy.PROXY_PORT, "the egress proxy", PROXY_START_TIMEOUT));
     }
 
     /** The whole log of a proxy, bounded in characters: what {@link ProxyLogParser} reads. */
     List<String> logOf(String proxy) {
-        return logOf(client, proxy, Integer.MAX_VALUE, ProxyLogParser.MAX_LOG_CHARS);
-    }
-
-    /** A container's log lines, bounded in characters, and to the last {@code tail} lines when that is finite. */
-    static List<String> logOf(DockerClient client, String container, int tail, int maxChars) {
-        StringBuilder log = new StringBuilder();
-        ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
-            @Override
-            public void onNext(Frame frame) {
-                if (log.length() < maxChars) {
-                    log.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
-                }
-            }
-        };
-        var command = client.logContainerCmd(container).withStdOut(true).withStdErr(true);
-        command = tail == Integer.MAX_VALUE ? command.withTailAll() : command.withTail(tail);
-        try (ResultCallback.Adapter<Frame> stream = command.exec(callback)) {
-            stream.awaitCompletion(LOG_READ_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (IOException closing) {
-            // The answer is what was read before the stream failed to close.
-        }
-        return Arrays.stream(log.toString().split("\\R")).map(String::strip).filter(line -> !line.isEmpty()).toList();
+        return sidecars.logOf(proxy, Sidecars.LogBound.whole(ProxyLogParser.MAX_LOG_CHARS));
     }
 }

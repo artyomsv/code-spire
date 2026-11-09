@@ -495,8 +495,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
                 EnterpriseEnvironment.NONE, EgressPolicy.OFF, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
-                Duration.ofMinutes(2),
-                new UnitInputs("inputs", "/inputs", Map.of("context.md", "TEST-INPUT-CANARY")));
+                Duration.ofMinutes(2))
+                .withInputs(new UnitInputs("inputs", "/inputs", Map.of("context.md", "TEST-INPUT-CANARY")));
     }
 
     @Test
@@ -1019,15 +1019,29 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     private static final EgressPolicy PROXIED_REPORT =
             new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of("declared.example.invalid"));
 
-    /** A unit whose agent runs {@code agentScript} beside a model proxy forwarding /v1/responses to the upstream. */
-    private RunUnitSpec proxiedUnit(String id, String agentScript, String upstream, EgressPolicy egress) {
+    /** The stand-in vendor a proxied unit's model proxy forwards to, and the egress policy the unit is built with. */
+    private record Vendor(String upstream, EgressPolicy egress) {
+
+        /** {@link #PROXIED_REPORT}: report mode, the upstream not among its hosts. */
+        static Vendor reporting(String upstream) {
+            return new Vendor(upstream, PROXIED_REPORT);
+        }
+
+        /** Enforce mode with the upstream as the one declared host. */
+        static Vendor enforcing(String upstream) {
+            return new Vendor(upstream, new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream)));
+        }
+    }
+
+    /** A unit whose agent runs {@code agentScript} beside a model proxy forwarding /v1/responses to the vendor. */
+    private RunUnitSpec proxiedUnit(String id, String agentScript, Vendor vendor) {
         ContainerSpec modelProxy = new ContainerSpec(MODEL_PROXY_IMAGE, List.of(), Map.of(
-                "SPIRE_MODEL_UPSTREAM", "http://" + upstream,
+                "SPIRE_MODEL_UPSTREAM", "http://" + vendor.upstream(),
                 "SPIRE_MODEL_INJECTION", "BEARER",
                 "SPIRE_MODEL_PATHS_EXACT", "/v1/responses",
                 "SPIRE_MODEL_SECRET", MODEL_SECRET,
                 "SPIRE_MODEL_ALLOW_PLAINTEXT_UPSTREAM", "true"), List.of());
-        return egressUnit(id, agentScript, egress).withModelProxy(modelProxy);
+        return egressUnit(id, agentScript, vendor.egress()).withModelProxy(modelProxy);
     }
 
     /** One model call, printed as a verdict: REACHED only when the upstream's own answer came back. */
@@ -1050,7 +1064,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theModelProxyJoinsTheAgentAndModelNetworksOnly() {
         String runId = "run_model_networks";
-        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
+        start(proxiedUnit(runId, "true", Vendor.reporting(startUpstream(200))));
 
         var networks = networksOf(runId, ModelProxyContainer.ROLE);
         String agentNetwork = DockerRunNetworks.agentNetworkName(runId);
@@ -1065,7 +1079,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theEgressProxyIsNotOnTheAgentNetwork() {
         String runId = "run_model_egress_net";
-        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
+        start(proxiedUnit(runId, "true", Vendor.reporting(startUpstream(200))));
 
         assertEquals(java.util.Set.of("bridge", DockerRunNetworks.modelNetworkName(runId)),
                 networksOf(runId, DockerRunNetworks.PROXY).keySet(),
@@ -1075,7 +1089,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theModelProxyIsSandboxedAndItsSecretIsNoLabel() {
         String runId = "run_model_sandbox";
-        start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
+        start(proxiedUnit(runId, "true", Vendor.reporting(startUpstream(200))));
 
         var inspected = runtime.client().inspectContainerCmd(modelProxyOf(runId).getId()).exec();
         var host = inspected.getHostConfig();
@@ -1101,7 +1115,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         RunHandle handle = start(proxiedUnit("run_model_reach",
                 "env | grep -i '_proxy' || echo NO-PROXY-VARIABLES; " + MODEL_CALL + probeEgress
                         + modelCall("OUTSIDE", "http://" + upstream + "/v1/responses"),
-                upstream, new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+                Vendor.enforcing(upstream)));
 
         List<String> agent = agentLog(handle);
         runtime.salvage(handle);
@@ -1115,8 +1129,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theModelProxysTrafficIsRecordedByTheEgressProxy() {
         String upstream = startUpstream(200);
-        RunHandle handle = start(proxiedUnit("run_model_recorded", MODEL_CALL, upstream,
-                new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+        RunHandle handle = start(proxiedUnit("run_model_recorded", MODEL_CALL, Vendor.enforcing(upstream)));
 
         List<String> agent = agentLog(handle);
         runtime.salvage(handle);
@@ -1132,8 +1145,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // REPORT would let everything through; a proxied unit's egress proxy enforces the spec's hosts whatever the
         // mode, so the upstream, not among them, is refused.
         String upstream = startUpstream(200);
-        RunHandle handle = start(proxiedUnit("run_model_enforced", MODEL_CALL, upstream,
-                new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of("declared.example.invalid"))));
+        RunHandle handle = start(proxiedUnit("run_model_enforced", MODEL_CALL, Vendor.reporting(upstream)));
 
         List<String> agent = agentLog(handle);
         runtime.salvage(handle);
@@ -1147,8 +1159,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void theReportCountsARejectedModelCall() {
         String upstream = startUpstream(401);
-        RunHandle handle = start(proxiedUnit("run_model_rejected", MODEL_CALL, upstream,
-                new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(upstream))));
+        RunHandle handle = start(proxiedUnit("run_model_rejected", MODEL_CALL, Vendor.enforcing(upstream)));
 
         agentLog(handle);
         runtime.salvage(handle);
@@ -1186,7 +1197,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void destroyRemovesTheModelProxyAndBothNetworks() {
         String runId = "run_model_destroy";
-        RunHandle handle = start(proxiedUnit(runId, "true", startUpstream(200), PROXIED_REPORT));
+        RunHandle handle = start(proxiedUnit(runId, "true", Vendor.reporting(startUpstream(200))));
         runtime.salvage(handle);
         assertEquals(2, labelledNetworks(runId).size(), "the unit must have both networks: " + labelledNetworks(runId));
 
@@ -1201,7 +1212,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void cancelStopsTheModelProxy() {
         String runId = "run_model_cancel";
-        RunHandle handle = start(proxiedUnit(runId, "sleep 300", startUpstream(200), PROXIED_REPORT));
+        RunHandle handle = start(proxiedUnit(runId, "sleep 300", Vendor.reporting(startUpstream(200))));
 
         runtime.cancel(handle);
 

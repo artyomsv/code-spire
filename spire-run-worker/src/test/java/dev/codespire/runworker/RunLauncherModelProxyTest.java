@@ -59,8 +59,14 @@ class RunLauncherModelProxyTest {
 
     private static final String PROXY_IMAGE = "TEST-model-proxy:missing";
 
-    /** A unit as the builder makes it, with or without a model proxy; the launcher only reads its model proxy's image. */
-    private static dev.codespire.runtime.RunUnitSpec unit(boolean proxied) {
+    /** A unit as the builder makes it with a model proxy; the launcher only reads its model proxy's image. */
+    private static dev.codespire.runtime.RunUnitSpec proxiedUnit() {
+        return directUnit().withModelProxy(new dev.codespire.runtime.ContainerSpec(PROXY_IMAGE, List.of(),
+                Map.of("SPIRE_MODEL_SECRET", "TEST-model-key"), List.of()));
+    }
+
+    /** A unit as the builder makes it without a model proxy: every factory build under REVIEWS. */
+    private static dev.codespire.runtime.RunUnitSpec directUnit() {
         dev.codespire.runtime.ContainerSpec init = new dev.codespire.runtime.ContainerSpec("TEST-publisher",
                 List.of("spire-clone"), Map.of(), List.of(dev.codespire.runtime.Mount.writable("workspace", "/workspace")));
         dev.codespire.runtime.ContainerSpec agent = new dev.codespire.runtime.ContainerSpec("TEST-agent", List.of("fake"),
@@ -68,13 +74,11 @@ class RunLauncherModelProxyTest {
                         dev.codespire.runtime.Mount.writable("handoff", "/handoff")));
         dev.codespire.runtime.ContainerSpec publisher = new dev.codespire.runtime.ContainerSpec("TEST-publisher",
                 List.of("spire-publish-none"), Map.of(), List.of(dev.codespire.runtime.Mount.readOnly("handoff", "/handoff")));
-        dev.codespire.runtime.RunUnitSpec unit = new dev.codespire.runtime.RunUnitSpec(command().runId(), init, agent,
+        return new dev.codespire.runtime.RunUnitSpec(command().runId(), init, agent,
                 publisher, dev.codespire.runtime.EnterpriseEnvironment.NONE,
                 new dev.codespire.runtime.EgressPolicy(dev.codespire.runtime.EgressPolicy.Mode.ENFORCE,
                         java.util.Set.of("TEST-vendor.example.test")),
                 1L << 30, 1_000_000_000L, 1L << 30, java.time.Duration.ofSeconds(60));
-        return proxied ? unit.withModelProxy(new dev.codespire.runtime.ContainerSpec(PROXY_IMAGE, List.of(),
-                Map.of("SPIRE_MODEL_SECRET", "TEST-model-key"), List.of())) : unit;
     }
 
     private static RunCommand.ExecuteReviewRun review() {
@@ -107,7 +111,7 @@ class RunLauncherModelProxyTest {
      */
     @Test
     void aReviewRunWithoutTheModelProxyImageFailsAsImageUnavailable() {
-        building(launcher, unit(true));
+        building(launcher, proxiedUnit());
 
         RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
                 launcher.launchReview(review(), RunObserver.IGNORING));
@@ -122,7 +126,7 @@ class RunLauncherModelProxyTest {
     @Test
     void aReviewRunWithTheModelProxyImageIsCreated() {
         runtime.images.add(PROXY_IMAGE);
-        building(launcher, unit(true));
+        building(launcher, proxiedUnit());
 
         launcher.launchReview(review(), RunObserver.IGNORING);
 
@@ -133,7 +137,7 @@ class RunLauncherModelProxyTest {
     /** A unit with no model proxy (every factory build under REVIEWS) is never held up by the model proxy's image. */
     @Test
     void aUnitWithoutAModelProxyIsNotChecked() {
-        building(launcher, unit(false));
+        building(launcher, directUnit());
 
         launcher.launch(command(), RunObserver.IGNORING);
 
