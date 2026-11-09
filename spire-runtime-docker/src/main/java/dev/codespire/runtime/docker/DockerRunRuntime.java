@@ -39,8 +39,6 @@ import dev.codespire.runtime.VerifyUnitSpec;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -229,12 +227,6 @@ public final class DockerRunRuntime implements PublicationRuntime {
         return new RuntimeCapabilities(false, true, false, true, true, false);
     }
 
-    /** Reads the init container's own failure line; never writes, so one instance is enough. */
-    private static final ObjectMapper JSON = new ObjectMapper();
-
-    /** A failure_detail is read in a table cell, not scrolled. */
-    private static final int MAX_INIT_REPORT_CHARS = 500;
-
     /**
      * The init container is ours and writes one line, but it is still a container log: bounded so a
      * pathological image cannot make reading its failure an allocation on the worker.
@@ -264,6 +256,14 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // credential its directive cannot hold) refuses the run here, naming the setting, rather than after a clone.
             TinyproxyConfig.upstreamLines(spec.enterprise());
         }
+        Map<String, String> volumeLabels = createVolumes(spec, binding);
+        runInit(spec, binding);
+        if (spec.egress().proxiesTheAgent()) openNetworks(spec, volumeLabels);
+        return startAgentAndPublisher(spec, binding);
+    }
+
+    /** The unit's volumes, labelled with its run id (and its hold) so a discovered orphan's are findable; the labels. */
+    private Map<String, String> createVolumes(RunUnitSpec spec, PublicationKey binding) {
         Map<String, String> volumeLabels = new LinkedHashMap<>();
         volumeLabels.put(RUN_ID_LABEL, spec.runId());
         if (binding != null) volumeLabels.put(PUBLICATION_HOLD_LABEL, binding.value());
@@ -274,7 +274,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
                     .withLabels(volumeLabels)
                     .exec();
         }
+        return volumeLabels;
+    }
 
+    /** The init container, run to its end before anything else starts; a failure leaves the unit for the watchdog. */
+    private void runInit(RunUnitSpec spec, PublicationKey binding) {
         String initId = createContainer(spec, spec.init(), INIT, binding, null);
         copyInputs(spec, initId);
         client.startContainerCmd(initId).exec();
@@ -294,10 +298,11 @@ public final class DockerRunRuntime implements PublicationRuntime {
             // The unit stays behind on purpose: its containers and volumes carry the run id, so the
             // orphan watchdog can reach them, and an operator can read why the clone failed.
             throw new IllegalStateException("init container failed with exit " + initExit
-                    + " for run " + spec.runId() + initReport(initId));
+                    + " for run " + spec.runId() + InitFailureReport.of(initId, this::logLinesOf));
         }
+    }
 
-        if (spec.egress().proxiesTheAgent()) openNetworks(spec, volumeLabels);
+    private RunHandle startAgentAndPublisher(RunUnitSpec spec, PublicationKey binding) {
         String publisherId = createContainer(spec, spec.publisher(), PUBLISHER, binding, null);
         String agentId = createContainer(spec, spec.agent(), AGENT, binding, null);
         // Publisher first, but ONLY as a defensive habit — nothing depends on it. The handoff is a
@@ -725,62 +730,6 @@ public final class DockerRunRuntime implements PublicationRuntime {
         } catch (IOException e) {
             throw new UncheckedIOException("closing the log stream of " + containerId, e);
         }
-    }
-
-    /**
-     * What the init container said about its own failure, as {@code ": CAUSE: detail"}, or empty.
-     *
-     * <p>{@code CloneMain} writes one JSON line on stdout — {@code {"event":"failed","cause":…,
-     * "detail":…}} — already scrubbed of the git credential by {@code OutcomeWriter}. <b>Nothing
-     * read it.</b> Every init failure reached the run row as "exit 1", and the cause lived only in
-     * {@code docker logs} on the host that ran it: a checkout conflict on a pull request's own
-     * branch took a container log to diagnose, on a screen built to answer exactly that question.
-     *
-     * <p>Best effort by construction. The exit code is the fact; this is the explanation, and a
-     * failure to read it must never replace a real failure with a reading error — so everything
-     * here is caught and the caller still gets "exit N".
-     */
-    private String initReport(String containerId) {
-        try {
-            List<String> log = logLinesOf(containerId);
-            String failure = lastFailureLine(log);
-            if (failure.isEmpty()) {
-                // No structured line: the process died before it could write one. Measured, not
-                // hypothetical — a JGitInternalException escaped CloneMain's catch list and the
-                // whole report was a stack trace on stderr. Its FIRST line carries the exception
-                // and its message; every line after it is a stack frame.
-                return log.isEmpty() ? "" : clipToOneLine(log.getFirst());
-            }
-            JsonNode node = JSON.readTree(failure);
-            String cause = node.path("cause").asText("");
-            String detail = node.path("detail").asText("");
-            if (cause.isEmpty() && detail.isEmpty()) {
-                return "";
-            }
-            return clipToOneLine(cause + (detail.isEmpty() ? "" : ": " + detail));
-        } catch (RuntimeException | IOException unreadable) {
-            LOG.log(System.Logger.Level.DEBUG,
-                    "could not read why the init container " + containerId + " failed", unreadable);
-            return "";
-        }
-    }
-
-    /** One line, bounded: this becomes a run's failure_detail and is rendered in a table cell. */
-    private static String clipToOneLine(String report) {
-        String line = report.replaceAll("\\R", " ").strip();
-        return line.isEmpty() ? ""
-                : ": " + line.substring(0, Math.min(line.length(), MAX_INIT_REPORT_CHARS));
-    }
-
-    /** The structured report, or empty when the process died before writing one. */
-    private static String lastFailureLine(List<String> log) {
-        String last = "";
-        for (String line : log) {
-            if (line.startsWith("{") && line.contains("\"failed\"")) {
-                last = line;
-            }
-        }
-        return last;
     }
 
     /** The container has exited, so the log is finite. */
