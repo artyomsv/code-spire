@@ -2335,8 +2335,10 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   cleanly (it now drops the connection) and a missing image stopping the whole review lane (now only proxied runs
   fail). Seven guards were broken, one mutant pull request each (#395 to #401, closed): every mutant failed CI, six
   of them in the test named for the guard. The seventh, flushing a stream only at its end, was caught by
-  `aMidStreamResetIsNotAcleanEnd` but not by `aStreamIsPassedOnAsItArrives`, whose five-second bound starts only
-  after the request returns, and the request itself waits for the vendor's ten-second release. Left open: no live run yet; WebSocket upgrades, `oaiusercontent.com`, the placeholder `auth.json`
+  `aMidStreamResetIsNotAcleanEnd` but not by `aStreamIsPassedOnAsItArrives`, whose five-second bound started only
+  after the request returned, while the request itself waited for the vendor's ten-second release. The test now
+  awaits the response and its first event within the bound, and the same mutant re-run (#402, closed) fails it. Left
+  open: no live run yet; WebSocket upgrades, `oaiusercontent.com`, the placeholder `auth.json`
   and `ALL` mode are unmeasured; a 403's failure detail names no path; the image is not on GHCR
   (docs/UNVERIFIED.md, the step 3 entry). Next: the live acceptance with the operator, then PR 3b (Claude Code on an
   API key).

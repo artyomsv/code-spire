@@ -46,7 +46,7 @@ The design is fully specified in `docs/` — **treat those files as the source o
 
 ## Status (a snapshot — rewrite it, never append to it)
 
-Measured on **2026-11-09**. Delivery history is in docs/HISTORY.md; the
+Measured on **2026-10-27**. Delivery history is in docs/HISTORY.md; the
 [M3 acceptance record](docs/factory/M3-ACCEPTANCE.md) maps M3's seven verified criteria to their
 proving slices and reviews, the [M3.5 acceptance record](docs/factory/M35-ACCEPTANCE.md) holds
 the live proof of "one ticket to a build", the [M4 verify acceptance record](docs/factory/M4-VERIFY-ACCEPTANCE.md)
@@ -205,7 +205,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   cancels a reply run, a close does; a refused or failed reply writes `FollowUpRefused` or `FollowUpFailed` under its
   thread. Every reply, API and harness, opens with the forge's own mention of the person it answers. Live on
   `spire-test` #97: two replies in one thread were each one `FOLLOWUP` run on a seat, charged once per turn at cost 0,
-  `chatgpt.com` only. The lane is docs/factory/RUN-TOPOLOGY.md §6B. Step 3 takes the credential out of a review
+  `chatgpt.com` only. The lane is docs/factory/RUN-TOPOLOGY.md §6B. Step 3 (as of 2026-11-09) takes the credential out of a review
   run's agent: under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (default; `OFF` and `ALL` too) the agent gets
   placeholders, no proxy variables and one reachable host, `spire-model:8080`, a per-run model proxy
   (`spire-model-proxy`) on its own internal network. The model proxy injects the API key, or only a seat's access

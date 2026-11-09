@@ -47,9 +47,10 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   and a rejected key) is pending; it is run with the operator after the final review. Until then everything below is
   proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s busybox upstream and the run worker's
   fakes only.
-- **The placeholder `auth.json` is unmeasured.** A seat's agent gets a generated sign-in file (`last_refresh` and
-  `exp` in 2100, plan `plus`, no email claim). Whether Codex accepts it, and never tries to refresh it, is unknown
-  until the live seat run.
+- **The placeholder `auth.json` is not proven in a live run.** A seat's agent gets a generated sign-in file
+  (`last_refresh` and `exp` in 2100, plan `plus`, no email claim). Its shape comes from the 2026-11-07 spike
+  against codex-cli 0.156.1 (`PlaceholderSignIn`). That Codex accepts it, and makes no refresh call, in a live
+  proxied review run is unverified until the live seat run.
 - **WebSocket upgrades and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy refuses an
   upgrade (501), and a seat's content hosts are not declared. If a Codex release moves its model stream to a
   WebSocket, or a long seat run fetches from a content host, the run fails; no run has shown either.
@@ -60,16 +61,15 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   Claude Code and opencode arrive in later PRs.
 - **A 403 names no path.** A run that failed after a 403 keeps the adapter's own cause and detail, so the failure
   does not say which model path was forbidden.
-- **Some refusals leave no line.** A request the JDK HTTP server rejects before the proxy's handler runs (a `//` or a
-  backslash target, a `CONNECT`) is refused, but the model proxy report has no line for it, so a run failing that
-  way is not explained as `BLOCKED_EGRESS`.
+- **Some refusals leave no line.** A request the JDK HTTP server rejects before the proxy's handler runs is refused,
+  but the model proxy report has no line for it, so a run failing that way is not explained as `BLOCKED_EGRESS`. On
+  JDK 25 that is a `//` target (400, measured in CI), a backslash target (a malformed URI to the server; the test
+  accepts 400 or 403) and a `CONNECT`, which the server closes without an answer (measured in CI) (`aConnectIsRefused` pins -1 or 501). Should a later JDK pass a `CONNECT` through, the
+  handler answers 501 and writes a `refused` line.
 - **Every image lookup failure reads as a missing image.** The worker's check before the unit is created reports
   any failure to describe or pull `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, a daemon outage included, as
   `IMAGE_UNAVAILABLE`.
 - **The image is not on GHCR**, and only the Docker arm builds the topology (there is no Kubernetes arm).
-- **Streaming has one discriminating test, not two.** With the per-read flush removed (mutant PR #397),
-  `aStreamIsPassedOnAsItArrives` still passed: its five-second bound starts after `send` returns, and `send` itself
-  waits out the vendor's ten-second release. Only `aMidStreamResetIsNotAcleanEnd` failed.
 - **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
   half as many concurrent proxied units as unproxied ones; no test runs near the bound.
 
