@@ -32,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -267,17 +268,32 @@ class ModelProxyTest {
         };
         ModelProxy proxy = start(apiKeyRoute(upstreamOrigin()), log);
 
-        HttpResponse<InputStream> response = client.send(HttpRequest.newBuilder(at(proxy, "/v1/responses"))
-                .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofInputStream());
-        try (InputStream body = response.body()) {
-            CompletableFuture<String> first = CompletableFuture.supplyAsync(() -> readEvent(body));
-            try {
-                assertEquals("data: TEST-1\n\n", first.get(5, TimeUnit.SECONDS),
-                        "the first event must arrive while the vendor is still holding the stream open");
-            } finally {
-                release.countDown();
-            }
-            assertEquals("data: TEST-2\n\n", new String(body.readAllBytes(), StandardCharsets.UTF_8));
+        // The response and its first event are both awaited while the vendor still holds the stream: a proxy that
+        // buffers (its headers included, which the JDK server sends only on a flush) delivers neither until the
+        // vendor's release, so each bound here, shorter than the vendor's wait, fails it.
+        CompletableFuture<HttpResponse<InputStream>> sent = client.sendAsync(
+                HttpRequest.newBuilder(at(proxy, "/v1/responses")).POST(HttpRequest.BodyPublishers.ofString("{}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+        InputStream body = null;
+        try {
+            body = awaitWhileHeld(sent, "the response").body();
+            InputStream stream = body;
+            assertEquals("data: TEST-1\n\n", awaitWhileHeld(CompletableFuture.supplyAsync(() -> readEvent(stream)),
+                    "the first event"));
+        } finally {
+            release.countDown();
+        }
+        try (InputStream rest = body) {
+            assertEquals("data: TEST-2\n\n", new String(rest.readAllBytes(), StandardCharsets.UTF_8));
+        }
+    }
+
+    private static <T> T awaitWhileHeld(CompletableFuture<T> pending, String what) throws Exception {
+        try {
+            return pending.get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException held) {
+            throw new AssertionError(what + " must arrive while the vendor is still holding the stream open", held);
         }
     }
 

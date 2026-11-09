@@ -83,7 +83,10 @@ public class RunUnitBuilder {
     @ConfigProperty(name = "spire.run.credential-proxy.mode")
     CredentialProxyMode credentialProxyMode = CredentialProxyMode.OFF;
 
-    /** The model proxy's image; {@link ModelProxyImageCheck} refuses to start a worker that cannot run it. */
+    /**
+     * The model proxy's image. {@link ModelProxyImageCheck} refuses to start a worker with none set, and logs one it
+     * cannot find; a proxied run then fails as IMAGE_UNAVAILABLE.
+     */
     @ConfigProperty(name = "spire.run.credential-proxy.image")
     String modelProxyImage;
 
