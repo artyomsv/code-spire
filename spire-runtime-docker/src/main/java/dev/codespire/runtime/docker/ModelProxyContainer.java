@@ -38,8 +38,13 @@ final class ModelProxyContainer {
     /** The JVM writes nothing it needs (no perf data); this is for what it might write anyway. */
     static final String TMPFS = "rw,nosuid,nodev,noexec,size=8m";
 
-    /** How long a starting model proxy may take to listen: a JVM start, well under a second on a warm host. */
-    static final Duration START_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * How long a starting model proxy may take to listen: a JVM start under 0.5 CPU, about 2 to 3.4 s when measured,
+     * on a host that may be busy with other work. In the live acceptance of harness reviews step 3 one start was
+     * running and not seen listening within the earlier 30 s, cause unknown; a timeout now reports the container's
+     * state and the tail of its log ({@link SidecarStartFailure}), so the next one says which it was.
+     */
+    static final Duration START_TIMEOUT = Duration.ofSeconds(120);
 
     private final DockerClient client;
 

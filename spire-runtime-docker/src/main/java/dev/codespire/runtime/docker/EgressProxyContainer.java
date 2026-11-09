@@ -108,8 +108,9 @@ final class EgressProxyContainer {
     }
 
     /**
-     * Starts a unit's sidecar and waits until it listens on {@code port}, or reports, with the last lines of its own
-     * log, why it exited first. Shared with the model proxy, whose image has the same shell and no probe either.
+     * Starts a unit's sidecar and waits until it listens on {@code port}. Shared with the model proxy, whose image has
+     * the same shell and no probe either. Whether it exited first or never listened, the failure says its state and
+     * the last lines of its own log ({@link SidecarStartFailure}), so a timeout explains itself as an exit does.
      */
     static void startAndAwaitListening(DockerClient client, String container, int port, String what, Duration timeout) {
         client.startContainerCmd(container).exec();
@@ -117,8 +118,7 @@ final class EgressProxyContainer {
         while (System.nanoTime() < deadline) {
             var state = client.inspectContainerCmd(container).exec().getState();
             if (!Boolean.TRUE.equals(state.getRunning())) {
-                throw new IllegalStateException(what + " exited before it listened (exit "
-                        + state.getExitCodeLong() + "): " + String.join(" | ", logOf(client, container, 20, 4096)));
+                throw startFailure(client, container, what + " exited before it listened");
             }
             if (listening(client, container, port)) {
                 return;
@@ -130,7 +130,25 @@ final class EgressProxyContainer {
                 throw new IllegalStateException("interrupted waiting for " + what, e);
             }
         }
-        throw new IllegalStateException(what + " did not listen within " + timeout);
+        throw startFailure(client, container, what + " did not listen within " + timeout);
+    }
+
+    /** The failure, with the container's state read now and the bounded tail of its log. */
+    private static IllegalStateException startFailure(DockerClient client, String container, String headline) {
+        SidecarStartFailure.State state;
+        try {
+            state = SidecarStartFailure.State.of(client.inspectContainerCmd(container).exec().getState());
+        } catch (RuntimeException uninspectable) {
+            state = SidecarStartFailure.State.of(null);
+        }
+        List<String> log;
+        try {
+            log = logOf(client, container, SidecarStartFailure.TAIL_LINES, SidecarStartFailure.TAIL_CHARS);
+        } catch (RuntimeException unreadable) {
+            // The failure is still the start's; an unreadable log must not replace it with its own.
+            log = List.of("(log unreadable: " + unreadable.getClass().getSimpleName() + ")");
+        }
+        return new IllegalStateException(SidecarStartFailure.detail(headline, state, log));
     }
 
     /** The port as /proc/net/tcp prints it (8888 is 22B8); either table, since a server may bind either family. */
