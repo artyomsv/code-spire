@@ -16,9 +16,9 @@ of the model proxy that was not seen listening; its fix is below.
 
 | | 1. Seat review | 2. API-key review | 3. Long seat review | 4. Rejected key |
 |---|---|---|---|---|
-| Pull request | [#98](https://github.com/artyomsv/spire-test/pull/98) "TEST: loyalty bonus helper (credential proxy, seat)" | [#99](https://github.com/artyomsv/spire-test/pull/99), run 3, head `73824bdf` | [#100](https://github.com/artyomsv/spire-test/pull/100) "TEST: forty pricing rule tables" (40 files, 336 KB) | [#99](https://github.com/artyomsv/spire-test/pull/99), run 1 |
-| Run | `run::github:artyomsv/spire-test:review-98-deda47e93248-8a4d83d4:1` | (run 3 of #99) | `run::github:artyomsv/spire-test:review-100-70750ab99989-fa625c9f:1` | `run::github:artyomsv/spire-test:review-99-517cb4764848-60948e1e:1` |
-| Paid with | `SUBSCRIPTION` | `API_KEY` | `SUBSCRIPTION` | `API_KEY` (`factory-openai`) |
+| Pull request | [#98](https://github.com/artyomsv/spire-test/pull/98) "TEST: loyalty bonus helper (credential proxy, seat)" | [#99](https://github.com/artyomsv/spire-test/pull/99), head `73824bdf` | [#100](https://github.com/artyomsv/spire-test/pull/100) "TEST: forty pricing rule tables" (40 files, 336 KB) | [#99](https://github.com/artyomsv/spire-test/pull/99), run 1 |
+| Run | `run::github:artyomsv/spire-test:review-98-deda47e93248-8a4d83d4:1` | `run::github:artyomsv/spire-test:review-99-73824bdf84eb-cf92182e:1` | `run::github:artyomsv/spire-test:review-100-70750ab99989-fa625c9f:1` | `run::github:artyomsv/spire-test:review-99-517cb4764848-60948e1e:1` |
+| Paid with | `SUBSCRIPTION` | `API_KEY` (`openai-api`) | `SUBSCRIPTION` | `API_KEY` (`factory-openai`) |
 | Outcome | succeeded, 09:21:01–09:22:49 UTC | succeeded | succeeded in 2 min 24 s | failed `CREDENTIAL_REJECTED` |
 | Review posted | `CHANGES_REQUESTED`, 1 inline comment (floating-point money, citing `.codespire`) | `APPROVED` (with a note on int money arithmetic) | `APPROVED`, one finding (floating-point discount methods) | none |
 | Model proxy log | not captured (the container was removed before capture started) | 6 × `POST /v1/responses -> 200` | see below | 6 × `POST /v1/responses -> 401` |
@@ -45,14 +45,16 @@ The egress proxy was on `bridge` and `…-model` (alias `spire-egress`), not on 
 | `OUTPUT` | 1,079 |
 | `REASONING` | 168 |
 
-### 2. API-key review (#99, run 3)
+### 2. API-key review (#99, head `73824bdf`)
 
 The agent's environment held `SPIRE_MODEL_PLACEHOLDER=TEST-PLACEHOLDER` only: no `OPENAI_API_KEY` and no `codex login`.
 Its argv set `-c model_provider="spire"` with `model_providers.spire.base_url="http://spire-model:8080/v1"`,
 `env_key="SPIRE_MODEL_PLACEHOLDER"`, `name="spire"` and `wire_api="responses"`. The model proxy had
 `SPIRE_MODEL_UPSTREAM=https://api.openai.com`, `SPIRE_MODEL_INJECTION=BEARER` and
-`SPIRE_MODEL_PATHS_EXACT=/v1/models,/v1/responses`. It ran after the operator had added the key `openai-api` and
-erased `factory-openai` (check 4).
+`SPIRE_MODEL_PATHS_EXACT=/v1/models,/v1/responses`. The run,
+`run::github:artyomsv/spire-test:review-99-73824bdf84eb-cf92182e:1`,
+was paid with the `openai-api` credential (its `factory_run.harness_credential_id`), the key the operator added
+after check 4.
 
 | Token type (`METERED`) | Count | Millicents |
 |---|---|---|
