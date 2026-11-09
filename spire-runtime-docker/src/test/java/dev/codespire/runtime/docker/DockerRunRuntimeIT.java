@@ -1102,7 +1102,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // One line per request, so a long run's log is rotated: at most three files of 2 MiB, under the parser's bound.
         var logConfig = host.getLogConfig();
         String inspectedLog = "the model proxy's log config as inspected: " + logConfig;
-        assertEquals(ModelProxyContainer.LOG.getType(), logConfig.getType(), inspectedLog);
+        // By name: the inspected enum constant was measured in CI as a different instance of json-file, so identity fails.
+        assertEquals("json-file", logConfig.getType() == null ? null : logConfig.getType().getType(), inspectedLog);
         assertEquals("2m", logConfig.getConfig() == null ? null : logConfig.getConfig().get("max-size"), inspectedLog);
         assertEquals("3", logConfig.getConfig() == null ? null : logConfig.getConfig().get("max-file"), inspectedLog);
         assertFalse(inspected.getConfig().getLabels().values().stream().anyMatch(value -> value.contains(MODEL_SECRET)),
