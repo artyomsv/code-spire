@@ -9,7 +9,7 @@ import java.util.TreeSet;
 
 /**
  * What a proxied unit hands its model proxy, and the placeholders it hands the harness arm instead (harness reviews
- * step 3). The model proxy's environment contract is {@code spire-model-proxy}'s {@code ModelProxyConfig}.
+ * step 3). The model proxy's environment contract is {@code spire-model-proxy}'s {@code dev.codespire.modelproxy.ProxyRoute}.
  *
  * <p>{@code SPIRE_MODEL_ALLOW_PLAINTEXT_UPSTREAM} is never set here: it exists for the model proxy's own tests, and a
  * unit that set it would send the real credential over plain HTTP.

@@ -2341,4 +2341,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   open: no live run yet; WebSocket upgrades, `oaiusercontent.com`, the placeholder `auth.json`
   and `ALL` mode are unmeasured; a 403's failure detail names no path; the image is not on GHCR
   (docs/UNVERIFIED.md, the step 3 entry). Next: the live acceptance with the operator, then PR 3b (Claude Code on an
-  API key).
+  API key). Upgrading: the run worker now defaults to `REVIEWS` and compose does not build the image, so before
+  upgrading run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
+  (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;
+  otherwise every Codex review fails `IMAGE_UNAVAILABLE`.

@@ -45,7 +45,7 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 **Why nothing catches it today.**
 - **No live run yet.** The live acceptance (a review on an API key, one on a seat, a long seat review that compacts,
   and a rejected key) is pending; it is run with the operator after the final review. Until then everything below is
-  proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s busybox upstream and the run worker's
+  proven against `ModelProxyTest`'s local upstream, `DockerRunRuntimeIT`'s `python:3.13-alpine` upstream and the run worker's
   fakes only.
 - **The placeholder `auth.json` is not proven in a live run.** A seat's agent gets a generated sign-in file
   (`last_refresh` and `exp` in 2100, plan `plus`, no email claim). Its shape comes from the 2026-11-07 spike

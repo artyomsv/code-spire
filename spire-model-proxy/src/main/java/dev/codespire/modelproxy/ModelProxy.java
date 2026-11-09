@@ -65,6 +65,10 @@ public final class ModelProxy {
 
     /** What forwarding needs, fixed at start. */
     private record Upstream(ProxyRoute route, String secret, String account, HttpClient client) {
+        @Override
+        public String toString() {
+            return "Upstream[route=" + route + ", secret=***, account=***]";
+        }
     }
 
     private final Upstream upstream;
