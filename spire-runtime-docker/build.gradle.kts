@@ -45,10 +45,10 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    // DockerRunRuntimeIT builds the egress proxy image from deploy/egress, as a deployment would; handed in
+    // The ITs' shared DockerUnits builds the egress proxy image from deploy/egress, as a deployment would; handed in
     // explicitly rather than guessed from the working directory, the same property spire-agent-image uses.
     systemProperty("spire.repoRoot", rootProject.projectDir.absolutePath)
-    // DockerRunRuntimeIT builds the model proxy image from spire-model-proxy's Dockerfile, whose context is the
+    // DockerUnits builds the model proxy image from spire-model-proxy's Dockerfile, whose context is the
     // installed distribution.
     dependsOn(":spire-model-proxy:installDist")
     // CI keeps no test report, so a failure's message (what the daemon actually returned) must reach the job log.
