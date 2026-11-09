@@ -194,14 +194,18 @@ class CodexAdapterTest {
                 adapter.environment(proxied(HarnessInvocation.SIGN_IN)));
     }
 
-    /** The paths the 2026-11-07 spike saw, and no others; an unproxied run declares no route. */
+    /**
+     * The paths the 2026-11-07 spike saw, and no others; an unproxied run declares no route. A seat's model call is
+     * also an exact path, so the model proxy logs it by name and a 401 on it marks the seat; every other seat path is
+     * logged by its prefix only.
+     */
     @Test
     void theRoutePerPayment() {
         assertEquals(java.util.Optional.of(new CredentialRoute("https://api.openai.com", CredentialRoute.Injection.BEARER,
                         Set.of("/v1/responses", "/v1/models"), List.of())),
                 adapter.credentialRoute(proxied(HarnessInvocation.CREDENTIAL)));
         assertEquals(java.util.Optional.of(new CredentialRoute("https://chatgpt.com",
-                        CredentialRoute.Injection.CHATGPT_SEAT, Set.of(),
+                        CredentialRoute.Injection.CHATGPT_SEAT, Set.of("/backend-api/codex/responses"),
                         List.of("/backend-api/codex/", "/backend-api/wham/"))),
                 adapter.credentialRoute(proxied(HarnessInvocation.SIGN_IN)));
         assertTrue(adapter.credentialRoute(invocation()).isEmpty());

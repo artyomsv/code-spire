@@ -96,6 +96,10 @@ public final class ModelProxy {
         }
     }
 
+    static ModelProxy start(ProxyStart start) throws IOException {
+        return start(start.env(), start.address(), start.log());
+    }
+
     static ModelProxy start(Map<String, String> env, InetSocketAddress address, PrintStream log) throws IOException {
         ProxyRoute route = ProxyRoute.fromEnvironment(env);
         String account = route.injection() == Injection.CHATGPT_SEAT

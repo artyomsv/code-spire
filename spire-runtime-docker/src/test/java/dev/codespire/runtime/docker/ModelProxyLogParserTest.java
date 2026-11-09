@@ -32,6 +32,30 @@ class ModelProxyLogParserTest {
         assertEquals(new ModelProxyReport(3, 0, List.of()), report);
     }
 
+    /**
+     * The proxy logs a route, never the agent's path: a prefix route is the prefix and {@code *}, and a 401 on one is
+     * not a refused model call, since the model call is logged by its exact path.
+     */
+    @Test
+    void aPrefixRoutes401IsNotARejection() {
+        ModelProxyReport report = ModelProxyLogParser.parse(List.of(
+                "spire-model GET /backend-api/codex/* -> 401",
+                "spire-model GET /backend-api/wham/* -> 401",
+                "spire-model POST /backend-api/codex/responses -> 401"));
+
+        assertEquals(new ModelProxyReport(3, 1, List.of()), report);
+    }
+
+    /** A refused request is logged as a fixed token, never its target; the report keeps that token once. */
+    @Test
+    void aRefusedRequestIsReportedByItsToken() {
+        ModelProxyReport report = ModelProxyLogParser.parse(List.of(
+                "spire-model GET <refused> -> refused",
+                "spire-model DELETE <refused> -> refused"));
+
+        assertEquals(new ModelProxyReport(2, 0, List.of("<refused>")), report);
+    }
+
     @Test
     void aRefusedPathIsRecordedOnce() {
         ModelProxyReport report = ModelProxyLogParser.parse(List.of(

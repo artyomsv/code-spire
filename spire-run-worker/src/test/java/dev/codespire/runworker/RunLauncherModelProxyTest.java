@@ -141,7 +141,11 @@ class RunLauncherModelProxyTest {
         assertEquals(1, runtime.created);
     }
 
-    private static final String UNDECLARED = "/v1/files";
+    /** What the model proxy logs for every request it refused: a fixed token, never the target. */
+    private static final String UNDECLARED = "<refused>";
+
+    private static final String REFUSED_DETAIL =
+            "the model proxy refused a request the harness does not declare (" + UNDECLARED + ")";
 
     private final ProxiedRuntime runtime = new ProxiedRuntime();
 
@@ -196,7 +200,7 @@ class RunLauncherModelProxyTest {
         RunResult.RunFailed failed = failed();
 
         assertEquals(RunFailureCause.BLOCKED_EGRESS.name(), failed.cause());
-        assertTrue(failed.detail().contains("model path " + UNDECLARED + " refused"), failed.detail());
+        assertTrue(failed.detail().contains(REFUSED_DETAIL), failed.detail());
     }
 
     /** A refused credential is the more exact story than a refused host, so it wins over the egress proxy's. */
@@ -230,7 +234,7 @@ class RunLauncherModelProxyTest {
         RunResult.RunFailed failed = failed();
 
         assertEquals(RunFailureCause.BLOCKED_EGRESS.name(), failed.cause());
-        assertTrue(failed.detail().contains("model path " + UNDECLARED + " refused"), failed.detail());
+        assertTrue(failed.detail().contains(REFUSED_DETAIL), failed.detail());
     }
 
     @Test
