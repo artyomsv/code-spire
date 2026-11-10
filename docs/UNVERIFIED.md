@@ -88,8 +88,9 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   which replaces the whole secret and a seat's account id, split across chunks or not (`ModelProxyResponseTest`,
   `EchoMaskTest`). A fragment of the secret, or the secret in another encoding (percent- or base64-encoded), is not
   caught; only the 401 and 403 bodies, where OpenAI quotes a key's last characters, are replaced whole. No live vendor
-  was seen to echo a credential, and whether Codex needs a response header the allowlist leaves out was not measured:
-  the live acceptance predates the allowlist.
+  was seen to echo a credential. The four main live checks predate the allowlist; the final seat check (#101) ran with
+  it and Codex on a seat worked, so no header Codex needs on a seat review was dropped there. An API-key run, and
+  any other Codex path, have not run with the allowlist.
 - **The limits are proven against local fakes only (review of PR #394, security/M-1).** 8 requests at once (503
   past it), an 8 MiB request body (413), 10 minutes for the vendor's headers and between body bytes, 60 minutes per
   response, and the JDK server's 30 s for a request's head and body (`ModelProxyAdmissionTest`,
