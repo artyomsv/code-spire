@@ -1,0 +1,5 @@
+# Only the installed distribution enters the build context. Everything else in this module —
+# sources, tests, Gradle caches — stays out of every layer.
+*
+!Dockerfile
+!build/install/spire-model-proxy/lib/

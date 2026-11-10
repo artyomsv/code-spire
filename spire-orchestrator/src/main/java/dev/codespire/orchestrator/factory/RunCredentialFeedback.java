@@ -12,25 +12,22 @@ import java.util.UUID;
 /**
  * What a run's outcome would say about the key it ran with (FR-F12).
  *
- * <p><b>Read this first: nothing in the shipped pipeline produces the cause this class waits for, so
- * the automatic half of the pool's health does not currently fire.</b> A review established it by
- * grep rather than by reading — {@link RunFailureCause#CREDENTIAL_REJECTED} appears in main sources
- * only as the enum value, an unrelated attention-row string, and the branch below. The harness tier's
- * own {@code FailureCause} has no credential value, the publisher's vocabulary has none, and nothing
- * aliases onto it. A model provider refusing a key surfaces as {@code PROVIDER_ERROR} →
- * {@code MODEL_UNAVAILABLE}, which by the rule below marks nothing.
+ * <p><b>One producer exists, and only on a proxied unit.</b> Since harness reviews step 3 the run
+ * worker's {@code ModelProxyResults} reports {@link RunFailureCause#CREDENTIAL_REJECTED} when the
+ * unit's model proxy saw the vendor answer 401 on a model call path ({@code /v1/responses},
+ * the seat's responses path) and the agent then failed. A 401 elsewhere and every 403 are
+ * deliberately not a refusal: a 403 can be a challenge or an entitlement answer, and a mark keeps a
+ * member out until an operator replaces it. {@code RunResultSagaTest} proves a review run's refusal
+ * reaches the pool member its {@code factory_run} row names.
  *
- * <p>So a dead key stays in rotation, and the pool hands it out again. That is verbatim the state
- * V52's own header calls "how a pool quietly stops rotating while looking healthy" — written in the
- * same change that shipped it. An earlier version of this javadoc and of the debt entry both said
- * this loop was closed and tested; the test injects the cause string by hand, so it proves the
- * translation and says nothing about whether anything crosses the seam.
+ * <p>An unproxied unit (a factory build while {@code spire.run.credential-proxy.mode} is REVIEWS, or
+ * any unit with the mode OFF or egress off) still has no producer: there a provider refusing a key
+ * surfaces as the harness's own failure ({@code HARNESS_EXIT_NONZERO} for the first arm, or
+ * {@code PROVIDER_ERROR} → {@code MODEL_UNAVAILABLE}), which by the rule below marks nothing, and the
+ * dead key stays in rotation. See
+ * {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}.
  *
- * <p>{@code HarnessCredentialProducerGuardTest} fails the build when a producer DOES appear, so the
- * claim cannot silently become stale in the other direction either. The design for a real producer is
- * in {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}.
- *
- * <p><b>The rule, for when a producer exists.</b> Only a refusal marks a member.
+ * <p><b>The rule.</b> Only a refusal marks a member.
  * {@code CREDENTIAL_REJECTED} is the provider saying the key is wrong, revoked or out of credit — an
  * answer, and the same one next time, so the member leaves the pool until an operator replaces it.
  *

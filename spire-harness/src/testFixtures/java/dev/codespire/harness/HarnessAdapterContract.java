@@ -101,6 +101,29 @@ public abstract class HarnessAdapterContract {
                 "the child process must actually receive what it was given");
     }
 
+    /**
+     * In a proxied unit the worker hands the arm placeholders, never the real secret (the model proxy holds it). So an
+     * arm that declares a route must build the same command and the same environment whatever value the credential map
+     * holds: an arm whose output changed with the value would be one that needs it, and passes it on.
+     */
+    @Test
+    void aProxiedRunNeverNeedsTheRealSecret() {
+        String realLooking = "TEST-real-looking-secret-0123456789";
+        for (String key : List.of(HarnessInvocation.CREDENTIAL, HarnessInvocation.SIGN_IN)) {
+            HarnessInvocation real = invocation("do the work", Map.of(key, realLooking)).proxied();
+            HarnessInvocation placeholder = invocation("do the work", Map.of(key, "TEST-PLACEHOLDER"))
+                    .proxied();
+            if (adapter().credentialRoute(real).isEmpty()) {
+                continue;
+            }
+
+            assertEquals(adapter().command(placeholder), adapter().command(real), key);
+            assertEquals(adapter().environment(placeholder), adapter().environment(real), key);
+            assertFalse(String.join("\u0000", adapter().command(real)).contains(realLooking), key);
+            assertFalse(adapter().environment(real).containsValue(realLooking), key);
+        }
+    }
+
     @Test
     void anUnreadableLineIsSkippedRatherThanFatal() {
         // A harness writes prose to stdout on some paths, and the agent itself can write to that

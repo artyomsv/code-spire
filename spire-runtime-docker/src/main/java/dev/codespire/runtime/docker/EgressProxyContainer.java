@@ -1,21 +1,14 @@
 package dev.codespire.runtime.docker;
 
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.async.ResultCallback;
-import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Capability;
-import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import dev.codespire.runtime.EgressPolicy;
 import dev.codespire.runtime.RunUnitSpec;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The egress proxy container itself: created with its rendered configuration, started, waited on until it listens,
@@ -39,21 +32,24 @@ final class EgressProxyContainer {
     /** How long a starting proxy may take to listen; tinyproxy takes milliseconds. */
     private static final Duration PROXY_START_TIMEOUT = Duration.ofSeconds(20);
 
-    private static final Duration PROXY_POLL = Duration.ofMillis(100);
-
-    /** The port as /proc/net/tcp prints it (8888 is 22B8); tinyproxy binds every address, so either table. */
-    private static final String LISTENING_PROBE = "grep -qi '" + String.format(":%04X ", EgressPolicy.PROXY_PORT)
-            + "' /proc/net/tcp /proc/net/tcp6 2>/dev/null";
-
-    /** A read of an exited container's log is finite; this bounds one the daemon is slow to finish. */
-    private static final Duration LOG_READ_TIMEOUT = Duration.ofSeconds(30);
+    /**
+     * What the proxy enforces and for whom.
+     *
+     * @param egress what the proxy enforces: the spec's own, or for a unit with a model proxy its hosts in ENFORCE
+     * @param subnet the one network whose containers may use the proxy
+     */
+    record Placement(EgressPolicy egress, String subnet) {
+    }
 
     private final DockerClient client;
+
+    private final Sidecars sidecars;
 
     private final String image;
 
     EgressProxyContainer(DockerClient client, String image) {
         this.client = client;
+        this.sidecars = new Sidecars(client);
         this.image = image;
     }
 
@@ -62,9 +58,9 @@ final class EgressProxyContainer {
     }
 
     /** Creates the unit's proxy on the default bridge, configured for this run. Not started. */
-    String create(RunUnitSpec spec, String subnet, Map<String, String> labels) {
+    String create(RunUnitSpec spec, Placement placement, Map<String, String> labels) {
         String name = DockerRunNetworks.proxyName(spec.runId());
-        removeStale(name);
+        sidecars.removeStale(name);
         HostConfig host = HostConfig.newHostConfig()
                 .withMemory(PROXY_MEMORY_BYTES)
                 .withNanoCPUs(PROXY_NANO_CPUS)
@@ -78,93 +74,27 @@ final class EgressProxyContainer {
         return client.createContainerCmd(image)
                 .withName(name)
                 .withEnv(List.of(
-                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(spec.egress(), spec.enterprise(), subnet),
-                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(spec.egress())))
+                        "SPIRE_EGRESS_CONF=" + TinyproxyConfig.configFor(placement.egress(), spec.enterprise(),
+                                placement.subnet()),
+                        "SPIRE_EGRESS_FILTER=" + TinyproxyConfig.filterFor(placement.egress())))
                 .withLabels(labels)
                 .withHostConfig(host)
                 .exec().getId();
     }
 
-    /** A proxy left by an earlier attempt of the same run, which would hold the name. Only ever this run's. */
-    private void removeStale(String name) {
-        try {
-            client.removeContainerCmd(name).withForce(true).exec();
-        } catch (NotFoundException absent) {
-            // the ordinary case
-        }
-    }
-
     /**
      * Starts the proxy and waits until it is listening. The agent starts the moment this returns, and a harness whose
-     * first call meets a refused connection fails the run on a race with nothing to do with the run.
-     *
-     * <p>Read from {@code /proc/net/tcp} inside the proxy, because the image has no probe of its own and this needs
-     * none: a listening socket on the port is the fact. A proxy that exits instead (a configuration it refused) is
-     * reported with the last lines of its own log, which name the directive.
+     * first call meets a refused connection fails the run on a race with nothing to do with the run. A proxy that
+     * exits instead (a configuration it refused) is reported with the last lines of its own log, which name the
+     * directive.
      */
     void start(String proxy) {
-        client.startContainerCmd(proxy).exec();
-        long deadline = System.nanoTime() + PROXY_START_TIMEOUT.toNanos();
-        while (System.nanoTime() < deadline) {
-            var state = client.inspectContainerCmd(proxy).exec().getState();
-            if (!Boolean.TRUE.equals(state.getRunning())) {
-                throw new IllegalStateException("the egress proxy exited before it listened (exit "
-                        + state.getExitCodeLong() + "): " + String.join(" | ", logOf(proxy, 20, 4096)));
-            }
-            if (listening(proxy)) {
-                return;
-            }
-            try {
-                Thread.sleep(PROXY_POLL.toMillis());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted waiting for the egress proxy", e);
-            }
-        }
-        throw new IllegalStateException("the egress proxy did not listen within " + PROXY_START_TIMEOUT);
-    }
-
-    private boolean listening(String proxy) {
-        try {
-            String exec = client.execCreateCmd(proxy).withCmd("sh", "-c", LISTENING_PROBE).exec().getId();
-            try (ResultCallback.Adapter<Frame> probe = client.execStartCmd(exec).exec(new ResultCallback.Adapter<Frame>())) {
-                probe.awaitCompletion(5, TimeUnit.SECONDS);
-            }
-            Long exit = client.inspectExecCmd(exec).exec().getExitCodeLong();
-            return exit != null && exit == 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        } catch (IOException | RuntimeException notYet) {
-            return false;
-        }
+        sidecars.startAndAwaitListening(
+                new Sidecars.Start(proxy, EgressPolicy.PROXY_PORT, "the egress proxy", PROXY_START_TIMEOUT));
     }
 
     /** The whole log of a proxy, bounded in characters: what {@link ProxyLogParser} reads. */
     List<String> logOf(String proxy) {
-        return logOf(proxy, Integer.MAX_VALUE, ProxyLogParser.MAX_LOG_CHARS);
-    }
-
-    /** A container's log lines, bounded in characters, and to the last {@code tail} lines when that is finite. */
-    private List<String> logOf(String container, int tail, int maxChars) {
-        StringBuilder log = new StringBuilder();
-        ResultCallback.Adapter<Frame> callback = new ResultCallback.Adapter<>() {
-            @Override
-            public void onNext(Frame frame) {
-                if (log.length() < maxChars) {
-                    log.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
-                }
-            }
-        };
-        var command = client.logContainerCmd(container).withStdOut(true).withStdErr(true);
-        command = tail == Integer.MAX_VALUE ? command.withTailAll() : command.withTail(tail);
-        try (ResultCallback.Adapter<Frame> stream = command.exec(callback)) {
-            stream.awaitCompletion(LOG_READ_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (IOException closing) {
-            // The answer is what was read before the stream failed to close.
-        }
-        return Arrays.stream(log.toString().split("\\R")).map(String::strip).filter(line -> !line.isEmpty()).toList();
+        return sidecars.logOf(proxy, Sidecars.LogBound.whole(ProxyLogParser.MAX_LOG_CHARS));
     }
 }

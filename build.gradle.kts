@@ -203,6 +203,8 @@ val fastTestModules = listOf(
     // which is a bare JVM by the rule this list states. It was in the service tier by proximity to
     // the run unit it ships inside, which is not the criterion.
     "spire-publisher",
+    // A plain-JDK HTTP service tested in-process against a JDK HttpServer upstream; boots nothing.
+    "spire-model-proxy",
     "spire-arch",
     "spire-encryption",
     "spire-diff",

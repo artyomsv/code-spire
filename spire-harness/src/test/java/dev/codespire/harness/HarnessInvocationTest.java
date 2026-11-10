@@ -18,6 +18,30 @@ class HarnessInvocationTest {
                 credentials, Duration.ofMinutes(30));
     }
 
+    /**
+     * A record component added later is dropped at every rebuild site that forgets it, and everything still compiles.
+     * Each wither changes exactly one component and keeps every other, and the shorter constructors are not proxied.
+     */
+    @Test
+    void theWithersKeepEveryOtherComponent() {
+        HarnessInvocation plain = new HarnessInvocation("run-1", "fix the bug", "/workspace", "gpt-5-codex",
+                Map.of("TEST_KEY", "TEST-value"), Duration.ofMinutes(30), "high")
+                .withProjectGuidance(HarnessInvocation.ProjectGuidance.IGNORED);
+
+        HarnessInvocation proxied = plain.proxied();
+
+        assertFalse(plain.credentialProxied());
+        assertFalse(invocation(Map.of()).credentialProxied());
+        assertTrue(proxied.credentialProxied());
+        assertEquals(new HarnessInvocation("run-1", "fix the bug", "/workspace", "gpt-5-codex",
+                Map.of("TEST_KEY", "TEST-value"), Duration.ofMinutes(30), "high", HarnessInvocation.ProjectGuidance.IGNORED,
+                HarnessInvocation.CredentialHolder.MODEL_PROXY), proxied);
+        assertEquals(HarnessInvocation.ProjectGuidance.IGNORED, plain.projectGuidance());
+        assertEquals(HarnessInvocation.ProjectGuidance.LOADED,
+                plain.withProjectGuidance(HarnessInvocation.ProjectGuidance.LOADED).projectGuidance());
+        assertEquals(plain, proxied.direct());
+    }
+
     @Test
     void aThinkingLevelThatIsNotAPlainWordIsRefused() {
         assertThrows(IllegalArgumentException.class, () -> new HarnessInvocation("run-1", "p", "/workspace",

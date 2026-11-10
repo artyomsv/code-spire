@@ -165,9 +165,10 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   M4's exit criterion (three verified steps on one chain, step 1's decision in step 3's prompt), and #77
   showed the two fixes the proof made: a readable specification comment and a plan that splits on its own.
 
-- **Harness reviews, steps 4 to 7: review runs, first reviews, re-reviews and replies** (steps 4 to 6 on master with
-  PRs #367, #368 and #370, live-proven 2026-11-01 and 2026-11-02 in docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md and
-  docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md; step 7 on PR #371, not merged, live-proven 2026-11-03 in docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; ADR-050, design
+- **Harness reviews, steps 3 to 7: review runs, first reviews, re-reviews, replies and the credential proxy** (steps 4
+  to 7 on master with PRs #367, #368, #370 and #371, live-proven 2026-11-01 to 2026-11-03 in
+  docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md, docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md and
+  docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; step 3 on PR #394, not merged, live-proven 2026-11-09 in docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md; ADR-050, design
   docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits
@@ -204,7 +205,21 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   cancels a reply run, a close does; a refused or failed reply writes `FollowUpRefused` or `FollowUpFailed` under its
   thread. Every reply, API and harness, opens with the forge's own mention of the person it answers. Live on
   `spire-test` #97: two replies in one thread were each one `FOLLOWUP` run on a seat, charged once per turn at cost 0,
-  `chatgpt.com` only. The lane is docs/factory/RUN-TOPOLOGY.md §6B.
+  `chatgpt.com` only. The lane is docs/factory/RUN-TOPOLOGY.md §6B. Step 3 (as of 2026-11-09) takes the credential out of a review
+  run's agent: under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (default; `OFF` and `ALL` too) the agent gets
+  placeholders, no proxy variables and one reachable host, `spire-model:8080`, a per-run model proxy
+  (`spire-model-proxy`) on its own internal network. The model proxy injects the API key, or only a seat's access
+  token and account id, lets through only the harness's declared model paths, and reaches the vendor over a second
+  internal network through an egress proxy that always enforces. A 401 on a model call fails the run as
+  `CREDENTIAL_REJECTED` (its first producer) and marks the pool member; a 403 does not; a refused path is
+  `BLOCKED_EGRESS`; a missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. Only Codex declares a route;
+  any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401). Live on `spire-test` (Codex `gpt-6-astra`,
+  2026-11-09): #98 on a seat and #99 on an API key were reviewed with no credential in the agent and only the declared
+  host in the egress record. The model proxy log was read for #99 and #100 and named only declared paths; #98's was
+  not captured. #100 (40 files) on a seat did not compact (compaction is proven by the spike only); a key OpenAI
+  refused failed `CREDENTIAL_REJECTED` and marked its pool member. One model proxy start was not seen listening within
+  30 s (cause unknown); the wait is now 120 s and a timeout reports the container's state and log tail
+  (docs/UNVERIFIED.md, the step 3 entry; docs/factory/RUN-TOPOLOGY.md §6B.1).
 
 **Limits that remain:**
 
@@ -226,7 +241,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
-- **The three factory images (agent, publisher, egress proxy) are still not on GHCR.**
+- **The four factory images (agent, publisher, egress proxy, model proxy) are still not on GHCR.**
 - Per-forge identity and permission limits remain separate UNVERIFIED entries. Native external
   gate answers and operator resume have no live proof. GitLab/Bitbucket native PR approvals and
   Jira Data Center comment polling remain unavailable. Publication already in progress cannot
@@ -247,12 +262,13 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
-**The factory's three images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
+**The factory's four images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
 
 ```bash
 ./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
 ./deploy/egress/build.sh               # the agent's per-run egress proxy (spire.run.egress.mode, default report)
+./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy  # model proxy
 ```
 
 `M0WalkingSkeletonTest` (`spire-run-worker`, `testServices`) builds the publisher and egress proxy images

@@ -10,6 +10,7 @@ import dev.codespire.harness.TerminalOutcome;
 import dev.codespire.harness.UsageReport;
 import dev.codespire.runtime.Finalization;
 import dev.codespire.runtime.LogChannel;
+import dev.codespire.runtime.ModelProxyReport;
 import dev.codespire.runtime.RunHandle;
 import dev.codespire.runtime.RunRuntime;
 import dev.codespire.runtime.RunUnitSpec;
@@ -66,10 +67,10 @@ public class RunLauncher {
 
     /**
      * Everything a run left behind for {@link #interpret}: the events, the publisher's report, the exit, and what the
-     * unit's egress proxy saw.
+     * unit's egress proxy and model proxy saw.
      */
     private record Observed(RunEventFold seen, PublisherOutcome outcome, Finalization finalization,
-                            List<RunResult.EgressAttempt> egress) {
+                            List<RunResult.EgressAttempt> egress, ModelProxyReport modelProxy) {
     }
 
     /**
@@ -116,47 +117,62 @@ public class RunLauncher {
      */
     private RunResult launch(RunCommand.ExecuteRun command, RunCommand wrapper,
                              RunObserver observer, java.util.function.Consumer<RunUnitSpec> prepared) {
-        RunCommand.ExecuteWorkRun work = wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
-        HarnessAdapter adapter;
+        Launch launch;
         RunUnitSpec unit;
         try {
-            adapter = harnesses.forName(command.harness());
-            if (work != null && !(runtime instanceof dev.codespire.runtime.PublicationRuntime)) {
+            launch = new Launch(command, wrapper, harnesses.forName(command.harness()), observer);
+            if (launch.work() != null && !(runtime instanceof dev.codespire.runtime.PublicationRuntime)) {
                 throw new IllegalArgumentException("The runtime cannot retain publication");
             }
-            unit = topology(command, wrapper, adapter);
+            unit = topology(command, wrapper, launch.adapter());
         } catch (RuntimeException e) {
             // Nothing was created, so nothing needs salvaging. Not retryable: the same command
             // would be rejected identically, and retrying a malformed dispatch is a loop.
             return failure(command, "BAD_COMMAND", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        RunResult.RunFailed unstartable = modelProxyImageMissing(command, unit);
+        if (unstartable != null) return unstartable;
+        return start(launch, unit, prepared);
+    }
 
+    /** Creates the unit, announces it, and observes it to its result. */
+    private RunResult start(Launch launch, RunUnitSpec unit, java.util.function.Consumer<RunUnitSpec> prepared) {
         RunHandle handle;
         long activeStarted = System.nanoTime();
         try {
             // Persist the exact topology before any resource exists; a resumed publisher must
             // neither rebuild an agent invocation nor depend on today's deployment image settings.
             prepared.accept(unit);
-            handle = work == null ? runtime.create(unit)
+            handle = launch.work() == null ? runtime.create(unit)
                     : ((dev.codespire.runtime.PublicationRuntime) runtime).createHeld(unit,
-                            new dev.codespire.runtime.PublicationKey(work.work().publicationKey()));
+                            new dev.codespire.runtime.PublicationKey(launch.work().work().publicationKey()));
         } catch (RuntimeException e) {
             // RUNTIME_UNAVAILABLE, not SANDBOX_LOST: nothing has started yet, so nothing was lost.
             // The daemon is down or refusing, which is a different person looking in a different
             // place from an eviction mid-run — and that discrimination is the whole point of FR-F9.
-            return failure(command, "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return failure(launch.command(), "RUNTIME_UNAVAILABLE", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         // Built before the unit is announced, because the announcement hands it over: it is this
         // run's numbering authority for its transcript, and anything adding a line to that run --
         // the log readers here, an operator's steer on the control channel -- must go through this
         // one instance rather than counting for itself. See RunNotes.
-        Watchers watchers = new Watchers(observer,
-                new RunEventStream(command.runId(), failures.scrubFor(command), observer::event));
+        Watchers watchers = new Watchers(launch.observer(), new RunEventStream(launch.command().runId(),
+                failures.scrubFor(launch.command()), launch.observer()::event));
         // Announced BEFORE observing, so a run that then hangs is still findable by its unit.
         // Guarded: this is bookkeeping about the run, and a caller that throws here must not cost
         // the run its outcome — the unit exists whether or not anybody recorded that it does.
-        announce(command, handle, watchers);
-        return observe(command, adapter, handle, watchers, wrapper, activeStarted);
+        announce(launch.command(), handle, watchers);
+        return observe(new Live(launch, handle, watchers, activeStarted));
+    }
+
+    /**
+     * A proxied unit whose model proxy image is missing fails before anything exists, as IMAGE_UNAVAILABLE: its lane
+     * stops, the worker does not ({@link ModelProxyImageCheck} only logs it at startup). Null when it can start.
+     */
+    private RunResult.RunFailed modelProxyImageMissing(RunCommand.ExecuteRun command, RunUnitSpec unit) {
+        return ModelProxyResults.imageMissing(runtime, unit)
+                .map(missing -> failure(command, RunFailureCause.IMAGE_UNAVAILABLE.name(), missing))
+                .orElse(null);
     }
 
     private RunUnitSpec topology(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter) {
@@ -167,7 +183,7 @@ public class RunLauncher {
     }
 
     /** Active wall time in whole seconds, rounded up, so a run that ran at all never reports zero. */
-    private static long wallSecondsSince(long activeStarted) {
+    static long wallSecondsSince(long activeStarted) {
         return (System.nanoTime() - activeStarted + 999_999_999L) / 1_000_000_000L;
     }
 
@@ -195,6 +211,26 @@ public class RunLauncher {
         }
     }
 
+    /** The run being launched: its command, which unit it is ({@code wrapper}, as launch says), its harness. */
+    private record Launch(RunCommand.ExecuteRun command, RunCommand wrapper, HarnessAdapter adapter,
+                          RunObserver observer) {
+        /** The held build, or null for every other unit. */
+        RunCommand.ExecuteWorkRun work() {
+            return wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
+        }
+    }
+
+    /** A unit that exists: what launched it, its handle, its watchers, and when its active time began. */
+    private record Live(Launch launch, RunHandle handle, Watchers watchers, long activeStarted) {
+        RunCommand.ExecuteRun command() {
+            return launch.command();
+        }
+    }
+
+    /** A live unit's two log readers, and what they fill: the agent's events and the publisher's report. */
+    private record Readers(Future<?> agent, Future<?> publisher, RunEventFold seen, PublisherOutcome outcome) {
+    }
+
     /**
      * Both streams are read CONCURRENTLY: the publisher reports pushes while the agent is still
      * working (continuous checkpointing, RUN-TOPOLOGY §5), so reading them in sequence would hold
@@ -202,57 +238,90 @@ public class RunLauncher {
      * result or leave a reader blocked on a log stream for the life of the process: the siblings
      * are cancelled, what the publisher had reported is kept, and the unit is preserved by label.
      */
-    private RunResult observe(RunCommand.ExecuteRun command, HarnessAdapter adapter, RunHandle handle,
-                              Watchers watchers, RunCommand wrapper, long activeStarted) {
-        RunCommand.ExecuteWorkRun work = wrapper instanceof RunCommand.ExecuteWorkRun held ? held : null;
-        RunEventStream transcript = watchers.transcript();
+    private RunResult observe(Live live) {
+        Readers readers = read(live);
+        Finalization finalization;
+        try {
+            finalization = runtime.salvage(live.handle());
+        } catch (RuntimeException e) {
+            return salvageFailed(live, readers, e);
+        }
+        awaitReaders(live.command(), readers);
+        // After salvage, when the proxy has seen everything the agent asked for, and before destroy removes it.
+        SidecarRecords sidecars = SidecarRecords.read(runtime, live.handle(), failures.scrubFor(live.command()));
+        RunResult result = EgressResults.attach(decide(live, new Observed(readers.seen(), readers.outcome(),
+                finalization, sidecars.egress(), sidecars.modelProxy())), sidecars.egress());
+        // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
+        // can read what the agent was doing — throwing that away is the loss salvage prevents.
+        UnitRelease release = new UnitRelease(runtime, live.command().runId());
+        if (finalization.salvaged() && live.launch().work() == null) {
+            release.destroy(live.handle(), live.watchers().observer());
+        } else if (!finalization.salvaged()) {
+            release.stopPreserved(live.handle(), finalization);
+        }
+        return result;
+    }
+
+    /**
+     * submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
+     * interrupts the running task. CompletableFuture.cancel documents that its flag "has no
+     * effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
+     * the process.
+     */
+    private Readers read(Live live) {
         RunEventFold seen = new RunEventFold();
         // A review's answer may be as large as the review cap its unit hands the publisher; every other unit keeps 32 KiB.
-        PublisherOutcome outcome = wrapper instanceof RunCommand.ExecuteReviewRun
+        PublisherOutcome outcome = live.launch().wrapper() instanceof RunCommand.ExecuteReviewRun
                 ? PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
                 : new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
         AtomicBoolean refusalStops = new AtomicBoolean();
-        // submit(), not CompletableFuture.runAsync(): only an ExecutorService Future's cancel(true)
-        // interrupts the running task. CompletableFuture.cancel documents that its flag "has no
-        // effect", so the readers it "cancelled" kept blocking on the follow stream for the life of
-        // the process.
-        Future<?> agentStream = streams.submit(() ->
-                runtime.attach(handle, LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
+        Future<?> agentStream = readAgent(live, seen);
+        Future<?> publisherStream = streams.submit(() ->
+                runtime.attach(live.handle(), LogChannel.PUBLISHER, line -> {
+                    outcome.accept(line);
+                    if (outcome.refused() && refusalStops.compareAndSet(false, true)) {
+                        new UnitRelease(runtime, live.command().runId()).stopAgent(live.handle());
+                    }
+                }));
+        return new Readers(agentStream, publisherStream, seen, outcome);
+    }
+
+    private Future<?> readAgent(Live live, RunEventFold seen) {
+        HarnessAdapter adapter = live.launch().adapter();
+        RunEventStream transcript = live.watchers().transcript();
+        return streams.submit(() ->
+                runtime.attach(live.handle(), LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
                     // One parse, two readers. The fold decides the run's outcome and stays bounded;
                     // the transcript is the operator-facing tier and is bounded separately.
                     seen.accept(event);
                     transcript.accept(event);
                 })));
-        Future<?> publisherStream = streams.submit(() ->
-                runtime.attach(handle, LogChannel.PUBLISHER, line -> {
-                    outcome.accept(line);
-                    if (outcome.refused() && refusalStops.compareAndSet(false, true)) {
-                        stopAgent(command, handle);
-                    }
-                }));
+    }
 
-        Finalization finalization;
-        try {
-            finalization = runtime.salvage(handle);
-        } catch (RuntimeException e) {
-            // The readers get a moment to deliver what the publisher already wrote — the pushed
-            // ref is the one fact worth carrying out of here — and are then interrupted, because a
-            // follow stream on a container that is still running would otherwise never end.
-            awaitBriefly(agentStream, publisherStream);
-            LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", command.runId());
-            List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
-            // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
-            // exit, so a push the publisher already reported is still a push. This used to build a
-            // bare failure that carried the ref in its detail TEXT only, so the run's record had no
-            // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
-            // also gives a gate refusal and a forge rejection their own outcomes on this path.
-            return EgressResults.attach(unobserved(command, adapter, new Observed(seen, outcome,
-                    Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()), egress)), egress);
-        }
-        // A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
-        // whatever was read still decide the result, and the unit is still destroyed.
-        for (Future<?> reader : List.of(agentStream, publisherStream)) {
+    private RunResult salvageFailed(Live live, Readers readers, RuntimeException e) {
+        // The readers get a moment to deliver what the publisher already wrote — the pushed
+        // ref is the one fact worth carrying out of here — and are then interrupted, because a
+        // follow stream on a container that is still running would otherwise never end.
+        awaitBriefly(readers.agent(), readers.publisher());
+        LOG.errorf(e, "run %s: salvage failed; the unit is preserved for inspection", live.command().runId());
+        SidecarRecords sidecars = SidecarRecords.read(runtime, live.handle(), failures.scrubFor(live.command()));
+        // The SAME rule as an overrun, and for the same reason: nobody observed the agent's
+        // exit, so a push the publisher already reported is still a push. This used to build a
+        // bare failure that carried the ref in its detail TEXT only, so the run's record had no
+        // pushed_ref and an operator was sent hunting for a branch that exists. Ranking it here
+        // also gives a gate refusal and a forge rejection their own outcomes on this path.
+        return EgressResults.attach(unobserved(live.command(), live.launch().adapter(), new Observed(readers.seen(),
+                readers.outcome(), Finalization.faulted(e.getClass().getSimpleName() + ": " + e.getMessage()),
+                sidecars.egress(), sidecars.modelProxy())), sidecars.egress());
+    }
+
+    /**
+     * A reader fault after a good salvage is a logging fault, not a run fault: the exit code and
+     * whatever was read still decide the result, and the unit is still destroyed.
+     */
+    private static void awaitReaders(RunCommand.ExecuteRun command, Readers readers) {
+        for (Future<?> reader : List.of(readers.agent(), readers.publisher())) {
             try {
                 reader.get();
             } catch (ExecutionException e) {
@@ -261,82 +330,43 @@ public class RunLauncher {
                 Thread.currentThread().interrupt();
             }
         }
+    }
 
-        // After salvage, when the proxy has seen everything the agent asked for, and before destroy removes it.
-        List<RunResult.EgressAttempt> egress = EgressResults.read(runtime, handle, failures.scrubFor(command));
-        RunResult result = interpret(command, adapter, new Observed(seen, outcome, finalization, egress), work != null);
-        if (work != null && result instanceof RunResult.RunFinished finished && !finished.refused()
+    /** The result of a salvaged or unobserved unit: interpreted, then shaped for a held build or a read-only unit. */
+    private RunResult decide(Live live, Observed observed) {
+        RunCommand.ExecuteRun command = live.command();
+        RunResult result = interpret(command, live.launch().adapter(), observed, live.launch().work() != null);
+        if (live.launch().work() != null && result instanceof RunResult.RunFinished finished && !finished.refused()
                 && !finished.agentUnobserved()) {
-            if (finished.pushedRef() != null) {
-                result = failure(command, "PUBLISHER_FAILED", "Publication escaped the initial hold at " + finished.pushedRef())
-                        .withUsage(finished.tokenUsage());
-            } else if (outcome.checkpointHead().isPresent() && !emptyRefused(work, command, outcome)) {
-                result = new RunResult.RunWorkReady(command.runId(), work.work(), outcome.checkpointHead().orElseThrow(),
-                        finished.changedPaths(), finished.tokenUsage(), wallSecondsSince(activeStarted))
-                        .withStepSummary(StepSummaries.from(outcome, failures.scrubFor(command)))
-                        // Where it started, after any base fallback: the orchestrator compares it with the start it chose (A2).
-                        .withStartFromHead(command.startFromHead())
-                        .withEmpty(outcome.checkpointEmpty());
-            } else {
-                result = failure(command, "PUBLISHER_FAILED", "The held build produced no observed checkpoint")
-                        .withUsage(finished.tokenUsage());
-            }
+            result = new HeldResults(failures, live.launch().work())
+                    .of(finished, observed.outcome(), live.activeStarted());
         }
-
-        if (wrapper instanceof RunCommand.ExecuteWorkDraftRun draft) {
+        if (live.launch().wrapper() instanceof RunCommand.ExecuteWorkDraftRun draft) {
             // The named read-only branch (A1), decided before the destroy below. A failed salvage returned earlier,
             // through the same unobserved ranking as any run, and preserves the unit for inspection.
-            result = new ReadOnlyResults(failures, draft).of(result, outcome, wallSecondsSince(activeStarted));
-        } else if (wrapper instanceof RunCommand.ExecuteReviewRun review) {
+            result = new ReadOnlyResults(failures, draft).of(result, observed.outcome(),
+                    wallSecondsSince(live.activeStarted()));
+        } else if (live.launch().wrapper() instanceof RunCommand.ExecuteReviewRun review) {
             // The same branch for a review's answer (harness reviews, step 4): its unit is destroyed below like a draft's.
-            result = new ReadOnlyResults(failures, review).of(result, outcome, wallSecondsSince(activeStarted));
-        }
-        result = EgressResults.attach(result, egress);
-
-        // destroy ONLY after salvage succeeded. A failed salvage preserves the unit so an operator
-        // can read what the agent was doing — throwing that away is the loss salvage prevents.
-        if (finalization.salvaged() && work == null) {
-            // Guarded for the same reason its sibling below is, and the reason is sharper here:
-            // by this line the run's outcome AND its measured spend are already decided, so a
-            // daemon blip during teardown would propagate out of launch, be caught by the
-            // dispatcher, and rewrite a successful run as WORKER_FAILED with its usage dropped —
-            // discarding exactly the charge the ledger exists to keep. A leaked unit is
-            // recoverable by its label; a discarded result is not.
-            try {
-                runtime.destroy(handle);
-                // The ONE place a unit is known gone. Reporting it here rather than letting the
-                // caller infer it from the result is what closed four leaking paths: an init
-                // failure the arm deliberately leaves behind, a throwing salvage after a publisher
-                // failure, this catch, and anything escaping the loop above.
-                watchers.observer().unitReleased();
-            } catch (RuntimeException e) {
-                LOG.warnf("run %s: the unit could not be destroyed (%s); it is labelled for cleanup"
-                        + " and keeps its lease, because it is still there",
-                        command.runId(), e.getClass().getSimpleName());
-            }
-        } else if (!finalization.salvaged()) {
-            // Preserved, and STOPPED. That an overrun kills the agent is one arm's private promise,
-            // not something the SPI states — and a run now reported finished makes an operator rely
-            // on it. cancel() is an idempotent kill, and the publisher has already had its drain
-            // window inside salvage, so nothing is lost. A throwing cancel must not lose the result.
-            try {
-                runtime.cancel(handle);
-            } catch (RuntimeException e) {
-                LOG.warnf("run %s: the preserved unit could not be stopped (%s)",
-                        command.runId(), e.getClass().getSimpleName());
-            }
-            LOG.warnf("run %s preserved for inspection: %s", command.runId(), finalization.detail());
+            result = new ReadOnlyResults(failures, review).of(result, observed.outcome(),
+                    wallSecondsSince(live.activeStarted()));
         }
         return result;
     }
 
     /**
-     * A run the AGENT failed: when the egress proxy refused a host, that refusal is the likely reason and the cause
-     * says so, naming the host. Only here: a publisher failure, a gate refusal or a push keeps its own outcome, with
-     * the refused hosts beside it on the result.
+     * A run the AGENT failed: when the model proxy saw a refused credential or an undeclared path, or the egress proxy
+     * refused a host, that is the likely reason and the cause says so ({@link ModelProxyResults}). Only here: a
+     * publisher failure, a gate refusal or a push keeps its own outcome, with the refused hosts beside it on the result.
      */
     private RunResult.RunFailed agentFailure(RunCommand.ExecuteRun command, String cause, String detail,
                                              Observed observed) {
+        // The model proxy first: a refused credential or an undeclared model path explains the failure more exactly
+        // than a refused host, and a refused credential is what marks the pool member (harness reviews step 3).
+        java.util.Optional<ModelProxyResults.Explained> explained = ModelProxyResults.explain(observed.modelProxy(), detail);
+        if (explained.isPresent()) {
+            return failure(command, explained.orElseThrow().cause().name(), explained.orElseThrow().detail());
+        }
         List<String> refused = EgressResults.refusedHosts(observed.egress());
         if (refused.isEmpty()) {
             return failure(command, cause, detail);
@@ -347,32 +377,6 @@ public class RunLauncher {
     /** Delegated so the dispatcher's failures get the same scrub and the same retry answer. */
     private RunResult.RunFailed failure(RunCommand.ExecuteRun command, String cause, String detail) {
         return failures.of(command, cause, detail);
-    }
-
-    /**
-     * Stop the agent once the push gate has refused this run.
-     *
-     * <p>A refusal terminates the PUBLISHER: it stops reading bundles and exits, and nothing
-     * reaches the remote. The agent knows none of that and keeps working until it finishes or
-     * its wall clock expires, buying model calls for work that can never be published — which is
-     * the whole cost of the refusal falling on the operator rather than on the run.
-     *
-     * <p>Called from the publisher reader, so it runs the moment the refusal is read rather than
-     * at salvage, when the money is already spent. The caller holds the once-only latch, because
-     * the publisher keeps emitting lines after it refuses.
-     */
-    private void stopAgent(RunCommand.ExecuteRun command, RunHandle handle) {
-        LOG.warnf("run %s: the push gate refused, so the agent is stopped rather than left to spend"
-                + " its wall clock on work that cannot be published", command.runId());
-        try {
-            runtime.cancel(handle);
-        } catch (RuntimeException e) {
-            // Reported, not rethrown: this runs on the publisher's reader thread, and throwing
-            // here would end that stream and lose the blocked paths the refusal is about to be
-            // reported with. The wall clock remains the bound.
-            LOG.errorf(e, "run %s: the agent could not be stopped after the gate refused (%s)",
-                    command.runId(), e.getClass().getSimpleName());
-        }
     }
 
     /**
@@ -430,15 +434,6 @@ public class RunLauncher {
             LOG.warnf("run %s: %d changed or blocked paths beyond the result's cap are not listed",
                     command.runId(), outcome.omittedPaths());
         }
-    }
-
-    /**
-     * An empty checkpoint is a ready only for a plan step allowed to finish empty that started from the base (M4 slice 3,
-     * decision 14, amendment 3). A run started from a checkpoint always bundles its start, so an empty line from one means
-     * it wrote no bundle and holds nothing: it is today's idle build, no observed checkpoint, and its predecessor is kept.
-     */
-    private static boolean emptyRefused(RunCommand.ExecuteWorkRun work, RunCommand.ExecuteRun command, PublisherOutcome outcome) {
-        return outcome.checkpointEmpty() && (!work.emptyAllowed() || command.startFromHead() != null);
     }
 
     private RunResult interpret(RunCommand.ExecuteRun command, HarnessAdapter adapter, Observed observed, boolean held) {

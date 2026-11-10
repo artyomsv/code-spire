@@ -433,6 +433,75 @@ yet, so the orchestrator admits a review run's row under an advisory lock per re
 the admission refuses the run when the pull request is no longer `OPEN` or its round has ended (V108,
 `review_run_superseded`), and sends only after its row commits.
 
+### 6B.1 The model proxy (harness reviews step 3)
+
+Since step 3 a review unit's agent holds no model credential. `spire.run.credential-proxy.mode`
+(`SPIRE_RUN_CREDENTIAL_PROXY_MODE`) is `OFF`, `REVIEWS` (the default: review-lane units only) or `ALL` (factory builds
+too); with the egress mode `off` no unit is proxied. A proxied unit gets one more container, the model proxy
+(`spire-model-proxy`, image `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, default `spire-model-proxy:latest`), and a second
+internal network:
+
+```
+agent network (internal):   agent ── model proxy ("spire-model:8080")
+model network (internal):            model proxy ── egress proxy ("spire-egress") ── vendor
+```
+
+- The **agent** is on the agent network only. It is handed placeholder credential values and no proxy variables, only
+  the deployment's trust; its harness calls `http://spire-model:8080` in plain HTTP. It cannot reach the egress proxy:
+  the egress proxy is not on its network.
+- The **model proxy** is on both. It drops every credential header the agent sends (`Authorization`, `x-api-key`,
+  `chatgpt-account-id`, `Cookie`, `Proxy-Authorization`), injects the real one (a bearer API key, an `x-api-key`, or a
+  seat's access token with its account id), and forwards only the route's paths: exact paths for an API key
+  (`/v1/responses`, `/v1/models`), whole-segment prefixes for a seat (`/backend-api/codex/`, `/backend-api/wham/`),
+  with the seat's model call `/backend-api/codex/responses` also named exactly. A
+  path with `..`, a `.` segment, `//`, a backslash, a `%` escape or any reserved character is refused before matching.
+  It refuses methods other than GET and POST (405), an absolute-form target (403) and an upgrade or `CONNECT` (501). A
+  401 or 403 from the vendor reaches the agent with a fixed body. Every other answer is passed on failing closed
+  (review of PR #394, security/H-1): only an allowlist of headers (`content-type`, `cache-control`, `retry-after`,
+  `retry-after-ms`, the request ids, `openai-model`, `openai-version`, `openai-processing-ms` and the `x-ratelimit-`
+  and `x-codex-` families), and of those none whose value holds the credential; never `location`; the vendor is asked
+  for `Accept-Encoding: identity` and an encoded body is refused with a 502; and every body, whatever its status,
+  streams through a mask that replaces the secret and a seat's account id with `spire-model-withheld`, split across
+  chunks or not, holding back only a tail that may begin one. A vendor failing mid-stream breaks the agent's
+  connection rather than ending the body cleanly. It reaches the vendor
+  over HTTP/1.1 through `HTTPS_PROXY`, trusting the deployment's bundle. Its sandbox matches the egress proxy's:
+  `cap-drop ALL`, `no-new-privileges`, a read-only root with an 8 MiB `/tmp`, 192 MiB, half a CPU and 64 pids. It
+  mounts nothing of the unit's, and the credential is an environment variable of that container only, never a label.
+- **What a request may cost** (review of PR #394, security/M-1): 8 requests at once (a ninth is answered 503); an
+  8 MiB request body, read whole before the vendor is contacted (a declared or counted excess is answered 413); a
+  request's head and body within 30 s of its first byte, at most 100 headers in 64 KiB, and 32 open connections (the
+  JDK server's bounds); 10 minutes for the vendor's response headers, 10 minutes between two bytes of its body and
+  60 minutes for one response (a stalled or endless body breaks the agent's response). The run's wall clock, which
+  kills the whole unit, stays the outer bound.
+- The **egress proxy** is on the model network only, and for a proxied unit it **enforces** the harness's declared
+  hosts whatever the global egress mode, so `report` does not open a proxied unit.
+
+The model proxy writes one line per request, `spire-model <METHOD> <route> -> <status|refused|aborted>`, and nothing
+else about it. The route is never the agent's target (review of PR #394, security/M-2): it is the exact path the
+route declares, a declared prefix and `*` (`/backend-api/codex/*`), or `<refused>` for every refused request; the
+line is bounded to visible ASCII where it is written, and the container's log is rotated at three files of 2 MiB. `aborted` means the response did not finish: the vendor failed mid-response, or the client hung up
+before the body ended, or a request whose body never arrived. The live acceptance saw the second twice, on
+`GET /backend-api/codex/models` in a run that succeeded (`spire-test` #100, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md), so an `aborted` line alone is no
+failure. The worker reads that log once the agent is gone (`ModelProxyReport`) and uses it only for a run that
+failed anyway: a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails the run as
+`CREDENTIAL_REJECTED`, which marks the pool member; a refused request fails it as `BLOCKED_EGRESS`, the detail
+saying the model proxy refused a request the harness does not declare (`<refused>`, never the path); a 403 keeps the adapter's own cause (and names no path). Before the unit is created the
+worker looks the image up; a missing one fails a proxied run as `IMAGE_UNAVAILABLE`, naming
+`SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, and leaves unproxied runs alone. The worker also logs a missing image at startup.
+
+The runtime starts the model proxy and waits up to 120 s for it to listen before the agent starts (the egress proxy
+waits 20 s). It listened in about 2 s in the live acceptance; once it was running and not seen listening within the
+earlier 30 s, cause unknown, and the run failed `RUNTIME_UNAVAILABLE` with nothing more to say. A sidecar that exits
+first or never listens now fails the run with its state, exit code and OOMKilled flag, and the last 20 lines (at most
+2 KiB) of its own log: for the model proxy, request lines and start-up refusals that name a variable, never a value.
+
+The adapter declares the route (`HarnessAdapter.credentialRoute`); a harness that declares none runs unproxied with
+the real credential, as before. Today only Codex declares one: a custom model provider at `http://spire-model:8080`
+and, on a seat, a generated placeholder `auth.json`.
+
+Two subnets per proxied unit roughly halve how many proxied units can run at once before Docker's default address
+pool runs out. Only the Docker arm builds this topology; there is no Kubernetes arm yet.
+
 ## 7. What leaves the pod, and how
 
 **Nothing is extracted.** Every output leaves as a log stream, which Docker and Kubernetes both
@@ -479,6 +548,11 @@ With them off, Codex declares:
 to renew. Which paths a long run adds is not settled
 (docs/UNVERIFIED.md).
 
+In a model-proxied unit (§6B.1) these hosts are the model proxy's, not the agent's: the agent reaches only the model
+proxy, the egress proxy records and enforces the model proxy's calls, and the model proxy itself narrows each host to
+the route's paths. A redirect, a WebSocket upgrade and a seat's `oaiusercontent.com` content host have not been
+measured through it (docs/UNVERIFIED.md).
+
 ---
 
 ## 8. Credentials
@@ -500,7 +574,7 @@ Two tokens, different scopes, different containers — **the design. Not what sh
 | Credential | Container | Scope | Notes |
 |---|---|---|---|
 | clone token | `fetch` init | read-only **by design; today the write token** | the AGENT never holds anything that can write; the init container currently does |
-| model credential | `agent` | model API only | subscription `auth.json` or API key (ADR-031) |
+| model credential | `agent`, or the model proxy in a proxied unit | model API only | subscription `auth.json` or API key (ADR-031); in a proxied unit (§6B.1, review units by default) the agent holds a placeholder and the model proxy holds the key, or only a seat's access token and account id |
 | push token | `publish` | write, **machine account** (ADR-038) | never the review bot's |
 
 The residual risk, stated rather than hidden: **a write credential lives in the run pod.** For a

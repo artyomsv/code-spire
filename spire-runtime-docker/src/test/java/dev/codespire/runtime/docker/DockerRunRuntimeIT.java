@@ -49,106 +49,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class DockerRunRuntimeIT extends RunRuntimeContract {
 
-    private static final String IMAGE = "alpine:3.20";
+    private static final String IMAGE = DockerUnits.IMAGE;
 
-    private final DockerRunRuntime runtime = new DockerRunRuntime();
+    private final DockerUnits units = new DockerUnits();
 
-    /**
-     * The egress proxy image, built from deploy/egress under the tag the runtime names by default, so the proxy these
-     * tests meet is the one a deployment runs and CI needs no registry for it.
-     */
+    private final DockerRunRuntime runtime = units.runtime();
+
+    private final List<RunHandle> started = units.started();
+
+    private final List<String> targets = units.targets();
+
+    /** The egress proxy image these tests meet, the one a deployment runs; see {@link DockerUnits}. */
     @org.junit.jupiter.api.BeforeAll
     static void buildTheEgressProxyImage() {
-        String root = System.getProperty("spire.repoRoot");
-        if (root == null || root.isBlank()) {
-            throw new IllegalStateException("spire.repoRoot is unset — see spire-runtime-docker/build.gradle.kts");
-        }
-        new DockerRunRuntime().client()
-                .buildImageCmd(Path.of(root, "deploy", "egress").toFile())
-                .withTags(java.util.Set.of(DockerRunRuntime.DEFAULT_EGRESS_IMAGE))
-                .exec(new com.github.dockerjava.api.command.BuildImageResultCallback())
-                .awaitImageId();
+        DockerUnits.buildTheEgressProxyImage();
     }
-
-    private final List<RunHandle> started = new CopyOnWriteArrayList<>();
 
     @AfterEach
     void tearDownEveryUnit() {
-        // Containers are created withAutoRemove(false) so salvage can read an exit code, which
-        // means nothing reclaims them but destroy. A failed assertion must not leak a unit.
-        //
-        // Guarded per unit: a test that destroys its own unit makes the second destroy throw, and an
-        // unguarded forEach would then skip every LATER unit in the list -- each one a sandbox
-        // holding a model credential that nothing reclaims. RunRuntimeContract's own teardown says
-        // exactly this, and this one did not.
-        for (RunHandle handle : started) {
-            try {
-                runtime.destroy(handle);
-            } catch (RuntimeException alreadyGone) {
-                // The ordinary case for a test that destroyed its own unit.
-            }
-            // Independent of destroy, so a destroy that leaves a network behind fails its own test and not every
-            // later run on this daemon.
-            for (var network : labelledNetworks(handle.runId())) {
-                try {
-                    runtime.client().removeNetworkCmd(network.getId()).exec();
-                } catch (RuntimeException alreadyGone) {
-                    // removed by destroy, or by a test
-                }
-            }
-        }
-        for (String target : targets) {
-            try {
-                runtime.client().removeContainerCmd(target).withForce(true).exec();
-            } catch (RuntimeException alreadyGone) {
-                // never started
-            }
-        }
-    }
-
-    private RunUnitSpec unit(String id, String agentScript, String publisherScript) {
-        return unit(id, agentScript, publisherScript, Duration.ofMinutes(2));
-    }
-
-    /**
-     * init seeds /workspace; the agent writes into it and drops a file in /handoff; the publisher
-     * mounts /handoff READ-ONLY and does not mount /workspace at all.
-     */
-    private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock) {
-        return unit(id, agentScript, publisherScript, wallClock, EnterpriseEnvironment.NONE);
-    }
-
-    private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock,
-                             EnterpriseEnvironment enterprise) {
-        return unit(id, agentScript, publisherScript, wallClock, enterprise, EgressPolicy.OFF);
-    }
-
-    private RunUnitSpec unit(String id, String agentScript, String publisherScript, Duration wallClock,
-                             EnterpriseEnvironment enterprise, EgressPolicy egress) {
-        return new RunUnitSpec(id,
-                new ContainerSpec(IMAGE, List.of("sh", "-c", "echo seeded > /workspace/seed.txt"),
-                        Map.of(),
-                        List.of(Mount.writable("ws", "/workspace"), Mount.writable("ho", "/handoff"))),
-                new ContainerSpec(IMAGE, List.of("sh", "-c", agentScript),
-                        Map.of(),
-                        List.of(Mount.writable("ws", "/workspace"), Mount.writable("ho", "/handoff"))),
-                new ContainerSpec(IMAGE, List.of("sh", "-c", publisherScript),
-                        Map.of(),
-                        List.of(Mount.readOnly("ho", "/handoff"))),
-                enterprise, egress, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024, wallClock);
-    }
-
-    /** A unit whose agent runs {@code agentScript} behind an egress proxy, with a publisher that has nothing to do. */
-    private RunUnitSpec egressUnit(String id, String agentScript, EgressPolicy egress) {
-        return unit(id, agentScript, "true", Duration.ofMinutes(2), EnterpriseEnvironment.NONE, egress);
+        units.tearDown();
     }
 
     private static final EgressPolicy REPORT = new EgressPolicy(EgressPolicy.Mode.REPORT, java.util.Set.of());
 
     /** busybox carries httpd; alpine moved it to busybox-extras. */
     private static final String TARGET_IMAGE = "busybox:1.37.0";
-
-    private final List<String> targets = new CopyOnWriteArrayList<>();
 
     /**
      * A small HTTP server on the daemon's default bridge, standing in for everything an agent must not reach
@@ -174,15 +99,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     }
 
     private String startTarget() {
-        runtime.ensureImage(TARGET_IMAGE);
-        String id = runtime.client().createContainerCmd(TARGET_IMAGE)
-                .withCmd("sh", "-c", "mkdir -p /www && echo TEST-EGRESS-TARGET > /www/index.html"
-                        + " && exec httpd -f -p 80 -h /www")
-                .exec().getId();
-        targets.add(id);
-        runtime.client().startContainerCmd(id).exec();
-        return runtime.client().inspectContainerCmd(id).exec()
-                .getNetworkSettings().getNetworks().get("bridge").getIpAddress();
+        return units.startOnTheBridge(TARGET_IMAGE, List.of(), "sh", "-c",
+                "mkdir -p /www && echo TEST-EGRESS-TARGET > /www/index.html && exec httpd -f -p 80 -h /www");
     }
 
     /** One fetch, printed as a verdict line, so the log says which way it went rather than how wget failed. */
@@ -200,60 +118,6 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         return fetch(label, url, "-Y off");
     }
 
-    private List<com.github.dockerjava.api.model.Network> labelledNetworks(String runId) {
-        return runtime.client().listNetworksCmd()
-                .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=" + runId))
-                .exec();
-    }
-
-    private Map<String, com.github.dockerjava.api.model.ContainerNetwork> networksOf(String runId, String role) {
-        Container container = runtime.client().listContainersCmd().withShowAll(true)
-                .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId, DockerRunRuntime.ROLE_LABEL, role))
-                .exec().getFirst();
-        return runtime.client().inspectContainerCmd(container.getId()).exec().getNetworkSettings().getNetworks();
-    }
-
-    private List<Container> proxyOf(String runId) {
-        return runtime.client().listContainersCmd().withShowAll(true)
-                .withNameFilter(List.of(DockerRunNetworks.proxyName(runId)))
-                .exec();
-    }
-
-    /** Bounds the proxy log a failure message quotes. */
-    private static final int DIAGNOSIS_CHARS = 4096;
-
-    /**
-     * What was parsed beside what the proxy actually wrote, so a failure shows the real log format rather than an empty
-     * list. Read straight from the daemon, not through the code under test.
-     */
-    private String diagnosis(List<EgressAttempt> parsed, String runId) {
-        StringBuilder log = new StringBuilder();
-        for (Container proxy : proxyOf(runId)) {
-            try (var stream = runtime.client().logContainerCmd(proxy.getId()).withStdOut(true).withStdErr(true)
-                    .withTailAll().exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<
-                            com.github.dockerjava.api.model.Frame>() {
-                        @Override
-                        public void onNext(com.github.dockerjava.api.model.Frame frame) {
-                            if (log.length() < DIAGNOSIS_CHARS) {
-                                log.append(new String(frame.getPayload(), java.nio.charset.StandardCharsets.UTF_8));
-                            }
-                        }
-                    })) {
-                stream.awaitCompletion(10, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (InterruptedException | java.io.IOException | RuntimeException unreadable) {
-                log.append("[proxy log unreadable: ").append(unreadable).append("]");
-            }
-        }
-        String raw = log.length() > DIAGNOSIS_CHARS ? log.substring(0, DIAGNOSIS_CHARS) + "[...]" : log.toString();
-        return "parsed=" + parsed + "; proxy log (" + proxyOf(runId).size() + " proxy containers):\n" + raw;
-    }
-
-    private List<String> agentLog(RunHandle handle) {
-        List<String> lines = new ArrayList<>();
-        runtime.attach(handle, LogChannel.AGENT, lines::add);
-        return lines;
-    }
-
     @Override
     protected RunRuntime runtime() {
         return runtime;
@@ -269,18 +133,12 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
      */
     @Override
     protected RunUnitSpec quietUnit(String runId) {
-        return unit(runId, "sleep 30", "sleep 30");
+        return units.unit(runId, "sleep 30", "sleep 30");
     }
 
     @Override
     protected RunUnitSpec echoingUnit(String runId, String marker) {
-        return unit(runId, "echo " + marker, "true");
-    }
-
-    private RunHandle start(RunUnitSpec spec) {
-        RunHandle handle = runtime.create(spec);
-        started.add(handle);
-        return handle;
+        return units.unit(runId, "echo " + marker, "true");
     }
 
     @Test
@@ -296,7 +154,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
             // the state the test wants
         }
         ContainerSpec noop = new ContainerSpec(image, List.of("sh", "-c", "true"), Map.of(), List.of());
-        RunHandle handle = start(new RunUnitSpec("pull-1", noop,
+        RunHandle handle = units.start(new RunUnitSpec("pull-1", noop,
                 new ContainerSpec(image, List.of("sh", "-c", "echo pulled"), Map.of(), List.of()),
                 noop, EnterpriseEnvironment.NONE, EgressPolicy.OFF, 64L * 1024 * 1024, 500_000_000L, 16L * 1024 * 1024,
                 Duration.ofMinutes(2)));
@@ -326,7 +184,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 List.of(new HostMount(bundle.toAbsolutePath().toString(), "/etc/spire/ca-bundle.crt")),
                 Map.of("SSL_CERT_FILE", "/etc/spire/ca-bundle.crt"));
 
-        RunHandle handle = start(unit("run_unit_ca",
+        RunHandle handle = units.start(units.unit("run_unit_ca",
                 "cat /etc/spire/ca-bundle.crt; echo env=$SSL_CERT_FILE; "
                         + "if echo x >> /etc/spire/ca-bundle.crt 2>/dev/null; then echo WRITABLE; "
                         + "else echo read-only; fi; echo x > /handoff/delta",
@@ -377,7 +235,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         DockerRunRuntime withRegistry = new DockerRunRuntime(
                 new RegistryCredential("registry.acme.example", "spire", "TEST-registry-secret"));
 
-        RunHandle handle = withRegistry.create(unit("run_unit_reg", "echo x > /handoff/delta",
+        RunHandle handle = withRegistry.create(units.unit("run_unit_reg", "echo x > /handoff/delta",
                 "sleep 1", Duration.ofMinutes(1), EnterpriseEnvironment.NONE));
         started.add(handle);
 
@@ -399,7 +257,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     }
     @Test
     void runsInitThenAgentAndPublisherOnSharedVolumes() {
-        RunHandle handle = start(unit("run_unit1",
+        RunHandle handle = units.start(units.unit("run_unit1",
                 "cat /workspace/seed.txt; echo handed-over > /handoff/delta; echo agent-done",
                 "for i in $(seq 1 30); do [ -f /handoff/delta ] && { cat /handoff/delta; "
                         + "echo publisher-done; exit 0; }; sleep 1; done; exit 1"));
@@ -420,7 +278,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     @Test
     void thePublisherCannotSeeTheAgentsWorkspace() {
-        RunHandle handle = start(unit("run_unit2",
+        RunHandle handle = units.start(units.unit("run_unit2",
                 "echo secret > /workspace/private.txt; echo x > /handoff/delta",
                 "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
                         + "if [ -e /workspace ]; then echo LEAKED; else echo isolated; fi"));
@@ -437,7 +295,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     @Test
     void handoffIsReadOnlyToThePublisher() {
-        RunHandle handle = start(unit("run_unit3",
+        RunHandle handle = units.start(units.unit("run_unit3",
                 "echo x > /handoff/delta; echo agent-done",
                 "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
                         + "if echo y > /handoff/evil 2>/dev/null; then echo WRITABLE; else echo readonly; fi"));
@@ -470,13 +328,13 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         Map.of(),
                         List.of(Mount.readOnly("ho", "/handoff"))),
                 EnterpriseEnvironment.NONE, EgressPolicy.OFF, 256L * 1024 * 1024, 1_000_000_000L, 64L * 1024 * 1024,
-                Duration.ofMinutes(2),
-                new UnitInputs("inputs", "/inputs", Map.of("context.md", "TEST-INPUT-CANARY")));
+                Duration.ofMinutes(2))
+                .withInputs(new UnitInputs("inputs", "/inputs", Map.of("context.md", "TEST-INPUT-CANARY")));
     }
 
     @Test
     void theAgentReadsItsInputsAndCannotWriteThem() {
-        RunHandle handle = start(inputsUnit("run_unit_inputs1",
+        RunHandle handle = units.start(inputsUnit("run_unit_inputs1",
                 "echo; cat /inputs/context.md; echo; if touch /inputs/x 2>/dev/null; then echo WRITABLE; "
                         + "else echo readonly; fi",
                 "echo publisher-idle"));
@@ -492,7 +350,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     @Test
     void thePublisherCannotSeeTheInputs() {
-        RunHandle handle = start(inputsUnit("run_unit_inputs2",
+        RunHandle handle = units.start(inputsUnit("run_unit_inputs2",
                 "echo x > /handoff/delta",
                 "for i in $(seq 1 30); do [ -f /handoff/delta ] && break; sleep 1; done; "
                         + "if [ -e /inputs/context.md ]; then echo LEAKED; else echo isolated; fi"));
@@ -507,7 +365,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
 
     @Test
     void reportsANonZeroAgentExitRatherThanThrowing() {
-        RunHandle handle = start(unit("run_unit4", "exit 3", "echo publisher-idle"));
+        RunHandle handle = units.start(units.unit("run_unit4", "exit 3", "echo publisher-idle"));
 
         runtime.attach(handle, LogChannel.AGENT, line -> { });
         Finalization finalization = runtime.salvage(handle);
@@ -521,7 +379,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // The wall clock is validated by RunUnitSpec and enforced HERE. The first version waited on
         // the agent indefinitely, so the limit existed in the type and constrained nothing: a hung
         // run held its memory and CPU reservation until a human noticed.
-        RunHandle handle = start(unit("run_unit6", "sleep 120", "sleep 120", Duration.ofSeconds(3)));
+        RunHandle handle = units.start(units.unit("run_unit6", "sleep 120", "sleep 120", Duration.ofSeconds(3)));
 
         Finalization finalization = runtime.salvage(handle);
 
@@ -564,7 +422,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // The wall-clock path used to call cancel(), which SIGKILLs BOTH roles, one line before the
         // drain window it then waited on — so every overrun lost its last checkpoint's report. The
         // agent overruns a 4s clock; the publisher is still working for 8s and must finish.
-        RunHandle handle = start(unit("run_unit10", "sleep 60",
+        RunHandle handle = units.start(units.unit("run_unit10", "sleep 60",
                 "trap 'exit 143' TERM; sleep 8 & wait $!; echo drained; exit 0", Duration.ofSeconds(4)));
         List<String> publisher = new CopyOnWriteArrayList<>();
         Thread reader = Thread.ofVirtual().start(
@@ -582,7 +440,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // The agent writes to this stream unconfined, so an unterminated line was an allocation it
         // controlled on the shared worker. Past the cap the line is delivered clipped with a marker,
         // the remainder dropped up to the next newline, and lines after it still arrive.
-        RunHandle handle = start(unit("run_unit11",
+        RunHandle handle = units.start(units.unit("run_unit11",
                 "head -c 200000 /dev/zero | tr '\\0' a; echo; echo tail-line", "true"));
         List<String> agent = new ArrayList<>();
         runtime.attach(handle, LogChannel.AGENT, agent::add);
@@ -605,7 +463,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // shell as PID 1 IGNORES SIGTERM, so a plain `sleep 5; echo drained` survived the old
         // stop until its 30s SIGKILL and printed "drained" anyway — the mutation passed. The real
         // publisher is a JVM, which dies on SIGTERM; the trap makes the fake die the same way.
-        RunHandle handle = start(unit("run_unit9", "exit 0",
+        RunHandle handle = units.start(units.unit("run_unit9", "exit 0",
                 "trap 'exit 143' TERM; sleep 5 & wait $!; echo drained; exit 0"));
         List<String> publisher = new CopyOnWriteArrayList<>();
         Thread reader = Thread.ofVirtual().start(
@@ -630,7 +488,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // and leaving the agent alive was the previous behaviour, so a hung run kept its memory,
         // its CPU reservation and its model credential — the limit bounded one method and nothing
         // else, while the commit message claimed it was enforced.
-        RunHandle handle = start(unit("run_unit8", "sleep 300", "sleep 300", Duration.ofSeconds(3)));
+        RunHandle handle = units.start(units.unit("run_unit8", "sleep 300", "sleep 300", Duration.ofSeconds(3)));
 
         assertFalse(runtime.salvage(handle).salvaged());
 
@@ -646,8 +504,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         // orphan by label, call destroy, find nothing in the map, and return successfully having
         // deleted nothing. A fresh runtime instance stands in for that restart.
         // Behind a proxy, so the unit has every kind of part: containers, volumes, networks and the proxy.
-        start(unit("run_unit5", "sleep 30", "sleep 30", Duration.ofMinutes(2), EnterpriseEnvironment.NONE, REPORT));
-        assertFalse(labelledNetworks("run_unit5").isEmpty(),
+        units.start(units.unit("run_unit5", "sleep 30", "sleep 30", Duration.ofMinutes(2), EnterpriseEnvironment.NONE, REPORT));
+        assertFalse(units.labelledNetworks("run_unit5").isEmpty(),
                 "the unit must have its network, or the check that destroy removed it checks nothing");
 
         DockerRunRuntime afterRestart = new DockerRunRuntime();
@@ -668,8 +526,8 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                         .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=run_unit5"))
                         .exec().getVolumes().isEmpty(),
                 "including its volumes, which no map remembered either");
-        assertTrue(labelledNetworks("run_unit5").isEmpty(), "and its networks");
-        assertTrue(proxyOf("run_unit5").isEmpty(), "and its egress proxy");
+        assertTrue(units.labelledNetworks("run_unit5").isEmpty(), "and its networks");
+        assertTrue(units.proxyOf("run_unit5").isEmpty(), "and its egress proxy");
     }
 
     /**
@@ -689,7 +547,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
      */
     @Test
     void aWritePastTheDiskBoundFailsRatherThanReachingTheHost() {
-        RunHandle handle = start(unit("run_disk_bound",
+        RunHandle handle = units.start(units.unit("run_disk_bound",
                 "dd if=/dev/zero of=/tmp/fill bs=1M count=128 2>&1; echo AGENT-DONE", "true"));
 
         List<String> lines = new ArrayList<>();
@@ -718,7 +576,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
      */
     @Test
     void cancelActuallyStopsTheContainers() {
-        RunHandle handle = start(unit("run_cancel_stops", "sleep 300", "sleep 300"));
+        RunHandle handle = units.start(units.unit("run_cancel_stops", "sleep 300", "sleep 300"));
 
         runtime.cancel(handle);
 
@@ -746,17 +604,17 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void anAgentBehindTheProxyIsOnTheUnitsInternalNetworkOnly() {
         String target = startTarget();
-        RunHandle handle = start(egressUnit("run_egress_isolated",
+        RunHandle handle = units.start(units.egressUnit("run_egress_isolated",
                 direct("DIRECT", "http://" + target + "/") + viaProxy("PROXIED", "http://" + target + "/"), REPORT));
 
-        List<String> agent = agentLog(handle);
+        List<String> agent = units.agentLog(handle);
         runtime.salvage(handle);
 
-        Map<String, com.github.dockerjava.api.model.ContainerNetwork> networks = networksOf("run_egress_isolated", "agent");
+        Map<String, com.github.dockerjava.api.model.ContainerNetwork> networks = units.networksOf("run_egress_isolated", "agent");
         assertEquals(java.util.Set.of(DockerRunNetworks.agentNetworkName("run_egress_isolated")), networks.keySet(),
                 "the agent must be on the unit's internal network and on nothing else, the default bridge included");
         for (String role : List.of("init", "publisher")) {
-            assertFalse(networksOf("run_egress_isolated", role)
+            assertFalse(units.networksOf("run_egress_isolated", role)
                             .containsKey(DockerRunNetworks.agentNetworkName("run_egress_isolated")),
                     "the " + role + " holds the forge credential and must never share the agent's network");
         }
@@ -768,16 +626,16 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void reportModeRecordsEveryHostTheAgentAskedFor() {
         String target = startTarget();
-        RunHandle handle = start(egressUnit("run_egress_report", viaProxy("PROXIED", "http://" + target + "/"), REPORT));
+        RunHandle handle = units.start(units.egressUnit("run_egress_report", viaProxy("PROXIED", "http://" + target + "/"), REPORT));
 
-        List<String> agent = agentLog(handle);
+        List<String> agent = units.agentLog(handle);
         runtime.salvage(handle);
 
         List<EgressAttempt> egress = runtime.egressOf(handle);
 
         assertTrue(agent.contains("PROXIED-REACHED"), agent.toString());
         assertTrue(egress.contains(new EgressAttempt(target, 80, true)),
-                "the proxy must record the host it let through: " + diagnosis(egress, "run_egress_report"));
+                "the proxy must record the host it let through: " + units.diagnosis(egress, "run_egress_report"));
     }
 
     /**
@@ -788,30 +646,30 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     void enforceModeRefusesAnUndeclaredHostAndRecordsTheRefusal() {
         String target = startTarget();
         String undeclared = "undeclared.example.invalid";
-        RunHandle handle = start(egressUnit("run_egress_enforce",
+        RunHandle handle = units.start(units.egressUnit("run_egress_enforce",
                 viaProxy("DECLARED", "http://" + target + "/") + viaProxy("UNDECLARED", "http://" + undeclared + "/"),
                 new EgressPolicy(EgressPolicy.Mode.ENFORCE, java.util.Set.of(target))));
 
-        List<String> agent = agentLog(handle);
+        List<String> agent = units.agentLog(handle);
         runtime.salvage(handle);
         List<EgressAttempt> egress = runtime.egressOf(handle);
 
         assertTrue(agent.contains("DECLARED-REACHED"), "a declared host must get through: " + agent);
         assertTrue(agent.contains("UNDECLARED-FAILED"), agent.toString());
-        assertTrue(egress.contains(new EgressAttempt(target, 80, true)), diagnosis(egress, "run_egress_enforce"));
+        assertTrue(egress.contains(new EgressAttempt(target, 80, true)), units.diagnosis(egress, "run_egress_enforce"));
         assertTrue(egress.contains(new EgressAttempt(undeclared, 80, false)),
                 "a refusal the run cannot name is a BLOCKED_EGRESS nobody can act on: "
-                        + diagnosis(egress, "run_egress_enforce"));
+                        + units.diagnosis(egress, "run_egress_enforce"));
     }
 
     /** An operator's cancel ends the proxy too: a stopped run must not leave its way out open. */
     @Test
     void cancelStopsTheEgressProxy() {
-        RunHandle handle = start(egressUnit("run_egress_cancel", "sleep 300", REPORT));
+        RunHandle handle = units.start(units.egressUnit("run_egress_cancel", "sleep 300", REPORT));
 
         runtime.cancel(handle);
 
-        List<Container> proxy = proxyOf("run_egress_cancel");
+        List<Container> proxy = units.proxyOf("run_egress_cancel");
         assertEquals(1, proxy.size(), "the unit must have exactly one egress proxy: " + proxy);
         assertEquals(Boolean.FALSE, runtime.client().inspectContainerCmd(proxy.getFirst().getId()).exec()
                 .getState().getRunning(), "the proxy is still running after cancel");
@@ -829,15 +687,15 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     void anAgentBehindTheProxyCannotReachAHostServiceThroughItsGateway() {
         startHostListener();
         String port = ":" + HOST_LISTENER_PORT + "/";
-        RunHandle control = start(unit("run_egress_gw_control",
+        RunHandle control = units.start(units.unit("run_egress_gw_control",
                 "GW=$(ip route | awk '/default/ {print $3}'); " + direct("CONTROL", "http://$GW" + port), "true"));
-        List<String> controlLog = agentLog(control);
+        List<String> controlLog = units.agentLog(control);
         runtime.salvage(control);
 
-        RunHandle proxied = start(egressUnit("run_egress_gw",
+        RunHandle proxied = units.start(units.egressUnit("run_egress_gw",
                 "SRC=$(hostname -i | awk '{print $1}'); GW=${SRC%.*}.1; echo gateway=$GW; "
                         + direct("GATEWAY", "http://$GW" + port), REPORT));
-        List<String> proxiedLog = agentLog(proxied);
+        List<String> proxiedLog = units.agentLog(proxied);
         runtime.salvage(proxied);
 
         assertTrue(controlLog.contains("CONTROL-REACHED"),
@@ -862,7 +720,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 .exec();
         started.add(new RunHandle(runId, "unknown"));
 
-        assertThrows(IllegalStateException.class, () -> runtime.create(egressUnit(runId, "true", REPORT)),
+        assertThrows(IllegalStateException.class, () -> runtime.create(units.egressUnit(runId, "true", REPORT)),
                 "an internal network without an isolated gateway must not be reused for an agent");
     }
 
@@ -874,7 +732,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void aNetworkLeftByAnInterruptedTeardownIsFoundAndRemoved() {
         String runId = "run_egress_remnant";
-        RunHandle handle = start(egressUnit(runId, "true", REPORT));
+        RunHandle handle = units.start(units.egressUnit(runId, "true", REPORT));
         runtime.salvage(handle);
         for (Container container : runtime.client().listContainersCmd().withShowAll(true)
                 .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId)).exec()) {
@@ -884,7 +742,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
                 .withFilter("label", List.of(DockerRunRuntime.RUN_ID_LABEL + "=" + runId)).exec().getVolumes()) {
             runtime.client().removeVolumeCmd(volume.getName()).exec();
         }
-        assertFalse(labelledNetworks(runId).isEmpty(), "the remnant this test is about must exist");
+        assertFalse(units.labelledNetworks(runId).isEmpty(), "the remnant this test is about must exist");
 
         DockerRunRuntime afterRestart = new DockerRunRuntime();
         RunHandle found = afterRestart.discoverUnits().stream()
@@ -898,7 +756,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
         assertFalse(finalization.salvaged(), "no agent exit was observed, so none may be claimed: " + finalization);
         afterRestart.destroy(found);
 
-        assertTrue(labelledNetworks(runId).isEmpty(), "the remnant network must be removed");
+        assertTrue(units.labelledNetworks(runId).isEmpty(), "the remnant network must be removed");
     }
 
     /**
@@ -909,7 +767,7 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void aRunWhoseContainersWentButWhoseVolumesRemainIsPreserved() {
         String runId = "run_egress_pruned";
-        RunHandle handle = start(egressUnit(runId, "echo work > /workspace/TEST-work.txt", REPORT));
+        RunHandle handle = units.start(units.egressUnit(runId, "echo work > /workspace/TEST-work.txt", REPORT));
         runtime.salvage(handle);
         for (Container container : runtime.client().listContainersCmd().withShowAll(true)
                 .withLabelFilter(Map.of(DockerRunRuntime.RUN_ID_LABEL, runId)).exec()) {
@@ -941,17 +799,17 @@ class DockerRunRuntimeIT extends RunRuntimeContract {
     @Test
     void destroyHeldRemovesTheUnitsNetworksAndProxy() {
         dev.codespire.runtime.PublicationKey key = new dev.codespire.runtime.PublicationKey("e".repeat(64));
-        RunHandle handle = runtime.createHeld(egressUnit("run_egress_held", "true", REPORT), key);
+        RunHandle handle = runtime.createHeld(units.egressUnit("run_egress_held", "true", REPORT), key);
         started.add(handle);
         runtime.salvage(handle);
-        boolean hadNetwork = !labelledNetworks("run_egress_held").isEmpty();
+        boolean hadNetwork = !units.labelledNetworks("run_egress_held").isEmpty();
 
         // Before any assertion: ordinary teardown refuses a held unit, so a failure here must not leak it.
         runtime.destroyHeld(handle, key);
 
         assertTrue(hadNetwork, "the held unit must have had its network, or the check below checks nothing");
-        assertTrue(labelledNetworks("run_egress_held").isEmpty(), "a network outlived its held unit");
-        assertTrue(proxyOf("run_egress_held").isEmpty(), "the proxy outlived its held unit");
+        assertTrue(units.labelledNetworks("run_egress_held").isEmpty(), "a network outlived its held unit");
+        assertTrue(units.proxyOf("run_egress_held").isEmpty(), "the proxy outlived its held unit");
     }
 
     @Test

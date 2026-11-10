@@ -15,7 +15,8 @@ import java.util.Objects;
  */
 public record HarnessInvocation(String runId, String prompt, String workspacePath,
                                 String model, Map<String, String> credentials,
-                                Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance) {
+                                Duration wallClock, String reasoningEffort, ProjectGuidance projectGuidance,
+                                CredentialHolder credentialHolder) {
 
     /** A run at the model's own thinking level: every caller written before levels existed (M3.5 part M). */
     public HarnessInvocation(String runId, String prompt, String workspacePath,
@@ -23,10 +24,52 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         this(runId, prompt, workspacePath, model, credentials, wallClock, null);
     }
 
-    /** A run that loads the repository's own guidance: every caller written before {@link ProjectGuidance} existed. */
+    /**
+     * A run that loads the repository's own guidance and talks to the vendor itself: every caller written before
+     * {@link ProjectGuidance} and the model proxy existed. {@link #withProjectGuidance} and {@link #proxied} change
+     * either.
+     */
     public HarnessInvocation(String runId, String prompt, String workspacePath, String model,
                              Map<String, String> credentials, Duration wallClock, String reasoningEffort) {
-        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED);
+        this(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort, ProjectGuidance.LOADED,
+                CredentialHolder.AGENT);
+    }
+
+    /** Where the run's model credential is held. */
+    public enum CredentialHolder {
+        /** The agent holds it and talks to the vendor itself: every run before the model proxy. */
+        AGENT,
+        /**
+         * The unit's model proxy holds it: the credential map holds placeholders under the same keys, and the arm
+         * builds its command for {@link CredentialRoute#AGENT_FACING_ORIGIN}.
+         */
+        MODEL_PROXY
+    }
+
+    /** Whether the unit's model proxy holds the credential rather than the agent. */
+    public boolean credentialProxied() {
+        return credentialHolder == CredentialHolder.MODEL_PROXY;
+    }
+
+    /**
+     * The same invocation run behind the unit's model proxy. Every component is named here once, so one added later
+     * fails to compile here rather than being dropped.
+     */
+    public HarnessInvocation proxied() {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                projectGuidance, CredentialHolder.MODEL_PROXY);
+    }
+
+    /** The same invocation with its credential in the agent; every component named once, as in {@link #proxied}. */
+    public HarnessInvocation direct() {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                projectGuidance, CredentialHolder.AGENT);
+    }
+
+    /** The same invocation with another guidance setting; every component named once, as in {@link #proxied}. */
+    public HarnessInvocation withProjectGuidance(ProjectGuidance guidance) {
+        return new HarnessInvocation(runId, prompt, workspacePath, model, credentials, wallClock, reasoningEffort,
+                guidance, credentialHolder);
     }
 
     /**
@@ -65,6 +108,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         Objects.requireNonNull(prompt, "prompt");
         Objects.requireNonNull(wallClock, "wallClock");
         Objects.requireNonNull(projectGuidance, "projectGuidance");
+        Objects.requireNonNull(credentialHolder, "credentialHolder");
         credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
 
         // model and workspacePath both become argv elements, so their shape is checked here once
@@ -82,16 +126,23 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
         //                 be; "/" would hand it everything mounted.
         requireArgumentSafe(model, "model");
         requireArgumentSafe(workspacePath, "workspacePath");
-        // An arm places the level inside its own configuration syntax, so the shape is fixed here: a
-        // short lower-case word can close no quote and name no second key. The vendor does not check
-        // it (measured 2026-09-22), so a wrong word would run rather than fail.
-        reasoningEffort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
-        if (reasoningEffort != null && !reasoningEffort.matches("[a-z]{1,16}")) {
-            throw new IllegalArgumentException("reasoningEffort must be a short lower-case word, was: " + reasoningEffort);
-        }
+        reasoningEffort = normalisedEffort(reasoningEffort);
         if (!workspacePath.startsWith("/")) {
             throw new IllegalArgumentException("workspacePath must be absolute, was: " + workspacePath);
         }
+    }
+
+    /**
+     * An arm places the level inside its own configuration syntax, so the shape is fixed here: a short lower-case word
+     * can close no quote and name no second key. The vendor does not check it (measured 2026-09-22), so a wrong word
+     * would run rather than fail. Blank is none.
+     */
+    private static String normalisedEffort(String reasoningEffort) {
+        String effort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
+        if (effort != null && !effort.matches("[a-z]{1,16}")) {
+            throw new IllegalArgumentException("reasoningEffort must be a short lower-case word, was: " + effort);
+        }
+        return effort;
     }
 
     private static void requireArgumentSafe(String value, String field) {
@@ -112,6 +163,7 @@ public record HarnessInvocation(String runId, String prompt, String workspacePat
                 + ", model=" + model
                 + ", reasoningEffort=" + reasoningEffort
                 + ", projectGuidance=" + projectGuidance
+                + ", credentialHolder=" + credentialHolder
                 + ", workspacePath=" + workspacePath
                 + ", wallClock=" + wallClock
                 + ", credentials=" + credentials.keySet() + " (values redacted)"

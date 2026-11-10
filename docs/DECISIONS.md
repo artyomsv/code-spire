@@ -11,8 +11,10 @@ reviews (the "Step 5" part below), merged to master with PR #368 on 2026-11-02; 
 what it did not reach is proven by tests only (docs/UNVERIFIED.md). Step 6, re-reviews (the "Step 6" part below),
 merged to master with PR #370 on 2026-11-03; its live proof was made on 2026-11-02 at `4a02f003`
 (docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md), and what it did not reach is proven by tests only (docs/UNVERIFIED.md).
-Step 7, replies (the "Step 7" part below), is built on `feat/harness-reviews-7-replies` (PR #371, not merged); its live
-proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+Step 7, replies (the "Step 7" part below), merged to master with PR #371 on 2026-11-04 as `88d5f745`; its live
+proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Step 3, the credential proxy (the "Step 3"
+part below), is built on `feat/harness-reviews-3-credential-proxy` (PR #394, not merged); its live proof was made on
+2026-11-09 (docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
@@ -55,10 +57,11 @@ review behind an hour-long build would wait an hour.
   startup refuses otherwise, since the run-worker would refuse the unit after it was paid for.
 
 **Consequences.**
-- The agent of a review run holds the model credential, as a factory agent does, behind the step 2 egress network.
+- The agent of a review run held the model credential, as a factory agent does, behind the step 2 egress network.
   The operator deferred the credential-injecting proxy (step 3) to just before fork pull requests: a same-repository
-  pull request is opened by someone with write access already. Until then a fork pull request on a repository that
-  reviews with a harness is not reviewed on the harness.
+  pull request is opened by someone with write access already. Step 3 (below) now gives a review run's agent a
+  placeholder; a fork pull request on a repository that reviews with a harness is still not reviewed on the harness
+  until step 8.
 - The reviewer account's token, which can post, enters the unit's init container: this crosses ADR-038's
   two-authority split, recorded in docs/UNVERIFIED.md until a read-scoped clone token exists.
 - A supersede missed while the orchestrator was down leaves a run that finishes and is charged: a cost, never a
@@ -236,6 +239,34 @@ review behind an hour-long build would wait an hour.
   FOLLOWUP prompt keeps its own text.
 - **No attention row for a reply.** A refused reply is said in its thread's history, as a reply the spend cap refuses
   is; `REVIEW_HARNESS_REFUSED` speaks of a review that was not reviewed, which is false here.
+
+**Step 3: the agent holds a placeholder, a model proxy adds the credential**
+([step 3 plan](superpowers/plans/2026-11-08-harness-reviews-3-credential-proxy.md), "Changes after the plan check"
+included). Built after steps 4 to 7, before fork pull requests (step 8).
+- **Which units.** `spire.run.credential-proxy.mode`: `OFF`, `REVIEWS` (the default, review-lane units) or `ALL`.
+  With egress `off` nothing is proxied. A harness opts in by declaring a `CredentialRoute`
+  (`HarnessAdapter.credentialRoute`: upstream, injection kind, exact paths, path prefixes); one that declares none
+  runs as before, with the real credential. Codex declares `https://api.openai.com` with a bearer key and the exact
+  paths `/v1/responses` and `/v1/models`, or `https://chatgpt.com` with the seat's access token and account id
+  and the prefixes `/backend-api/codex/` and `/backend-api/wham/`.
+- **The adapter never sees the secret.** The run worker asks the adapter for its route with placeholder values, and a
+  proxied invocation (`HarnessInvocation.credentialProxied`) is built from placeholders only. Codex then points a
+  custom provider at `http://spire-model:8080` and, on a seat, writes a generated placeholder `auth.json`. The
+  model proxy gets the API key, or only a seat's access token and account id, never its `id_token`.
+- **Two internal networks.** The agent's network holds the agent and the model proxy; a second holds the model proxy
+  and the egress proxy. The agent has no proxy variables and no route to the egress proxy, which for a proxied unit
+  always enforces the harness's hosts. The model proxy is a small JDK-only process (`spire-model-proxy`, FSL-1.1-ALv2 as a
+  deployable) in a container sandboxed like the egress proxy's.
+- **The model proxy's log is the evidence.** One line per request, method, path and status only. A failed run whose
+  model proxy saw a 401 on a model call path fails as `CREDENTIAL_REJECTED`, the first producer of that cause, and
+  marks the pool member (`CredentialRefusalHasNoProducerTest` is deleted). Codex's own exit 120, a failed login
+  step, stays `HARNESS_EXIT_NONZERO`; the spec's earlier claim that it maps to `CREDENTIAL_REJECTED` is corrected. A 403 is not a rejection: it can be a
+  challenge or an entitlement answer, and marking would retire a healthy seat; the run keeps the adapter's cause. A
+  refused path fails the run as `BLOCKED_EGRESS`.
+- **A missing image stops only the proxied lane.** The worker logs it at startup and fails each proxied run as
+  `IMAGE_UNAVAILABLE`, naming `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`; factory builds under `REVIEWS` are untouched.
+- **Rejected:** handing the adapter the real secret and trusting it to place only a placeholder (the plan check's
+  finding 9: the adapter is never handed it); counting a 403 as rejected (above).
 
 ---
 

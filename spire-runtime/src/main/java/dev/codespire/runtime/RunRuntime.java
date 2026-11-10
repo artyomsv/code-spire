@@ -60,6 +60,15 @@ public interface RunRuntime {
     }
 
     /**
+     * What the unit's model proxy saw: its requests, the model calls the vendor refused with 401, and the paths it
+     * refused itself. Read once, after salvage and before destroy, like {@link #egressOf}. {@link ModelProxyReport#NONE}
+     * for a unit with no model proxy, and from an arm that cannot start one.
+     */
+    default ModelProxyReport modelProxyOf(RunHandle handle) {
+        return ModelProxyReport.NONE;
+    }
+
+    /**
      * Every run unit this runtime currently holds, alive or exited, identified by its run id.
      *
      * <p><b>Named for what it returns, not for a judgement it cannot make.</b> It was

@@ -39,12 +39,13 @@ import java.util.UUID;
  * single "unavailable until" column forces one of those to be wrong, and the direction that reads a
  * rejection as a pause is how a pool stops rotating while still looking healthy.
  *
- * <p><b>Neither state has an automatic producer today, and that is the honest statement of what this
- * class currently is.</b> See {@link RunCredentialFeedback} and
- * {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}:
- * nothing in the shipped pipeline emits a credential-refusal cause, so both marks are operator-driven.
+ * <p><b>The rejection has one automatic producer; the rate limit has none.</b> A unit whose credential
+ * sits in a model proxy (harness review runs by default, harness reviews step 3) reports
+ * {@code CREDENTIAL_REJECTED} when the vendor answered 401 on a model call, and
+ * {@link RunCredentialFeedback} marks the member. Every other unit, and every rate limit, is still
+ * operator-driven: see {@code techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md}.
  * The rotation, the separation from the reviewer's key and the exhaustion refusal are all live; the
- * self-healing is not.
+ * self-healing is live for a proxied unit's refused key only.
  */
 @ApplicationScoped
 public class HarnessCredentialPool {

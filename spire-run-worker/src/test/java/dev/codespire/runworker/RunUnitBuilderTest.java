@@ -48,7 +48,7 @@ class RunUnitBuilderTest {
 
     private final RunUnitBuilder builder = builder(encryption);
 
-    private static RunUnitBuilder builder(EncryptionService encryption) {
+    static RunUnitBuilder builder(EncryptionService encryption) {
         Credentials credentials = new Credentials();
         credentials.encryption = encryption;
         credentials.mapper = JSON;

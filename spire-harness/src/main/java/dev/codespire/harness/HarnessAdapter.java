@@ -55,6 +55,18 @@ public interface HarnessAdapter {
     }
 
     /**
+     * The route a model proxy takes for this invocation, when {@link HarnessInvocation#credentialProxied()} says the
+     * unit has one. Empty means this arm does not run behind a model proxy, and the worker then hands it the real
+     * credential as before.
+     *
+     * <p>An arm that answers a route must build its {@link #command} and {@link #environment} without the real secret:
+     * in a proxied unit the worker hands it placeholders under the same keys.
+     */
+    default Optional<CredentialRoute> credentialRoute(HarnessInvocation invocation) {
+        return Optional.empty();
+    }
+
+    /**
      * How an OPERATOR signs this arm in, for a run paid by a subscription rather than a key
      * (M3.5 part F).
      *

@@ -33,6 +33,88 @@ evidence would settle it**.
 
 ---
 
+## Model proxy for run credentials (harness reviews step 3, PR #394, 2026-11-09)
+
+**The claim.** In a model-proxied unit (review-lane units under the default `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`,
+every unit under `ALL`) the agent holds only placeholder credentials and reaches only the model proxy; the model
+proxy holds the real API key, or a seat's access token and account id, injects it, lets through only the harness's
+declared model paths, and reaches the vendor through an egress proxy that enforces. A 401 on a model call fails the
+run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it as `BLOCKED_EGRESS`
+(docs/factory/RUN-TOPOLOGY.md §6B.1).
+
+**Why nothing catches it today.**
+- **Live once, on one harness (2026-11-09, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md).** On `spire-test` with
+  Codex `gpt-6-astra` (codex-cli 0.156.1) a seat review (#98), an API-key review (#99, run 3) and a long seat review
+  (#100, 40 files) were posted with no credential in the agent and `run_egress` naming only the declared host. The
+  model proxy log was read for #99 and #100 and named only declared paths; #98's was not captured (its egress record
+  shows `chatgpt.com` only). A key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its pool member
+  (#99, run 1). Codex accepted the placeholder `auth.json` and made no refresh call (no `auth.openai.com`). What
+  follows was not reached live and is proven against the model proxy's in-process tests (`ModelProxy*Test` over
+  `ProxyTestSupport`'s local upstream), `DockerRunRuntimeIT`'s `python:3.13-alpine` upstream and the run worker's
+  fakes only.
+- **Compaction through the proxy is proven by the spike only.** The long seat review (#100) ran at about 38k context
+  per call and did not compact. Remote compaction through the same path was forced in the 2026-11-07/08 spike
+  (`model_auto_compact_token_limit`), not in a live review run.
+- **WebSocket upgrades, redirects and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy
+  refuses an upgrade (501), and a seat's content hosts are not declared. No live run showed a redirect, a content host
+  or a WebSocket. If a Codex release moves its model stream to a WebSocket, or a long seat run fetches from a content
+  host, the run fails.
+- **One start was not seen listening, cause unknown.** In the live acceptance #99 run 2 failed `RUNTIME_UNAVAILABLE`,
+  "the model proxy did not listen within PT30S": the container kept running with no output and no request, while the
+  same image listened in about 2 s in the runs before and after it and in about 3.4 s measured with the same limits;
+  the host was busy with other stacks. Not reproduced. The wait is now 120 s, and a timeout reports the container's
+  state, exit code, OOMKilled flag and the last 20 lines (at most 2 KiB) of its log
+  (`SidecarStartFailureTest`; `DockerRunRuntimeIT` for an exit); whether 120 s is enough on such a host is unproven.
+- **`aborted` is not a failure signal.** An `-> aborted` line means the response did not finish, whether the vendor
+  failed or the client hung up; #100 showed two on `GET /backend-api/codex/models` in a run that succeeded. Nothing
+  reads `aborted` as a cause.
+- **`ALL` mode is not proven live**, and in `ALL` mode a held factory unit's retained spec (Tink-encrypted) would
+  carry `SPIRE_MODEL_SECRET`, the real credential, for as long as the unit is held.
+- **A harness with no route runs unproxied silently.** Under `REVIEWS` a review on a harness that declares no
+  credential route gets the real credential in its agent, with no log line saying so. Only Codex declares one;
+  Claude Code and opencode arrive in later PRs.
+- **A 403 names no path.** A run that failed after a 403 keeps the adapter's own cause and detail, so the failure
+  does not say which model path was forbidden.
+- **Some refusals leave no line.** A request the JDK HTTP server rejects before the proxy's handler runs is refused,
+  but the model proxy report has no line for it, so a run failing that way is not explained as `BLOCKED_EGRESS`. On
+  JDK 25 that is a `//` target (400, measured in CI), a backslash target (a malformed URI to the server; the test
+  accepts 400 or 403) and a `CONNECT`, which the server closes without an answer (measured in CI) (`aConnectIsRefused` pins -1 or 501). Should a later JDK pass a `CONNECT` through, the
+  handler answers 501 and writes a `refused` line.
+- **The answer is cleaned of exact echoes only (review of PR #394, security/H-1).** Response headers are an
+  allowlist, `Location` never passes, an encoded body is refused (502), and every body is streamed through `EchoMask`,
+  which replaces the whole secret and a seat's account id, split across chunks or not (`ModelProxyResponseTest`,
+  `EchoMaskTest`). A fragment of the secret, or the secret in another encoding (percent- or base64-encoded), is not
+  caught; only the 401 and 403 bodies, where OpenAI quotes a key's last characters, are replaced whole. No live vendor
+  was seen to echo a credential, and whether Codex needs a response header the allowlist leaves out was not measured:
+  the live acceptance predates the allowlist.
+- **The limits are proven against local fakes only (review of PR #394, security/M-1).** 8 requests at once (503
+  past it), an 8 MiB request body (413), 10 minutes for the vendor's headers and between body bytes, 60 minutes per
+  response, and the JDK server's 30 s for a request's head and body (`ModelProxyAdmissionTest`,
+  `ModelProxyDeadlineTest`; the test JVM runs the 30 s bound at 2 s, `ServerLimitsTest`). Whether a live Codex
+  review's largest request stays under 8 MiB, and whether a reasoning model ever pauses a stream for 10 minutes, is
+  not measured.
+- **The report names routes, not paths (review of PR #394, security/M-2).** A refused request is logged as
+  `<refused>`, so a `BLOCKED_EGRESS` detail no longer says which undeclared path a harness called; an operator
+  diagnosing a new harness path reads it from a test run, not from the run record. The container's log is rotated at
+  three files of 2 MiB, so a run of more than about 100,000 requests loses its oldest lines.
+- **The vendor connection has no destination-address policy (review of PR #394, security/M-3, deferred).** An allowed
+  vendor hostname that resolved to a loopback, link-local or private address would be connected to; TLS hostname
+  verification still keeps the credential from a wrong address.
+  `techdebt/spire-model-proxy/3-3-the-vendor-connection-has-no-destination-address-policy.md` holds the fix.
+- **Every image lookup failure reads as a missing image.** The worker's check before the unit is created reports
+  any failure to describe or pull `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, a daemon outage included, as
+  `IMAGE_UNAVAILABLE`.
+- **The image is not on GHCR**, and only the Docker arm builds the topology (there is no Kubernetes arm).
+- **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
+  half as many concurrent proxied units as unproxied ones; no test runs near the bound.
+
+**What evidence would settle it.** The live acceptance settled the main claim for Codex on an API key and a seat.
+Still open: a seat review that compacts with no new path or host, a seat whose token the vendor refuses failing as
+`CREDENTIAL_REJECTED`, a model proxy start on a busy host within the 120 s wait (or a timeout whose detail explains
+it), `ALL` mode, and each later harness's route when it arrives.
+
+---
+
 ## Run egress proxy (harness reviews PR 2, 2026-11-01)
 
 **The claim.** On the Docker arm, a run unit's agent reaches the network only through its per-run egress
@@ -54,7 +136,8 @@ not declare.
   `chatgpt.com`, so the three `sdmntpr*.oaiusercontent.com` content hosts were dropped; the step 5 live proof
   re-checks it in report mode. No run has been made in enforce mode: which paths a long run adds (remote
   compaction) is not settled, so enforce may still refuse a host Codex needs and fail the run as
-  `BLOCKED_EGRESS`.
+  `BLOCKED_EGRESS`. (Since step 3 a model-proxied review unit's egress proxy enforces; its live runs on
+  2026-11-09 called only the declared host and did not compact, see the model proxy entry above.)
 - **Not every container is isolated.** Verify check containers and the operator's sign-in container
   are still on the default bridge (see the M4 verify entry below). In report mode, a plain-HTTP request
   may name any port, because tinyproxy restricts ports for CONNECT only.
@@ -849,9 +932,10 @@ starting to resolve, which no source scan can see.
 **The claim.** `harness_credential` has two exhaustion states: a rate limit that heals itself, and a
 rejection that needs an operator. Both were described as implemented.
 
-**Why nothing catches it.** Nothing in the pipeline emits `CREDENTIAL_REJECTED`. The harness tier's
-failure vocabulary has no credential value, the publisher's has none, and nothing aliases onto it. A
-refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores — so the
+**Why nothing catches it (in an unproxied unit).** In a unit whose agent holds the real credential
+(factory builds by default, and any harness that declares no credential route), nothing emits
+`CREDENTIAL_REJECTED`. The harness tier's failure vocabulary has no credential value, the publisher's
+has none, and nothing aliases onto it. A refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately ignores — so the
 pool hands the dead key back out on its next turn. V52's own header calls this *"how a pool quietly
 stops rotating while looking healthy"*, written in the change that shipped it. The test passed
 because it constructed the wire string by hand.
@@ -861,8 +945,18 @@ container's actual output and exit code. Then the mapping is written *from the o
 harness adapter. Guessing the pattern is worse than the gap: it would pass a test built from the same
 guess and retire nothing in production.
 
-**Guarded by** `spire-arch`'s `CredentialRefusalHasNoProducerTest`, which fails the build when a
-producer appears — that red is the signal to remove it and correct the three documents.
+**Guarded by** nothing any more: `spire-arch`'s `CredentialRefusalHasNoProducerTest` failed the build when a
+producer appeared, and was deleted with the first one (harness reviews step 3). **Narrowed:** a unit whose
+credential sits in a model proxy (harness review units by default) now reports `CREDENTIAL_REJECTED` when
+the model proxy saw a 401 on a model call path and the agent failed (`ModelProxyResults`). The worker
+half is proven by `RunLauncherModelProxyTest`, the orchestrator half (marking the run's pool member) by
+`RunResultSagaTest`. **Proven live once, for an API key** (2026-11-09,
+docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md): the stored key `factory-openai` was invalid at OpenAI, and review run
+`review-99-517cb4764848-60948e1e:1` on `spire-test` failed `CREDENTIAL_REJECTED` after six `POST /v1/responses -> 401`
+lines, and the pool member was marked `rejected_at` 2026-11-09 11:58:13 UTC. A seat's refusal
+(`/backend-api/codex/responses -> 401`) has no live run and is proven against fakes only. An unproxied unit still has
+no producer.
+
 **Tracked in** `techdebt/spire-orchestrator/4-2-no-harness-reports-a-rate-limit-so-the-pool-only-heals-by-hand.md`.
 
 ### A2. The rate-limit half has no producer either

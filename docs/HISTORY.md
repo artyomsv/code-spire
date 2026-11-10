@@ -2316,3 +2316,40 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   answer, a summary-thread reply and the GitLab and Bitbucket mentions are proven against fakes only. Record:
   [replies on a harness acceptance](factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Next: step 3, the credential-injecting
   proxy, then step 8, fork pull requests.
+
+- **Harness reviews step 3: the agent holds a placeholder, a model proxy adds the credential (2026-11-09, PR #394; not
+  merged, live-proven 2026-11-09 in [the step 3 acceptance](factory/HARNESS-REVIEWS-3-ACCEPTANCE.md)).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
+  Under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (the default; `OFF` and `ALL` too) the run worker hands the harness
+  adapter placeholders, and Codex points a custom provider at `http://spire-model:8080` (on a seat, with a generated
+  placeholder `auth.json`). A per-run model proxy (`spire-model-proxy`, a JDK-only process in a container sandboxed
+  like the egress proxy) holds the API key, or only a seat's access token and account id, drops every credential
+  header the agent sends, injects the real one, forwards only the declared model paths and reaches the vendor through
+  the egress proxy. The agent's network holds the agent and the model proxy; a second internal network holds the
+  model proxy and the egress proxy, which for a proxied unit always enforces. The model proxy's log, one line per
+  request, gives `CREDENTIAL_REJECTED` its first producer: a failed run with a 401 on a model call marks the pool
+  member, and `CredentialRefusalHasNoProducerTest` is deleted; a 403 marks nothing; a refused path is
+  `BLOCKED_EGRESS`. A missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. The plan check found that the
+  agent could still reach the egress proxy on the shared network, that a 403 would retire a healthy seat for good, that
+  the JVM ignores `SSL_CERT_FILE`, that dot-segment and encoded paths could escape a prefix, and that the adapter was
+  handed the real secret; each is fixed in the plan. During the build the proxy was found ending a broken stream
+  cleanly (it now drops the connection) and a missing image stopping the whole review lane (now only proxied runs
+  fail). Seven guards were broken, one mutant pull request each (#395 to #401, closed): every mutant failed CI, six
+  of them in the test named for the guard. The seventh, flushing a stream only at its end, was caught by
+  `aMidStreamResetIsNotAcleanEnd` but not by `aStreamIsPassedOnAsItArrives`, whose five-second bound started only
+  after the request returned, while the request itself waited for the vendor's ten-second release. The test now
+  awaits the response and its first event within the bound, and the same mutant re-run (#402, closed) fails it. The
+  live acceptance on `spire-test` (Codex `gpt-6-astra`) posted a seat review (#98), an API-key review (#99) and a long
+  seat review (#100, 40 files) with no credential in the agent and only the declared host in the egress record. The
+  model proxy log was read for #99 and #100 and named only declared paths; #98's was not captured. Codex accepted
+  the placeholder `auth.json` with no refresh call; a key OpenAI refused failed `CREDENTIAL_REJECTED` and marked its
+  pool member, the cause's first live producer. #100 did not compact (about 38k context per call), and its two
+  `aborted` model-list reads in a successful run showed that `aborted` covers a client hanging up too. One model proxy
+  start (#99 run 2) was running and not seen listening within 30 s, cause unknown and not reproduced; the fix round
+  raised the wait to 120 s and made a sidecar's start failure say its state, exit code, OOMKilled flag and the last
+  20 lines (at most 2 KiB) of its log (`SidecarStartFailure`). Left open: live compaction, a seat's refusal, WebSocket
+  upgrades, redirects, `oaiusercontent.com` and `ALL` mode are unmeasured; a 403's failure detail names no path; the
+  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). Next: PR 3b (Claude Code on an API key).
+
+  Upgrading: the run worker now defaults to `REVIEWS`, and compose does not build the image. Before upgrading, run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
+  (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;
+  otherwise every Codex review fails `IMAGE_UNAVAILABLE`.

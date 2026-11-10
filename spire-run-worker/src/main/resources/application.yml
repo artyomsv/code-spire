@@ -104,6 +104,15 @@ spire:
     egress:
       mode: ${SPIRE_RUN_EGRESS_MODE:report}
       image: ${SPIRE_RUN_EGRESS_IMAGE:spire-egress-proxy:latest}
+    # Which run units hold their model credential in a per-run model proxy instead of the agent (harness reviews
+    # step 3): OFF, REVIEWS (default: harness review units) or ALL (factory builds too). A proxied unit's agent holds a
+    # placeholder; the model proxy injects the key, or a seat's access token and account id, and lets through only the
+    # harness's declared model paths. It needs the egress proxy: with egress off no unit is proxied and the worker
+    # warns at startup. The image (spire-model-proxy) is built locally; when it is missing, the worker logs it at startup
+    # and every proxied run fails as IMAGE_UNAVAILABLE, while unproxied runs are untouched.
+    credential-proxy:
+      mode: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:REVIEWS}
+      image: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:spire-model-proxy:latest}
     # Declared HERE and nowhere else. The scheduler that advances the heartbeat and the startup
     # guard that checks it against the staleness window both resolve this key, so a change moves
     # both. Inline defaults on each meant two literals for one decision -- the exact fault the
@@ -408,6 +417,11 @@ mp:
   spire:
     run:
       publisher-image: spire-publisher:latest
+      # Quoted: a bare OFF is YAML's boolean false, which no enum converts from.
+      # Off: no CI runner holds the locally built model proxy image, and the proxied lane would fail every review suite.
+      # The proxied unit is asserted by the builder's and the launcher's unit tests, and the runtime's Docker tests.
+      credential-proxy:
+        mode: "OFF"
     encryption:
       # Test-only AES-GCM keyset (not a secret) — the same one the orchestrator's and the review
       # worker's test profiles use, so a worker test can open a credential the orchestrator packed.
