@@ -14,6 +14,14 @@ import java.util.function.IntPredicate;
  * at most the longest value's length less one, until the next chunk says what it was; a stream that pauses mid-sentence
  * still reaches the agent up to the pause.
  *
+ * <p>The scan is leftmost-longest: at each position the longest value that occurs whole there is masked, so a value
+ * that extends a shorter one is withheld whole and never leaves its tail
+ * visible. A tail is therefore held even after a shorter value has matched whole, while a longer one may still be
+ * arriving. A position is decided only once no later byte can change the decision, so the output is a pure function
+ * of the whole body, identical however the vendor chunks it. Each masked occurrence becomes {@link #WITHHELD}; every
+ * other byte passes unchanged. Occurrences that overlap (a value starting inside another occurrence) need nothing
+ * more: the first is masked whole and scanning resumes after it.
+ *
  * <p>It works on bytes and matches the values exactly as the vendor received them. Neither a key, a seat's token (a
  * JWT) nor an account id holds a character JSON would escape, so an echo inside a JSON string is the same bytes. A
  * fragment of a value (a key's last four characters, as OpenAI quotes a refused one) is not one; the 401 and 403
@@ -58,13 +66,11 @@ final class EchoMask {
     private byte[] mask(byte[] pending, IntPredicate holdFrom) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(pending.length);
         int at = 0;
-        while (at < pending.length) {
-            int echo = echoAt(pending, at);
+        while (at < pending.length && !holdFrom.test(at)) {
+            int echo = longestEchoAt(pending, at);
             if (echo > 0) {
                 out.writeBytes(WITHHELD_BYTES);
                 at += echo;
-            } else if (holdFrom.test(at)) {
-                break;
             } else {
                 out.write(pending[at++]);
             }
@@ -73,15 +79,17 @@ final class EchoMask {
         return out.toByteArray();
     }
 
-    /** The length of the value that occurs whole at {@code at}, or 0. */
-    private int echoAt(byte[] bytes, int at) {
+    /** The length of the longest value that occurs whole at {@code at}, or 0. */
+    private int longestEchoAt(byte[] bytes, int at) {
+        int longest = 0;
         for (byte[] value : values) {
             int end = at + value.length;
-            if (end <= bytes.length && Arrays.equals(bytes, at, end, value, 0, value.length)) {
-                return value.length;
+            if (value.length > longest && end <= bytes.length
+                    && Arrays.equals(bytes, at, end, value, 0, value.length)) {
+                longest = value.length;
             }
         }
-        return 0;
+        return longest;
     }
 
     /** Whether everything from {@code at} to the end is the start of a value, which the next chunk may complete. */
