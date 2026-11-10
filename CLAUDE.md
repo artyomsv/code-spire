@@ -168,7 +168,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
 - **Harness reviews, steps 3 to 7: review runs, first reviews, re-reviews, replies and the credential proxy** (steps 4
   to 7 on master with PRs #367, #368, #370 and #371, live-proven 2026-11-01 to 2026-11-03 in
   docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md, docs/factory/HARNESS-REVIEWS-6-ACCEPTANCE.md and
-  docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; step 3 on PR #394, not merged, live-proven 2026-11-09 in docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md; ADR-050, design
+  docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md; step 3 merged with PR #394 on 2026-11-10, live-proven 2026-11-09 in docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md; ADR-050, design
   docs/superpowers/specs/2026-10-30-harness-reviews-design.md). A review
   may run as a read-only factory run of kind `REVIEW`, `RECONCILE` or `FOLLOWUP` (V107) on the run-worker's own lane,
   `cs.review-runs` (offset `earliest`, its own pool, `SPIRE_RUN_REVIEW_CONCURRENCY` per instance), so it never waits

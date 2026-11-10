@@ -58,7 +58,9 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 - **WebSocket upgrades, redirects and `*.oaiusercontent.com` are never measured through the proxy.** The model proxy
   refuses an upgrade (501), and a seat's content hosts are not declared. No live run showed a redirect, a content host
   or a WebSocket. If a Codex release moves its model stream to a WebSocket, or a long seat run fetches from a content
-  host, the run fails.
+  host, the run fails. The seat's model list marks `gpt-6-astra` with `"prefer_websockets": true` (read through
+  the proxy on 2026-11-10); the final seat check (#101) still worked over plain HTTP, and its log showed no refused
+  upgrade.
 - **One start was not seen listening, cause unknown.** In the live acceptance #99 run 2 failed `RUNTIME_UNAVAILABLE`,
   "the model proxy did not listen within PT30S": the container kept running with no output and no request, while the
   same image listened in about 2 s in the runs before and after it and in about 3.4 s measured with the same limits;
@@ -66,7 +68,8 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   state, exit code, OOMKilled flag and the last 20 lines (at most 2 KiB) of its log
   (`SidecarStartFailureTest`; `DockerRunRuntimeIT` for an exit); whether 120 s is enough on such a host is unproven.
 - **`aborted` is not a failure signal.** An `-> aborted` line means the response did not finish, whether the vendor
-  failed or the client hung up; #100 showed two on `GET /backend-api/codex/models` in a run that succeeded. Nothing
+  failed or the client hung up; #100 showed two on `GET /backend-api/codex/models` in a run that succeeded, and #101 two on the same route; a
+  direct read of the model list through the same image answered 200 with the whole 480 KB list. Nothing
   reads `aborted` as a cause.
 - **`ALL` mode is not proven live**, and in `ALL` mode a held factory unit's retained spec (Tink-encrypted) would
   carry `SPIRE_MODEL_SECRET`, the real credential, for as long as the unit is held.
@@ -85,8 +88,9 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   which replaces the whole secret and a seat's account id, split across chunks or not (`ModelProxyResponseTest`,
   `EchoMaskTest`). A fragment of the secret, or the secret in another encoding (percent- or base64-encoded), is not
   caught; only the 401 and 403 bodies, where OpenAI quotes a key's last characters, are replaced whole. No live vendor
-  was seen to echo a credential, and whether Codex needs a response header the allowlist leaves out was not measured:
-  the live acceptance predates the allowlist.
+  was seen to echo a credential. The four main live checks predate the allowlist; the final seat check (#101) ran with
+  it and Codex on a seat worked, so no header Codex needs on a seat review was dropped there. An API-key run, and
+  any other Codex path, have not run with the allowlist.
 - **The limits are proven against local fakes only (review of PR #394, security/M-1).** 8 requests at once (503
   past it), an 8 MiB request body (413), 10 minutes for the vendor's headers and between body bytes, 60 minutes per
   response, and the JDK server's 30 s for a request's head and body (`ModelProxyAdmissionTest`,

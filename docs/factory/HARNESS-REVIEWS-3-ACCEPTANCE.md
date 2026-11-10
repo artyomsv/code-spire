@@ -105,6 +105,30 @@ operator then added `openai-api` and erased `factory-openai`. This is the first 
   exits first fails with its state, exit code, OOMKilled flag and the last 20 lines (at most 2 KiB) of its log
   (`SidecarStartFailure`).
 
+## Final seat check on the merged code (#101)
+
+After the review fixes, one more seat review ran on the final code of PR #394 (`fc71e84f`, merged as `a36424c0`):
+[#101](https://github.com/artyomsv/spire-test/pull/101) "TEST: return fee helper (credential proxy, final seat
+check)". The model proxy image, the dev stack and the run worker were rebuilt from that commit. The run succeeded in
+1 min 29 s and posted an APPROVED review, at cost 0, with `chatgpt.com` the only host in the egress record. The
+model proxy's log (route names, as the fixed code logs them):
+
+| Line | Count |
+|---|---|
+| `POST /backend-api/codex/responses -> 200` | 6 |
+| `GET /backend-api/codex/* -> aborted` | 2 |
+
+So an ordinary seat review works on the final code: the header allowlist, the echo mask, the limits and the
+route-only log were in the path and did not break it. This run did not make any of those guards act: no credential
+was echoed, no limit was reached, and no path was refused. No model-list read finished in this run. A direct read through the same image with the operator's seat (values never printed),
+`GET /backend-api/codex/models?client_version=0.156.1`, answered 200 with 480,260 bytes (chunked,
+`application/json`) and logged `GET /backend-api/codex/* -> 200`. So the model list can pass the proxy whole. That
+does not say why the two reads in the run aborted: `aborted` covers an upstream read failure or stall as well as a
+client hanging up, and the log does not say which. Codex ending its own read fits the evidence; the cause was not
+established. The list marks `gpt-6-astra` with `"prefer_websockets": true`, so
+Codex may try a WebSocket first, which the model proxy refuses, and then fall back to HTTP. That is a guess: no
+refused upgrade was seen in the log (docs/UNVERIFIED.md, the step 3 entry).
+
 ## Limits that remain
 
 - **One model, one harness, one forge:** Codex `gpt-6-astra` on GitHub.
@@ -113,8 +137,10 @@ operator then added `openai-api` and erased `factory-openai`. This is the first 
 - **No Claude Code subscription run**, by standing rule; Claude Code declares no credential route yet.
 - **The start miss is unexplained.** Whether 120 s is enough on a busy host is unproven (docs/UNVERIFIED.md, the step 3
   entry).
-- **The review of PR #394 changed the proxy after these runs.** Response headers became an allowlist, `Location` is
-  never passed, an encoded body is refused, every body is masked for an echo of the credential, requests and answers
-  are bounded, and the log names a route (`/backend-api/codex/*`) or `<refused>` instead of the agent's path (the
-  model call keeps its name). None of that ran live here: the four checks above predate it, and their log excerpts
-  show the earlier full paths. It is proven against local fakes only (docs/UNVERIFIED.md, the step 3 entry).
+- **The review of PR #394 changed the proxy after the four checks.** Response headers became an allowlist, `Location`
+  is never passed, an encoded body is refused, every body is masked for an echo of the credential, requests and
+  answers are bounded, and the log names a route (`/backend-api/codex/*`) or `<refused>` instead of the agent's path
+  (the model call keeps its name). The four checks predate it, and their log excerpts show the earlier full paths. The
+  final seat check (#101) ran on it and shows that an ordinary seat review still works. What the guards do when they
+  act (an echoed credential, a reached limit or timeout, an encoded body) is proven against local fakes only
+  (docs/UNVERIFIED.md, the step 3 entry).
