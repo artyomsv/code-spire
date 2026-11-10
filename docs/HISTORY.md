@@ -2317,8 +2317,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   [replies on a harness acceptance](factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Next: step 3, the credential-injecting
   proxy, then step 8, fork pull requests.
 
-- **Harness reviews step 3: the agent holds a placeholder, a model proxy adds the credential (2026-11-09, PR #394; not
-  merged, live-proven 2026-11-09 in [the step 3 acceptance](factory/HARNESS-REVIEWS-3-ACCEPTANCE.md)).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
+- **Harness reviews step 3: the agent holds a placeholder, a model proxy adds the credential (2026-11-09, PR #394; merged
+  2026-11-10 as `a36424c0`, live-proven 2026-11-09 in [the step 3 acceptance](factory/HARNESS-REVIEWS-3-ACCEPTANCE.md)).** A review run's agent no longer holds the model credential (ADR-050, "Step 3").
   Under `SPIRE_RUN_CREDENTIAL_PROXY_MODE` `REVIEWS` (the default; `OFF` and `ALL` too) the run worker hands the harness
   adapter placeholders, and Codex points a custom provider at `http://spire-model:8080` (on a seat, with a generated
   placeholder `auth.json`). A per-run model proxy (`spire-model-proxy`, a JDK-only process in a container sandboxed
@@ -2348,7 +2348,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   raised the wait to 120 s and made a sidecar's start failure say its state, exit code, OOMKilled flag and the last
   20 lines (at most 2 KiB) of its log (`SidecarStartFailure`). Left open: live compaction, a seat's refusal, WebSocket
   upgrades, redirects, `oaiusercontent.com` and `ALL` mode are unmeasured; a 403's failure detail names no path; the
-  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). Next: PR 3b (Claude Code on an API key).
+  image is not on GHCR (docs/UNVERIFIED.md, the step 3 entry). A final seat review (#101) on the merged code
+  succeeded with the fixed proxy: six model calls answered 200, `chatgpt.com` only, cost 0. Next: PR 3b (Claude Code
+  on an API key).
 
   Upgrading: the run worker now defaults to `REVIEWS`, and compose does not build the image. Before upgrading, run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
   (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;

@@ -105,6 +105,27 @@ operator then added `openai-api` and erased `factory-openai`. This is the first 
   exits first fails with its state, exit code, OOMKilled flag and the last 20 lines (at most 2 KiB) of its log
   (`SidecarStartFailure`).
 
+## Final seat check on the merged code (#101)
+
+After the review fixes, one more seat review ran on the final code of PR #394 (`fc71e84f`, merged as `a36424c0`):
+[#101](https://github.com/artyomsv/spire-test/pull/101) "TEST: return fee helper (credential proxy, final seat
+check)". The model proxy image, the dev stack and the run worker were rebuilt from that commit. The run succeeded in
+1 min 29 s and posted an APPROVED review, at cost 0, with `chatgpt.com` the only host in the egress record. The
+model proxy's log (route names, as the fixed code logs them):
+
+| Line | Count |
+|---|---|
+| `POST /backend-api/codex/responses -> 200` | 6 |
+| `GET /backend-api/codex/* -> aborted` | 2 |
+
+So the header allowlist, the echo mask, the limits and the route-only log ran live on a seat. No model-list read
+finished in this run. A direct read through the same image with the operator's seat (values never printed),
+`GET /backend-api/codex/models?client_version=0.156.1`, answered 200 with 480,260 bytes (chunked,
+`application/json`) and logged `GET /backend-api/codex/* -> 200`. The model list passes the proxy whole; the two
+`aborted` lines are Codex ending its own read. The list marks `gpt-6-astra` with `"prefer_websockets": true`, so
+Codex may try a WebSocket first, which the model proxy refuses, and then fall back to HTTP. That is a guess: no
+refused upgrade was seen in the log (docs/UNVERIFIED.md, the step 3 entry).
+
 ## Limits that remain
 
 - **One model, one harness, one forge:** Codex `gpt-6-astra` on GitHub.
