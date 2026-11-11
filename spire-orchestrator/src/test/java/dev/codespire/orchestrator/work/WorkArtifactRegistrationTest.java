@@ -96,7 +96,7 @@ class WorkArtifactRegistrationTest extends WorkPreparedFixture {
      */
     @Test void onlyTheHarnessesThisDeploymentCanRunAreOffered() {
         var harnesses=resource.options().harnesses();
-        assertEquals(factoryConfig.agentImage().keySet().stream().sorted().toList(),harnesses);
+        assertEquals(factoryConfig.configuredAgentImages().keySet().stream().sorted().toList(),harnesses);
         assertFalse(harnesses.isEmpty(),"A deployment with no agent image can run no build at all");
     }
     @Test void theBaseHeadIsReadFromTheForgeRatherThanTyped() throws Exception {
