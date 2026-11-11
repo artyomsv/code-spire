@@ -443,6 +443,26 @@ describe('build setup', () => {
     expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
   });
 
+  // Harness reviews 3b: a review-only harness is configured but may not build.
+  it('lists only build harnesses in the build setup', async () => {
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'claude_code'], buildHarnesses: ['codex'],
+      subscriptionHarnesses: ['codex'], reportedTypes: { codex: ['INPUT', 'OUTPUT'] } });
+    renderFactory();
+    await open();
+    await screen.findByRole('option', { name: 'Codex' });
+    expect(screen.queryByRole('option', { name: 'Claude Code' })).toBeNull();
+  });
+
+  it('offers a subscription only to a harness that may use one', async () => {
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-keyed'], buildHarnesses: ['codex', 'TEST-keyed'],
+      subscriptionHarnesses: ['codex'], reportedTypes: { codex: ['INPUT', 'OUTPUT'] } });
+    renderFactory();
+    await open();
+    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'TEST-keyed' } });
+    const pay = screen.getByRole('combobox', { name: 'Pay with' });
+    expect(within(pay).queryByRole('option', { name: /subscription/ })).toBeNull();
+  });
+
   // M3.5 part D: the harness's own reported types decide, and the server sends them with the list.
   it('refuses a model that cannot price what the chosen harness reports', async () => {
     vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'],

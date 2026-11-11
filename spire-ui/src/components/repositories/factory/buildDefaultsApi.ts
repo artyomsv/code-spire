@@ -53,7 +53,12 @@ export interface HarnessModels {
 }
 
 export interface BuildOptions {
+  /** Every configured harness, review-only ones included. */
   harnesses: string[];
+  /** The harnesses that may pay with a subscription seat. Absent from an older server: then every harness is offered it. */
+  subscriptionHarnesses?: string[];
+  /** The harnesses that may run builds. Absent from an older server: then every harness is offered. */
+  buildHarnesses?: string[];
   /** Per harness, the token types it can report. A model that cannot price one of them is refused. */
   reportedTypes: Record<string, string[]>;
   /** Per harness, the models its image says it runs. Absent from an older server. */

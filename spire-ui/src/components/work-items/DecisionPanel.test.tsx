@@ -49,7 +49,7 @@ it('shows how the build pays and labels the specification and the plan', async (
   show();
   expect(await screen.findByText('Specification — the ticket text, as it was prepared')).toBeInTheDocument();
   expect(screen.getByText('Plan — the one step the build runs')).toBeInTheDocument();
-  expect(screen.getByText('a Codex subscription')).toBeInTheDocument();
+  expect(screen.getByText('a subscription seat')).toBeInTheDocument();
 });
 
 // The old card showed a digest and a generation number. An approver has to see what they approve.

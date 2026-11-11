@@ -272,3 +272,11 @@ it('fills nothing when the fresh build setup read fails', async () => {
   expect(screen.getByLabelText('Base branch')).toHaveValue('');
   expect(screen.getByLabelText('Harness')).toHaveValue('');
 });
+it('lists only build harnesses in item preparation', async () => {
+  vi.spyOn(api, 'preparationOptions').mockResolvedValue({ harnesses: ['TEST-harness', 'claude_code'], buildHarnesses: ['TEST-harness'],
+    subscriptionHarnesses: [], reportedTypes: { 'TEST-harness': ['INPUT', 'OUTPUT'] } });
+  show();
+  await screen.findByRole('option', { name: 'TEST-harness' });
+  expect(screen.queryByRole('option', { name: 'Claude Code' })).toBeNull();
+  expect(screen.queryByRole('option', { name: 'claude_code' })).toBeNull();
+});
