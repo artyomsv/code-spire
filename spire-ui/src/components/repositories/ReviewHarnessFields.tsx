@@ -3,7 +3,8 @@ import { fetchLlmModels } from '../../api';
 import { preparationKeys } from '../work-items/workQueries';
 import SettingField from '../SettingField';
 import BuildModelFields, { modelChoices } from './factory/BuildModelFields';
-import { PAY_WITH_LABEL, buildOptions, buildOptionsKey, type PayWith } from './factory/buildDefaultsApi';
+import { harnessLabel } from '../harnessLabels';
+import { PAY_WITH_LABEL, buildOptions, buildOptionsKey, mayPayWithSubscription, type PayWith } from './factory/buildDefaultsApi';
 import type { ReviewHarness } from './repositoriesApi';
 
 interface Props {
@@ -27,19 +28,26 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
   const known = optionsRead.data?.models?.[value.harness];
   const priced = (modelsRead.data ?? []).filter(model => model.enabled);
   const choices = modelChoices(value.harness, known, priced, optionsRead.data?.reportedTypes ?? {}, value.payWith);
+  const subscriptionOffered = mayPayWithSubscription(optionsRead.data, value.harness);
   const patch = (next: Partial<ReviewHarness>) => onChange(previous => ({ ...previous, ...next }));
+  // The level belongs to the harness's model list, and a payment one harness allows another may not.
+  const changeHarness = (harness: string) => onChange(previous => ({ ...previous, harness, effort: null,
+    payWith: mayPayWithSubscription(optionsRead.data, harness) ? previous.payWith : 'API_KEY' }));
   return <>
     <SettingField label="Harness" scope={SCOPE} hint="Required. The agent image that reviews this repository's pull requests, read-only. A refused run never falls back to an API provider.">
       {/* The level belongs to the harness's model list, so it does not survive a change of harness. */}
-      <select aria-label="Harness" value={value.harness} onChange={event => patch({ harness: event.target.value, effort: null })}>
+      <select aria-label="Harness" value={value.harness} onChange={event => changeHarness(event.target.value)}>
         <option value="">{harnesses.length ? 'Select a harness' : 'No harness is configured'}</option>
-        {harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
-        {value.harness && !harnesses.includes(value.harness) && <option value={value.harness}>{value.harness} (not configured here)</option>}
+        {harnesses.map(harness => <option key={harness} value={harness}>{harnessLabel(harness)}</option>)}
+        {value.harness && !harnesses.includes(value.harness) && <option value={value.harness}>{harnessLabel(value.harness)} (not configured here)</option>}
       </select></SettingField>
-    <SettingField label="Pay with" scope={SCOPE} hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in Codex seat at no per-token cost.">
+    <SettingField label="Pay with" scope={SCOPE} hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in subscription seat at no per-token cost.">
       <select aria-label="Pay with" value={value.payWith} onChange={event => patch({ payWith: event.target.value as PayWith })}>
         <option value="API_KEY">{PAY_WITH_LABEL.API_KEY}</option>
-        <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>
+        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+        // through a Claude subscription or to hold claude.ai tokens:
+        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
       </select></SettingField>
     <BuildModelFields harness={value.harness} known={known} choices={choices} model={value.model} effort={value.effort ?? ''}
       scope={SCOPE} setModel={model => patch({ model, effort: null })} setEffort={effort => patch({ effort: effort || null })} />

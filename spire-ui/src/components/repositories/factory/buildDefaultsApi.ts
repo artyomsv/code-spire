@@ -25,7 +25,7 @@ export interface BuildDefaults {
 }
 export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
 /** How a run pays, in the words the build setup and the review setting show. */
-export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
+export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a subscription seat' };
 /** `composed` copies the ticket as one step; `generated` writes a specification and plan with the build model. */
 export type Preparation = 'composed' | 'generated';
 
@@ -93,3 +93,14 @@ export const saveBuildDefaults = (repository: string, input: { expectedRevision:
   read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);
+
+/** The harnesses a build or an item preparation may run. An older server sends no such list: then every harness. */
+export const buildHarnessesOf = (options: { harnesses: string[]; buildHarnesses?: string[] }): string[] =>
+  options.buildHarnesses ?? options.harnesses ?? [];
+
+// NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+// through a Claude subscription or to hold claude.ai tokens:
+// https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+/** Whether the Subscription payment is offered to this harness; an older server sends no list: then every harness. */
+export const mayPayWithSubscription = (options: { harnesses: string[]; subscriptionHarnesses?: string[] } | undefined, harness: string): boolean =>
+  (options?.subscriptionHarnesses ?? options?.harnesses ?? []).includes(harness);
