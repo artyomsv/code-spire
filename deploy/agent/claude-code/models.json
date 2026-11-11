@@ -1,0 +1,6 @@
+[
+  { "s": "claude-opus-5-5", "n": "Claude Opus 5.5", "d": null, "e": [], "v": "list", "p": 1 },
+  { "s": "claude-sonnet-5-5", "n": "Claude Sonnet 5.5", "d": null, "e": [], "v": "list", "p": 2 },
+  { "s": "claude-haiku-5-5", "n": "Claude Haiku 5.5", "d": null, "e": [], "v": "list", "p": 3 },
+  { "s": "claude-fable-5-2", "n": "Claude Fable 5.2", "d": null, "e": [], "v": "list", "p": 4 }
+]

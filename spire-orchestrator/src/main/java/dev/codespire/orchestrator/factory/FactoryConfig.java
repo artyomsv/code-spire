@@ -6,6 +6,7 @@ import io.smallrye.config.WithName;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * What a dispatched run inherits from the deployment rather than from the request.
@@ -32,7 +33,9 @@ public interface FactoryConfig {
      * {@code none} is absent from every list and refused as unconfigured at every door.
      */
     default Map<String, String> configuredAgentImages() {
-        return agentImage();
+        return agentImage().entrySet().stream()
+                .filter(entry -> !NOT_CONFIGURED.equals(entry.getValue()))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /** The wall-clock cap handed to the runtime; the run is cancelled and salvaged when it elapses. */

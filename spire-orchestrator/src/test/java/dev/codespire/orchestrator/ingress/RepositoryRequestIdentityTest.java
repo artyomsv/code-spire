@@ -73,6 +73,8 @@ class RepositoryRequestIdentityTest {
         set(resource, "config", java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
                 new Class<?>[]{dev.codespire.orchestrator.factory.FactoryConfig.class}, (proxy, method, args) -> {
                     if (method.getName().equals("agentImage")) return java.util.Map.of("codex", "TEST-agent:latest");
+                    // A default method (configuredAgentImages) runs its own body, which reads agentImage above.
+                    if (method.isDefault()) return java.lang.reflect.InvocationHandler.invokeDefault(proxy, method, args);
                     throw new AssertionError("Unexpected configuration read: " + method.getName());
                 }));
         set(resource, "machineAccounts", new MachineAccounts() {
