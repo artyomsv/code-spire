@@ -402,6 +402,14 @@ it('labels subscription_not_allowed and harness_reviews_only')
   19. `DispatchRequestParser` builds guard → `aManualDispatchOnClaudeCodeIsRefused`
   20. adapter `LOADED` refusal → `aRunThatLoadsGuidanceIsRefused`
   21. empty route on `SIGN_IN` → `aSignInHasNoRoute`
+  22. `PoolHealth` SQL kind clause → `noKeyOfTheKindIsAnEmptyPool`
+  23. `RunAttentionRows` reads `Optional.empty()` → `aSpentKindRaisesAttentionBesideAHealthyOne`
+  24. `RunFunding.pickKey` passes `Optional.empty()` → its fake-pool kind test (Task 1 fix round)
+  25. `RunResource.harnessCredential` passes `Optional.empty()` → its fake-pool kind test (Task 1 fix round)
+  26. `HarnessSignIns` `IllegalStateException` catch (~336-341) → no test reaches it today (the completion guard fires
+      first); if it survives, add a test that bypasses the completion guard, or record it as defence in depth
+  27. `RunLauncher` calls `parse` instead of `parseAll` → the launcher-level result test (Task 4)
+  28. `RunEventFold` drops the result `StateChange` → `anErrorResultFailsThroughTheFold`
 - [ ] **Step 2: Docs.** What 3b adds; the disabled branch and its reason (blockquote); Claude Code is reviews only and
   proxied only; `harness_credential.type` now chooses the key (Upgrading: check that every key's kind is its vendor);
   the Claude Code image is opt-in (`SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE`). UNVERIFIED: a run killed before
