@@ -29,6 +29,7 @@ dependencies {
     implementation(project(":spire-encryption")) // decrypt the per-command credentials (ADR-015)
     implementation(project(":spire-harness"))
     implementation(project(":spire-harness-codex"))
+    implementation(project(":spire-harness-claude-code"))
     implementation(project(":spire-runtime"))
     implementation(project(":spire-runtime-docker"))
     // SecretScrub: one credential scrubber, shared with the publisher. A module of its own and

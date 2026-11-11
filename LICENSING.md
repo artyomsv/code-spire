@@ -32,6 +32,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-worksource-gitlab` | Apache-2.0 | Reference GitLab ticket work source with separate write facade. |
 | `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-030). |
 | `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
+| `spire-harness-claude-code` | Apache-2.0 | Harness arm for Claude Code: review runs only, behind the model proxy, paid with an API key. The CLI itself is not redistributed. |
 | `spire-secrets` | Apache-2.0 | One credential scrubber, for every process that writes a failure message a human reads. JDK-only ON PURPOSE: the run worker must not inherit a git library to obtain it. |
 | `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
 | `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |

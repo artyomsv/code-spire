@@ -34,6 +34,15 @@ public interface HarnessAdapter {
     /** @return one normalized event, or empty when the line carries nothing the domain models. */
     Optional<RunEvent> parse(String line);
 
+    /**
+     * Every normalized event one line carries, in order. An arm whose line can carry several (one message with a
+     * text, a thinking and a tool block; a result with its usage and its outcome) overrides this; for every other arm
+     * it is {@link #parse}'s one event or none. The worker folds each event in turn.
+     */
+    default List<RunEvent> parseAll(String line) {
+        throw new UnsupportedOperationException("parseAll");
+    }
+
     TerminalOutcome classify(int exitCode, RunEventSummary seen);
 
     /**
