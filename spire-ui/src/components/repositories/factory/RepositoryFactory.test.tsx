@@ -473,7 +473,7 @@ describe('build setup', () => {
     offeringKeyedHarness();
     vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'TEST-keyed', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
     renderFactory();
-    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
     await screen.findByRole('option', { name: 'TEST-keyed' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
