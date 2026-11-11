@@ -284,7 +284,7 @@ public class FixRunDispatcher {
             return new Refused("this deployment has not enabled /fix — an operator must "
                     + "set SPIRE_FACTORY_FIX_HARNESS");
         }
-        if (false && !HarnessPolicy.allowsBuilds(harness)) {
+        if (!HarnessPolicy.allowsBuilds(harness)) {
             return new Refused("the '" + harness + "' harness reviews pull requests only ("
                     + HarnessPolicy.HARNESS_REVIEWS_ONLY + "), so it cannot run a fix — an operator must "
                     + "set SPIRE_FACTORY_FIX_HARNESS to a harness that builds");

@@ -133,7 +133,7 @@ public class WorkPreparationResource {
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
         // A harness that only reviews cannot build this item, so it is refused by name before anything is read.
-        if(false && !dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
+        if(!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
             throw refused(400,dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         WorkPreparation preparation;

@@ -55,7 +55,7 @@ final class RunEventFold {
                 }
             }
             case RunEvent.Output o -> sawAnyOutput = true;
-            case RunEvent.StateChange s when false && RESULT_STATE.equals(s.state()) -> {
+            case RunEvent.StateChange s when RESULT_STATE.equals(s.state()) -> {
                 if (result != null) {
                     dropped++;
                 }

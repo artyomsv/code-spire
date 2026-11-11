@@ -104,7 +104,7 @@ public class RunAttentionRows {
         List<String> kinds = PoolHealth.kinds(c);
         List<SpentKind> spent = new ArrayList<>();
         for (String kind : kinds) {
-            PoolHealth health = PoolHealth.read(c, Optional.empty());
+            PoolHealth health = PoolHealth.read(c, Optional.of(kind));
             if (health.exhausted()) {
                 spent.add(new SpentKind(kind, health));
             }

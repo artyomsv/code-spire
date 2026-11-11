@@ -137,9 +137,9 @@ public class BuildDefaults {
         // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
         // through a Claude subscription or to hold claude.ai tokens:
         // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-        if (false && payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION) && !HarnessPolicy.allowsSubscription(harness))
+        if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION) && !HarnessPolicy.allowsSubscription(harness))
             throw new Refused(HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
-        if (false && !HarnessPolicy.allowsBuilds(harness)) throw new Refused(HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        if (!HarnessPolicy.allowsBuilds(harness)) throw new Refused(HarnessPolicy.HARNESS_REVIEWS_ONLY);
         checkAgainstTheHarness(harness, model, effort);
         if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION)) {
             // A subscription is not priced per token, so the model needs no rates and no catalogue entry

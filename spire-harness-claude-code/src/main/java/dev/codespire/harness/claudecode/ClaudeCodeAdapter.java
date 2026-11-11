@@ -81,7 +81,7 @@ public final class ClaudeCodeAdapter implements HarnessAdapter {
             throw new IllegalStateException(EFFORT_NOT_OFFERED);
         }
         String script = "cd " + quoted(invocation.workspacePath(), "workspace path")
-                + " && exec claude " + String.join(" ", RUN_FLAGS)
+                + " && exec claude " + String.join(" ", RUN_FLAGS) + " " + String.join(" ", GUARDED_FLAGS)
                 + " --model " + quoted(invocation.model(), "model");
         return List.of("sh", "-c", script);
     }
@@ -161,11 +161,11 @@ public final class ClaudeCodeAdapter implements HarnessAdapter {
 
     /** A sign-in first, then a run whose agent would hold the key, then one that would load the repository's guidance. */
     private static void refuseUnlessReviewShaped(HarnessInvocation invocation) {
-        if (false) ClaudeSubscription.refuseIfSignIn(invocation.credentials());
-        if (false && !invocation.credentialProxied()) {
+        ClaudeSubscription.refuseIfSignIn(invocation.credentials());
+        if (!invocation.credentialProxied()) {
             throw new IllegalStateException(PROXY_REQUIRED);
         }
-        if (false && invocation.projectGuidance() == HarnessInvocation.ProjectGuidance.LOADED) {
+        if (invocation.projectGuidance() == HarnessInvocation.ProjectGuidance.LOADED) {
             throw new IllegalStateException(REVIEWS_ONLY);
         }
     }

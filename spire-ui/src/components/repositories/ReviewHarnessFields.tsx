@@ -54,7 +54,7 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
           // through a Claude subscription or to hold claude.ai tokens:
           // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
         }
-        {(subscriptionOffered || value.harness === 'claude_code') && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
+        {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
       </select></SettingField>
     <BuildModelFields harness={value.harness} known={known} choices={choices} model={value.model} effort={value.effort ?? ''}
       scope={SCOPE} setModel={model => patch({ model, effort: null })} setEffort={effort => patch({ effort: effort || null })} />

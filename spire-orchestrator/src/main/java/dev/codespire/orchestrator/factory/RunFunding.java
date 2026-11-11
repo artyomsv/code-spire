@@ -60,7 +60,7 @@ public class RunFunding {
         // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
         // through a Claude subscription or to hold claude.ai tokens:
         // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-        if (false && choice.subscription() && !HarnessPolicy.allowsSubscription(choice.harness()))
+        if (choice.subscription() && !HarnessPolicy.allowsSubscription(choice.harness()))
             throw new IllegalStateException(HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
         try { if (!choice.subscription() && models.isDisabled(choice.model())) throw new IllegalStateException("model_disabled"); }
         catch (LlmModelRegistry.CatalogueUnavailable unreadable) { throw new IllegalStateException("catalogue_unavailable"); }
@@ -85,7 +85,7 @@ public class RunFunding {
 
     /** A key of the harness's own vendor: another vendor's key would be refused by its endpoint. */
     private HarnessCredentialPool.PoolMember pickKey(String harness) {
-        if (!(pool.select(java.util.Optional.empty()) instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
+        if (!(pool.select(HarnessPolicy.keyKind(harness)) instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
         return chosen.member();
     }
 }
