@@ -44,6 +44,9 @@ public class WorkRunAssembly {
      */
     public Prepared assemble(Connection c,WorkSourceRegistry.Source source,WorkItemEvent item,WorkArtifacts.Evidence evidence,
                              dev.codespire.orchestrator.work.WorkLandFixes.Fix fix) throws SQLException {
+        // Before the step and the parse: the parse would refuse it too, in prose the item cannot show.
+        if (!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(item.preparation().harness()))
+            throw new IllegalStateException(dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
         String subject="work-"+item.progress().attemptId();
         // A plan step (M4 slice 3) builds its own prompt and start; a land fix after the plan is no step (decision 12),
         // and is told the whole plan is already built, never given step 1 as a single-step task.

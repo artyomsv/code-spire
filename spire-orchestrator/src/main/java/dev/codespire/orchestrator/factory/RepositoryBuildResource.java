@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.llm.HarnessTokenReport;
 import dev.codespire.contract.port.PullRequestLander;
 import dev.codespire.contract.scm.RepoRef;
@@ -49,6 +50,8 @@ public class RepositoryBuildResource {
      *
      * @param verifyMaxSeconds the longest verify time limit a save accepts: this deployment's wall clock (M4)
      * @param preparations the preparation values a save accepts (M4 slice 3)
+     * @param subscriptionHarnesses the listed harnesses a subscription seat may pay for (harness reviews 3b)
+     * @param buildHarnesses the listed harnesses that may build; the others only review (harness reviews 3b)
      */
     public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes,
                           Map<String, HarnessModels> models, long verifyMaxSeconds, List<String> preparations,
@@ -83,7 +86,8 @@ public class RepositoryBuildResource {
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)),
                 config.wallClockSeconds(), List.of(BuildDefaults.COMPOSED, BuildDefaults.GENERATED),
-                List.of(), List.of());
+                harnesses.stream().filter(HarnessPolicy::allowsSubscription).toList(),
+                harnesses.stream().filter(HarnessPolicy::allowsBuilds).toList());
     }
 
     private HarnessModels modelsOf(String harness) {

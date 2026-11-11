@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.HarnessSignInCommand;
 import dev.codespire.contract.event.HarnessSignInResult;
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -77,6 +78,11 @@ public class HarnessSignIns {
         // Stored as the row's own start time and sent with every start, so the wait is counted from the
         // operator's press however late, or however often, the start is delivered.
         Instant requested = Instant.now();
+        // Before the image is looked up: the refusal is about the harness, whatever this deployment configures.
+        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+        // through a Claude subscription or to hold claude.ai tokens:
+        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        if (!HarnessPolicy.allowsSubscription(harness)) return new Started(null, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
         String image = config.agentImage().get(harness);
         if (image == null) return new Started(null, "harness_unconfigured");
 
@@ -268,6 +274,14 @@ public class HarnessSignIns {
                             pending.map(View::state).orElse("gone"));
                     return;
                 }
+                // A row opened before start refused this harness: closed by name, before the sealed file is opened.
+                // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+                // through a Claude subscription or to hold claude.ai tokens:
+                // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+                if (!HarnessPolicy.allowsSubscription(pending.get().harness())) {
+                    fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+                    return;
+                }
                 String body = encryption.decryptString(result.sealedAuth(), HarnessSignInResult.sealedAad(result.signInId()));
                 // Judged on the SEALED BYTES, not on what the result claimed. The claim is a
                 // convenience for the wire; deciding a credential's kind from it means deciding from a
@@ -318,6 +332,12 @@ public class HarnessSignIns {
                     if (!"23505".equals(collision.getSQLState())) throw collision;
                     c.rollback(attempt);
                     fail(c, id, "harness_credential_label_taken");
+                    return;
+                } catch (IllegalStateException refused) {
+                    // The pool's own refusal, should the guard above ever be bypassed: the row is closed, not left open.
+                    if (!HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED.equals(refused.getMessage())) throw refused;
+                    c.rollback(attempt);
+                    fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
                     return;
                 }
                 try (PreparedStatement ps = c.prepareStatement("""

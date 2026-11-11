@@ -30,6 +30,7 @@ public class WorkPreparationResource {
     /**
      * The harnesses this deployment can run, each with the token types it can report: a key without an
      * agent image refuses at dispatch, and so does a model with no price for a type the harness reports.
+     * {@code subscriptionHarnesses} and {@code buildHarnesses} are the ones a seat may pay for and that may build.
      */
     public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes,
                           java.util.List<String> subscriptionHarnesses, java.util.List<String> buildHarnesses) {}
@@ -58,7 +59,8 @@ public class WorkPreparationResource {
         java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
         return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
                 harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
-                java.util.List.of(),java.util.List.of());
+                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsSubscription).toList(),
+                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsBuilds).toList());
     }
 
     /**
@@ -130,6 +132,9 @@ public class WorkPreparationResource {
 
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
+        // A harness that only reviews cannot build this item, so it is refused by name before anything is read.
+        if(!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
+            throw refused(400,dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         WorkPreparation preparation;
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();

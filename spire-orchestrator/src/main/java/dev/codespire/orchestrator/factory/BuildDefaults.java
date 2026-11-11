@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -129,10 +130,17 @@ public class BuildDefaults {
         if (harness == null || !config.agentImage().containsKey(harness))
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
-        checkAgainstTheHarness(harness, model, effort);
         String payWith;
         try { payWith = dev.codespire.contract.work.PayWith.normalise(input.payWith()); }
         catch (IllegalArgumentException unknown) { throw new Refused("pay_with_invalid"); }
+        // What the harness may be paid with and used for, before anything about the model is asked.
+        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+        // through a Claude subscription or to hold claude.ai tokens:
+        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION) && !HarnessPolicy.allowsSubscription(harness))
+            throw new Refused(HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+        if (!HarnessPolicy.allowsBuilds(harness)) throw new Refused(HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        checkAgainstTheHarness(harness, model, effort);
         if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION)) {
             // A subscription is not priced per token, so the model needs no rates and no catalogue entry
             // — the harness's own list above is what says it can run. What it does need is a seat.

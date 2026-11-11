@@ -483,6 +483,11 @@ public class HarnessCredentialPool {
      * @return the new member's id
      */
     public UUID addSubscription(Connection c, String label, String type, String body) throws SQLException {
+        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+        // through a Claude subscription or to hold claude.ai tokens:
+        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        if (!dev.codespire.contract.llm.HarnessPolicy.allowsSubscription(type))
+            throw new IllegalStateException(dev.codespire.contract.llm.HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
         String account = SignInFiles.accountOf(body)
                 .orElseThrow(() -> new IllegalArgumentException("subscription_unidentified"));
         UUID id = UUID.randomUUID();

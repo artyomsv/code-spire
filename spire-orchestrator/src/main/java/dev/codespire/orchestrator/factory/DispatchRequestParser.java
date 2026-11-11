@@ -70,6 +70,10 @@ final class DispatchRequestParser {
             throw badRequest("prompt exceeds " + MAX_PROMPT_CHARS + " characters");
         }
         String harness = required(req.harness(), "harness");
+        if (!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(harness)) {
+            throw badRequest(dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY + ": the '" + harness
+                    + "' harness reviews pull requests only; it cannot run a build, a fix or a factory run");
+        }
         String agentImage = config.agentImage().get(harness);
         if (agentImage == null) {
             throw badRequest("no agent image is configured for harness '" + harness
