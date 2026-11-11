@@ -55,10 +55,10 @@ export interface HarnessModels {
 export interface BuildOptions {
   /** Every configured harness, review-only ones included. */
   harnesses: string[];
-  /** The harnesses that may pay with a subscription seat. Absent from an older server: then every harness is offered it. */
-  subscriptionHarnesses?: string[];
-  /** The harnesses that may run builds. Absent from an older server: then every harness is offered. */
-  buildHarnesses?: string[];
+  /** The harnesses that may pay with a subscription seat. */
+  subscriptionHarnesses: string[];
+  /** The harnesses that may run builds. */
+  buildHarnesses: string[];
   /** Per harness, the token types it can report. A model that cannot price one of them is refused. */
   reportedTypes: Record<string, string[]>;
   /** Per harness, the models its image says it runs. Absent from an older server. */
@@ -94,13 +94,9 @@ export const saveBuildDefaults = (repository: string, input: { expectedRevision:
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);
 
-/** The harnesses a build or an item preparation may run. An older server sends no such list: then every harness. */
-export const buildHarnessesOf = (options: { harnesses: string[]; buildHarnesses?: string[] }): string[] =>
-  options.buildHarnesses ?? options.harnesses ?? [];
-
 // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
 // through a Claude subscription or to hold claude.ai tokens:
 // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-/** Whether the Subscription payment is offered to this harness; an older server sends no list: then every harness. */
-export const mayPayWithSubscription = (options: { harnesses: string[]; subscriptionHarnesses?: string[] } | undefined, harness: string): boolean =>
-  (options?.subscriptionHarnesses ?? options?.harnesses ?? []).includes(harness);
+/** Whether the Subscription payment is offered to this harness. A list that did not arrive offers it to none. */
+export const mayPayWithSubscription = (subscriptionHarnesses: string[] | undefined, harness: string): boolean =>
+  (subscriptionHarnesses ?? []).includes(harness);

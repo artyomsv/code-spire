@@ -7,7 +7,7 @@ import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
 import { harnessLabel } from '../../harnessLabels';
-import { PAY_WITH_LABEL, buildDefaultsKey, buildHarnessesOf, buildOptions, buildOptionsKey, mayPayWithSubscription, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
+import { PAY_WITH_LABEL, buildDefaultsKey, buildOptions, buildOptionsKey, mayPayWithSubscription, repositoryBranchHead, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -29,10 +29,10 @@ interface Props {
  */
 /** What the form offers: the harnesses and models this deployment can run. */
 interface Choices {
-  harnesses: string[]; subscriptionHarnesses?: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
+  harnesses: string[]; subscriptionHarnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]>;
   harnessModels: Record<string, HarnessModels>; verifyMaxSeconds?: number; preparations: Preparation[];
 }
-const NO_CHOICES: Choices = { harnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] };
+const NO_CHOICES: Choices = { harnesses: [], subscriptionHarnesses: [], models: [], reportedTypes: {}, harnessModels: {}, preparations: [] };
 
 /** How the specification and plan are made (M4 slice 3, §6.1). */
 const PREPARATION_LABEL: Record<Preparation, string> = { composed: 'Copy the ticket as one step', generated: 'Write them with the build model' };
@@ -60,7 +60,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   const options = optionsRead.data, models = modelsRead.data;
   // A wire answer of the wrong shape offers nothing rather than blanking the step.
   const choices: Choices = options && models
-    ? { harnesses: buildHarnessesOf(options), subscriptionHarnesses: options.subscriptionHarnesses ?? options.harnesses, models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
+    ? { harnesses: options.buildHarnesses ?? [], subscriptionHarnesses: options.subscriptionHarnesses ?? [], models: (models ?? []).filter(model => model.enabled), reportedTypes: options.reportedTypes ?? {},
       harnessModels: options.models ?? {}, verifyMaxSeconds: options.verifyMaxSeconds, preparations: options.preparations ?? [] }
     : NO_CHOICES;
   // The server offers generated only while it can honour it (M4 slice 3); otherwise the choice is not shown.
@@ -98,10 +98,13 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   // can leave a selection the dispatch refuses; the option goes grey, and Save used to stay live.
   const known = choices.harnessModels[form.harness];
   const offered = modelChoices(form.harness, known, choices.models, choices.reportedTypes, form.payWith);
-  const subscriptionOffered = mayPayWithSubscription({ harnesses: choices.harnesses, subscriptionHarnesses: choices.subscriptionHarnesses }, form.harness);
+  const subscriptionOffered = mayPayWithSubscription(choices.subscriptionHarnesses, form.harness);
   // The level belongs to the harness's model list, and a payment one harness allows another may not.
   const changeHarness = (harness: string) => setForm(previous => ({ ...previous, harness, effort: '',
-    payWith: mayPayWithSubscription({ harnesses: choices.harnesses, subscriptionHarnesses: choices.subscriptionHarnesses }, harness) ? previous.payWith : 'API_KEY' }));
+    payWith: mayPayWithSubscription(choices.subscriptionHarnesses, harness) ? previous.payWith : 'API_KEY' }));
+  // A stored subscription on a harness that does not allow one is not shown, so it must not be sent either.
+  const staleSubscription = !!options && !!form.harness && form.payWith === 'SUBSCRIPTION' && !subscriptionOffered;
+  useEffect(() => { if (staleSubscription) setForm(previous => ({ ...previous, payWith: 'API_KEY' })); }, [staleSubscription]);
   const picked = offered.find(choice => choice.value === form.model);
   // An unresolved model is UNKNOWN, not complete: before the catalogue answers, and for a saved name the
   // catalogue no longer offers, there is nothing to judge — so Save waits rather than guessing.
@@ -141,9 +144,11 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
         <select aria-label="Pay with" value={form.payWith}
           onChange={event => setForm(previous => ({ ...previous, payWith: event.target.value as PayWith }))}>
           <option value="API_KEY">{PAY_WITH_LABEL.API_KEY}</option>
-          // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
-          // through a Claude subscription or to hold claude.ai tokens:
-          // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+          {
+            // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+            // through a Claude subscription or to hold claude.ai tokens:
+            // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+          }
           {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
         </select></SettingField>
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}

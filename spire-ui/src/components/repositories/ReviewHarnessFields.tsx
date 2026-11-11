@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchLlmModels } from '../../api';
 import { preparationKeys } from '../work-items/workQueries';
@@ -28,11 +29,15 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
   const known = optionsRead.data?.models?.[value.harness];
   const priced = (modelsRead.data ?? []).filter(model => model.enabled);
   const choices = modelChoices(value.harness, known, priced, optionsRead.data?.reportedTypes ?? {}, value.payWith);
-  const subscriptionOffered = mayPayWithSubscription(optionsRead.data, value.harness);
+  const subscriptionOffered = mayPayWithSubscription(optionsRead.data?.subscriptionHarnesses, value.harness);
   const patch = (next: Partial<ReviewHarness>) => onChange(previous => ({ ...previous, ...next }));
   // The level belongs to the harness's model list, and a payment one harness allows another may not.
   const changeHarness = (harness: string) => onChange(previous => ({ ...previous, harness, effort: null,
-    payWith: mayPayWithSubscription(optionsRead.data, harness) ? previous.payWith : 'API_KEY' }));
+    payWith: mayPayWithSubscription(optionsRead.data?.subscriptionHarnesses, harness) ? previous.payWith : 'API_KEY' }));
+  // A stored subscription on a harness that does not allow one is not shown, so it must not be sent either.
+  const loaded = optionsRead.isSuccess;
+  const staleSubscription = loaded && !!value.harness && value.payWith === 'SUBSCRIPTION' && !subscriptionOffered;
+  useEffect(() => { if (staleSubscription) onChange(previous => ({ ...previous, payWith: 'API_KEY' })); }, [staleSubscription, onChange]);
   return <>
     <SettingField label="Harness" scope={SCOPE} hint="Required. The agent image that reviews this repository's pull requests, read-only. A refused run never falls back to an API provider.">
       {/* The level belongs to the harness's model list, so it does not survive a change of harness. */}
@@ -44,9 +49,11 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
     <SettingField label="Pay with" scope={SCOPE} hint="An API key is billed per token and needs a price for the model. A subscription uses a signed-in subscription seat at no per-token cost.">
       <select aria-label="Pay with" value={value.payWith} onChange={event => patch({ payWith: event.target.value as PayWith })}>
         <option value="API_KEY">{PAY_WITH_LABEL.API_KEY}</option>
-        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
-        // through a Claude subscription or to hold claude.ai tokens:
-        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        {
+          // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+          // through a Claude subscription or to hold claude.ai tokens:
+          // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        }
         {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
       </select></SettingField>
     <BuildModelFields harness={value.harness} known={known} choices={choices} model={value.model} effort={value.effort ?? ''}

@@ -73,10 +73,10 @@ async function read<T>(path: string, init?: RequestInit): Promise<T> {
 /** The harness names this deployment has an agent image for; anything else is refused at dispatch. */
 export interface PreparationOptions {
   harnesses: string[];
-  /** The harnesses that may pay with a subscription seat. Absent from an older server. */
-  subscriptionHarnesses?: string[];
-  /** The harnesses that may run builds. Absent from an older server. */
-  buildHarnesses?: string[];
+  /** The harnesses that may pay with a subscription seat. */
+  subscriptionHarnesses: string[];
+  /** The harnesses that may run builds. */
+  buildHarnesses: string[];
   reportedTypes: Record<string, string[]>;
 }
 export interface BranchHead { branch: string; commit: string }
