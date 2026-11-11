@@ -390,8 +390,10 @@ public class RunResource {
      *
      * <p>Each refusal says which of the three states the pool is in, because they need three
      * different actions — wait, replace a key, or configure one at all.
+     *
+     * <p>Package-private so {@code RunResourceKeyKindTest} can check that the harness's key kind reaches the pool.
      */
-    private HarnessCredentialPool.PoolMember harnessCredential(String harness) {
+    HarnessCredentialPool.PoolMember harnessCredential(String harness) {
         HarnessCredentialPool.Selection selection;
         try {
             // Paid with a key of the harness's own vendor.

@@ -54,7 +54,7 @@ class FixRunDispatcherTest {
     private Optional<ScmProvider> account = Optional.of(machineAccount());
     private HarnessCredentialPool.Selection selection =
             new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                    CREDENTIAL_ID, "pool-1", "anthropic", "https://example.invalid",
+                    CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
                     "TEST-harness-key-do-not-print"));
     private String configuredHarness = "codex";
     private String configuredModel = "TEST-model";
@@ -276,14 +276,6 @@ class FixRunDispatcherTest {
         assertEquals(dispatched.runId(), rows.getFirst().runId());
     }
 
-    /**
-     * <b>The row is written BEFORE the command is launched.</b>
-     *
-     * <p>A crash between them must leave a row with no command — recoverable, and visible in the runs
-     * view — rather than a command with no row. The latter is a paid run that neither cap counts,
-     * which is FR-F32 failing open in exactly the direction V54 exists to prevent. It is also the
-     * ordering {@code RunLaunch} assumes when it updates a row on failure.
-     */
     /** The fix harness's own key vendor pays it, and none of that vendor's keys is the empty-pool refusal. */
     @Test
     void aFixRunPaysWithItsHarnessKind() {
@@ -299,6 +291,14 @@ class FixRunDispatcherTest {
                 refused.why());
     }
 
+    /**
+     * <b>The row is written BEFORE the command is launched.</b>
+     *
+     * <p>A crash between them must leave a row with no command — recoverable, and visible in the runs
+     * view — rather than a command with no row. The latter is a paid run that neither cap counts,
+     * which is FR-F32 failing open in exactly the direction V54 exists to prevent. It is also the
+     * ordering {@code RunLaunch} assumes when it updates a row on failure.
+     */
     @Test
     void theRowIsRecordedBeforeTheCommandIsLaunched() {
         dispatch();
@@ -537,7 +537,7 @@ class FixRunDispatcherTest {
         launchOutcome = new RunLaunch.Dispatched();
         account = Optional.of(machineAccount());
         selection = new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                CREDENTIAL_ID, "pool-1", "anthropic", "https://example.invalid",
+                CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
                 "TEST-harness-key-do-not-print"));
         configuredHarness = "codex";
         configuredModel = "TEST-model";
