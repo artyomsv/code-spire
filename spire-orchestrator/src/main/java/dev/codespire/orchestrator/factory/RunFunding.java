@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
@@ -65,7 +66,7 @@ public class RunFunding {
                     + unpriced.stream().map(Enum::name).collect(Collectors.joining(",")));
         }
         if (spend.decide().refused()) throw new IllegalStateException("deployment_spend_cap_reached");
-        HarnessCredentialPool.PoolMember member = choice.subscription() ? pickSeat(choice.harness()) : pickKey();
+        HarnessCredentialPool.PoolMember member = choice.subscription() ? pickSeat(choice.harness()) : pickKey(choice.harness());
         // The agent gets the sign-in with its refresh token emptied; the whole file stays here, encrypted.
         String handedOver = choice.subscription() ? SignInFiles.forAgent(member.apiKey()) : member.apiKey();
         return new Funded(member, handedOver, admission.image());
@@ -75,8 +76,9 @@ public class RunFunding {
         return pool.selectSubscription(harness).orElseThrow(() -> new IllegalStateException("subscription_unavailable"));
     }
 
-    private HarnessCredentialPool.PoolMember pickKey() {
-        if (!(pool.select(java.util.Optional.empty()) instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
+    /** A key of the harness's own vendor: another vendor's key would be refused by its endpoint. */
+    private HarnessCredentialPool.PoolMember pickKey(String harness) {
+        if (!(pool.select(HarnessPolicy.keyKind(harness)) instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
         return chosen.member();
     }
 }

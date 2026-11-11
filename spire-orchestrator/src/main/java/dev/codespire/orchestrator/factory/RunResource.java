@@ -3,6 +3,7 @@ package dev.codespire.orchestrator.factory;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunIds;
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
@@ -155,7 +156,7 @@ public class RunResource {
         // needs the member's id. So a duplicate-subject request does still stamp a tiebreaker. That
         // costs one rotation position and no key, which is the residue rather than a fix, and it is
         // said here rather than left to be rediscovered.
-        HarnessCredentialPool.PoolMember credential = harnessCredential();
+        HarnessCredentialPool.PoolMember credential = harnessCredential(in.harness());
 
         RepoRef repo = new RepoRef(in.workspace(), in.slug());
         String runId = RunIds.of(in.scmType(), in.workspace(), in.slug(), in.subject(), FIRST_ATTEMPT);
@@ -390,10 +391,11 @@ public class RunResource {
      * <p>Each refusal says which of the three states the pool is in, because they need three
      * different actions — wait, replace a key, or configure one at all.
      */
-    private HarnessCredentialPool.PoolMember harnessCredential() {
+    private HarnessCredentialPool.PoolMember harnessCredential(String harness) {
         HarnessCredentialPool.Selection selection;
         try {
-            selection = pool.select(java.util.Optional.empty());
+            // Paid with a key of the harness's own vendor.
+            selection = pool.select(HarnessPolicy.keyKind(harness));
         } catch (IllegalStateException e) {
             // A read fault, not an empty pool. The pool throws rather than answering Empty
             // precisely to preserve that distinction, and nothing downstream of a bare 500 says

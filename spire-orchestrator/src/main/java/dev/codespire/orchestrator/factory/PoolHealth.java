@@ -6,6 +6,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * How much of the harness credential pool can serve a run right now.
@@ -44,17 +47,42 @@ public record PoolHealth(int members, int rejected, int resting, Instant returns
              -- The same boundary the selector draws: this explains why a RUN found nothing, so it must
              -- count exactly what a run could have been given.
              WHERE auth_mode = 'API_KEY'
+               -- And the same kind: a run is paid only with a key of its harness's vendor.
+               AND (CAST(? AS VARCHAR) IS NULL OR type = CAST(? AS VARCHAR))
             """;
 
-    public static PoolHealth read(Connection c, java.util.Optional<String> kind) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(SQL); ResultSet rs = ps.executeQuery()) {
-            if (!rs.next()) {
-                return new PoolHealth(0, 0, 0, null);
+    /**
+     * The pool's health for one key kind ({@code harness_credential.type}), or for every API key when
+     * the kind is empty.
+     */
+    public static PoolHealth read(Connection c, Optional<String> kind) throws SQLException {
+        String type = kind.orElse(null);
+        try (PreparedStatement ps = c.prepareStatement(SQL)) {
+            ps.setString(1, type);
+            ps.setString(2, type);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return new PoolHealth(0, 0, 0, null);
+                }
+                Timestamp returnsAt = rs.getTimestamp("returns_at");
+                return new PoolHealth(rs.getInt("members"), rs.getInt("rejected"), rs.getInt("resting"),
+                        returnsAt == null ? null : returnsAt.toInstant());
             }
-            Timestamp returnsAt = rs.getTimestamp("returns_at");
-            return new PoolHealth(rs.getInt("members"), rs.getInt("rejected"), rs.getInt("resting"),
-                    returnsAt == null ? null : returnsAt.toInstant());
         }
+    }
+
+    /** The key kinds of the enabled API keys, so each can be read on its own. */
+    public static List<String> kinds(Connection c) throws SQLException {
+        List<String> kinds = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT DISTINCT type FROM harness_credential
+                 WHERE enabled AND auth_mode = 'API_KEY' ORDER BY type
+                """); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                kinds.add(rs.getString(1));
+            }
+        }
+        return kinds;
     }
 
     /** Nothing can be handed out: every enabled member is either refused or resting. */

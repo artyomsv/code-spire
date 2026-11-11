@@ -77,12 +77,15 @@ public class HarnessCredentialPool {
      * reason {@code ExecuteRun} and {@code Credentials.Scm} mask theirs. A convention the type does
      * not enforce is one the type does not have.
      *
-     * <p>{@code label}, {@code type} and {@code baseUrl} are operator METADATA: they name the key in
-     * a vendor console and in this pool's own listing, and {@code baseUrl} is validated on the way in
-     * like every sibling registry's. The dispatch path reads only {@code apiKey} — the endpoint the
-     * agent calls is the harness image's, not this row's — so registering a member against a
-     * self-hosted base URL does not change where the model call goes. Recorded in the javadoc because
-     * the REST surface demands both fields, which reasonably implies they route something.
+     * <p>{@code type} is the key's vendor ({@code openai}, {@code anthropic}, ...), and dispatch reads
+     * it: a harness is paid only with a key of its own vendor ({@code HarnessPolicy.keyKind}), because a
+     * key of another vendor is refused by the harness's endpoint and would be marked dead for it.
+     *
+     * <p>{@code label} and {@code baseUrl} are operator METADATA: they name the key in a vendor console
+     * and in this pool's own listing, and {@code baseUrl} is validated on the way in like every sibling
+     * registry's. The endpoint the agent calls is the harness image's, not this row's, so registering a
+     * member against a self-hosted base URL does not change where the model call goes. Recorded in the
+     * javadoc because the REST surface demands the field, which reasonably implies it routes something.
      */
     public record PoolMember(UUID id, String label, String type, String baseUrl, String apiKey) {
 
@@ -157,6 +160,9 @@ public class HarnessCredentialPool {
      * failed to kill that mutation, which is worth recording so nobody hunts it a third time. What
      * IS asserted is the mechanism the rotation actually rests on — the use stamp above — and
      * removing that does fail a test. Change the index and this clause together.
+     *
+     * @param keyKind the key vendor the run's harness is paid with ({@code harness_credential.type}).
+     *                Empty selects from every API key, as before key kinds were read.
      */
     public Selection select(Optional<String> keyKind) {
         String sql = """
@@ -174,6 +180,7 @@ public class HarnessCredentialPool {
                           AND auth_mode = 'API_KEY'
                           AND rejected_at IS NULL
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
+                          AND (CAST(? AS VARCHAR) IS NULL OR type = CAST(? AS VARCHAR))
                         ORDER BY exhausted_at NULLS FIRST, last_used_at NULLS FIRST
                         LIMIT 1)
                    -- Checked again here, after any wait for the row: a member switched off or erased
@@ -183,11 +190,15 @@ public class HarnessCredentialPool {
                 RETURNING id, label, type, base_url, api_key
                 """;
         UUID chosen = null;
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            if (rs.next()) {
-                chosen = rs.getObject("id", UUID.class);
-                return new Selection.Chosen(decrypt(chosen, rs));
+        String kind = keyKind.orElse(null);
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, kind);
+            ps.setString(2, kind);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    chosen = rs.getObject("id", UUID.class);
+                    return new Selection.Chosen(decrypt(chosen, rs));
+                }
             }
         } catch (SQLException e) {
             // Not an empty pool: a read fault is not "you have no credentials", and answering Empty
@@ -205,9 +216,9 @@ public class HarnessCredentialPool {
             LOG.errorf(e, "harness credential %s could not be decrypted; it leaves the pool until an"
                     + " operator replaces it", chosen);
             markRejected(chosen);
-            return whyNothingIsAvailable();
+            return whyNothingIsAvailable(keyKind);
         }
-        return whyNothingIsAvailable();
+        return whyNothingIsAvailable(keyKind);
     }
 
     /**
@@ -298,10 +309,13 @@ public class HarnessCredentialPool {
      * {@code Empty}, because "no harness credential is configured" is precisely the wrong sentence
      * for an operator who has several, and it is the sentence this method's own design set out to
      * avoid.
+     *
+     * <p>It reads the kind the selection asked for: a resting key of another vendor is no reason for this
+     * run to wait, so a pool with none of its kind answers {@code Empty}.
      */
-    private Selection whyNothingIsAvailable() {
+    private Selection whyNothingIsAvailable(Optional<String> keyKind) {
         try (Connection c = dataSource.getConnection()) {
-            PoolHealth health = PoolHealth.read(c, Optional.empty());
+            PoolHealth health = PoolHealth.read(c, keyKind);
             if (health.members() == 0) {
                 return new Selection.Empty();
             }

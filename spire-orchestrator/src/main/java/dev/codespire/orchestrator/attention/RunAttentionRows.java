@@ -10,7 +10,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The factory's attention rows: a refused push, a dispatch nobody can confirm, and an exhausted
@@ -72,15 +74,20 @@ public class RunAttentionRows {
     }
 
     /**
-     * The pool's state, as one row rather than one per member (FR-F12).
+     * The pool's state, as one row per key kind rather than one per member (FR-F12).
      *
      * <p>Unlike the two above, this is not a fact about a run — it is a fact about the deployment,
-     * and its consequence is that NO run can start. So it counts rather than lists, and it carries
-     * no acknowledgement: a member recovering or being replaced is what removes it, which is the
-     * panel's contract met by the cause going away rather than by an operator silencing it.
+     * and its consequence is that no run paid by that kind can start. So it counts rather than lists,
+     * and it carries no acknowledgement: a member recovering or being replaced is what removes it,
+     * which is the panel's contract met by the cause going away rather than by an operator silencing it.
+     *
+     * <p><b>Per kind</b>, because a harness is paid only with keys of its own vendor: a spent kind
+     * blocks the harnesses it pays while another kind's keys still serve theirs. The row's subject is
+     * the kind, so two spent kinds are two rows, and only when every kind is spent does the message say
+     * that no factory run can start.
      *
      * <p>BLOCKING rather than WARNING, on the same reasoning the spend cap's row uses: severity
-     * describes impact, not fault, and while this holds every factory run is refused.
+     * describes impact, not fault, and while this holds every run paid by that kind is refused.
      *
      * <p>Raised only when NOTHING is selectable, never when the pool is merely under strain. A pool
      * with one rested member and three rejected ones still starts every run, so a row there would be
@@ -94,21 +101,37 @@ public class RunAttentionRows {
      * told the same operator that everything was merely rate limited, and to retry.
      */
     private void collectPoolExhaustion(Connection c, List<AttentionView> rows) throws SQLException {
-        PoolHealth health = PoolHealth.read(c, java.util.Optional.empty());
-        if (!health.exhausted()) {
-            return;
+        List<String> kinds = PoolHealth.kinds(c);
+        List<SpentKind> spent = new ArrayList<>();
+        for (String kind : kinds) {
+            PoolHealth health = PoolHealth.read(c, Optional.of(kind));
+            if (health.exhausted()) {
+                spent.add(new SpentKind(kind, health));
+            }
         }
-        rows.add(new AttentionView(POOL_CODE, Severity.BLOCKING, null, poolMessage(health), "/"));
+        boolean nothingServes = spent.size() == kinds.size();
+        for (SpentKind kind : spent) {
+            rows.add(new AttentionView(POOL_CODE, Severity.BLOCKING, kind.kind(),
+                    poolMessage(kind, nothingServes), "/"));
+        }
     }
 
-    private static String poolMessage(PoolHealth health) {
+    /** A key kind with nothing selectable, and the health that says why. */
+    private record SpentKind(String kind, PoolHealth health) {
+    }
+
+    private static String poolMessage(SpentKind spent, boolean nothingServes) {
+        String kind = spent.kind();
+        PoolHealth health = spent.health();
+        String consequence = nothingServes ? "so no factory run can start"
+                : "so no run paid with " + kind + " keys can start";
         if (health.resting() == 0) {
-            return "All " + health.rejected() + " harness credential(s) were refused by their provider,"
-                    + " so no factory run can start. Nothing recovers on its own — rotating onto a"
+            return "All " + health.rejected() + " " + kind + " harness credential(s) were refused by their"
+                    + " provider, " + consequence + ". Nothing recovers on its own — rotating onto a"
                     + " refused key spends a request per run to rediscover it is dead. Replace the keys,"
                     + " or clear one you have fixed.";
         }
-        return "Every harness credential is exhausted, so no factory run can start. The earliest rate"
+        return "Every " + kind + " harness credential is exhausted, " + consequence + ". The earliest rate"
                 + " limit lifts at " + health.returnsAt() + "." + health.permanentlyLostHalf();
     }
 

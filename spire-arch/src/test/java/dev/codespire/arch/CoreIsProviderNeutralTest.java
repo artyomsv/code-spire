@@ -158,6 +158,11 @@ class CoreIsProviderNeutralTest {
                         + "heard of is refused rather than silently under-priced — the failure mode the "
                         + "neutrality rule exists to prevent cannot occur here. Drift is caught in the "
                         + "adapter's own module by CodexReportsWhatTheContractDeclaresTest.");
+        allowed.put("spire-contract/src/main/java/dev/codespire/contract/llm/HarnessPolicy.java",
+                "Restricts the harnesses it lists: which key vendor pays them, whether a subscription is "
+                        + "allowed, whether they may build. The orchestrator decides payment and has no "
+                        + "dependency on the harness tier, so this cannot live on an adapter. An unlisted name "
+                        + "is not constrained here and has no adapter, so the worker refuses it before it runs.");
         return Collections.unmodifiableMap(allowed);
     }
 

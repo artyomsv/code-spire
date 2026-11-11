@@ -34,7 +34,10 @@ public final class HarnessTokenReport {
 
     private static final Map<String, Set<TokenType>> REPORTED = Map.of(
             "codex", Set.copyOf(EnumSet.of(TokenType.INPUT, TokenType.CACHED_INPUT, TokenType.CACHE_WRITE,
-                    TokenType.OUTPUT, TokenType.REASONING)));
+                    TokenType.OUTPUT, TokenType.REASONING)),
+            // Anthropic's usage carries no separate reasoning count: thinking tokens are billed as output.
+            "claude_code", Set.copyOf(EnumSet.of(TokenType.INPUT, TokenType.CACHED_INPUT, TokenType.CACHE_WRITE,
+                    TokenType.OUTPUT)));
 
     private HarnessTokenReport() {}
 
