@@ -40,7 +40,7 @@ public interface HarnessAdapter {
      * it is {@link #parse}'s one event or none. The worker folds each event in turn.
      */
     default List<RunEvent> parseAll(String line) {
-        throw new UnsupportedOperationException("parseAll");
+        return parse(line).stream().toList();
     }
 
     TerminalOutcome classify(int exitCode, RunEventSummary seen);
