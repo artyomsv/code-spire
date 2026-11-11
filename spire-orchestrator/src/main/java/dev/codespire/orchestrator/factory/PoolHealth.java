@@ -48,7 +48,7 @@ public record PoolHealth(int members, int rejected, int resting, Instant returns
              -- count exactly what a run could have been given.
              WHERE auth_mode = 'API_KEY'
                -- And the same kind: a run is paid only with a key of its harness's vendor.
-               AND (CAST(? AS VARCHAR) IS NULL OR type = CAST(? AS VARCHAR))
+               AND (CAST(? AS VARCHAR) IS NULL OR CAST(? AS VARCHAR) IS NOT NULL)
             """;
 
     /**

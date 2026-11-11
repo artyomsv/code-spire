@@ -291,7 +291,7 @@ public class RunLauncher {
         HarnessAdapter adapter = live.launch().adapter();
         RunEventStream transcript = live.watchers().transcript();
         return streams.submit(() ->
-                runtime.attach(live.handle(), LogChannel.AGENT, line -> adapter.parseAll(line).forEach(event -> {
+                runtime.attach(live.handle(), LogChannel.AGENT, line -> adapter.parse(line).ifPresent(event -> {
                     // One parse, two readers. The fold decides the run's outcome and stays bounded;
                     // the transcript is the operator-facing tier and is bounded separately.
                     seen.accept(event);
