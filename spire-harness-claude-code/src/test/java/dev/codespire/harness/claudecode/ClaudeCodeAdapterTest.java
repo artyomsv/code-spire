@@ -123,8 +123,10 @@ class ClaudeCodeAdapterTest {
         RunEvent.ToolUse tool = assertInstanceOf(RunEvent.ToolUse.class, events.get(2));
         assertEquals("Bash", tool.tool());
         assertTrue(tool.summary().contains("git diff TEST-base HEAD"), tool.summary());
-        assertEquals(events.get(0), adapter.parse(ClaudeCodeLines.THREE_BLOCKS).orElseThrow(),
-                "parse is the first event of parseAll");
+        // Each event is stamped when it is read, so the two reads compare by content, not by record equality.
+        RunEvent.Output first = assertInstanceOf(RunEvent.Output.class,
+                adapter.parse(ClaudeCodeLines.THREE_BLOCKS).orElseThrow(), "parse is the first event of parseAll");
+        assertEquals("TEST-answer", first.text());
     }
 
     /** An assistant message's own usage is per call; the run's usage is the result line's, so this line reports none. */
