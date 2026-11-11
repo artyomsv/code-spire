@@ -18,7 +18,7 @@ repositories {
 
 dependencies {
     // Tink stays encapsulated here — the public API is byte[]/String only.
-    implementation("com.google.crypto.tink:tink:1.23.0")
+    implementation("com.google.crypto.tink:tink:1.24.0")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
