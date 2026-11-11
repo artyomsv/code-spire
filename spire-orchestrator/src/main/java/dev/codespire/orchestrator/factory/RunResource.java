@@ -393,7 +393,7 @@ public class RunResource {
     private HarnessCredentialPool.PoolMember harnessCredential() {
         HarnessCredentialPool.Selection selection;
         try {
-            selection = pool.select();
+            selection = pool.select(java.util.Optional.empty());
         } catch (IllegalStateException e) {
             // A read fault, not an empty pool. The pool throws rather than answering Empty
             // precisely to preserve that distinction, and nothing downstream of a bare 500 says

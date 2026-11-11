@@ -46,7 +46,7 @@ public record PoolHealth(int members, int rejected, int resting, Instant returns
              WHERE auth_mode = 'API_KEY'
             """;
 
-    public static PoolHealth read(Connection c) throws SQLException {
+    public static PoolHealth read(Connection c, java.util.Optional<String> kind) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(SQL); ResultSet rs = ps.executeQuery()) {
             if (!rs.next()) {
                 return new PoolHealth(0, 0, 0, null);

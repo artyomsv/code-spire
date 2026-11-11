@@ -94,7 +94,7 @@ public class RunAttentionRows {
      * told the same operator that everything was merely rate limited, and to retry.
      */
     private void collectPoolExhaustion(Connection c, List<AttentionView> rows) throws SQLException {
-        PoolHealth health = PoolHealth.read(c);
+        PoolHealth health = PoolHealth.read(c, java.util.Optional.empty());
         if (!health.exhausted()) {
             return;
         }

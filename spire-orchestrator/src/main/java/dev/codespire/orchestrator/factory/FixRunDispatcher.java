@@ -177,7 +177,7 @@ public class FixRunDispatcher {
         // they then refused -- and it holds a decrypted key from here on.
         HarnessCredentialPool.Selection selection;
         try {
-            selection = pool.select();
+            selection = pool.select(Optional.empty());
         } catch (IllegalStateException readFault) {
             // A read fault is NOT an empty pool, and the pool throws rather than answering Empty
             // precisely to keep the two apart. Answering "no credential is configured" to a database

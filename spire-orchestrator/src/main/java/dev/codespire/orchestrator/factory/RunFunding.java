@@ -76,7 +76,7 @@ public class RunFunding {
     }
 
     private HarnessCredentialPool.PoolMember pickKey() {
-        if (!(pool.select() instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
+        if (!(pool.select(java.util.Optional.empty()) instanceof HarnessCredentialPool.Selection.Chosen chosen)) throw new IllegalStateException("harness_credential_unavailable");
         return chosen.member();
     }
 }

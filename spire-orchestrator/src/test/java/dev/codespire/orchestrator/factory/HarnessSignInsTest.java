@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -203,7 +204,7 @@ class HarnessSignInsTest {
         // that ignored the mode could possibly return. Other suites leave keys in this pool, and a test
         // that asked what the whole pool answers would be testing them.
         withNothingElseAvailable(() -> {
-            var selection = pool.select();
+            var selection = pool.select(Optional.empty());
             assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, selection,
                     "a run must find NOTHING rather than a sign-in file dressed as a key: " + selection);
         });
@@ -218,7 +219,7 @@ class HarnessSignInsTest {
         withNothingElseAvailable(() -> {
             pool.add("TEST-seat-real-key", "openai", "https://api.example.test", "sk-TEST-not-real");
 
-            var selection = pool.select();
+            var selection = pool.select(Optional.empty());
 
             var chosen = assertInstanceOf(HarnessCredentialPool.Selection.Chosen.class, selection).member();
             assertEquals("TEST-seat-real-key", chosen.label());

@@ -70,6 +70,7 @@ class FixRunDispatcherTest {
     private final List<String> order = new ArrayList<>();
     private final List<String> claimsChecked = new ArrayList<>();
     private final List<String> plannedFor = new ArrayList<>();
+    private final List<Optional<String>> keyKindsAsked = new ArrayList<>();
 
     private FixRunDispatcher dispatcher() {
         FixRunDispatcher dispatcher = new FixRunDispatcher();
@@ -140,9 +141,11 @@ class FixRunDispatcherTest {
             }
         };
         dispatcher.pool = new HarnessCredentialPool() {
+            // The only method this path reaches; left to the real one it would open a database.
             @Override
-            public Selection select() {
+            public Selection select(Optional<String> keyKind) {
                 order.add("credential");
+                keyKindsAsked.add(keyKind);
                 return selection;
             }
         };
@@ -281,6 +284,21 @@ class FixRunDispatcherTest {
      * which is FR-F32 failing open in exactly the direction V54 exists to prevent. It is also the
      * ordering {@code RunLaunch} assumes when it updates a row on failure.
      */
+    /** The fix harness's own key vendor pays it, and none of that vendor's keys is the empty-pool refusal. */
+    @Test
+    void aFixRunPaysWithItsHarnessKind() {
+        configuredHarness = "codex";
+
+        assertInstanceOf(FixRunDispatcher.Dispatched.class, dispatch());
+        assertEquals(List.of(Optional.of("openai")), keyKindsAsked);
+
+        resetToTheHappyPath();
+        selection = new HarnessCredentialPool.Selection.Empty();
+        FixRunDispatcher.Refused refused = assertInstanceOf(FixRunDispatcher.Refused.class, dispatch());
+        assertEquals("no harness credential is configured, so there is no key for a fix run to call the model with",
+                refused.why());
+    }
+
     @Test
     void theRowIsRecordedBeforeTheCommandIsLaunched() {
         dispatch();

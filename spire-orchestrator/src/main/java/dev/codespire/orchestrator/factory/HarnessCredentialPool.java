@@ -158,7 +158,7 @@ public class HarnessCredentialPool {
      * IS asserted is the mechanism the rotation actually rests on — the use stamp above — and
      * removing that does fail a test. Change the index and this clause together.
      */
-    public Selection select() {
+    public Selection select(Optional<String> keyKind) {
         String sql = """
                 UPDATE harness_credential
                    SET last_used_at = now(), updated_at = now()
@@ -301,7 +301,7 @@ public class HarnessCredentialPool {
      */
     private Selection whyNothingIsAvailable() {
         try (Connection c = dataSource.getConnection()) {
-            PoolHealth health = PoolHealth.read(c);
+            PoolHealth health = PoolHealth.read(c, Optional.empty());
             if (health.members() == 0) {
                 return new Selection.Empty();
             }

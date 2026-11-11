@@ -20,6 +20,14 @@ class ModelProxyLogParserTest {
         assertEquals(new ModelProxyReport(2, 2, List.of()), report);
     }
 
+    /** Claude Code calls Anthropic's Messages route, so a 401 there is a refused key like Codex's. */
+    @Test
+    void aRefusedAnthropicKeyIsRejected() {
+        ModelProxyReport report = ModelProxyLogParser.parse(List.of("spire-model POST /v1/messages -> 401"));
+
+        assertEquals(1, report.rejected());
+    }
+
     @Test
     void a401OffTheModelCallAndA403AreNotRejections() {
         // A seat's account check can answer 401 while the seat still works, and a 403 can be a challenge or an
