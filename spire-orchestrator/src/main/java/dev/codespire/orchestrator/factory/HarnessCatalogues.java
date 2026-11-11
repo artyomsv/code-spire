@@ -86,7 +86,7 @@ public class HarnessCatalogues {
     @Scheduled(every = "${spire.harness-catalogue-interval:10m}", delayed = "1m",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     void refresh() {
-        for (Map.Entry<String, String> harness : config.agentImage().entrySet()) {
+        for (Map.Entry<String, String> harness : config.configuredAgentImages().entrySet()) {
             try {
                 KafkaSends.sendAndAwait(commands, harness.getKey(),
                         new HarnessImageCommand.Describe(UUID.randomUUID().toString(), harness.getKey(), harness.getValue(),
@@ -107,7 +107,7 @@ public class HarnessCatalogues {
      * answer that arrives after the configuration moved on would describe models that will not run.
      */
     public void record(HarnessImageResult.Described answer) {
-        String current = config.agentImage().get(answer.harness());
+        String current = config.configuredAgentImages().get(answer.harness());
         if (current == null || !current.equals(answer.image())) {
             LOG.infof("ignoring a model catalogue for %s that describes an image it no longer runs", answer.harness());
             return;
@@ -186,7 +186,7 @@ public class HarnessCatalogues {
     }
 
     private String imageOf(String harness, Optional<Catalogue> known) {
-        return known.map(Catalogue::pinnedImage).orElseGet(() -> config.agentImage().get(harness));
+        return known.map(Catalogue::pinnedImage).orElseGet(() -> config.configuredAgentImages().get(harness));
     }
 
     /**
@@ -202,7 +202,7 @@ public class HarnessCatalogues {
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) return Optional.empty();
                 // An answer for an image the configuration has since left is not served.
-                if (!rs.getString("image").equals(config.agentImage().get(harness))) return Optional.empty();
+                if (!rs.getString("image").equals(config.configuredAgentImages().get(harness))) return Optional.empty();
                 return Optional.of(new Catalogue(rs.getString("harness"), rs.getString("image"),
                         HarnessImageResult.Status.valueOf(rs.getString("status")),
                         mapper.readValue(rs.getString("models"), new TypeReference<List<HarnessImageResult.Model>>() { }),

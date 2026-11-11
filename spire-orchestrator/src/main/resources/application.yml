@@ -439,8 +439,12 @@ spire:
   factory:
     # Agent image per harness NAME. Keyed by name so the orchestrator never spells a harness; a
     # harness with no image here is refused at dispatch, before a row is written or a token moves.
+    # Claude Code is opt-in: `none` (FactoryConfig.NOT_CONFIGURED) leaves it unconfigured, because SmallRye
+    # Config refuses an empty map value and `${VAR:}` would fail startup. Every reader uses
+    # FactoryConfig.configuredAgentImages(), which drops it, so it is in no list and refused at every door.
     agent-image:
       codex: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:spire-agent-codex:latest}
+      claude_code: ${SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE:none}
     wall-clock-seconds: ${SPIRE_FACTORY_WALL_CLOCK_SECONDS:1800}
     # A harness review run's wall clock (harness reviews, step 4). A tuning knob with a default; startup refuses
     # one above wall-clock-seconds, because the run-worker would refuse the unit after it was paid for.

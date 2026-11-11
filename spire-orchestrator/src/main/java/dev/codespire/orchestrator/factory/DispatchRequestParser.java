@@ -74,10 +74,10 @@ final class DispatchRequestParser {
             throw badRequest(dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY + ": the '" + harness
                     + "' harness reviews pull requests only; it cannot run a build, a fix or a factory run");
         }
-        String agentImage = config.agentImage().get(harness);
+        String agentImage = config.configuredAgentImages().get(harness);
         if (agentImage == null) {
             throw badRequest("no agent image is configured for harness '" + harness
-                    + "'; this deployment configures " + config.agentImage().keySet()
+                    + "'; this deployment configures " + config.configuredAgentImages().keySet()
                     + " (spire.factory.agent-image.<harness>)");
         }
         String model = required(req.model(), "model");

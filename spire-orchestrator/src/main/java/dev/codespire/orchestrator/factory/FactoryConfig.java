@@ -23,6 +23,18 @@ public interface FactoryConfig {
     @WithName("agent-image")
     Map<String, String> agentImage();
 
+    /** The value that leaves a harness unconfigured: SmallRye Config refuses an empty map value at startup. */
+    String NOT_CONFIGURED = "none";
+
+    /**
+     * The harnesses this deployment runs, each with its image: {@link #agentImage()} without the entries set to
+     * {@link #NOT_CONFIGURED}. Every reader asks this, never the raw map, so an opt-in harness left at
+     * {@code none} is absent from every list and refused as unconfigured at every door.
+     */
+    default Map<String, String> configuredAgentImages() {
+        return agentImage();
+    }
+
     /** The wall-clock cap handed to the runtime; the run is cancelled and salvaged when it elapses. */
     @WithName("wall-clock-seconds")
     @WithDefault("1800")
@@ -56,7 +68,7 @@ public interface FactoryConfig {
 
     interface Fix {
 
-        /** Must be a key of {@link #agentImage()}, or the dispatch refuses before it spends. */
+        /** Must be a key of {@link FactoryConfig#configuredAgentImages()}, or the dispatch refuses before it spends. */
         Optional<String> harness();
 
         /** Must be priceable, or the charge ledger records a run whose cost is unknowable. */

@@ -294,7 +294,7 @@ public class FixRunDispatcher {
             return new Refused("this deployment has not enabled /fix — an operator must "
                     + "set SPIRE_FACTORY_FIX_MODEL");
         }
-        String image = config.agentImage().get(harness);
+        String image = config.configuredAgentImages().get(harness);
         if (image == null || image.isBlank()) {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");

@@ -192,7 +192,7 @@ public class RepositoryRegistry {
             throw new IllegalArgumentException("Review with: " + HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED + " — the "
                     + harness.harness() + " harness pays with an API key only");
         }
-        if (harness.harness() == null || !factoryConfig.agentImage().containsKey(harness.harness())) {
+        if (harness.harness() == null || !factoryConfig.configuredAgentImages().containsKey(harness.harness())) {
             throw new IllegalArgumentException("Review with: unknown harness " + harness.harness()
                     + "; choose one with an agent image (spire.factory.agent-image.<harness>)");
         }

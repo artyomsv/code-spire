@@ -56,7 +56,7 @@ public class WorkPreparationResource {
 
     @GET @Path("/options")
     public Options options() {
-        java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
+        java.util.List<String> harnesses=factoryConfig.configuredAgentImages().keySet().stream().sorted().toList();
         return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
                 harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
                 harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsSubscription).toList(),

@@ -127,7 +127,7 @@ public class BuildDefaults {
         // refusal back where this slice is taking it away from: after an approval, mid-item.
         if (!DispatchRequestParser.isRefName(branch)) throw new Refused("base_branch_invalid");
         // An exact key, no case folding, as at DispatchRequestParser.java:73.
-        if (harness == null || !config.agentImage().containsKey(harness))
+        if (harness == null || !config.configuredAgentImages().containsKey(harness))
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
         String payWith;

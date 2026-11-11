@@ -80,7 +80,7 @@ public class RepositoryBuildResource {
 
     @GET @Path("/build/options")
     public Options options() {
-        List<String> harnesses = config.agentImage().keySet().stream().sorted().toList();
+        List<String> harnesses = config.configuredAgentImages().keySet().stream().sorted().toList();
         return new Options(harnesses,
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),

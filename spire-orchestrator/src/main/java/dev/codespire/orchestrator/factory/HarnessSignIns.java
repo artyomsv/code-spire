@@ -83,7 +83,7 @@ public class HarnessSignIns {
         // through a Claude subscription or to hold claude.ai tokens:
         // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
         if (!HarnessPolicy.allowsSubscription(harness)) return new Started(null, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
-        String image = config.agentImage().get(harness);
+        String image = config.configuredAgentImages().get(harness);
         if (image == null) return new Started(null, "harness_unconfigured");
 
         // COMMIT FIRST, then publish. The earlier order inserted the row, awaited the broker and
@@ -178,7 +178,7 @@ public class HarnessSignIns {
             ps.setTimestamp(2, Timestamp.from(Instant.now().minus(EXPIRY_GRACE)));
         });
         for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
-            String image = config.agentImage().get(row.harness());
+            String image = config.configuredAgentImages().get(row.harness());
             boolean windowClosed = !row.requestedAt().plus(START_WITHIN).isAfter(Instant.now());
             if (row.requestedAt().plus(UNCLAIMED_DEADLINE).isBefore(Instant.now()) || image == null) {
                 failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
