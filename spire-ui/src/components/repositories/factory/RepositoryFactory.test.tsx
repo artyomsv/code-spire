@@ -481,6 +481,24 @@ describe('build setup', () => {
       expect.objectContaining({ harness: 'TEST-keyed', payWith: 'API_KEY' })));
   });
 
+  // The options can arrive before the model catalogue; until both are in, the harness lists are not known to be empty.
+  it('keeps a stored subscription while the model catalogue is still loading', async () => {
+    let resolveModels!: (models: Awaited<ReturnType<typeof api.fetchLlmModels>>) => void;
+    const catalogue = await vi.mocked(api.fetchLlmModels)();
+    vi.mocked(api.fetchLlmModels).mockReturnValue(new Promise(resolve => { resolveModels = resolve; }));
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    await waitFor(() => expect(build.buildOptions).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { resolveModels(catalogue); });
+    await screen.findByRole('option', { name: 'TEST model (TEST-model)' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
+      expect.objectContaining({ harness: 'codex', payWith: 'SUBSCRIPTION' })));
+  });
+
   // Harness reviews 3b: a review-only harness is configured but may not build.
   it('lists only build harnesses in the build setup', async () => {
     vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'claude_code'], buildHarnesses: ['codex'],
