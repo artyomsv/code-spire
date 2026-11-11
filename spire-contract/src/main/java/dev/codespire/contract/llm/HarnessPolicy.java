@@ -30,6 +30,12 @@ public final class HarnessPolicy {
     /** Claude Code reviews only; building with it is not offered yet. */
     private static final Set<String> NO_BUILDS = Set.of("claude_code");
 
+    /** The refusal every door gives a subscription for a harness that may not use one. */
+    public static final String SUBSCRIPTION_NOT_ALLOWED = "subscription_not_allowed";
+
+    /** The refusal every build, fix and factory dispatch gives a harness that may only review. */
+    public static final String HARNESS_REVIEWS_ONLY = "harness_reviews_only";
+
     private HarnessPolicy() {}
 
     /** The key vendor that pays this harness, or empty when this class does not constrain it. */

@@ -51,7 +51,8 @@ public class RepositoryBuildResource {
      * @param preparations the preparation values a save accepts (M4 slice 3)
      */
     public record Options(List<String> harnesses, Map<String, List<String>> reportedTypes,
-                          Map<String, HarnessModels> models, long verifyMaxSeconds, List<String> preparations) {}
+                          Map<String, HarnessModels> models, long verifyMaxSeconds, List<String> preparations,
+                          List<String> subscriptionHarnesses, List<String> buildHarnesses) {}
 
     /**
      * The models a harness can run, as its image declares them, and why there are none when there are none.
@@ -81,7 +82,8 @@ public class RepositoryBuildResource {
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness,
                         harness -> HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
                 harnesses.stream().collect(java.util.stream.Collectors.toMap(harness -> harness, this::modelsOf)),
-                config.wallClockSeconds(), List.of(BuildDefaults.COMPOSED, BuildDefaults.GENERATED));
+                config.wallClockSeconds(), List.of(BuildDefaults.COMPOSED, BuildDefaults.GENERATED),
+                List.of(), List.of());
     }
 
     private HarnessModels modelsOf(String harness) {

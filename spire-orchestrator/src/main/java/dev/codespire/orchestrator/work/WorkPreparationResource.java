@@ -31,7 +31,8 @@ public class WorkPreparationResource {
      * The harnesses this deployment can run, each with the token types it can report: a key without an
      * agent image refuses at dispatch, and so does a model with no price for a type the harness reports.
      */
-    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes) {}
+    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes,
+                          java.util.List<String> subscriptionHarnesses, java.util.List<String> buildHarnesses) {}
     public record Head(String branch,String commit) {}
     /**
      * What an approver is asked to approve, read from the tracker now: the specification text and the
@@ -56,7 +57,8 @@ public class WorkPreparationResource {
     public Options options() {
         java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
         return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
-                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
+                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
+                java.util.List.of(),java.util.List.of());
     }
 
     /**
