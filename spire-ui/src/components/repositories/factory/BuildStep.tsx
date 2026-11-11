@@ -103,7 +103,8 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
   const changeHarness = (harness: string) => setForm(previous => ({ ...previous, harness, effort: '',
     payWith: mayPayWithSubscription(choices.subscriptionHarnesses, harness) ? previous.payWith : 'API_KEY' }));
   // A stored subscription on a harness that does not allow one is not shown, so it must not be sent either.
-  const staleSubscription = !!options && !!form.harness && form.payWith === 'SUBSCRIPTION' && !subscriptionOffered;
+  const staleSubscription = !!options && !!form.harness && form.payWith === 'SUBSCRIPTION'
+    && !mayPayWithSubscription(options.subscriptionHarnesses, form.harness);
   useEffect(() => { if (staleSubscription) setForm(previous => ({ ...previous, payWith: 'API_KEY' })); }, [staleSubscription]);
   const picked = offered.find(choice => choice.value === form.model);
   // An unresolved model is UNKNOWN, not complete: before the catalogue answers, and for a saved name the
