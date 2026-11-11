@@ -55,3 +55,21 @@ it('names harnesses by label', async () => {
   expect(option.value).toBe('claude_code');
   expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument();
 });
+
+// A JSX child that starts with // is text, not a comment: the history note must not reach the page.
+it('keeps the history note out of the Pay with select', async () => {
+  await show({ harness: 'codex', model: '', effort: null, payWith: 'API_KEY' });
+  expect(screen.getByRole('combobox', { name: 'Pay with' }).textContent).not.toContain('NOT ALLOWED');
+});
+
+it('normalises a stored subscription on a harness that does not allow one to API key', async () => {
+  await show({ harness: 'claude_code', model: '', effort: null, payWith: 'SUBSCRIPTION' });
+  await waitFor(() => expect(latest.payWith).toBe('API_KEY'));
+  expect(latest.harness).toBe('claude_code');
+});
+
+it('keeps a stored subscription on a harness that allows one', async () => {
+  await show({ harness: 'codex', model: '', effort: null, payWith: 'SUBSCRIPTION' });
+  expect(latest.payWith).toBe('SUBSCRIPTION');
+  expect(screen.getByRole('combobox', { name: 'Pay with' })).toHaveValue('SUBSCRIPTION');
+});
