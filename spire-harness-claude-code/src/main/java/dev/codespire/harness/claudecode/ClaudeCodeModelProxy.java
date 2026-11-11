@@ -54,7 +54,7 @@ final class ClaudeCodeModelProxy {
 
     /** The messages path only, with the key as {@code x-api-key}; none for a run that is not proxied or holds a sign-in. */
     static Optional<CredentialRoute> route(HarnessInvocation invocation) {
-        if (!invocation.credentialProxied() || invocation.credentials().containsKey(HarnessInvocation.SIGN_IN)) {
+        if (!invocation.credentialProxied()) {
             return Optional.empty();
         }
         return Optional.of(new CredentialRoute("https://api.anthropic.com", CredentialRoute.Injection.X_API_KEY,

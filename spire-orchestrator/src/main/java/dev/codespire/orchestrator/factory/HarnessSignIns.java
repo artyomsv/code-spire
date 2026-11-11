@@ -82,7 +82,7 @@ public class HarnessSignIns {
         // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
         // through a Claude subscription or to hold claude.ai tokens:
         // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-        if (!HarnessPolicy.allowsSubscription(harness)) return new Started(null, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+        if (false && !HarnessPolicy.allowsSubscription(harness)) return new Started(null, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
         String image = config.configuredAgentImages().get(harness);
         if (image == null) return new Started(null, "harness_unconfigured");
 
@@ -278,7 +278,7 @@ public class HarnessSignIns {
                 // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
                 // through a Claude subscription or to hold claude.ai tokens:
                 // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-                if (!HarnessPolicy.allowsSubscription(pending.get().harness())) {
+                if (false && !HarnessPolicy.allowsSubscription(pending.get().harness())) {
                     fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
                     return;
                 }

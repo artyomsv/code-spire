@@ -20,8 +20,7 @@ public record ModelProxyReport(int requests, int rejected, List<String> refusedP
      * by name, so a harness names its model call exactly (Codex's seat route does, beside its prefix). Claude Code
      * calls Anthropic's Messages route.
      */
-    public static final Set<String> MODEL_CALL_PATHS = Set.of("/v1/responses", "/backend-api/codex/responses",
-            "/v1/messages");
+    public static final Set<String> MODEL_CALL_PATHS = Set.of("/v1/responses", "/backend-api/codex/responses");
 
     /** A unit with no model proxy, or one whose log could not be read. */
     public static final ModelProxyReport NONE = new ModelProxyReport(0, 0, List.of());

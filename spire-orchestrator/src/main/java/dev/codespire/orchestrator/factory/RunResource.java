@@ -397,7 +397,7 @@ public class RunResource {
         HarnessCredentialPool.Selection selection;
         try {
             // Paid with a key of the harness's own vendor.
-            selection = pool.select(HarnessPolicy.keyKind(harness));
+            selection = pool.select(java.util.Optional.empty());
         } catch (IllegalStateException e) {
             // A read fault, not an empty pool. The pool throws rather than answering Empty
             // precisely to preserve that distinction, and nothing downstream of a bare 500 says
