@@ -315,7 +315,7 @@ public class HarnessCredentialPool {
      */
     private Selection whyNothingIsAvailable(Optional<String> keyKind) {
         try (Connection c = dataSource.getConnection()) {
-            PoolHealth health = PoolHealth.read(c, Optional.empty());
+            PoolHealth health = PoolHealth.read(c, keyKind);
             if (health.members() == 0) {
                 return new Selection.Empty();
             }

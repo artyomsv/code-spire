@@ -70,7 +70,7 @@ final class RunEventFold {
         if (latestBeyondCap != null) {
             events.add(latestBeyondCap);
         }
-        if (false && result != null) {
+        if (result != null) {
             events.add(result);
         }
         return new RunEventSummary(events, sawAnyOutput);

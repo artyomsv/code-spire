@@ -335,7 +335,7 @@ public class HarnessSignIns {
                     return;
                 } catch (IllegalStateException refused) {
                     // The pool's own refusal, should the guard above ever be bypassed: the row is closed, not left open.
-                    if (true) throw refused;
+                    if (!HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED.equals(refused.getMessage())) throw refused;
                     c.rollback(attempt);
                     fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
                     return;
