@@ -14,7 +14,9 @@ merged to master with PR #370 on 2026-11-03; its live proof was made on 2026-11-
 Step 7, replies (the "Step 7" part below), merged to master with PR #371 on 2026-11-04 as `88d5f745`; its live
 proof was made on 2026-11-03 (docs/factory/HARNESS-REVIEWS-7-ACCEPTANCE.md). Step 3, the credential proxy (the "Step 3"
 part below), merged to master with PR #394 on 2026-11-10 as `a36424c0`; its live proof was made on
-2026-11-09 and re-checked on the final code on 2026-11-10 (docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
+2026-11-09 and re-checked on the final code on 2026-11-10 (docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md). Step 3b,
+Claude Code reviews on an API key (the "Step 3b" part below), is on PR #404; its live proof was made on 2026-11-12
+(docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md). Supersedes ADR-018's rule for a review that runs on a harness: such a review's call is not
 brokered to the review worker as an `LlmCredential`; it runs as a factory run.
 
 **Context.** The operator wants a repository to be able to review with an agent harness (Codex on an API key or a
@@ -267,6 +269,42 @@ included). Built after steps 4 to 7, before fork pull requests (step 8).
   `IMAGE_UNAVAILABLE`, naming `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`; factory builds under `REVIEWS` are untouched.
 - **Rejected:** handing the adapter the real secret and trusting it to place only a placeholder (the plan check's
   finding 9: the adapter is never handed it); counting a 403 as rejected (above).
+
+**Step 3b: Claude Code reviews on an API key** ([3b plan](superpowers/plans/2026-11-11-harness-reviews-3b-claude-code.md),
+PR #404; live proof 2026-11-12 in docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md).
+- **A second harness, reviews only.** `spire-harness-claude-code` drives Claude Code (`claude -p`, stream JSON) for
+  review runs only. Builds, fixes, item preparation, build defaults and manual dispatch on Claude Code are refused
+  `harness_reviews_only` (`HarnessPolicy.allowsBuilds`), and work-item refusals name it. The image is opt-in:
+  `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` defaults to `none`, which every reader drops
+  (`FactoryConfig.configuredAgentImages()`).
+- **Proxied only.** Claude Code declares the route `https://api.anthropic.com`, `x-api-key`, exact path
+  `/v1/messages`. The adapter refuses an unproxied invocation (`credential_proxy_required`), one that loads the
+  repository's guidance and one that holds a sign-in, before a container exists, so the real Anthropic key never
+  reaches a Claude Code agent.
+- **The reviewed branch cannot steer it.** Every run carries `--bare --safe-mode --strict-mcp-config
+  --disable-slash-commands --setting-sources user`, the most restrictive set measured (Claude Code 2.1.319) that
+  still reviewed. Without them a positive control loaded `CLAUDE.md`, rules, skills, agents, commands, hooks, an
+  `apiKeyHelper` and an MCP server from the branch, and a `settings.local.json` `env` entry sent the agent past the
+  model proxy.
+- **The key is chosen by its kind.** `harness_credential.type` now picks the key: a Claude Code run is funded only
+  by an `anthropic` key, a Codex run only by an `openai` one (`HarnessPolicy.keyKind`), at all three dispatch paths,
+  and pool health and attention are read per kind. Before 3b any `API_KEY` row could fund any harness.
+- **An error result fails the run.** Claude Code reported an error with `"subtype":"success"`, `"is_error":true`; the
+  adapter decides on `is_error`, the run fails `PROVIDER_ERROR` through the real fold, and its usage is still
+  charged. Anthropic reports no reasoning count, so Claude Code reports `INPUT`, `CACHED_INPUT`, `CACHE_WRITE` and
+  `OUTPUT`.
+- **A Claude subscription is never a path.** It is refused `subscription_not_allowed` at every door: the review
+  setting, build defaults, item preparation, sign-in start, sign-in completion for an older pending row,
+  `addSubscription`, and a stored row from before 3b at `fund`. A refusal, never a silent swap to an API key. The
+  dashboard never offers it. The branch is kept in code for history only:
+
+  > NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+  > through a Claude subscription or to hold claude.ai tokens:
+  > https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+
+- **Rejected:** a Claude OAuth injection kind on the model proxy, `CLAUDE_CODE_OAUTH_TOKEN` or a `claude setup-token`
+  step (the terms above); Claude Code builds in this PR (deferred: only the read-only review shape was measured); letting the agent
+  load project memory (a review's working directory is the change under review).
 
 ---
 

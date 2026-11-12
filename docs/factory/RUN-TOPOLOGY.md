@@ -483,7 +483,7 @@ line is bounded to visible ASCII where it is written, and the container's log is
 before the body ended, or a request whose body never arrived. The live acceptance saw the second twice, on
 `GET /backend-api/codex/models` in a run that succeeded (`spire-test` #100, docs/factory/HARNESS-REVIEWS-3-ACCEPTANCE.md), so an `aborted` line alone is no
 failure. The worker reads that log once the agent is gone (`ModelProxyReport`) and uses it only for a run that
-failed anyway: a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails the run as
+failed anyway: a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`, `/v1/messages`) fails the run as
 `CREDENTIAL_REJECTED`, which marks the pool member; a refused request fails it as `BLOCKED_EGRESS`, the detail
 saying the model proxy refused a request the harness does not declare (`<refused>`, never the path); a 403 keeps the adapter's own cause (and names no path). Before the unit is created the
 worker looks the image up; a missing one fails a proxied run as `IMAGE_UNAVAILABLE`, naming
@@ -496,8 +496,26 @@ first or never listens now fails the run with its state, exit code and OOMKilled
 2 KiB) of its own log: for the model proxy, request lines and start-up refusals that name a variable, never a value.
 
 The adapter declares the route (`HarnessAdapter.credentialRoute`); a harness that declares none runs unproxied with
-the real credential, as before. Today only Codex declares one: a custom model provider at `http://spire-model:8080`
-and, on a seat, a generated placeholder `auth.json`.
+the real credential, as before. Two declare one:
+
+- **Codex:** a custom model provider at `http://spire-model:8080` and, on a seat, a generated placeholder
+  `auth.json`.
+- **Claude Code (harness reviews 3b):** `https://api.anthropic.com`, the key injected as `x-api-key`, the exact path
+  `/v1/messages` and nothing else (a measured review called no other; the model list is not read by a run). The
+  agent gets `ANTHROPIC_API_KEY=TEST-PLACEHOLDER`, `ANTHROPIC_BASE_URL=http://spire-model:8080` and
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and its egress host is `api.anthropic.com`. A 401 on
+  `/v1/messages` is a model call's 401 like the others. Claude Code runs only proxied: the adapter refuses an
+  unproxied invocation (`credential_proxy_required`), one that loads the repository's guidance
+  (`harness_reviews_only`) and one holding a sign-in (`subscription_not_allowed`) before a container exists, and the
+  launch reports each as `BAD_COMMAND`. So under `OFF`, or with egress `off`, a Claude Code review fails at the
+  worker. Every run carries `--bare --safe-mode --strict-mcp-config --disable-slash-commands --setting-sources user`,
+  measured on Claude Code 2.1.319 to load nothing from the reviewed branch: without them a `settings.local.json`
+  `env` entry alone moved the agent's traffic off the model proxy
+  ([3b acceptance](HARNESS-REVIEWS-3B-ACCEPTANCE.md)). It pays with an API key only:
+
+  > NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+  > through a Claude subscription or to hold claude.ai tokens:
+  > https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
 
 Two subnets per proxied unit roughly halve how many proxied units can run at once before Docker's default address
 pool runs out. Only the Docker arm builds this topology; there is no Kubernetes arm yet.

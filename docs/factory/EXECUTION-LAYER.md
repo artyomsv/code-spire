@@ -45,6 +45,20 @@ credentials with anyone else or make your Account available to anyone else."*
 written into the ban itself. This is also enforced server-side: since January 2026 subscription OAuth
 tokens used outside first-party Claude Code are rejected.
 
+### Anthropic — Claude Code legal and compliance (retrieved 2026-11-08)
+
+https://code.claude.com/docs/en/legal-and-compliance forbids a third-party product to route requests through
+Free, Pro, Max or Ultra credentials, or to collect, store or intermediate claude.ai credentials or session tokens.
+
+**What ships (harness reviews 3b, ADR-050 "Step 3b"):** Claude Code reviews pull requests only, behind the per-run
+model proxy, paid with an Anthropic API key (key kind `anthropic`). Builds and fixes on it are refused
+`harness_reviews_only`; a Claude subscription is refused `subscription_not_allowed` at every door, never swapped
+for a key. The subscription branch stays in code for history only:
+
+> NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+> through a Claude subscription or to hold claude.ai tokens:
+> https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+
 ### Anthropic — Commercial Terms of Service, effective 2025-06-17
 
 §A.1:
@@ -131,7 +145,7 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
 > model-proxied units only.** Nothing in the shipped pipeline emits a distinct rate limit. In a unit
 > whose credential sits in a model proxy (harness review units under the default
 > `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`, harness reviews step 3), a failed run whose model proxy saw
-> a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`) fails as
+> a 401 on a model call path (`/v1/responses`, `/backend-api/codex/responses`, `/v1/messages`) fails as
 > `CREDENTIAL_REJECTED`, and `RunCredentialFeedback` marks the pool member rejected; a 403 is not a
 > rejection and marks nothing. In an unproxied unit (factory builds by default) nothing emits a
 > credential refusal: a refused key arrives as `MODEL_UNAVAILABLE`, which the feedback rule deliberately
@@ -412,7 +426,8 @@ own, by path: a model path the harness does not declare is refused there and fai
    the seam from an assertion into a fact.
 3. **opencode** — MIT, shaped like `pi`; its weaker default output stream may push it to `opencode
    serve`.
-4. **Claude Code** — API key only, installed rather than shipped.
+4. **Claude Code** — API key only, installed rather than shipped. Delivered for reviews only (harness reviews
+   3b, `spire-harness-claude-code`, opt-in image `spire-agent-claude-code`); builds are not offered yet.
 
 Others — Gemini CLI, OpenHands, Goose, Cline, Qwen Code — are recognised as viable arms and are not
 scheduled. Each is an adapter plus a registry entry, which is exactly the cost the seam exists to

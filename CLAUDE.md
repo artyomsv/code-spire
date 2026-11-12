@@ -212,14 +212,29 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   token and account id, lets through only the harness's declared model paths, and reaches the vendor over a second
   internal network through an egress proxy that always enforces. A 401 on a model call fails the run as
   `CREDENTIAL_REJECTED` (its first producer) and marks the pool member; a 403 does not; a refused path is
-  `BLOCKED_EGRESS`; a missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. Only Codex declares a route;
-  any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401). Live on `spire-test` (Codex `gpt-6-astra`,
+  `BLOCKED_EGRESS`; a missing image fails only proxied runs, as `IMAGE_UNAVAILABLE`. Codex and Claude Code declare a
+  route; any other harness runs unproxied. Tested in CI, seven guards mutation-checked (#395 to #401). Live on `spire-test` (Codex `gpt-6-astra`,
   2026-11-09): #98 on a seat and #99 on an API key were reviewed with no credential in the agent and only the declared
   host in the egress record. The model proxy log was read for #99 and #100 and named only declared paths; #98's was
   not captured. #100 (40 files) on a seat did not compact (compaction is proven by the spike only); a key OpenAI
   refused failed `CREDENTIAL_REJECTED` and marked its pool member. One model proxy start was not seen listening within
   30 s (cause unknown); the wait is now 120 s and a timeout reports the container's state and log tail
   (docs/UNVERIFIED.md, the step 3 entry; docs/factory/RUN-TOPOLOGY.md §6B.1).
+
+- **Harness reviews 3b: Claude Code reviews on an API key** (PR #404, live-proven 2026-11-12 in
+  docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md; ADR-050, "Step 3b"). The module `spire-harness-claude-code` drives
+  `claude -p` for review runs only, behind the model proxy (`api.anthropic.com`, `x-api-key`, `/v1/messages` only),
+  paid with an `anthropic` key. Its image is opt-in: `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` (default `none`, which
+  leaves Claude Code unconfigured), built with `./deploy/agent/build-claude-code.sh`. Builds, fixes and factory runs
+  on it are refused `harness_reviews_only`, an unproxied run `credential_proxy_required`, and a Claude subscription
+  `subscription_not_allowed` at every door; the subscription branch is kept for history only (Anthropic's terms) and
+  never runs, in tests, CI or by hand. Every run carries `--bare --safe-mode --strict-mcp-config
+  --disable-slash-commands --setting-sources user`, measured on CLI 2.1.319 to load nothing from the reviewed branch
+  (without them a branch's settings moved the agent off the model proxy); a CLI upgrade must re-run the canaries.
+  `harness_credential.type` now picks the key a run is funded with (Upgrading in docs/HISTORY.md: check every key's
+  kind is its vendor's). Live on `spire-test` (`claude-sonnet-5-5`): #102 reviewed, #103's steering and redirect
+  canaries ignored, #104 (40 files) reviewed, a refused key failed #105 `CREDENTIAL_REJECTED` and was marked, an API
+  subscription request refused. 27 of 28 guards mutation-checked; the 28th is unreachable defence in depth.
 
 **Limits that remain:**
 
@@ -241,7 +256,11 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
-- **The four factory images (agent, publisher, egress proxy, model proxy) are still not on GHCR.**
+- **The five factory images (the Codex and Claude Code agents, publisher, egress proxy, model proxy) are still not
+  on GHCR.**
+- **Claude Code ran on one model and one CLI version** (`claude-sonnet-5-5`, 2.1.319): its charge is not reconciled
+  with the vendor, only the measured canaries are proven absent, and a re-review, a reply and a rate limit on it have
+  no live run (docs/UNVERIFIED.md, the 3b entry).
 - Per-forge identity and permission limits remain separate UNVERIFIED entries. Native external
   gate answers and operator resume have no live proof. GitLab/Bitbucket native PR approvals and
   Jira Data Center comment polling remain unavailable. Publication already in progress cannot
@@ -262,10 +281,11 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
-**The factory's four images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
+**The factory's five images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
 
 ```bash
 ./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
+./deploy/agent/build-claude-code.sh    # opt-in: reviews only, API key only; set SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
 ./deploy/egress/build.sh               # the agent's per-run egress proxy (spire.run.egress.mode, default report)
 ./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy  # model proxy
