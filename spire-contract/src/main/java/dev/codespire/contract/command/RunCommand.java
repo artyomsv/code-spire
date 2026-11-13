@@ -18,6 +18,7 @@ import java.util.Objects;
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkRun.class, name = "ExecuteWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteWorkDraftRun.class, name = "ExecuteWorkDraftRun"),
         @JsonSubTypes.Type(value = RunCommand.ExecuteReviewRun.class, name = "ExecuteReviewRun"),
+        @JsonSubTypes.Type(value = RunCommand.ExecuteUntrustedReviewRun.class, name = "ExecuteUntrustedReviewRun"),
         @JsonSubTypes.Type(value = RunCommand.PublishWorkRun.class, name = "PublishWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.HoldWorkRun.class, name = "HoldWorkRun"),
         @JsonSubTypes.Type(value = RunCommand.CancelRun.class, name = "CancelRun"),
@@ -375,6 +376,32 @@ public sealed interface RunCommand {
             // A step 5 command still in flight has no inputs member: it runs, and its agent finds /inputs empty.
             if (inputs == null) inputs = dev.codespire.contract.review.HarnessReviewInputs.NONE;
         }
+        @Override public String scmCredential(){return execution.scmCredential();}
+        @Override public String harnessCredential(){return execution.harnessCredential();}
+    }
+
+    /**
+     * A harness review run of a fork pull request (harness reviews, step 8). The head is fetched from the base
+     * repository's pull ref, {@code pullRef}, onto the local branch {@code spire/review-<pr>}, and the run is
+     * untrusted: it has its own discriminator, so a worker built before this type existed refuses the command rather
+     * than reading it as an {@link ExecuteReviewRun} and cloning the fork's branch name.
+     */
+    record ExecuteUntrustedReviewRun(String runId, ExecuteRun execution,
+                                     dev.codespire.contract.review.ReviewRunBinding review,
+                                     dev.codespire.contract.review.HarnessReviewInputs inputs, String pullRef)
+            implements RunCommand {
+        public ExecuteUntrustedReviewRun {
+            // The checks of ExecuteReviewRun, by building one: a trusted and an untrusted review never drift apart.
+            new ExecuteReviewRun(runId, execution, review, inputs);
+            if (!dev.codespire.contract.review.PullRefs.isValid(pullRef))
+                throw new IllegalArgumentException("A fork review fetches a pull ref, not " + pullRef);
+            if (!execution.branch().equals(dev.codespire.contract.review.PullRefs.localBranch(review.prId())))
+                throw new IllegalArgumentException("A fork review clones onto "
+                        + dev.codespire.contract.review.PullRefs.localBranch(review.prId()) + ", not " + execution.branch());
+            if (inputs == null) inputs = dev.codespire.contract.review.HarnessReviewInputs.NONE;
+        }
+        /** The same review as the unit build sees it: the shared build takes an {@link ExecuteReviewRun}. */
+        public ExecuteReviewRun asReview(){return new ExecuteReviewRun(runId,execution,review,inputs);}
         @Override public String scmCredential(){return execution.scmCredential();}
         @Override public String harnessCredential(){return execution.harnessCredential();}
     }
