@@ -172,10 +172,17 @@ public class RunUnitBuilder {
      * ref to fetch the head from, since a fork's head is on no branch of the base repository.
      */
     public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter adapter) {
+        // Decided before the adapter is asked: Claude Code refuses an unproxied run with its own detail, and a fork's
+        // refusal must say what it is whatever the harness. A sign-in or a guidance fault still keeps its own detail.
+        if (!proxies(Topology.REVIEW)) {
+            throw new IllegalStateException(FORK_PROXY_REQUIRED);
+        }
         RunUnitSpec unit = buildReview(review.asReview(), adapter);
+        // The arm with no route is only known once built.
         if (unit.modelProxy() == null) {
             throw new IllegalStateException(FORK_PROXY_REQUIRED);
         }
+        // Defence in depth: the command's own constructor already refuses an invalid pull ref.
         if (!dev.codespire.contract.review.PullRefs.isValid(review.pullRef())) {
             throw new IllegalArgumentException("A fork review fetches a pull ref");
         }

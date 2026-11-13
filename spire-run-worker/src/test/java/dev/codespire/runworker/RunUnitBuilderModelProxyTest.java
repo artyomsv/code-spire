@@ -284,6 +284,25 @@ class RunUnitBuilderModelProxyTest {
         }
     }
 
+    /**
+     * Claude Code would refuse an unproxied run itself, as credential_proxy_required; a fork is refused as a fork first,
+     * in every mode that does not proxy reviews and with egress off.
+     */
+    @Test
+    void anUnproxiedClaudeCodeForkIsRefusedAsAFork() {
+        for (CredentialProxyMode mode : CredentialProxyMode.values()) {
+            for (EgressPolicy.Mode egress : EgressPolicy.Mode.values()) {
+                boolean proxied = mode != CredentialProxyMode.OFF && egress != EgressPolicy.Mode.OFF;
+                if (proxied) continue;
+                IllegalStateException refused = assertThrows(IllegalStateException.class, () ->
+                        proxying(mode, egress).buildUntrustedReview(fork(reviewExecution(HARNESS_KEY)),
+                                new dev.codespire.harness.claudecode.ClaudeCodeAdapter()), mode + "/" + egress);
+
+                assertEquals(RunUnitBuilder.FORK_PROXY_REQUIRED, refused.getMessage(), mode + "/" + egress);
+            }
+        }
+    }
+
     /** An arm that declares no route (the fake adapter) would fall back to a direct credential: refused. */
     @Test
     void anUntrustedReviewIsRefusedOnAnArmWithNoRoute() {
@@ -316,7 +335,7 @@ class RunUnitBuilderModelProxyTest {
      * spire-arch's ForkRefPatternsAgreeTest; here the contract's pattern is pinned to the two shapes init accepts.
      */
     @Test
-    void bothRefPatternsAgree() {
+    void theContractPatternIsPinned() {
         assertEquals("refs/(pull|merge-requests)/[1-9][0-9]{0,17}/head", dev.codespire.contract.review.PullRefs.PATTERN);
     }
 

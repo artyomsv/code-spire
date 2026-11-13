@@ -288,7 +288,7 @@ public class RunLauncher {
         RunEventFold seen = new RunEventFold();
         // A review's answer may be as large as the review cap its unit hands the publisher; every other unit keeps 32 KiB.
         PublisherOutcome outcome = reviewOf(live.launch().wrapper()) != null
-                ?PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
+                ? PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
                 : new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
         AtomicBoolean refusalStops = new AtomicBoolean();
