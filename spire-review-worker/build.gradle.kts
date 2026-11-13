@@ -36,7 +36,7 @@ dependencies {
     implementation(project(":spire-context-code"))
     implementation(project(":spire-llm"))
     // Decides which parts of a posted comment are Markdown code, so raw HTML is escaped everywhere else (SECURITY.md).
-    implementation("org.commonmark:commonmark:0.24.0")
+    implementation("org.commonmark:commonmark:0.32.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
 
     implementation("io.quarkus:quarkus-jackson")
