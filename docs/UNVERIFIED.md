@@ -33,6 +33,45 @@ evidence would settle it**.
 
 ---
 
+## Fork pull requests on a harness (harness reviews step 8, PR #419, 2026-11-13)
+
+**The claim.** A repository that reviews with a harness reviews fork pull requests on GitHub and GitLab, first
+reviews, re-reviews and replies, only in a unit whose model credential is held by the model proxy. An untrusted pull
+request (a fork, or fork status unknown) is sent as `ExecuteUntrustedReviewRun` with the forge's pull ref, init fetches
+that ref onto `spire/review-<prId>`, the run worker refuses an unproxied unit with `fork_requires_credential_proxy`,
+and no linked context is gathered. A Bitbucket Cloud or Data Center untrusted pull request is refused
+`fork_pull_request_has_no_pull_ref`.
+
+**What is proven live.** Nothing yet. The acceptance on `spire-test` (a fork pull request on a Codex seat, a Codex key
+and Claude Code; a canary asking the agent to print its environment; a private issue linked from the description; a
+push re-reviewed; a reply; mode `OFF` refusing a fork) has not run. This entry is rewritten when it does.
+
+**Why nothing catches the rest.** Every path below is proven against fakes, or not at all.
+- **Bitbucket's refusal.** Proven by tests only.
+- **A lagging or absent ref.** The retry (3 tries, 2 s apart, any transport error counts) is tested with an
+  injected sleeper and local repositories, not a real forge's delay. A forge that takes longer than 4 s fails the review
+  `CLONE_FAILED`; an authentication fault costs the same retries.
+- **A force-pushed fork, and a fork re-review's unreachable prior head.** The pull ref moves to the new head, and the
+  prior head is on no fetched ref; the agent is told to judge against the current code, and nothing crashes in tests.
+  Not seen with a real fork.
+- **A deleted fork.** It reads as same-repository at ingress, becomes a trusted command with no pull ref and fails init.
+  Not exercised.
+- **Manual registration.** A dashboard registration leaves fork status unknown, so the pull request is untrusted
+  until a webhook records it. Tested; not tried on the dashboard.
+- **The init clone is not shown safe against a hostile fork.** It holds the reviewer's clone token (ADR-050, the
+  step 4 entry), and a filter driver in the init image's own system or global gitconfig is not covered. The fresh
+  config and the absence of submodules are tested, not attacked.
+- **Mutation checks of the new guards** were reasoned, not run: the proxy refusal, the pull ref allowlist, the
+  linked-context skip.
+- **Old components.** An old publisher ignores `SPIRE_FETCH_REF` and every fork fails `CLONE_FAILED`; an old run
+  worker drops the command. Neither is exercised; the upgrade order is in docs/HISTORY.md.
+- **Links from trusted comments** (an owner or a person with write access) are not read; planned as PR 8b.
+
+**What evidence would settle it.** The acceptance above, with the model proxy log captured for every run, and a fork
+pull request from an organisation fork on GitLab.
+
+---
+
 ## Claude Code reviews on an API key (harness reviews 3b, PR #404, 2026-11-12)
 
 **The claim.** Claude Code reviews a same-repository pull request on an `anthropic` API key, only behind the model
@@ -304,7 +343,7 @@ with no duplicate. Egress was `chatgpt.com` only.
 - **Paths the live proof did not reach.** A re-review whose prior head is unreachable (the compare is null); a
   `/finding` filed while the run works; a seat refused during a re-review; a re-review on an API key; an over-cap
   answer or re-review; a finish with no stored numbering (its verdicts are not read); a cut `prior-findings.md` (the
-  tail's findings carry no verdict); forks. Each is proven against fakes, or not at all. Replies are step 7's entry.
+  tail's findings carry no verdict). Each is proven against fakes, or not at all. Forks are step 8's entry. Replies are step 7's entry.
 - **Only the Docker arm copies inputs.** Another runtime arm would have to copy them into its init container too;
   `RunUnitSpec` checks the wiring, not that an arm wrote anything.
 - **The context text rests in plain text in two places.** `HarnessReviewPrepared` (on `cs.results`) and
@@ -343,8 +382,8 @@ on an API key and on a refused seat, and an over-cap answer.
 **The claim.** A repository whose "Review with" names a harness has the first review of each same-repository pull
 request made by a read-only review run. The agent reads the repository's rules from the target branch, never from the
 change under review, and its findings are posted through the API review's own outcome path. A fork pull request, or
-one whose fork status is unknown, and a refused dispatch are refused with a `REVIEW_HARNESS_REFUSED` attention
-warning, never sent to the API.
+one whose fork status is unknown, was refused here until step 8; a refused dispatch still is, with a
+`REVIEW_HARNESS_REFUSED` attention warning, never sent to the API.
 
 **What is proven live** (2026-11-01, docs/factory/HARNESS-REVIEWS-5-ACCEPTANCE.md). On `spire-test`, Codex
 `gpt-6-astra`, report mode: #93 on a seat and #94 on an API key were each reviewed by one `REVIEW` run. That covers
@@ -356,8 +395,7 @@ hosts: `chatgpt.com` alone on the seat, `api.openai.com` alone on the key. #95, 
 refused with `codex: subscription_unavailable` and its attention row, with no run and no fallback.
 
 **Why nothing catches the rest.**
-- **Live paths the proof did not reach.** The review page's run link was not recorded. A fork pull request, or one
-  whose fork status is unknown, has not been refused live. The refusal of a failed start
+- **Live paths the proof did not reach.** The review page's run link was not recorded. The refusal of a failed start
   (`harness_review_start_failed`, after #93's first attempt threw on a null review prompt and stayed `reviewing`) is
   proven by tests only. `939a1277` refused any failure composing or dispatching; `de7a905f` narrowed it to a failure
   composing the request, because a dispatch may throw after its command reached the broker (an ack that timed out,
@@ -424,7 +462,7 @@ refused with `codex: subscription_unavailable` and its attention row, with no ru
   be handed over for nothing. Neither is driven by a test.
 
 **What evidence would settle it.** The step 5 live proof settled the main path (above). The rest needs: a fork pull
-request on `spire-test` refused with `fork_pull_request_not_reviewed_on_harness` and its attention row; the review
+request on `spire-test` (step 8 replaced the refusal with a proxied review; its entry has the evidence); the review
 page's run link opened on a harness review; the review status read during a forced re-run's harness run, then a
 fix and a test for `superseded`; the `CANARY-AGENTS-LOADED` canary repeated whenever codex-cli is bumped; and a
 test that races a push against a harness answer on the two real consumers.
@@ -450,9 +488,8 @@ its review round or a closed pull request cancels it, a dispatch in flight inclu
 - **The reviewer token reaches init.** The clone credential is the REVIEWER account's token, which can post. It
   enters the unit's init container (never the agent's), crossing ADR-038's two-authority split. A read-scoped
   clone token is the fix and is not built.
-- **The agent holds the model credential.** The credential-injecting proxy is deferred (design "After step 2"), so
-  fork pull requests must not be reviewed on a harness. Step 5 refuses them, and a pull request whose fork status
-  is unknown, with a `REVIEW_HARNESS_REFUSED` attention warning; the refusal is proven by tests only.
+- **The agent held the model credential.** Step 3 put it behind a model proxy and step 8 reviews fork pull requests
+  only behind it (the step 8 entry); until step 8 they were refused.
 - **A missed supersede is not replayed.** The supersede listener reads `cs.events` from `latest` on its own group;
   an event published while the orchestrator was down is never read, so that run finishes and is charged.
 - **The over-cap path and the parts are proven against fakes.** No real agent has produced an answer over 32 KiB.

@@ -520,6 +520,31 @@ the real credential, as before. Two declare one:
 Two subnets per proxied unit roughly halve how many proxied units can run at once before Docker's default address
 pool runs out. Only the Docker arm builds this topology; there is no Kubernetes arm yet.
 
+### 6B.2 Fork pull requests (harness reviews step 8)
+
+A pull request is untrusted when it is a fork or its fork status is unknown. Its head is on no branch of the base
+repository, so its review is the command `ExecuteUntrustedReviewRun` (its own wire discriminator, so a run worker from
+before step 8 drops it), carrying the forge's own ref for the head: `refs/pull/<n>/head` or
+`refs/merge-requests/<iid>/head`. The unit is the §6B unit with three differences:
+
+- Init gets `SPIRE_FETCH_REF` as well as `SPIRE_FETCH_BRANCH`. After the clone it fetches that ref (object checking on;
+  3 attempts, 2 s apart, any transport error counts) and checks out the commit onto the local branch
+  `spire/review-<prId>`. The fork's own branch name never reaches the unit. Absent after the third try, init fails
+  `CLONE_FAILED` naming the commit and the ref. The target branch is still kept as `refs/spire-base/<target>`, so the
+  rules still come from it.
+- The unit must have a model proxy (§6B.1). The run worker refuses an untrusted unit before asking the harness when
+  the mode does not proxy reviews or egress is off, and after the build when the arm has no route, with
+  `BAD_COMMAND` and the detail `fork_requires_credential_proxy`, before a container exists. That holds for Codex and
+  Claude Code. The review is `refused` with an attention row; a reply is `FollowUpRefused`. With
+  `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF` every fork review is refused this way.
+- Nothing else about the lane changes: the same topic, claims, artifact, charge and cancellation.
+
+Bitbucket Cloud and Data Center have no pull ref this step uses, so an untrusted pull request there is refused
+`fork_pull_request_has_no_pull_ref` before any dispatch. A re-review of a fork judges against the current code: the
+prior head is on no fetched ref, so a prior head the clone cannot reach reads as it does on a trusted pull request
+whose head was force-pushed away. The pull ref is not retained in the workspace beyond the local branch and
+`refs/spire-head/pull`. None of it has a live proof yet (docs/UNVERIFIED.md, the step 8 entry).
+
 ## 7. What leaves the pod, and how
 
 **Nothing is extracted.** Every output leaves as a log stream, which Docker and Kubernetes both
