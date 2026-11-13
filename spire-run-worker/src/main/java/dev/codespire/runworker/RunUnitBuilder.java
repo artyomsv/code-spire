@@ -165,28 +165,16 @@ public class RunUnitBuilder {
     }
 
     /**
-     * A fork pull request's review unit (harness reviews, step 8). The fork's code runs in the agent, so the agent must
-     * never be beside a real model credential: the unit is refused unless its model proxy holds it. The refusal tests the
-     * built unit, because the three ways {@link #agentCredential} falls back to a direct credential (a mode that does not
-     * proxy reviews, egress off, an arm with no route) all leave the unit without a model proxy. Init is given the pull
-     * ref to fetch the head from, since a fork's head is on no branch of the base repository.
+     * A fork pull request's review unit (harness reviews, step 8), refused unless its model proxy holds the credential
+     * ({@link UntrustedReviewUnits}). Init is given the pull ref to fetch the head from.
      */
     public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter adapter) {
         // Decided before the adapter is asked: Claude Code refuses an unproxied run with its own detail, and a fork's
-        // refusal must say what it is whatever the harness. A sign-in or a guidance fault still keeps its own detail.
+        // refusal must say what it is whatever the harness.
         if (!proxies(Topology.REVIEW)) {
             throw new IllegalStateException(FORK_PROXY_REQUIRED);
         }
-        RunUnitSpec unit = buildReview(review.asReview(), adapter);
-        // The arm with no route is only known once built.
-        if (unit.modelProxy() == null) {
-            throw new IllegalStateException(FORK_PROXY_REQUIRED);
-        }
-        // Defence in depth: the command's own constructor already refuses an invalid pull ref.
-        if (!dev.codespire.contract.review.PullRefs.isValid(review.pullRef())) {
-            throw new IllegalArgumentException("A fork review fetches a pull ref");
-        }
-        return unit.withInit(withVariable(unit.init(), FETCH_REF, review.pullRef()));
+        return UntrustedReviewUnits.sealed(buildReview(review.asReview(), adapter), review.pullRef());
     }
 
     /** The variable a trusted init reads the branch to keep under refs/spire-base from (spire-publisher's CloneMain). */
@@ -199,7 +187,7 @@ public class RunUnitBuilder {
     static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
 
     /** The same container with one more environment variable. */
-    private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
+    static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
         Map<String, String> env = new LinkedHashMap<>(container.environment());
         env.put(name, value);
         return new ContainerSpec(container.image(), container.argv(), env, container.mounts(), container.entrypoint());

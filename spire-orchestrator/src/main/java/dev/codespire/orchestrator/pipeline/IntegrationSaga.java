@@ -755,11 +755,8 @@ public class IntegrationSaga {
         // never flips in practice — but a row that predates V55 defaults to false, and refreshing it
         // from the event is what replaces that default with the answer rather than leaving a guess
         // behind for the branch-mode gate to trust.
-        // Unknown (a manual registration) writes nothing: a new row stays NULL, which is untrusted, and a value a
-        // webhook recorded survives. Writing false here would turn a fork into a trusted pull request.
-        if (e.fromFork() != null) {
-            projection.setFromFork(reviewId, e.fromFork());
-        }
+        // Unknown (a manual registration) writes nothing: NULL stays untrusted, and a false would trust a fork.
+        if (e.fromFork() != null) projection.setFromFork(reviewId, e.fromFork());
 
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,

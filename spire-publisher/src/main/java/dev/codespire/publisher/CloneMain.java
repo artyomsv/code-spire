@@ -64,14 +64,11 @@ public final class CloneMain {
             Path workspace = Path.of(env.getOrDefault("SPIRE_WORKSPACE_DIR", DEFAULT_WORKSPACE_DIR));
             outcome = new OutcomeWriter(stdout, username, secret);
 
-            // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge.
-            String fetchBranch = env.get("SPIRE_FETCH_BRANCH");
-            // A fork's head is on no branch (harness reviews step 8): init fetches the pull request's own ref.
-            String fetchRef = env.get("SPIRE_FETCH_REF");
+            // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge; a
+            // fork's head is on no branch (harness reviews step 8), so init fetches the pull request's own ref.
             populate(new WorkspaceClone.CloneRequest(remote, base, branch, workspace,
                     new GitCredential(username, secret), username, username + "@" + IDENTITY_DOMAIN,
-                    fetchBranch == null || fetchBranch.isBlank() ? null : fetchBranch,
-                    fetchRef == null || fetchRef.isBlank() ? null : fetchRef), checkpointOf(env));
+                    optional(env, "SPIRE_FETCH_BRANCH"), optional(env, "SPIRE_FETCH_REF")), checkpointOf(env));
             return 0;
         } catch (CheckpointMissingException missing) {
             outcome.failed("CHECKPOINT_MISSING", missing.getMessage());
@@ -96,6 +93,12 @@ public final class CloneMain {
      * volume mounted read-only, or null to start from the base.
      */
     record Checkpoint(String head, Path bundles, long maxBytes) {}
+
+    /** An environment variable, or null when it is unset or blank. */
+    private static String optional(Map<String, String> env, String name) {
+        String value = env.get(name);
+        return value == null || value.isBlank() ? null : value;
+    }
 
     private static Checkpoint checkpointOf(Map<String, String> env) {
         String head = env.get("SPIRE_CHECKPOINT_HEAD");

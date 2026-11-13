@@ -39,6 +39,13 @@ public final class PullRefs {
         return ref != null && COMPILED.matcher(ref).matches();
     }
 
+    /** The checks of a fork review's command: a valid pull ref, cloned onto the pull request's own local branch. */
+    public static void requireForkReview(String pullRef, String branch, long prId) {
+        if (!isValid(pullRef)) throw new IllegalArgumentException("A fork review fetches a pull ref, not " + pullRef);
+        if (!branch.equals(localBranch(prId)))
+            throw new IllegalArgumentException("A fork review clones onto " + localBranch(prId) + ", not " + branch);
+    }
+
     /** The local branch name for a pull request's head. */
     public static String localBranch(long prId) {
         return LOCAL_BRANCH_PREFIX + prId;

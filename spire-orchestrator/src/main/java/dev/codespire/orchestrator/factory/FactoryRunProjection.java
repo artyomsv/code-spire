@@ -122,17 +122,7 @@ public class FactoryRunProjection {
 
     /** The harness this run was dispatched on, or empty when the row cannot be read. */
     public Optional<String> harnessOf(String runId) {
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT harness FROM factory_run WHERE run_id = ?")) {
-            ps.setString(1, runId);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.ofNullable(rs.getString("harness")) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            // Empty: the caller only names the harness in a refusal, which must still be recorded.
-            LOG.errorf(e, "run %s: its harness could not be read", runId);
-            return Optional.empty();
-        }
+        return RunHarnessRead.of(dataSource, runId);
     }
 
     /**

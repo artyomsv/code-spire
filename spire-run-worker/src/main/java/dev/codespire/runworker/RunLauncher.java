@@ -118,13 +118,6 @@ public class RunLauncher {
         return launch(review.execution(), review, observer, unit -> {});
     }
 
-    /** The review a wrapper carries, trusted or not, or null when it is not a review run. */
-    private static RunCommand.ExecuteReviewRun reviewOf(RunCommand wrapper) {
-        if (wrapper instanceof RunCommand.ExecuteReviewRun review) return review;
-        if (wrapper instanceof RunCommand.ExecuteUntrustedReviewRun untrusted) return untrusted.asReview();
-        return null;
-    }
-
     /**
      * {@code wrapper} says which unit this is: null for an ordinary run, the held build, the read-only draft, or the
      * read-only review run.
@@ -287,7 +280,7 @@ public class RunLauncher {
     private Readers read(Live live) {
         RunEventFold seen = new RunEventFold();
         // A review's answer may be as large as the review cap its unit hands the publisher; every other unit keeps 32 KiB.
-        PublisherOutcome outcome = reviewOf(live.launch().wrapper()) != null
+        PublisherOutcome outcome = ReviewWrappers.reviewOf(live.launch().wrapper()) != null
                 ? PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
                 : new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
@@ -362,7 +355,7 @@ public class RunLauncher {
             // through the same unobserved ranking as any run, and preserves the unit for inspection.
             result = new ReadOnlyResults(failures, draft).of(result, observed.outcome(),
                     wallSecondsSince(live.activeStarted()));
-        } else if (reviewOf(live.launch().wrapper()) instanceof RunCommand.ExecuteReviewRun review) {
+        } else if (ReviewWrappers.reviewOf(live.launch().wrapper()) instanceof RunCommand.ExecuteReviewRun review) {
             // The same branch for a review's answer (harness reviews, step 4): its unit is destroyed below like a draft's.
             result = new ReadOnlyResults(failures, review).of(result, observed.outcome(),
                     wallSecondsSince(live.activeStarted()));

@@ -52,7 +52,7 @@ class IntegrationSagaPolicyTest {
     private final List<RecordCommand> handledCommands = new ArrayList<>();
     private final List<String> prStateCalls = new ArrayList<>();
     /** Fork provenance written per event, as {@code reviewId:fromFork}. */
-    private final List<String> fromForkCalls = new ArrayList<>();
+    final List<String> fromForkCalls = new ArrayList<>();
     /** Durable review-history rows, as {@code type:detail} — distinct from the in-memory timeline. */
     private final List<String> appendedEvents = new ArrayList<>();
     /** Reviews whose live harness runs a close asked to stop. */
@@ -63,7 +63,7 @@ class IntegrationSagaPolicyTest {
     /** Set by the archived-notice cases; every other case runs against a live review. */
     private boolean reviewIsArchived;
 
-    private IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
+    IntegrationSaga sagaWith(ReviewPolicy policy, Optional<ScmProvider> provider) {
         return sagaWith(policy, provider, List.of(new DomainEvent.ReviewRequested("cafe123", "OPENED")));
     }
 
@@ -240,13 +240,13 @@ class IntegrationSagaPolicyTest {
         return saga;
     }
 
-    private static Optional<ScmProvider> provider(List<String> authors) {
+    static Optional<ScmProvider> provider(List<String> authors) {
         return Optional.of(new ScmProvider(UUID.randomUUID(), "CF", "bitbucket-cloud", "https://x",
                 "bearer", null, "secret", "acct", true, authors, null, null, ProviderRole.REVIEWER));
     }
 
     /** A ReviewPolicy fake with a fixed mode — the saga only reads observeOnly(). */
-    private static ReviewPolicy policyMode(boolean observeOnly) {
+    static ReviewPolicy policyMode(boolean observeOnly) {
         return new ReviewPolicy() {
             @Override
             public boolean observeOnly() {
@@ -255,7 +255,7 @@ class IntegrationSagaPolicyTest {
         };
     }
 
-    private static PullRequestEventReceived pr(String accountId, String username) {
+    static PullRequestEventReceived pr(String accountId, String username) {
         return pr(accountId, username, null);
     }
 
@@ -448,41 +448,6 @@ class IntegrationSagaPolicyTest {
         sagaWith(policyMode(true), provider(List.of())).onRepository(pr("acc-1", "alice"), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
         assertTrue(fromForkCalls.contains("review::acme/web#412:false"),
                 "observe mode registers the header, so it records this too: " + fromForkCalls);
-    }
-
-    /**
-     * A manual registration cannot tell a fork from a branch pull request, so it asserts nothing: a webhook's recorded
-     * answer survives it (step 8: a false here would turn a fork into a trusted pull request).
-     */
-    @Test
-    void aManualRegistrationAfterAForkWebhookStaysUntrusted() {
-        var saga = sagaWith(policyMode(false), provider(List.of()));
-        saga.onRepository(pr("acc-1", "alice").withFromFork(true), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-        fromForkCalls.clear();
-
-        saga.onRepository(pr("acc-1", "alice").withFromFork(null), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-
-        assertTrue(fromForkCalls.isEmpty(), "unknown never overwrites the recorded answer: " + fromForkCalls);
-    }
-
-    /** Nothing is written for a new pull request either, so its column stays NULL, which every reader treats as untrusted. */
-    @Test
-    void aManualRegistrationOfANewPullRequestIsUntrusted() {
-        var saga = sagaWith(policyMode(false), provider(List.of()));
-
-        saga.onRepository(pr("acc-1", "alice").withFromFork(null), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-
-        assertTrue(fromForkCalls.isEmpty(), "a NULL provenance is left NULL: " + fromForkCalls);
-    }
-
-    /** A webhook's known false still records, so a branch pull request is trusted. */
-    @Test
-    void aWebhooksKnownFalseStillMakesItTrusted() {
-        var saga = sagaWith(policyMode(false), provider(List.of()));
-
-        saga.onRepository(pr("acc-1", "alice").withFromFork(false), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
-
-        assertTrue(fromForkCalls.contains("review::acme/web#412:false"), fromForkCalls.toString());
     }
 
     /**

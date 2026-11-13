@@ -393,11 +393,7 @@ public sealed interface RunCommand {
         public ExecuteUntrustedReviewRun {
             // The checks of ExecuteReviewRun, by building one: a trusted and an untrusted review never drift apart.
             new ExecuteReviewRun(runId, execution, review, inputs);
-            if (!dev.codespire.contract.review.PullRefs.isValid(pullRef))
-                throw new IllegalArgumentException("A fork review fetches a pull ref, not " + pullRef);
-            if (!execution.branch().equals(dev.codespire.contract.review.PullRefs.localBranch(review.prId())))
-                throw new IllegalArgumentException("A fork review clones onto "
-                        + dev.codespire.contract.review.PullRefs.localBranch(review.prId()) + ", not " + execution.branch());
+            dev.codespire.contract.review.PullRefs.requireForkReview(pullRef, execution.branch(), review.prId());
             if (inputs == null) inputs = dev.codespire.contract.review.HarnessReviewInputs.NONE;
         }
         /** The same review as the unit build sees it: the shared build takes an {@link ExecuteReviewRun}. */

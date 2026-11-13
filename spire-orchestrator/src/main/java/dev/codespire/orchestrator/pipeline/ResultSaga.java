@@ -251,7 +251,7 @@ public class ResultSaga {
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        linksToGather(e), contextCred, scmType,
+                        ContextLinks.toGather(e, targets, projection), contextCred, scmType,
                         // Already read at diff-fetch, from the PR's target branch — the aggregator
                         // holds no SCM credential and so cannot fetch it itself.
                         e.repoRules(), e.codeReferences()));
@@ -706,22 +706,6 @@ public class ResultSaga {
                     timeline.record("result", "dropped:HarnessReviewPrepared", reviewId, dropped.why());
         }
         return true;
-    }
-
-    /**
-     * The links a review gathers context from. A fork author writes the title, branch and description the links are
-     * read from, so they would choose which private issues and documents are loaded: an untrusted pull request (a fork,
-     * or unknown provenance) gathers none, on the API and the harness path alike. Nothing is read when there is no
-     * link to cut.
-     */
-    private Set<String> linksToGather(DiffFetched e) {
-        Set<String> links = e.references() == null ? Set.of() : e.references();
-        if (links.isEmpty() || !targets.isUntrustedReview(e.reviewId())) {
-            return links;
-        }
-        projection.appendEvent(e.reviewId(), "result", "ContextLinksSkipped",
-                "context links skipped: untrusted pull request");
-        return Set.of();
     }
 
     /** {@link #refuse}'s terminal shape for a harness refusal, plus the reason the attention feed shows. */
