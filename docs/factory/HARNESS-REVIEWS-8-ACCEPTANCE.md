@@ -26,7 +26,7 @@ Run ids are shown without their `run::github:artyomsv/spire-test:` prefix.
 | Kind | `REVIEW` | `RECONCILE` | `RECONCILE` | `RECONCILE` | `RECONCILE` | `FOLLOWUP` |
 | Model | `claude-sonnet-5-5` | `gpt-6-astra` | `gpt-6-astra` | Codex | Codex | Codex |
 | Outcome | succeeded, 34 s | succeeded | succeeded | failed `BAD_COMMAND` | succeeded | succeeded |
-| Cost | $0.018 | $0.555 | unmetered | none | unmetered | unmetered |
+| Cost | 1,844 millicents | 55,457 millicents | unmetered | none | unmetered | unmetered |
 
 ### 1. A first review on Claude Code with an API key
 
@@ -34,12 +34,12 @@ The model was `claude-sonnet-5-5`, paid with the `anthropic` key. The unit clone
 base branch and the branch were that name; the fork's own branch name never reached it). The event log read
 `ContextLinksSkipped: context links skipped: untrusted pull request`, and `/inputs/context.md` held the pull request
 text and the `.codespire` rules only, with no issue #96. The review had one finding, a MAJOR on `Billing.java:10`
-("centigrades" is a temperature unit). The charge was $0.018 (a little over 1,800 millicents) and the dashboard
+("centigrades" is a temperature unit). The charge was 1,844 millicents ($0.018, read from `llm_charge`) and the dashboard
 showed $0.018. The review was posted as Approve, because the verdict counts blockers only (see below).
 
 ### 2. A fork re-review on Codex with an API key
 
-Run `…-164b69e2:1` was a `RECONCILE`, since the pull request already had an open prior finding. It cost $0.555. The
+Run `…-164b69e2:1` was a `RECONCILE`, since the pull request already had an open prior finding. It cost 55,457 millicents ($0.555). The
 model proxy's log held 6 × `spire-model POST /v1/responses -> 200`. The egress proxy's record named one
 `CONNECT api.openai.com:443` and nothing else. A search for key-like strings in both logs matched nothing.
 
