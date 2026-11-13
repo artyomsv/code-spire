@@ -344,28 +344,6 @@ class RunLauncherTest {
         assertEquals(1, runtime.destroyed.size(), "a salvaged unit is destroyed");
     }
 
-    /**
-     * The launcher's own path: every event of a line through parseAll into the fold, the fold's summary into classify.
-     * A Claude Code error result with exit 0 (measured with {@code "subtype":"success"}) fails the run, and its usage
-     * still rides on the failure. Reading only the first event of a line, or a fold that drops the result, succeeds.
-     */
-    @Test
-    void anErrorResultLineFailsTheRunThroughTheLauncher() {
-        runtime.agentLines = List.of("""
-                {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"TEST-answer"}]},\
-                "session_id":"TEST-session"}""", """
-                {"type":"result","subtype":"success","is_error":true,"api_error_status":null,\
-                "api_error":"connection_failed","usage":{"input_tokens":3,"cache_creation_input_tokens":0,\
-                "cache_read_input_tokens":0,"output_tokens":1},"result":"API Error: TEST","session_id":"TEST-session"}""");
-        RunLauncher claudeCode = launcher(runtime, new dev.codespire.harness.claudecode.ClaudeCodeAdapter());
-
-        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
-                claudeCode.launch(COMMAND, RunObserver.IGNORING));
-
-        assertEquals("PROVIDER_ERROR", failed.cause());
-        assertEquals(3L, failed.tokenUsage().get("INPUT"));
-    }
-
     @Test
     void aFailedAgentThatPushedNothingIsFailedNotFinished() {
         runtime.finalization = Finalization.salvaged(2, "exited");

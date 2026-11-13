@@ -8,35 +8,10 @@ import * as build from './buildDefaultsApi';
 import * as land from './landSettingsApi';
 import RepositoryFactory from './RepositoryFactory';
 import { account, buildSetup, landSetup, policy, profile, repository, source } from './factoryFixtures';
+import { field, renderFactory, step, stubFactoryApis } from './factoryTestSetup';
 import { createQueryClient } from '../../../queryClient';
-import { queryWrapper } from '../../../test/queryWrapper';
 
-const field = { selector: 'input,select,textarea' };
-const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
-  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />, { wrapper: queryWrapper() });
-const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
-beforeEach(() => {
-  vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
-  vi.spyOn(sources, 'saveWorkActor').mockResolvedValue(source());
-  vi.spyOn(sources, 'removeWorkActor').mockResolvedValue(source());
-  vi.spyOn(policies, 'profiles').mockResolvedValue([profile]);
-  vi.spyOn(policies, 'policy').mockResolvedValue(policy());
-  vi.spyOn(policies, 'savePolicy').mockResolvedValue(policy({ revision: 8 }));
-  vi.spyOn(policies, 'saveProfile').mockImplementation(async value => value);
-  vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
-  vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'], reportedTypes: { codex: ['INPUT','CACHED_INPUT','CACHE_WRITE','OUTPUT','REASONING'] } });
-  vi.spyOn(build, 'saveBuildDefaults').mockResolvedValue(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
-  vi.spyOn(land, 'landSettings').mockResolvedValue(landSetup());
-  vi.spyOn(land, 'landOptions').mockResolvedValue({ checked: true, allowed: ['merge', 'squash', 'rebase'] });
-  vi.spyOn(build, 'repositoryBranchHead').mockResolvedValue({ branch: 'main', commit: 'a'.repeat(40), account: 'FACTORY' });
-  vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
-    // Complete for codex: priced where this fake vendor bills, asserted where it does not.
-    { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
-    { id: 'TEST-unpriced-id', type: 'openai', name: 'TEST-unpriced', label: 'TEST unpriced', pricingMode: 'METERED', rates: { INPUT: 100 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: [] },
-  ]);
-});
+beforeEach(stubFactoryApis);
 
 describe('outcome', () => {
   it('says what a complete setup does, naming the person, label, profile and ceiling', async () => {
@@ -441,115 +416,6 @@ describe('build setup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Reload the saved setup' }));
     expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
-  });
-
-  const offeringKeyedHarness = () => vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-keyed'],
-    buildHarnesses: ['codex', 'TEST-keyed'], subscriptionHarnesses: ['codex'],
-    reportedTypes: { codex: ['INPUT', 'OUTPUT'], 'TEST-keyed': ['INPUT', 'OUTPUT'] } });
-
-  it('keeps the history note out of the Pay with select of the build setup', async () => {
-    offeringKeyedHarness();
-    renderFactory();
-    await open();
-    await screen.findByRole('option', { name: 'Codex' });
-    expect(screen.getByRole('combobox', { name: 'Pay with' }).textContent).not.toContain('NOT ALLOWED');
-  });
-
-  it('switching from a subscription to a harness without one saves API key', async () => {
-    offeringKeyedHarness();
-    renderFactory();
-    await open();
-    fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
-    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'codex' } });
-    fireEvent.change(await screen.findByLabelText('Pay with', field), { target: { value: 'SUBSCRIPTION' } });
-    fireEvent.change(screen.getByLabelText('Harness', field), { target: { value: 'TEST-keyed' } });
-    fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
-    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      expect.objectContaining({ harness: 'TEST-keyed', payWith: 'API_KEY' })));
-  });
-
-  it('a stored subscription on a harness without one saves API key', async () => {
-    offeringKeyedHarness();
-    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'TEST-keyed', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
-    renderFactory();
-    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
-    await screen.findByRole('option', { name: 'TEST-keyed' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
-    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      expect.objectContaining({ harness: 'TEST-keyed', payWith: 'API_KEY' })));
-  });
-
-  // The options can arrive before the model catalogue; until both are in, the harness lists are not known to be empty.
-  it('keeps a stored subscription while the model catalogue is still loading', async () => {
-    let resolveModels!: (models: Awaited<ReturnType<typeof api.fetchLlmModels>>) => void;
-    const catalogue = await vi.mocked(api.fetchLlmModels)();
-    vi.mocked(api.fetchLlmModels).mockReturnValue(new Promise(resolve => { resolveModels = resolve; }));
-    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
-    renderFactory();
-    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
-    await waitFor(() => expect(build.buildOptions).toHaveBeenCalled());
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    await act(async () => { resolveModels(catalogue); });
-    await screen.findByRole('option', { name: 'TEST model (TEST-model)' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
-    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      expect.objectContaining({ harness: 'codex', payWith: 'SUBSCRIPTION' })));
-  });
-
-  // An older server sends no subscription list: that is not a refusal, so the stored seat is saved back unchanged.
-  it('keeps a stored subscription when the server sends no subscription list', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'],
-      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] } } as unknown as build.BuildOptions);
-    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
-    renderFactory();
-    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
-    await screen.findByRole('option', { name: 'TEST model (TEST-model)' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
-    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
-      expect.objectContaining({ harness: 'codex', payWith: 'SUBSCRIPTION' })));
-  });
-
-  // A model belongs to the harness that offers it: the old slug must not ride along to a harness that never listed it.
-  it('drops a model the new harness does not offer', async () => {
-    const types = ['INPUT', 'OUTPUT'];
-    const offering = (slug: string) => ({ status: 'OK' as const,
-      offered: [{ slug, displayName: slug, defaultEffort: '', efforts: [], visible: true, priority: 1 }] });
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-other'], buildHarnesses: ['codex', 'TEST-other'],
-      subscriptionHarnesses: ['codex'], reportedTypes: { codex: types, 'TEST-other': types },
-      models: { codex: offering('TEST-model'), 'TEST-other': offering('TEST-other-model') } });
-    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
-    renderFactory();
-    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
-    await screen.findByRole('option', { name: 'TEST-other' });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Harness' }), { target: { value: 'TEST-other' } });
-    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('');
-    expect(screen.queryByRole('option', { name: /TEST-model/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Save build setup' })).toBeDisabled();
-    expect(build.saveBuildDefaults).not.toHaveBeenCalled();
-  });
-
-  // Harness reviews 3b: a review-only harness is configured but may not build.
-  it('lists only build harnesses in the build setup', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'claude_code'], buildHarnesses: ['codex'],
-      subscriptionHarnesses: ['codex'], reportedTypes: { codex: ['INPUT', 'OUTPUT'] } });
-    renderFactory();
-    await open();
-    await screen.findByRole('option', { name: 'Codex' });
-    expect(screen.queryByRole('option', { name: 'Claude Code' })).toBeNull();
-  });
-
-  it('offers a subscription only to a harness that may use one', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-keyed'], buildHarnesses: ['codex', 'TEST-keyed'],
-      subscriptionHarnesses: ['codex'], reportedTypes: { codex: ['INPUT', 'OUTPUT'] } });
-    renderFactory();
-    await open();
-    fireEvent.change(await screen.findByLabelText('Harness', field), { target: { value: 'TEST-keyed' } });
-    const pay = screen.getByRole('combobox', { name: 'Pay with' });
-    expect(within(pay).queryByRole('option', { name: /subscription/ })).toBeNull();
   });
 
   // M3.5 part D: the harness's own reported types decide, and the server sends them with the list.
