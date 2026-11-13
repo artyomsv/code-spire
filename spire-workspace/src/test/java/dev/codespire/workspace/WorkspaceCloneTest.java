@@ -288,6 +288,7 @@ class WorkspaceCloneTest {
     void aGitattributesFilterASubmoduleAndASymlinkRunNothing() throws Exception {
         Path marker = tmp.resolve("marker.txt");
         Path outside = tmp.resolve("outside-target");
+        Files.writeString(outside, "untouched");
         Path subOrigin = tmp.resolve("sub-origin.git");
         Path subSeed = tmp.resolve("sub-seed");
         Git.init().setBare(true).setDirectory(subOrigin.toFile()).call().close();
@@ -334,14 +335,14 @@ class WorkspaceCloneTest {
         Files.deleteIfExists(marker);
 
         Path ws = tmp.resolve("ws");
-        try { WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF); } catch (RuntimeException e) { e.printStackTrace(System.out); throw e; }
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF);
 
         assertTrue(Files.exists(ws.resolve("payload.txt")), "the tree was checked out");
         assertFalse(Files.exists(marker), "a gitattributes filter driver must run nothing");
         assertFalse(Files.exists(ws.resolve(".git/modules")), "a submodule must not be cloned");
         assertFalse(Files.exists(ws.resolve("sub/S.md")), "a submodule must not be populated");
-        assertFalse(Files.exists(outside), "nothing outside the workspace is written");
+        assertEquals("untouched", Files.readString(outside), "nothing outside the workspace is written");
         if (linked) {
             assertTrue(Files.isSymbolicLink(ws.resolve("link")), "a symlink stays a link");
         }
