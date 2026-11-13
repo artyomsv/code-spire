@@ -91,6 +91,32 @@ public record PoolHealth(int members, int rejected, int resting, Instant returns
     }
 
     /**
+     * Nothing was selectable — say which of the three reasons, in the order that decides the action.
+     *
+     * <p>Rate limits first: if ANY member is resting, the pool recovers on its own and the honest
+     * answer names the time AND how many will not return with it. Only when none is resting does
+     * "every member is rejected" become the whole story.
+     *
+     * <p>The last branch is the transient race — a rate limit expiring, or a rejection being cleared,
+     * between the selecting statement and this one. It answers {@code Resting(now)} rather than
+     * {@code Empty}, because "no harness credential is configured" is precisely the wrong sentence
+     * for an operator who has several, and it is the sentence this method's own design set out to
+     * avoid.
+     */
+    HarnessCredentialPool.Selection whyNothingIsAvailable() {
+        if (members == 0) {
+            return new HarnessCredentialPool.Selection.Empty();
+        }
+        if (returnsAt != null) {
+            return new HarnessCredentialPool.Selection.Resting(returnsAt, rejected);
+        }
+        if (rejected == members) {
+            return new HarnessCredentialPool.Selection.AllRejected(rejected);
+        }
+        return new HarnessCredentialPool.Selection.Resting(Instant.now(), rejected);
+    }
+
+    /**
      * The half of an exhausted pool that will never come back on its own, as a sentence fragment.
      *
      * <p>Empty when nothing is refused. Written once because both the dispatch refusal and the

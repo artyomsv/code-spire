@@ -1,7 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
-import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
@@ -178,8 +177,7 @@ public class FixRunDispatcher {
         // they then refused -- and it holds a decrypted key from here on.
         HarnessCredentialPool.Selection selection;
         try {
-            // Paid with a key of the fix harness's own vendor.
-            selection = pool.select(HarnessPolicy.keyKind(harness));
+            selection = HarnessKeys.select(pool, harness);
         } catch (IllegalStateException readFault) {
             // A read fault is NOT an empty pool, and the pool throws rather than answering Empty
             // precisely to keep the two apart. Answering "no credential is configured" to a database
@@ -201,13 +199,7 @@ public class FixRunDispatcher {
                         + "replace them");
             }
             case HarnessCredentialPool.Selection.Empty ignored -> {
-                // Empty is per key kind: keys of another vendor may exist, so the refusal names the one it looked for.
-                return new Refused(HarnessPolicy.keyKind(harness)
-                        .map(kind -> "no usable `" + kind + "` API key is configured for the " + harness
-                                + " harness, so there is no key for a fix run to call the model with; a key of"
-                                + " another vendor does not pay it")
-                        .orElse("no harness credential is configured, so there is no key for a fix "
-                                + "run to call the model with"));
+                return new Refused(HarnessKeys.noKey(harness, "a fix run"));
             }
         }
 
@@ -285,15 +277,8 @@ public class FixRunDispatcher {
      */
     private Refused refuseIfUnconfigured() {
         String harness = config.fix().harness().orElse("");
-        if (harness.isBlank()) {
-            return new Refused("this deployment has not enabled /fix — an operator must "
-                    + "set SPIRE_FACTORY_FIX_HARNESS");
-        }
-        if (!HarnessPolicy.allowsBuilds(harness)) {
-            return new Refused("the '" + harness + "' harness reviews pull requests only ("
-                    + HarnessPolicy.HARNESS_REVIEWS_ONLY + "), so it cannot run a fix — an operator must "
-                    + "set SPIRE_FACTORY_FIX_HARNESS to a harness that builds");
-        }
+        String unusable = HarnessRefusals.fixHarnessRefusal(harness);
+        if (unusable != null) return new Refused(unusable);
         String model = config.fix().model().orElse("");
         if (model.isBlank()) {
             return new Refused("this deployment has not enabled /fix — an operator must "

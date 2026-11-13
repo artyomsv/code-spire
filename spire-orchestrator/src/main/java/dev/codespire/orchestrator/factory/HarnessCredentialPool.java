@@ -176,8 +176,7 @@ public class HarnessCredentialPool {
                         -- with the refresh token removed. The rule lives here rather than in
                         -- a caller's discipline because three dispatch paths call this and each would
                         -- have to remember.
-                        WHERE enabled
-                          AND auth_mode = 'API_KEY'
+                        WHERE enabled AND auth_mode = 'API_KEY'
                           AND rejected_at IS NULL
                           AND (rate_limited_until IS NULL OR rate_limited_until <= now())
                           AND (CAST(? AS VARCHAR) IS NULL OR type = CAST(? AS VARCHAR))
@@ -190,15 +189,11 @@ public class HarnessCredentialPool {
                 RETURNING id, label, type, base_url, api_key
                 """;
         UUID chosen = null;
-        String kind = keyKind.orElse(null);
-        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, kind);
-            ps.setString(2, kind);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    chosen = rs.getObject("id", UUID.class);
-                    return new Selection.Chosen(decrypt(chosen, rs));
-                }
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql);
+             ResultSet rs = HarnessKeys.queryOfKind(ps, keyKind)) {
+            if (rs.next()) {
+                chosen = rs.getObject("id", UUID.class);
+                return new Selection.Chosen(decrypt(chosen, rs));
             }
         } catch (SQLException e) {
             // Not an empty pool: a read fault is not "you have no credentials", and answering Empty
@@ -298,34 +293,12 @@ public class HarnessCredentialPool {
     }
 
     /**
-     * Nothing was selectable — say which of the three reasons, in the order that decides the action.
-     *
-     * <p>Rate limits first: if ANY member is resting, the pool recovers on its own and the honest
-     * answer names the time AND how many will not return with it. Only when none is resting does
-     * "every member is rejected" become the whole story.
-     *
-     * <p>The last branch is the transient race — a rate limit expiring, or a rejection being cleared,
-     * between the selecting statement and this one. It answers {@code Resting(now)} rather than
-     * {@code Empty}, because "no harness credential is configured" is precisely the wrong sentence
-     * for an operator who has several, and it is the sentence this method's own design set out to
-     * avoid.
-     *
-     * <p>It reads the kind the selection asked for: a resting key of another vendor is no reason for this
-     * run to wait, so a pool with none of its kind answers {@code Empty}.
+     * Nothing was selectable: why, read for the kind the selection asked for. A resting key of another vendor is
+     * no reason for this run to wait, so a pool with none of its kind answers {@code Empty}.
      */
     private Selection whyNothingIsAvailable(Optional<String> keyKind) {
         try (Connection c = dataSource.getConnection()) {
-            PoolHealth health = PoolHealth.read(c, keyKind);
-            if (health.members() == 0) {
-                return new Selection.Empty();
-            }
-            if (health.returnsAt() != null) {
-                return new Selection.Resting(health.returnsAt(), health.rejected());
-            }
-            if (health.rejected() == health.members()) {
-                return new Selection.AllRejected(health.rejected());
-            }
-            return new Selection.Resting(Instant.now(), health.rejected());
+            return PoolHealth.read(c, keyKind).whyNothingIsAvailable();
         } catch (SQLException e) {
             throw new IllegalStateException("The harness credential pool could not be read", e);
         }
@@ -483,11 +456,7 @@ public class HarnessCredentialPool {
      * @return the new member's id
      */
     public UUID addSubscription(Connection c, String label, String type, String body) throws SQLException {
-        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
-        // through a Claude subscription or to hold claude.ai tokens:
-        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
-        if (!dev.codespire.contract.llm.HarnessPolicy.allowsSubscription(type))
-            throw new IllegalStateException(dev.codespire.contract.llm.HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+        HarnessRefusals.requireSubscriptionAllowed(type);
         String account = SignInFiles.accountOf(body)
                 .orElseThrow(() -> new IllegalArgumentException("subscription_unidentified"));
         UUID id = UUID.randomUUID();

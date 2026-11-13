@@ -3,7 +3,6 @@ package dev.codespire.orchestrator.factory;
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunEventRecord;
 import dev.codespire.contract.event.RunIds;
-import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.SpendGate;
 import dev.codespire.orchestrator.llm.LlmModelPricer;
@@ -388,16 +387,14 @@ public class RunResource {
      * the same call {@link #machineAccount} already makes for the push identity: the factory never
      * borrows the reviewer's identity, in either direction.
      *
-     * <p>Each refusal says which of the three states the pool is in, because they need three
-     * different actions — wait, replace a key, or configure one at all.
-     *
-     * <p>Package-private so {@code RunResourceKeyKindTest} can check that the harness's key kind reaches the pool.
+     * <p>Each refusal says which of the three states the pool is in, because they need three different actions —
+     * wait, replace a key, or configure one at all. Package-private so {@code RunResourceKeyKindTest} can check
+     * that the harness's key kind reaches the pool.
      */
     HarnessCredentialPool.PoolMember harnessCredential(String harness) {
         HarnessCredentialPool.Selection selection;
         try {
-            // Paid with a key of the harness's own vendor.
-            selection = pool.select(HarnessPolicy.keyKind(harness));
+            selection = HarnessKeys.select(pool, harness);
         } catch (IllegalStateException e) {
             // A read fault, not an empty pool. The pool throws rather than answering Empty
             // precisely to preserve that distinction, and nothing downstream of a bare 500 says
@@ -423,17 +420,9 @@ public class RunResource {
                             + "Nothing recovers on its own: rotating onto a refused key spends a request "
                             + "per run to rediscover it is dead. Replace the keys, or clear one you have "
                             + "fixed, with POST /api/harness-credentials.");
-            // Empty is per key kind: keys of another vendor may exist, so the refusal names the one it looked for.
-            case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(
-                    HarnessPolicy.keyKind(harness)
-                            .map(kind -> "No usable `" + kind + "` API key is configured for the " + harness
-                                    + " harness, so there is no key for this run to call the model with; a key of"
-                                    + " another vendor does not pay it.")
-                            .orElse("No harness credential is configured, so there is no key for this run to"
-                                    + " call the model with.")
-                            + " Add one with POST /api/harness-credentials. The factory"
-                            + " deliberately does NOT borrow the reviewer's key: it goes into a sandbox"
-                            + " that runs an untrusted work item at full access.");
+            case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(HarnessKeys.noKeySentence(harness, "this run")
+                    + " Add one with POST /api/harness-credentials. The factory deliberately does NOT borrow the"
+                    + " reviewer's key: it goes into a sandbox that runs an untrusted work item at full access.");
         };
     }
 

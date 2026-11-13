@@ -125,4 +125,53 @@ final class SignInFiles {
             else emptyRefreshTokens(field.getValue());
         }
     }
+
+    /** The vendor CLI's own word for an API-key sign-in. */
+    static boolean isApiKeyMode(String authMode) {
+        return "apikey".equalsIgnoreCase(authMode);
+    }
+
+    /**
+     * Reads {@code auth_mode} from the TOP level of the sign-in file, or null.
+     *
+     * <p>Streaming rather than a tree: the document is a credential, and a tree puts every value into
+     * an object graph that a logger or an exception message can print. This reads one string and skips
+     * everything else without holding it.
+     *
+     * <p>Null for anything unreadable, for a nested-only value, and for a field declared twice — JSON
+     * permits duplicates and readers disagree about which wins, so a repeat is treated as no answer
+     * rather than resolved by a rule the vendor never promised. Null refuses the sign-in, which is the
+     * safe direction: nothing is stored.
+     */
+    static String topLevelAuthMode(String body) {
+        try (com.fasterxml.jackson.core.JsonParser parser = JSON_STREAM.createParser(body)) {
+            if (parser.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
+            String found = null;
+            while (parser.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                String field = parser.currentName();
+                var value = parser.nextToken();
+                if (!"auth_mode".equals(field)) { parser.skipChildren(); continue; }
+                if (value != com.fasterxml.jackson.core.JsonToken.VALUE_STRING) return null;
+                if (found != null) return null;
+                String declared = parser.getText();
+                // A mode is a short token. The bound is a security one: this value is what a screen
+                // shows as the identity, and an e-mail address must never become one.
+                if (!MODE.matcher(declared).matches()) return null;
+                found = declared;
+            }
+            // The document must END here: a second root object behind the first would otherwise
+            // decide the kind from a value the real file never carried.
+            if (parser.nextToken() != null) return null;
+            return found;
+        } catch (java.io.IOException | RuntimeException notReadable) {
+            // Never log the body or the parser's message: both can quote the credential.
+            return null;
+        }
+    }
+
+    private static final com.fasterxml.jackson.core.JsonFactory JSON_STREAM =
+            new com.fasterxml.jackson.core.JsonFactory();
+
+    /** Letters, digits, underscore and hyphen. No address can pass, and nor can a sentence. */
+    private static final java.util.regex.Pattern MODE = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,32}");
 }
