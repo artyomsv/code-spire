@@ -63,6 +63,12 @@ it('shows what the gate binds before offering an answer', async () => {
   expect(screen.getByRole('region', { name: 'If you approve' })).toHaveTextContent('One build starts. It stops at $20.000 or after 2 hours, and this item may use up to 5 runs.');
   expect(screen.getByText('TEST-ticket title · TEST-42 · TEST-owner/TEST-repo')).toBeInTheDocument();
 });
+it('names the agent by its harness label, not its config key', async () => {
+  vi.mocked(gateway.getWorkItem).mockResolvedValue({ ...item, preparation: { ...item.preparation, harness: 'codex' } });
+  show();
+  expect(await screen.findByText('Codex · TEST-model')).toBeInTheDocument();
+  expect(screen.queryByText('codex · TEST-model')).toBeNull();
+});
 it('names a moved ticket instead of showing its unapproved text', async () => {
   vi.mocked(preparation.preparationEvidence).mockResolvedValue({ reason: 'artifacts_changed', detail: 'plan_changed', specification: null, instruction: null });
   show();

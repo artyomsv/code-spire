@@ -35,10 +35,10 @@ describe('outcome', () => {
     const view = renderFactory();
     view.rerender(<RepositoryFactory repository={{ ...repository, id: 'TEST-other', slug: 'TEST-other' }} accounts={[account()]}
       webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />);
-    expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
+    expect(await screen.findByText('Codex · TEST-model')).toBeInTheDocument();
     await act(async () => answer(buildSetup({ revision: 9, baseBranch: 'main', harness: 'codex', model: 'TEST-stale-model' })));
     expect(screen.queryByText(/TEST-stale-model/)).toBeNull();
-    expect(screen.getByText('codex · TEST-model')).toBeInTheDocument();
+    expect(screen.getByText('Codex · TEST-model')).toBeInTheDocument();
   });
 });
 
@@ -232,7 +232,7 @@ describe('build setup', () => {
   it('shows the saved coordinates instead of that warning once they exist', async () => {
     vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
     renderFactory();
-    expect(within(await step(5)).getByText('codex · TEST-model')).toBeInTheDocument();
+    expect(within(await step(5)).getByText('Codex · TEST-model')).toBeInTheDocument();
     expect((await screen.findByText('Ready — tickets can start work')).closest('.factory-outcome'))
       .not.toHaveTextContent('still needs its branch');
   });
@@ -248,7 +248,7 @@ describe('build setup', () => {
       // No level chosen is the model's own default, sent as null rather than as a level called ''.
       { expectedRevision: 0, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: null, payWith: 'API_KEY',
         verifyCommands: [], verifyTimeoutSeconds: 1800 }));
-    expect(await screen.findByText(/Build setup saved: codex on TEST-model/)).toBeInTheDocument();
+    expect(await screen.findByText(/Build setup saved: Codex on TEST-model/)).toBeInTheDocument();
   });
 
   it('saves the check commands one per line and the verify time limit', async () => {
@@ -415,7 +415,7 @@ describe('build setup', () => {
     fireEvent.change(await screen.findByLabelText('Model', field), { target: { value: 'TEST-model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Reload the saved setup' }));
-    expect(await screen.findByText('codex · TEST-model')).toBeInTheDocument();
+    expect(await screen.findByText('Codex · TEST-model')).toBeInTheDocument();
   });
 
   // M3.5 part D: the harness's own reported types decide, and the server sends them with the list.
@@ -538,7 +538,7 @@ describe('query cache (step 6)', () => {
     vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'TEST-new', harness: 'codex', model: 'TEST-model' }));
     render(<QueryClientProvider client={client}><RepositoryFactory repository={repository} accounts={[account()]}
       webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} /></QueryClientProvider>);
-    await screen.findByText('codex · TEST-model');
+    await screen.findByText('Codex · TEST-model');
     expect(client.getQueryData<build.BuildDefaults>(build.buildDefaultsKey(repository.id))?.baseBranch).toBe('TEST-new');
   });
 });

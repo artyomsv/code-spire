@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.work;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.review.TokenType;
 import java.util.Set;
 
@@ -24,7 +25,7 @@ final class WorkRunAssemblyRefusals {
             "model_not_run_by_harness", "effort_not_offered", "effort_unverifiable",
             "subscription_unavailable", "subscription_unreadable",
             // A harness that may not be paid with a seat or may not build (harness reviews 3b).
-            dev.codespire.contract.llm.HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED, dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY,
+            HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED, HarnessPolicy.HARNESS_REVIEWS_ONLY,
             // A plan step whose start is gone (M4 slice 3, decision 11); Retry refuses it first, so this is the race behind it.
             WorkStepAssembly.CHECKPOINT_LOST);
 

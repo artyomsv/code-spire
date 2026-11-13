@@ -83,6 +83,17 @@ class RepositoryResourceTest extends RepositoryFixture {
         assertNull(repositories.get(repo.id()).orElseThrow().reviewLlmProviderId(), "a refused save changes nothing");
     }
 
+    /** A refusal says why in the body: an empty 400 left the dashboard only "Could not save repository". */
+    @Test void aRefusedSaveNamesItsReasonInTheBody() {
+        ReviewHarness claudeSeat = new ReviewHarness("claude_code", "TEST-model", null, "SUBSCRIPTION");
+        given().contentType("application/json").body(repositoryReviewingOn(claudeSeat)).post("/api/repositories")
+                .then().statusCode(400).body(containsString("subscription_not_allowed"));
+        var repo = repositories.create(repository(null, null));
+        given().contentType("application/json").body(repositoryReviewingOn(claudeSeat))
+                .put("/api/repositories/" + repo.id() + "?revision=1").then().statusCode(400)
+                .body(containsString("subscription_not_allowed"));
+    }
+
     /** Harness reviews, step 5: the harness half of "Review with" is stored, read back and readable by the saga. */
     @Test void aReviewHarnessRoundTripsThroughCreateAndUpdate() {
         ReviewHarness seat = new ReviewHarness("codex", "TEST-model", "high", "SUBSCRIPTION");

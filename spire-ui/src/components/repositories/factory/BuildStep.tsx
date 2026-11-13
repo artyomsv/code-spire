@@ -7,7 +7,7 @@ import SettingField from '../../SettingField';
 import BuildModelFields, { modelChoices } from './BuildModelFields';
 import FactoryStep from './FactoryStep';
 import { harnessLabel } from '../../harnessLabels';
-import { PAY_WITH_LABEL, buildDefaultsKey, buildOptions, buildOptionsKey, harnessOffersModel, mayPayWithSubscription, repositoryBranchHead, subscriptionRefused, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
+import { PAY_WITH_LABEL, STORED_SEAT_LABEL, buildDefaultsKey, buildOptions, buildOptionsKey, harnessOffersModel, mayPayWithSubscription, repositoryBranchHead, subscriptionRefused, saveBuildDefaults, type BuildDefaults, type HarnessModels, type PayWith, type Preparation } from './buildDefaultsApi';
 
 interface Props {
   repositoryId: string;
@@ -89,7 +89,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
       // The saved row goes into its key first, so the list and the preparation form are right even if the re-read fails.
       // Written whether or not this form is still open, and after cancelling an older read that would overwrite it.
       writeLive(client, buildDefaultsKey(repositoryId), saved);
-      if (live.current) changed(`Build setup saved: ${form.harness} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
+      if (live.current) changed(`Build setup saved: ${harnessLabel(form.harness)} on ${form.model}${form.effort ? ` (${form.effort})` : ''}, paid with ${PAY_WITH_LABEL[form.payWith]}, starting from ${form.baseBranch}.`);
     } catch (failure) { if (live.current) setError(String(failure instanceof Error ? failure.message : failure)); }
     finally { if (live.current) setBusy(null); }
   }
@@ -122,7 +122,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
     actions={!editing && <button className={defaults.revision > 0 ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={open !== null}
       onClick={() => setOpen('build')}>{defaults.revision > 0 ? 'Change' : 'Set up the build'}</button>}>
     {defaults.revision > 0
-      ? <div className="factory-row"><b>{defaults.harness} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch} · paid with {PAY_WITH_LABEL[(defaults.payWith ?? 'API_KEY') as PayWith]}
+      ? <div className="factory-row"><b>{harnessLabel(defaults.harness ?? '')} · {defaults.model}{defaults.effort ? ` · ${defaults.effort}` : ''}</b><span className="prov-sub">starts from {defaults.baseBranch} · paid with {PAY_WITH_LABEL[(defaults.payWith ?? 'API_KEY') as PayWith]}
         {defaults.verifyCommands?.length ? ` · checks: ${defaults.verifyCommands.join(', ')}` : ' · no checks'}</span></div>
       : <p className="factory-note">Not set, so every ticket has to be given a branch, a harness and a model by hand.</p>}
     <p className="factory-note">A prepared task copies these. Changing them here never changes a decision that is already open.</p>
@@ -152,6 +152,7 @@ export default function BuildStep({ repositoryId, defaults, open, setOpen, chang
             // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
           }
           {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
+          {!subscriptionOffered && form.payWith === 'SUBSCRIPTION' && <option value="SUBSCRIPTION">{STORED_SEAT_LABEL}</option>}
         </select></SettingField>
       <BuildModelFields harness={form.harness} known={known} choices={offered} model={form.model} effort={form.effort}
         setModel={model => setForm(previous => ({ ...previous, model }))}

@@ -26,6 +26,11 @@ export interface BuildDefaults {
 export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
 /** How a run pays, in the words the build setup and the review setting show. */
 export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a subscription seat' };
+/**
+ * A stored seat the options do not offer (an older server sends no list): kept and saved back as it is, so the select
+ * shows it under this name rather than falling back to the first option, which would not be what is saved.
+ */
+export const STORED_SEAT_LABEL = `${PAY_WITH_LABEL.SUBSCRIPTION} (not offered here)`;
 /** `composed` copies the ticket as one step; `generated` writes a specification and plan with the build model. */
 export type Preparation = 'composed' | 'generated';
 

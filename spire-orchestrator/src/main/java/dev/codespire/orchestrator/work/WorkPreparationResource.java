@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.work;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.work.WorkItemEvent;
 import dev.codespire.contract.work.WorkPreparation;
 import dev.codespire.orchestrator.security.OidcSubjects;
@@ -59,8 +60,8 @@ public class WorkPreparationResource {
         java.util.List<String> harnesses=factoryConfig.configuredAgentImages().keySet().stream().sorted().toList();
         return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
                 harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
-                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsSubscription).toList(),
-                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsBuilds).toList());
+                harnesses.stream().filter(HarnessPolicy::allowsSubscription).toList(),
+                harnesses.stream().filter(HarnessPolicy::allowsBuilds).toList());
     }
 
     /**
@@ -135,8 +136,9 @@ public class WorkPreparationResource {
         // Who is asking comes first: an unidentified caller is told nothing about the harness rules.
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         // A harness that only reviews cannot build this item, so it is refused by name before anything is read.
-        if(!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
-            throw refused(400,dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        if(!HarnessPolicy.allowsBuilds(input.harness())) {
+            throw refused(400,HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        }
         WorkPreparation preparation;
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();
         // A hand-registered task verifies with the repository's checks too, copied and bound like the sweep's (M4):

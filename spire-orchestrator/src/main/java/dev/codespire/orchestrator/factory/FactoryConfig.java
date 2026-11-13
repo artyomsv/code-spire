@@ -4,6 +4,7 @@ import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithName;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -29,12 +30,12 @@ public interface FactoryConfig {
 
     /**
      * The harnesses this deployment runs, each with its image: {@link #agentImage()} without the entries set to
-     * {@link #NOT_CONFIGURED}. Every reader asks this, never the raw map, so an opt-in harness left at
-     * {@code none} is absent from every list and refused as unconfigured at every door.
+     * {@link #NOT_CONFIGURED}, read trimmed and in any case. Every reader asks this, never the raw map, so an opt-in
+     * harness left at {@code none} is absent from every list and refused as unconfigured at every door.
      */
     default Map<String, String> configuredAgentImages() {
         return agentImage().entrySet().stream()
-                .filter(entry -> !NOT_CONFIGURED.equals(entry.getValue()))
+                .filter(entry -> !NOT_CONFIGURED.equals(entry.getValue().trim().toLowerCase(Locale.ROOT)))
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 

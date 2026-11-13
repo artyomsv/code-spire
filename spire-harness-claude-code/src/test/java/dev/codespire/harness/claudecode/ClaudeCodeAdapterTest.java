@@ -185,6 +185,17 @@ class ClaudeCodeAdapterTest {
         assertEquals("error:api_error", state.detail());
     }
 
+    /** The last resort: no API status, no API error and no terminal reason, so the subtype names it. */
+    @Test
+    void anErrorResultWithNothingElseNamesItsSubtype() {
+        String line = ClaudeCodeLines.RESULT_ERROR.replace("\"api_error\":\"connection_failed\"", "\"api_error\":null")
+                .replace("\"terminal_reason\":\"api_error\"", "\"terminal_reason\":\"\"")
+                .replace("\"subtype\":\"success\"", "\"subtype\":\"error_during_execution\"");
+
+        RunEvent.StateChange state = assertInstanceOf(RunEvent.StateChange.class, adapter.parseAll(line).get(1));
+        assertEquals("error:error_during_execution", state.detail());
+    }
+
     @Test
     void anErrorResultNamesItsApiStatus() {
         String line = ClaudeCodeLines.RESULT_ERROR.replace("\"api_error_status\":null", "\"api_error_status\":401");

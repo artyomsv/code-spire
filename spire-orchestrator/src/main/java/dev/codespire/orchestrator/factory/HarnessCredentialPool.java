@@ -763,7 +763,9 @@ public class HarnessCredentialPool {
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             // One seat per account: switching a second seat of an account back on is refused by name.
-            if ("23505".equals(e.getSQLState())) throw new SeatTakenException(id, e);
+            if ("23505".equals(e.getSQLState())) {
+                throw new SeatTakenException(id, e);
+            }
             throw new IllegalStateException("The harness credential " + id + " could not be updated", e);
         }
     }

@@ -14,7 +14,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="$HERE/claude-code/Dockerfile"
 MODELS_FILE="$HERE/claude-code/models.json"
 
-AGENT_MODELS="$(base64 -w0 "$MODELS_FILE")"
+# One line with no host tool but base64: `-w0` is GNU only, so the wrapped output is joined instead, which GNU,
+# macOS and BSD base64 all produce. The host needs only docker, as before.
+AGENT_MODELS="$(base64 < "$MODELS_FILE" | tr -d '\n')"
 if [ -z "$AGENT_MODELS" ]; then
   echo "FAILED: $MODELS_FILE is empty; the image would carry no model list." >&2
   exit 1
