@@ -2,6 +2,7 @@ package dev.codespire.publisher;
 
 import dev.codespire.workspace.GitCredential;
 import dev.codespire.workspace.PublishRepo;
+import dev.codespire.workspace.WorkspaceClone;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -66,8 +67,8 @@ class CloneMainTest {
         f.run(seed, "git", "push", "origin", "HEAD:refs/pull/7/head");
 
         Path ws = dir.resolve("ws");
-        CloneMain.populate(f.originUri(), forkHead, "spire/review-7", ws, CREDENTIAL, "TEST-user", null, null,
-                "refs/pull/7/head");
+        CloneMain.populate(new WorkspaceClone.CloneRequest(f.originUri(), forkHead, "spire/review-7", ws, CREDENTIAL,
+                "TEST-user", "TEST-user@factory.invalid", null, "refs/pull/7/head"), null);
 
         assertEquals(forkHead, f.out(ws, "git", "rev-parse", "HEAD"));
         assertEquals("TEST fork", Files.readString(ws.resolve("FORK.md")).trim());

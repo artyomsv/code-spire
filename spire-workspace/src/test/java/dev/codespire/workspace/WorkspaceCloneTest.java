@@ -177,6 +177,11 @@ class WorkspaceCloneTest {
 
     private static final String PULL_REF = "refs/pull/7/head";
 
+    private WorkspaceClone.CloneRequest request(String commit, Path ws, String baseBranch, String fetchRef) {
+        return new WorkspaceClone.CloneRequest(origin, commit, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", baseBranch, fetchRef);
+    }
+
     /** Commits a file on a side branch of the seed and pushes it ONLY as the given ref, never as a branch. */
     private String pushToPullRef(Path seed, String file, String content, String ref) throws Exception {
         try (Git git = Git.open(seed.toFile())) {
@@ -199,8 +204,7 @@ class WorkspaceCloneTest {
         assertTrue(refusal.getMessage().contains("not reachable"), refusal.getMessage());
 
         Path ws = tmp.resolve("ws");
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF);
+        WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF));
 
         assertEquals("fork", Files.readString(ws.resolve("FORK.md")));
         try (Git git = Git.open(ws.toFile())) {
@@ -218,8 +222,7 @@ class WorkspaceCloneTest {
         List<Long> sleeps = new ArrayList<>();
         Path ws = tmp.resolve("ws");
 
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF, millis -> {
+        WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF), millis -> {
                     sleeps.add(millis);
                     try (Git git = Git.open(seed.toFile())) {
                         git.push().setRemote(origin).setForce(true)
@@ -242,8 +245,7 @@ class WorkspaceCloneTest {
         Path ws = tmp.resolve("ws");
 
         IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
-                WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                        "spire-bot@factory.invalid", null, PULL_REF, sleeps::add));
+                WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF), sleeps::add));
 
         assertTrue(refusal.getMessage().contains(forkHead), refusal.getMessage());
         assertTrue(refusal.getMessage().contains(PULL_REF), refusal.getMessage());
@@ -258,8 +260,7 @@ class WorkspaceCloneTest {
         Path ws = tmp.resolve("ws");
 
         // refs/pull/7/head does not exist on the first fetch; the forge creates it while init waits.
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF, millis -> {
+        WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF), millis -> {
                     sleeps.add(millis);
                     try (Git git = Git.open(seed.toFile())) {
                         git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
@@ -279,8 +280,7 @@ class WorkspaceCloneTest {
         Path ws = tmp.resolve("ws");
 
         IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
-                WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                        "spire-bot@factory.invalid", null, PULL_REF, sleeps::add));
+                WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF), sleeps::add));
 
         assertTrue(refusal.getMessage().contains(forkHead), refusal.getMessage());
         assertTrue(refusal.getMessage().contains(PULL_REF), refusal.getMessage());
@@ -298,8 +298,8 @@ class WorkspaceCloneTest {
             Path ws = tmp.resolve("ws-" + index++);
             // An origin that does not exist: any network call would fail differently from the refusal.
             IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
-                    WorkspaceClone.populate(tmp.resolve("missing.git").toUri().toString(), base, "spire/x", ws,
-                            CREDENTIAL, "spire-bot", "spire-bot@factory.invalid", null, bad, sleeps::add), bad);
+                    WorkspaceClone.populate(new WorkspaceClone.CloneRequest(tmp.resolve("missing.git").toUri().toString(), base, "spire/x", ws,
+                            CREDENTIAL, "spire-bot", "spire-bot@factory.invalid", null, bad), sleeps::add), bad);
             assertTrue(refusal.getMessage().contains("not a pull request head ref"), bad + ": " + refusal.getMessage());
             assertFalse(Files.exists(ws), "nothing is cloned for " + bad);
         }
@@ -310,8 +310,7 @@ class WorkspaceCloneTest {
     void theBaseIsStillKeptWithAPullRef() throws Exception {
         String forkHead = pushToPullRef(tmp.resolve("seed"), "FORK.md", "fork", PULL_REF);
         Path ws = tmp.resolve("ws");
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", "main", PULL_REF);
+        WorkspaceClone.populate(request(forkHead, ws, "main", PULL_REF));
 
         try (Git git = Git.open(ws.toFile())) {
             assertEquals(head, git.getRepository().resolve(WorkspaceClone.BASE_REF_PREFIX + "main").name());
@@ -375,8 +374,7 @@ class WorkspaceCloneTest {
         Files.deleteIfExists(marker);
 
         Path ws = tmp.resolve("ws");
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF);
+        WorkspaceClone.populate(request(forkHead, ws, null, PULL_REF));
 
         assertTrue(Files.exists(ws.resolve("payload.txt")), "the tree was checked out");
         assertFalse(Files.exists(marker), "a gitattributes filter driver must run nothing");

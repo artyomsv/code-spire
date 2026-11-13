@@ -70,22 +70,38 @@ public final class WorkspaceClone {
     }
 
     /**
+     * Everything one clone needs, so an entry point takes one value instead of nine arguments.
+     *
+     * @param baseCommit a commit id (full or abbreviated) reachable from some branch of the remote, or from
+     *                   {@code fetchRef}
+     * @param baseBranch the remote's branch to keep as {@value #BASE_REF_PREFIX}{@code <baseBranch>} (M4 slice 7a: a
+     *                   land fix merges its pull request's base); null keeps nothing
+     * @param fetchRef   a pull request's own head, fetched first for a fork whose head is on no branch; null fetches
+     *                   nothing, anything but a pull request head ref is refused before any network call
+     */
+    public record CloneRequest(String remoteUri, String baseCommit, String branch, Path workspace,
+                               GitCredential credential, String authorName, String authorEmail,
+                               String baseBranch, String fetchRef) {
+    }
+
+    /**
      * A fork's head is on no branch of the base repository, so it is read from the pull request's own ref. The forge
      * may lag behind the webhook, so a head that is not there yet is refetched, 2 s apart, up to 3 tries in all.
      */
-    private static void fetchPullRef(Git git, String baseCommit, String fetchRef, GitCredential credential,
-                                     LongConsumer sleeper) throws GitAPIException, IOException {
+    private static void fetchPullRef(Git git, CloneRequest request, LongConsumer sleeper)
+            throws GitAPIException, IOException {
+        GitCredential credential = request.credential();
         String lastError = null;
         for (int attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
             try {
                 git.fetch().setRemote("origin")
-                        .setRefSpecs(new RefSpec("+" + fetchRef + ":" + PULL_HEAD_REF))
+                        .setRefSpecs(new RefSpec("+" + request.fetchRef() + ":" + PULL_HEAD_REF))
                         .setCheckFetchedObjects(true)
                         .setCredentialsProvider(new UsernamePasswordCredentialsProvider(
                                 credential.username(), credential.secret()))
                         .call();
                 lastError = null;
-                ObjectId resolved = git.getRepository().resolve(baseCommit);
+                ObjectId resolved = git.getRepository().resolve(request.baseCommit());
                 if (resolved != null && git.getRepository().getObjectDatabase().has(resolved)) return;
             } catch (TransportException transport) {
                 // A ref the forge has not created yet makes JGit throw ("Remote does not have <ref> available for
@@ -95,7 +111,7 @@ public final class WorkspaceClone {
             }
             if (attempt < FETCH_ATTEMPTS) sleeper.accept(FETCH_RETRY_MILLIS);
         }
-        throw new IllegalArgumentException("base commit " + baseCommit + " is not on " + fetchRef
+        throw new IllegalArgumentException("base commit " + request.baseCommit() + " is not on " + request.fetchRef()
                 + " after " + FETCH_ATTEMPTS + " fetches; the forge does not hold the pull request head"
                 + (lastError == null ? "" : " (last error: " + lastError + ")"));
     }
@@ -132,29 +148,31 @@ public final class WorkspaceClone {
     public static void populate(String remoteUri, String baseCommit, String branch, Path workspace,
                                 GitCredential credential, String authorName, String authorEmail, String baseBranch)
             throws GitAPIException, IOException {
-        populate(remoteUri, baseCommit, branch, workspace, credential, authorName, authorEmail, baseBranch, null);
+        populate(new CloneRequest(remoteUri, baseCommit, branch, workspace, credential, authorName, authorEmail,
+                baseBranch, null));
     }
 
-    /**
-     * The same, first fetching {@code fetchRef} (a pull request's own head, for a fork whose head is on no branch).
-     * An invalid ref is refused before any network call. Null fetches nothing.
-     */
-    public static void populate(String remoteUri, String baseCommit, String branch, Path workspace,
-                                GitCredential credential, String authorName, String authorEmail, String baseBranch,
-                                String fetchRef) throws GitAPIException, IOException {
-        populate(remoteUri, baseCommit, branch, workspace, credential, authorName, authorEmail, baseBranch, fetchRef,
-                WorkspaceClone::sleepMillis);
+    /** The same from one request: the clone, an optional pull ref fetch, the base branch kept. */
+    public static void populate(CloneRequest request) throws GitAPIException, IOException {
+        populate(request, WorkspaceClone::sleepMillis);
     }
 
     /** The same with an injectable retry sleep, so a test does not wait. */
-    static void populate(String remoteUri, String baseCommit, String branch, Path workspace,
-                         GitCredential credential, String authorName, String authorEmail, String baseBranch,
-                         String fetchRef, LongConsumer sleeper) throws GitAPIException, IOException {
-        Objects.requireNonNull(remoteUri, "remoteUri");
+    static void populate(CloneRequest request, LongConsumer sleeper) throws GitAPIException, IOException {
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(request.remoteUri(), "remoteUri");
+        String fetchRef = request.fetchRef();
         if (fetchRef != null && !FETCH_REF.matcher(fetchRef).matches()) {
             throw new IllegalArgumentException("fetch ref is not a pull request head ref: " + fetchRef);
         }
-        Objects.requireNonNull(credential, "credential");
+        GitCredential credential = Objects.requireNonNull(request.credential(), "credential");
+        String remoteUri = request.remoteUri();
+        String baseCommit = request.baseCommit();
+        String branch = request.branch();
+        String authorName = request.authorName();
+        String authorEmail = request.authorEmail();
+        String baseBranch = request.baseBranch();
+        Path workspace = request.workspace();
         try (Git git = Git.cloneRepository()
                 .setURI(remoteUri)
                 .setDirectory(workspace.toFile())
@@ -162,7 +180,7 @@ public final class WorkspaceClone {
                 .setCredentialsProvider(new UsernamePasswordCredentialsProvider(
                         credential.username(), credential.secret()))
                 .call()) {
-            if (fetchRef != null) fetchPullRef(git, baseCommit, fetchRef, credential, sleeper);
+            if (fetchRef != null) fetchPullRef(git, request, sleeper);
             // resolve() turns ANY full 40-hex string into an ObjectId without looking it up, so the
             // existence check has to be explicit; only an abbreviation is looked up on the way.
             ObjectId base = git.getRepository().resolve(baseCommit);
