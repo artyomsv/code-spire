@@ -91,6 +91,11 @@ class ReadOnlyRunLauncherTest {
             public RunUnitSpec buildReview(RunCommand.ExecuteReviewRun review, HarnessAdapter harness) {
                 return null; // the real topology is RunUnitBuilderReviewTest's
             }
+
+            @Override
+            public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter harness) {
+                return null; // a fork's proxy requirement is RunLauncherModelProxyTest's; the result path is under test here
+            }
         };
     }
 
@@ -139,6 +144,56 @@ class ReadOnlyRunLauncherTest {
 
         assertFalse(read.overCap());
         assertEquals(answer, read.text());
+    }
+
+    /** A fork review (step 8): the same unit and result path, so the answer comes back as the review's artifact. */
+    private static RunCommand.ExecuteUntrustedReviewRun fork() {
+        RunCommand.ExecuteReviewRun base = ReviewRunDispatcherTest.REVIEW;
+        RunCommand.ExecuteRun trusted = base.execution();
+        String branch = dev.codespire.contract.review.PullRefs.localBranch(7);
+        RunCommand.ExecuteRun execution = new RunCommand.ExecuteRun(trusted.runId(), trusted.repo(), trusted.remoteUri(),
+                branch, trusted.baseCommit(), branch, trusted.prompt(), trusted.harness(), trusted.model(),
+                trusted.agentImage(), trusted.protectedPaths(), trusted.maxWallClockSeconds(), trusted.scmCredential(),
+                trusted.harnessCredential());
+        return new RunCommand.ExecuteUntrustedReviewRun(trusted.runId(), execution, base.review(), base.inputs(),
+                "refs/pull/7/head");
+    }
+
+    @Test
+    void aForkReviewRunReturnsItsAnswer() {
+        runtime.publisherLines = List.of(artifactLine("TEST-fork-findings"));
+
+        dev.codespire.contract.event.RunReviewArtifact answer = assertInstanceOf(
+                dev.codespire.contract.event.RunReviewArtifact.class,
+                launcher.launchUntrustedReview(fork(), observer));
+
+        assertEquals("TEST-fork-findings", answer.text());
+        assertEquals(ReviewRunDispatcherTest.REVIEW.review(), answer.review());
+        assertEquals(Map.of("INPUT", 7L), answer.tokenUsage());
+        assertEquals(List.of("created", "released"), observed, "the unit is destroyed, never retained");
+    }
+
+    /** A fork's answer is read against the review cap too: 40 KiB in parts arrives whole, not capped as a draft's. */
+    @Test
+    void aForkAnswerOverADraftsCapArrivesWhole() throws Exception {
+        String answer = "TEST-finding
+".repeat(40 * 1024 / 13);
+        List<String> lines = new ArrayList<>();
+        int count = (answer.length() + 8191) / 8192;
+        for (int index = 0; index < count; index++) {
+            String part = answer.substring(index * 8192, Math.min(answer.length(), (index + 1) * 8192));
+            lines.add(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
+                    "event", "artifact_part", "index", index, "count", count, "text", part)));
+        }
+        runtime.publisherLines = lines;
+
+        dev.codespire.contract.event.RunReviewArtifact read = assertInstanceOf(
+                dev.codespire.contract.event.RunReviewArtifact.class,
+                launcher.launchUntrustedReview(fork(), observer));
+
+        assertFalse(read.overCap());
+        assertEquals(answer, read.text());
+        assertEquals(ReviewRunDispatcherTest.REVIEW.review(), read.review());
     }
 
     @Test

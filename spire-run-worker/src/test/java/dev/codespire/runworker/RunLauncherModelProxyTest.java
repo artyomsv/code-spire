@@ -126,8 +126,10 @@ class RunLauncherModelProxyTest {
         runtime.images.add(PROXY_IMAGE);
         building(launcher, proxiedUnit());
 
-        launcher.launchUntrustedReview(fork(), RunObserver.IGNORING);
+        RunResult result = launcher.launchUntrustedReview(fork(), RunObserver.IGNORING);
 
+        // No answer was handed over, so the result is the review's own missing-artifact failure, not a bare RunFinished.
+        assertEquals(RunFailureCause.ARTIFACT_MISSING.name(), assertInstanceOf(RunResult.RunFailed.class, result).cause());
         assertEquals(1, runtime.created);
         assertEquals(List.of(PROXY_IMAGE), runtime.described);
     }
