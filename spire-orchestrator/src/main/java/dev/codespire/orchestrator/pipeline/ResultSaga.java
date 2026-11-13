@@ -33,6 +33,7 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -130,6 +131,10 @@ public class ResultSaga {
      *  paid-call sites cannot drift apart on what "over the cap" means. */
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
+
+    /** Whether the pull request is untrusted, which decides whether its links are loaded (harness reviews, step 8). */
+    @Inject
+    FixTargets targets;
 
     /** Whether a review runs on the repository's harness (harness reviews, steps 5 and 6). */
     @Inject
@@ -246,7 +251,7 @@ public class ResultSaga {
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.references() == null ? Set.of() : e.references(), contextCred, scmType,
+                        linksToGather(e), contextCred, scmType,
                         // Already read at diff-fetch, from the PR's target branch — the aggregator
                         // holds no SCM credential and so cannot fetch it itself.
                         e.repoRules(), e.codeReferences()));
@@ -701,6 +706,22 @@ public class ResultSaga {
                     timeline.record("result", "dropped:HarnessReviewPrepared", reviewId, dropped.why());
         }
         return true;
+    }
+
+    /**
+     * The links a review gathers context from. A fork author writes the title, branch and description the links are
+     * read from, so they would choose which private issues and documents are loaded: an untrusted pull request (a fork,
+     * or unknown provenance) gathers none, on the API and the harness path alike. Nothing is read when there is no
+     * link to cut.
+     */
+    private Set<String> linksToGather(DiffFetched e) {
+        Set<String> links = e.references() == null ? Set.of() : e.references();
+        if (links.isEmpty() || !FixTargets.isUntrusted(targets.forReview(e.reviewId()))) {
+            return links;
+        }
+        projection.appendEvent(e.reviewId(), "result", "ContextLinksSkipped",
+                "context links skipped: untrusted pull request");
+        return Set.of();
     }
 
     /** {@link #refuse}'s terminal shape for a harness refusal, plus the reason the attention feed shows. */
