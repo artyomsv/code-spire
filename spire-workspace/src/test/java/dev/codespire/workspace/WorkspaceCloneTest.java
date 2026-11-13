@@ -1,7 +1,11 @@
 package dev.codespire.workspace;
 
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.dircache.DirCacheEditor;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.RefSpec;
@@ -287,10 +291,11 @@ class WorkspaceCloneTest {
         Path subOrigin = tmp.resolve("sub-origin.git");
         Path subSeed = tmp.resolve("sub-seed");
         Git.init().setBare(true).setDirectory(subOrigin.toFile()).call().close();
+        ObjectId subCommit;
         try (Git sub = Git.init().setDirectory(subSeed.toFile()).setInitialBranch("main").call()) {
             Files.writeString(subSeed.resolve("S.md"), "sub");
             sub.add().addFilepattern(".").call();
-            sub.commit().setAuthor("seed", "seed@factory.invalid").setMessage("sub").call();
+            subCommit = sub.commit().setAuthor("seed", "seed@factory.invalid").setMessage("sub").call().copy();
             sub.push().setRemote(subOrigin.toUri().toString()).add("refs/heads/main").call();
         }
         Path seed = tmp.resolve("seed");
@@ -310,8 +315,19 @@ class WorkspaceCloneTest {
             } catch (IOException | UnsupportedOperationException noPrivilege) {
                 linked = false;
             }
-            git.submoduleAdd().setPath("sub").setURI(subOrigin.toUri().toString()).call().close();
+            Files.writeString(seed.resolve(".gitmodules"), "[submodule \"sub\"]\n\tpath = sub\n\turl = "
+                    + subOrigin.toUri() + "\n");
             git.add().addFilepattern(".").call();
+            // A gitlink entry pointing at a real commit, as a submodule is recorded in the tree.
+            DirCacheEditor editor = git.getRepository().lockDirCache().editor();
+            editor.add(new DirCacheEditor.PathEdit("sub") {
+                @Override
+                public void apply(DirCacheEntry entry) {
+                    entry.setFileMode(FileMode.GITLINK);
+                    entry.setObjectId(subCommit);
+                }
+            });
+            editor.commit();
             forkHead = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("evil").call().name();
             git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
         }
