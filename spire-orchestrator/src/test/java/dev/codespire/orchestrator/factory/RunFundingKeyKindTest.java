@@ -1,10 +1,5 @@
 package dev.codespire.orchestrator.factory;
 
-import dev.codespire.contract.review.TokenType;
-import dev.codespire.orchestrator.caps.CapRefusal;
-import dev.codespire.orchestrator.caps.SpendGate;
-import dev.codespire.orchestrator.llm.LlmModelPricer;
-import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -25,32 +20,7 @@ class RunFundingKeyKindTest {
     private final List<Optional<String>> kindsAsked = new ArrayList<>();
 
     private RunFunding funding() {
-        RunFunding funding = new RunFunding();
-        funding.models = new LlmModelRegistry() {
-            @Override
-            public boolean isDisabled(String model) {
-                return false;
-            }
-        };
-        funding.catalogues = new HarnessCatalogues() {
-            @Override
-            public Admission admit(String harness, String model, String effort) {
-                return new Admission(null, "TEST-image");
-            }
-        };
-        funding.pricer = new LlmModelPricer() {
-            @Override
-            public List<TokenType> unpricedTypes(String model, String harness) {
-                return List.of();
-            }
-        };
-        funding.spend = new SpendGate() {
-            @Override
-            public Decision decide() {
-                return Decision.of(CapRefusal.allow());
-            }
-        };
-        funding.pool = new HarnessCredentialPool() {
+        HarnessCredentialPool pool = new HarnessCredentialPool() {
             @Override
             public Selection select(Optional<String> keyKind) {
                 kindsAsked.add(keyKind);
@@ -58,7 +28,7 @@ class RunFundingKeyKindTest {
                         "https://TEST.invalid", "TEST-PLACEHOLDER"));
             }
         };
-        return funding;
+        return RunFundingFixtures.funding(new ArrayList<>(), pool);
     }
 
     private void fundOnAKey(String harness) {

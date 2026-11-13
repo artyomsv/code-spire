@@ -185,13 +185,7 @@ class ClaudeBuildsAreRefusedTest {
     private FixRunDispatcher fixDispatcher(String fixHarness, Map<String, String> images) {
         FixRunDispatcher dispatcher = new FixRunDispatcher();
         dispatcher.config = configured(fixHarness, images);
-        dispatcher.runs = new FactoryRunProjection() {
-            @Override protected void push(String runId) { throw new AssertionError("no row is written"); }
-            @Override public Optional<String> fixRunFor(String reviewId, String commentId) { return Optional.empty(); }
-            @Override public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
-                throw new AssertionError("no row is written");
-            }
-        };
+        dispatcher.runs = unwrittenRuns();
         dispatcher.spendGate = new SpendGate() {
             @Override public Decision decide() { return Decision.of(CapRefusal.allow()); }
         };
@@ -201,6 +195,22 @@ class ClaudeBuildsAreRefusedTest {
                         "TEST-ws", "TEST-repo");
             }
         };
+        refuseBeyondTheGuard(dispatcher);
+        return dispatcher;
+    }
+
+    private static FactoryRunProjection unwrittenRuns() {
+        return new FactoryRunProjection() {
+            @Override protected void push(String runId) { throw new AssertionError("no row is written"); }
+            @Override public Optional<String> fixRunFor(String reviewId, String commentId) { return Optional.empty(); }
+            @Override public boolean queued(QueuedRun row, String taskSummary, UUID repositoryId) {
+                throw new AssertionError("no row is written");
+            }
+        };
+    }
+
+    /** Every collaborator behind the guard fails the test if reached. */
+    private static void refuseBeyondTheGuard(FixRunDispatcher dispatcher) {
         dispatcher.models = new LlmModelRegistry() {
             @Override public boolean isDisabled(String model) { throw new AssertionError("refused before the catalogue"); }
         };
@@ -213,7 +223,6 @@ class ClaudeBuildsAreRefusedTest {
         dispatcher.launch = new RunLaunch() {
             @Override public Outcome launch(RunCommand.ExecuteRun command) { throw new AssertionError("nothing is launched"); }
         };
-        return dispatcher;
     }
 
     private static FixRunDispatcher.Result fix(FixRunDispatcher dispatcher) {
