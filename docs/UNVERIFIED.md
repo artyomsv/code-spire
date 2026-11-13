@@ -55,8 +55,8 @@ subscription is refused `subscription_not_allowed` at every door.
 - **Only the measured canaries are proven absent.** `GUARDED_FLAGS` (`--bare --safe-mode --strict-mcp-config
   --disable-slash-commands --setting-sources user`) cover the vectors measured on CLI 2.1.319: `CLAUDE.md` and its
   `@import`, `CLAUDE.local.md`, `.claude/` rules, skills, agents and commands, both settings files with hooks, `env`
-  and `apiKeyHelper`, and `.mcp.json`. Nested `CLAUDE.md` did not fire even in the positive control, so its absence is
-  not shown. A vector outside the list is not measured, and a CLI upgrade may change what a flag covers: an upgrade
+  and `apiKeyHelper`, and `.mcp.json`, and (measured 2026-11-13) a nested `CLAUDE.md` in a folder the agent reads,
+  which the positive control loaded and the guarded run did not. A vector outside the list is not measured, and a CLI upgrade may change what a flag covers: an upgrade
   must re-run the canaries (the measurement is in the acceptance record).
 - **The agent has only `Bash`, `Edit` and `Read` under `--bare`.** Measured once; a review that needs another tool
   (a search tool, a web fetch) does without it, and whether that lowers review quality is not measured.
@@ -84,8 +84,8 @@ subscription is refused `subscription_not_allowed` at every door.
 - **The image is opt-in and not on GHCR** (`SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE`, default `none`).
 
 **What evidence would settle it.** A run's charge compared with its `total_cost_usd` and the console; a re-review and
-a reply on Claude Code; a rate-limited run; the canaries re-run on every CLI upgrade, plus a nested `CLAUDE.md` the
-agent is made to read.
+a reply on Claude Code; a rate-limited run; the canaries, the nested `CLAUDE.md` pair included, re-run on every CLI
+upgrade.
 
 ---
 

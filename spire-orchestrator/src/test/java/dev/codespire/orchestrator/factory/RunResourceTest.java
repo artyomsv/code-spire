@@ -566,7 +566,9 @@ class RunResourceTest {
         given().contentType("application/json").body(body(workspace))
                 .when().post("/api/runs")
                 .then().statusCode(409)
-                .body(containsString("harness credential"))
+                // Names the key kind it looked for: codex is paid by an openai key (harness reviews 3b).
+                .body(containsString("No usable `openai` API key is configured for the codex harness"))
+                .body(containsString("/api/harness-credentials"))
                 .body(containsString("reviewer"));
 
         aHarnessCredential();
