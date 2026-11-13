@@ -155,10 +155,11 @@ reached `addSubscription` without the completion guard would leave the sign-in r
   to Claude Code reset the effort and the payment but kept `gpt-6-astra`, shown as "(not offered here)". The model
   must reset when the new harness does not offer it, in `ReviewHarnessFields` and `BuildStep`. The server's options
   were right: Claude Code offered the four catalogue models.
-- **A repository save refusal has an empty 400 body** (pre-existing). `BadRequestException(message)` never puts its
-  message in the response, so the dashboard cannot show `subscription_not_allowed`.
-- **The harness credential form shows an OpenAI endpoint for every kind.** The Endpoint hint is
-  `https://api.openai.com/v1` whatever the kind; the Claude Code route ignores the endpoint anyway.
+- **A repository save refusal had an empty 400 body** (pre-existing; fixed in #418). `BadRequestException(message)`
+  never put its message in the response, so the dashboard could not show `subscription_not_allowed`; the reason is
+  now the `text/plain` body, and the dashboard shows it.
+- **The harness credential form showed an OpenAI endpoint for every kind** (fixed in #404). The Endpoint hint is now
+  the kind's own (`https://api.anthropic.com` for `anthropic`); the Claude Code route ignores the endpoint anyway.
 
 ## Limits that remain
 

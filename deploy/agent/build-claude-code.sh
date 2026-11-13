@@ -14,7 +14,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE="$HERE/claude-code/Dockerfile"
 MODELS_FILE="$HERE/claude-code/models.json"
 
-AGENT_MODELS="$(base64 -w0 "$MODELS_FILE")"
+# Encoded with node, as build-codex.sh decodes its list: `base64 -w0` is GNU only and fails on macOS and BSD.
+AGENT_MODELS="$(node -e 'process.stdout.write(require("fs").readFileSync(process.argv[1]).toString("base64"))' "$MODELS_FILE")"
 if [ -z "$AGENT_MODELS" ]; then
   echo "FAILED: $MODELS_FILE is empty; the image would carry no model list." >&2
   exit 1

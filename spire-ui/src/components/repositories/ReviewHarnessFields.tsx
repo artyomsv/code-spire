@@ -5,7 +5,7 @@ import { preparationKeys } from '../work-items/workQueries';
 import SettingField from '../SettingField';
 import BuildModelFields, { modelChoices } from './factory/BuildModelFields';
 import { harnessLabel } from '../harnessLabels';
-import { PAY_WITH_LABEL, buildOptions, buildOptionsKey, harnessOffersModel, mayPayWithSubscription, subscriptionRefused, type PayWith } from './factory/buildDefaultsApi';
+import { PAY_WITH_LABEL, STORED_SEAT_LABEL, buildOptions, buildOptionsKey, harnessOffersModel, mayPayWithSubscription, subscriptionRefused, type PayWith } from './factory/buildDefaultsApi';
 import type { ReviewHarness } from './repositoriesApi';
 
 interface Props {
@@ -57,6 +57,7 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
           // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
         }
         {subscriptionOffered && <option value="SUBSCRIPTION">{PAY_WITH_LABEL.SUBSCRIPTION}</option>}
+        {!subscriptionOffered && value.payWith === 'SUBSCRIPTION' && <option value="SUBSCRIPTION">{STORED_SEAT_LABEL}</option>}
       </select></SettingField>
     <BuildModelFields harness={value.harness} known={known} choices={choices} model={value.model} effort={value.effort ?? ''}
       scope={SCOPE} setModel={model => patch({ model, effort: null })} setEffort={effort => patch({ effort: effort || null })} />

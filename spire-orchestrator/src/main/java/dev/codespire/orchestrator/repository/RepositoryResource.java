@@ -52,7 +52,7 @@ public class RepositoryResource {
     @POST
     public Response create(RepositoryInput input) {
         try { return Response.status(201).entity(registry.create(input)).build(); }
-        catch (IllegalArgumentException invalid) { throw new BadRequestException(invalid.getMessage()); }
+        catch (IllegalArgumentException invalid) { throw refused(invalid); }
         catch (AccountConflict conflict) { throw conflict(conflict); }
     }
 
@@ -60,8 +60,16 @@ public class RepositoryResource {
     public RepositoryView update(@PathParam("id") UUID id, @QueryParam("revision") long revision, RepositoryInput input) {
         get(id);
         try { return registry.update(id, revision, input); }
-        catch (IllegalArgumentException invalid) { throw new BadRequestException(invalid.getMessage()); }
+        catch (IllegalArgumentException invalid) { throw refused(invalid); }
         catch (AccountConflict conflict) { throw conflict(conflict); }
+    }
+
+    /**
+     * The reason in the body, as the conflict does: {@code new BadRequestException(message)} keeps the message off the
+     * response, which left the dashboard only "Could not save repository" for every refusal.
+     */
+    private static BadRequestException refused(IllegalArgumentException invalid) {
+        return new BadRequestException(Response.status(400).type(MediaType.TEXT_PLAIN).entity(invalid.getMessage()).build());
     }
 
     private ClientErrorException conflict(AccountConflict failure) {
