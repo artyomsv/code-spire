@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.event.RunIds;
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.work.PayWith;
 import dev.codespire.contract.work.WorkDraftBinding;
 import dev.codespire.contract.work.WorkItemEvent;
@@ -37,8 +38,9 @@ public class WorkDraftAssembly {
     public Prepared assemble(Connection c, Request request) throws SQLException {
         BuildDefaults.Defaults setup = request.setup();
         // Before the parse: it would refuse it too, in prose the item cannot show.
-        if (!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(setup.harness()))
-            throw new IllegalStateException(dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        if (!HarnessPolicy.allowsBuilds(setup.harness())) {
+            throw new IllegalStateException(HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        }
         WorkSourceRegistry.Source source = request.source();
         String subject = "draft-" + request.binding().attemptId();
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(new RunResource.DispatchRequest(source.repository().workspace(),
