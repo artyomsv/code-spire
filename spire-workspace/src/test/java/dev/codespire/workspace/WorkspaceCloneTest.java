@@ -4,13 +4,17 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.transport.RefSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -164,5 +168,166 @@ class WorkspaceCloneTest {
                 WorkspaceClone.populate(origin, "0123456789abcdef0123456789abcdef01234567", "spire/x", ws,
                         CREDENTIAL, "spire-bot", "spire-bot@factory.invalid"));
         assertTrue(refusal.getMessage().contains("not reachable"), refusal.getMessage());
+    }
+
+    private static final String PULL_REF = "refs/pull/7/head";
+
+    /** Commits a file on a side branch of the seed and pushes it ONLY as the given ref, never as a branch. */
+    private String pushToPullRef(Path seed, String file, String content, String ref) throws Exception {
+        try (Git git = Git.open(seed.toFile())) {
+            git.checkout().setCreateBranch(true).setName("fork-" + file).setStartPoint(base).call();
+            Files.writeString(seed.resolve(file), content);
+            git.add().addFilepattern(".").call();
+            String commit = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("fork").call().name();
+            git.push().setRemote(origin).setRefSpecs(new RefSpec(commit + ":" + ref)).setForce(true).call();
+            return commit;
+        }
+    }
+
+    @Test
+    void aCommitOnlyOnThePullRefIsCheckedOut() throws Exception {
+        String forkHead = pushToPullRef(tmp.resolve("seed"), "FORK.md", "fork", PULL_REF);
+        Path withoutRef = tmp.resolve("ws-none");
+        IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
+                WorkspaceClone.populate(origin, forkHead, "spire/review-7", withoutRef, CREDENTIAL, "spire-bot",
+                        "spire-bot@factory.invalid"));
+        assertTrue(refusal.getMessage().contains("not reachable"), refusal.getMessage());
+
+        Path ws = tmp.resolve("ws");
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF);
+
+        assertEquals("fork", Files.readString(ws.resolve("FORK.md")));
+        try (Git git = Git.open(ws.toFile())) {
+            assertEquals(forkHead, git.getRepository().resolve(Constants.HEAD).name());
+            assertTrue(git.remoteList().call().isEmpty(), "the remote is removed after the fetch");
+        }
+    }
+
+    @Test
+    void aLaggingRefIsRefetched() throws Exception {
+        Path seed = tmp.resolve("seed");
+        String forkHead = pushToPullRef(seed, "FORK.md", "fork", "refs/pull/8/head");
+        // The pull ref holds nothing useful on the first fetch; the forge catches up while init waits.
+        pushToPullRef(seed, "OTHER.md", "other", PULL_REF);
+        List<Long> sleeps = new ArrayList<>();
+        Path ws = tmp.resolve("ws");
+
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF, millis -> {
+                    sleeps.add(millis);
+                    try (Git git = Git.open(seed.toFile())) {
+                        git.push().setRemote(origin).setForce(true)
+                                .setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
+                    } catch (Exception failure) {
+                        throw new IllegalStateException(failure);
+                    }
+                });
+
+        assertEquals(List.of(2000L), sleeps, "one wait, then the second fetch found it");
+        assertTrue(Files.exists(ws.resolve("FORK.md")));
+    }
+
+    @Test
+    void aRefThatNeverHoldsTheCommitFails() throws Exception {
+        Path seed = tmp.resolve("seed");
+        String forkHead = pushToPullRef(seed, "FORK.md", "fork", "refs/pull/8/head");
+        pushToPullRef(seed, "OTHER.md", "other", PULL_REF);
+        List<Long> sleeps = new ArrayList<>();
+        Path ws = tmp.resolve("ws");
+
+        IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
+                WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                        "spire-bot@factory.invalid", null, PULL_REF, sleeps::add));
+
+        assertTrue(refusal.getMessage().contains(forkHead), refusal.getMessage());
+        assertTrue(refusal.getMessage().contains(PULL_REF), refusal.getMessage());
+        assertEquals(List.of(2000L, 2000L), sleeps, "three fetches in all, two waits between them");
+    }
+
+    @Test
+    void anInvalidRefIsRefusedBeforeAnyFetch() {
+        List<Long> sleeps = new ArrayList<>();
+        int index = 0;
+        for (String bad : List.of("refs/heads/main", "refs/pull/0/head", "refs/pull/07/head", "refs/pull/7/head\n",
+                "refs/pull/7/merge", "refs/pull/7/head:refs/heads/x", "--upload-pack=x", "refs/pull/7/head/extra",
+                "refs/pull/1234567890123456789/head", "x refs/pull/7/head", "")) {
+            Path ws = tmp.resolve("ws-" + index++);
+            // An origin that does not exist: any network call would fail differently from the refusal.
+            IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
+                    WorkspaceClone.populate(tmp.resolve("missing.git").toUri().toString(), base, "spire/x", ws,
+                            CREDENTIAL, "spire-bot", "spire-bot@factory.invalid", null, bad, sleeps::add), bad);
+            assertTrue(refusal.getMessage().contains("not a pull request head ref"), bad + ": " + refusal.getMessage());
+            assertFalse(Files.exists(ws), "nothing is cloned for " + bad);
+        }
+        assertTrue(sleeps.isEmpty());
+    }
+
+    @Test
+    void theBaseIsStillKeptWithAPullRef() throws Exception {
+        String forkHead = pushToPullRef(tmp.resolve("seed"), "FORK.md", "fork", PULL_REF);
+        Path ws = tmp.resolve("ws");
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", "main", PULL_REF);
+
+        try (Git git = Git.open(ws.toFile())) {
+            assertEquals(head, git.getRepository().resolve(WorkspaceClone.BASE_REF_PREFIX + "main").name());
+            assertEquals(forkHead, git.getRepository().resolve(Constants.HEAD).name());
+        }
+    }
+
+    /**
+     * The fork's tree is hostile input. The clone's own config declares no filter driver, so a gitattributes
+     * {@code filter=} must run nothing; a gitlink and a .gitmodules entry must clone nothing; a symlink stays a link.
+     */
+    @Test
+    void aGitattributesFilterASubmoduleAndASymlinkRunNothing() throws Exception {
+        Path marker = tmp.resolve("marker.txt");
+        Path outside = tmp.resolve("outside-target");
+        Path subOrigin = tmp.resolve("sub-origin.git");
+        Path subSeed = tmp.resolve("sub-seed");
+        Git.init().setBare(true).setDirectory(subOrigin.toFile()).call().close();
+        try (Git sub = Git.init().setDirectory(subSeed.toFile()).setInitialBranch("main").call()) {
+            Files.writeString(subSeed.resolve("S.md"), "sub");
+            sub.add().addFilepattern(".").call();
+            sub.commit().setAuthor("seed", "seed@factory.invalid").setMessage("sub").call();
+            sub.push().setRemote(subOrigin.toUri().toString()).add("refs/heads/main").call();
+        }
+        Path seed = tmp.resolve("seed");
+        boolean linked = true;
+        String forkHead;
+        try (Git git = Git.open(seed.toFile())) {
+            git.checkout().setCreateBranch(true).setName("evil").setStartPoint(base).call();
+            // The driver is defined only here, in the seed's config; it is not pushed, so the clone has none.
+            String command = "touch " + marker.toUri().getPath();
+            git.getRepository().getConfig().setString("filter", "evil", "smudge", command);
+            git.getRepository().getConfig().setString("filter", "evil", "clean", command);
+            git.getRepository().getConfig().save();
+            Files.writeString(seed.resolve(".gitattributes"), "* filter=evil\n");
+            Files.writeString(seed.resolve("payload.txt"), "payload");
+            try {
+                Files.createSymbolicLink(seed.resolve("link"), Path.of("../outside-target"));
+            } catch (IOException | UnsupportedOperationException noPrivilege) {
+                linked = false;
+            }
+            git.submoduleAdd().setPath("sub").setURI(subOrigin.toUri().toString()).call().close();
+            git.add().addFilepattern(".").call();
+            forkHead = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("evil").call().name();
+            git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
+        }
+        Files.deleteIfExists(marker);
+
+        Path ws = tmp.resolve("ws");
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF);
+
+        assertTrue(Files.exists(ws.resolve("payload.txt")), "the tree was checked out");
+        assertFalse(Files.exists(marker), "a gitattributes filter driver must run nothing");
+        assertFalse(Files.exists(ws.resolve(".git/modules")), "a submodule must not be cloned");
+        assertFalse(Files.exists(ws.resolve("sub/S.md")), "a submodule must not be populated");
+        assertFalse(Files.exists(outside), "nothing outside the workspace is written");
+        if (linked) {
+            assertTrue(Files.isSymbolicLink(ws.resolve("link")), "a symlink stays a link");
+        }
     }
 }
