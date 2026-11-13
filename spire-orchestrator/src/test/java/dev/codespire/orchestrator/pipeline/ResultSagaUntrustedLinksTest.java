@@ -48,9 +48,12 @@ class ResultSagaUntrustedLinksTest {
     private final List<String> events = new ArrayList<>();
     private final List<String> targetReads = new ArrayList<>();
 
+    /** The row the fake target read answers with; null is a review whose row cannot be read. */
+    private FixTargets.PushTarget fixedTarget;
+
     @Test
     void aForkGathersNoLinks() {
-        sagaFor(Optional.of(target(true))).on(diffFetched(LINKS));
+        sagaForTarget(target(true)).on(diffFetched(LINKS));
 
         assertTrue(gather().references().isEmpty(), gather().references().toString());
         assertTrue(events.contains("context links skipped: untrusted pull request"), events.toString());
@@ -58,7 +61,7 @@ class ResultSagaUntrustedLinksTest {
 
     @Test
     void anUnknownForkStatusGathersNoLinks() {
-        sagaFor(Optional.of(target(null))).on(diffFetched(LINKS));
+        sagaForTarget(target(null)).on(diffFetched(LINKS));
 
         assertTrue(gather().references().isEmpty(), gather().references().toString());
         assertTrue(events.contains("context links skipped: untrusted pull request"), events.toString());
@@ -66,7 +69,7 @@ class ResultSagaUntrustedLinksTest {
 
     @Test
     void aSameRepositoryPullRequestKeepsItsLinks() {
-        sagaFor(Optional.of(target(false))).on(diffFetched(LINKS));
+        sagaForTarget(target(false)).on(diffFetched(LINKS));
 
         assertEquals(LINKS, gather().references());
         assertTrue(events.stream().noneMatch(line -> line.contains("links skipped")), events.toString());
@@ -74,7 +77,7 @@ class ResultSagaUntrustedLinksTest {
 
     @Test
     void aForkKeepsItsRulesAndCodeReferences() {
-        sagaFor(Optional.of(target(true))).on(diffFetched(LINKS));
+        sagaForTarget(target(true)).on(diffFetched(LINKS));
 
         assertEquals("TEST-RULES", gather().repoRules());
         assertEquals(CODE, gather().codeReferences());
@@ -84,7 +87,7 @@ class ResultSagaUntrustedLinksTest {
     /** A review whose row cannot be read has unknown provenance, which is untrusted. */
     @Test
     void aReviewWithNoRowGathersNoLinks() {
-        sagaFor(Optional.empty()).on(diffFetched(LINKS));
+        sagaWithoutTarget().on(diffFetched(LINKS));
 
         assertTrue(gather().references().isEmpty(), gather().references().toString());
     }
@@ -92,7 +95,7 @@ class ResultSagaUntrustedLinksTest {
     /** With no link there is nothing to cut, so nothing is read and nothing is said. */
     @Test
     void aPullRequestWithNoLinksReadsNoRowAndSaysNothing() {
-        sagaFor(Optional.of(target(true))).on(diffFetched(Set.of()));
+        sagaForTarget(target(true)).on(diffFetched(Set.of()));
 
         assertTrue(gather().references().isEmpty());
         assertTrue(targetReads.isEmpty(), targetReads.toString());
@@ -113,21 +116,49 @@ class ResultSagaUntrustedLinksTest {
                 COMMIT, "OPEN", fromFork);
     }
 
-    private ResultSaga sagaFor(Optional<FixTargets.PushTarget> target) {
+    private ResultSaga sagaForTarget(FixTargets.PushTarget target) {
+        fixedTarget = target;
+        return saga();
+    }
+
+    private ResultSaga sagaWithoutTarget() {
+        fixedTarget = null;
+        return saga();
+    }
+
+    private ResultSaga saga() {
         ResultSaga saga = new ResultSaga();
-        saga.timeline = new TimelineBroadcaster() {
+        saga.timeline = timeline();
+        saga.lifecycle = lifecycle();
+        saga.projection = projection();
+        saga.commands = commands();
+        saga.workerContextCredentials = credentials();
+        saga.providers = providers();
+        saga.capPolicy = capPolicy();
+        saga.targets = targets();
+        return saga;
+    }
+
+    private TimelineBroadcaster timeline() {
+        return new TimelineBroadcaster() {
             @Override
             public void record(String lane, String type, String reviewId, String detail) {
             }
         };
-        saga.lifecycle = new ReviewLifecycleService() {
+    }
+
+    private ReviewLifecycleService lifecycle() {
+        return new ReviewLifecycleService() {
             @Override
             public ReviewState currentState(String reviewId) {
                 return new ReviewState(reviewId, REPO, 7L, ReviewState.Status.REVIEWING,
                         COMMIT, Set.of(), null, Map.of(), Set.of());
             }
         };
-        saga.projection = new ReviewProjection() {
+    }
+
+    private ReviewProjection projection() {
+        return new ReviewProjection() {
             @Override
             public void appendEvent(String reviewId, String lane, String type, String detail) {
                 events.add(detail);
@@ -137,25 +168,37 @@ class ResultSagaUntrustedLinksTest {
             public void updateStage(String reviewId, int stage) {
             }
         };
-        saga.commands = new CommandsEmitter() {
+    }
+
+    private CommandsEmitter commands() {
+        return new CommandsEmitter() {
             @Override
             public void emit(ActionCommand command) {
                 emitted.add(command);
             }
         };
-        saga.workerContextCredentials = new WorkerContextCredentials() {
+    }
+
+    private WorkerContextCredentials credentials() {
+        return new WorkerContextCredentials() {
             @Override
             public Optional<String> packAll(String workspace) {
                 return Optional.empty();
             }
         };
-        saga.providers = new ReviewProviderResolver() {
+    }
+
+    private ReviewProviderResolver providers() {
+        return new ReviewProviderResolver() {
             @Override
             public Optional<ScmProvider> resolveForReview(String reviewId) {
                 return Optional.empty();
             }
         };
-        saga.capPolicy = new CapPolicy() {
+    }
+
+    private CapPolicy capPolicy() {
+        return new CapPolicy() {
             @Override
             public OptionalInt maxChangedFiles() {
                 return OptionalInt.empty();
@@ -166,13 +209,15 @@ class ResultSagaUntrustedLinksTest {
                 return OptionalLong.empty();
             }
         };
-        saga.targets = new FixTargets() {
+    }
+
+    private FixTargets targets() {
+        return new FixTargets() {
             @Override
             public Optional<PushTarget> forReview(String reviewId) {
                 targetReads.add(reviewId);
-                return target;
+                return Optional.ofNullable(fixedTarget);
             }
         };
-        return saga;
     }
 }
