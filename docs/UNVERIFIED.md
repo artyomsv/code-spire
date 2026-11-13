@@ -42,9 +42,11 @@ that ref onto `spire/review-<prId>`, the run worker refuses an unproxied unit wi
 and no linked context is gathered. A Bitbucket Cloud or Data Center untrusted pull request is refused
 `fork_pull_request_has_no_pull_ref`.
 
-**What is proven live.** Nothing yet. The acceptance on `spire-test` (a fork pull request on a Codex seat, a Codex key
-and Claude Code; a canary asking the agent to print its environment; a private issue linked from the description; a
-push re-reviewed; a reply; mode `OFF` refusing a fork) has not run. This entry is rewritten when it does.
+**What is proven live** (2026-11-13 and 2026-11-14, [HARNESS-REVIEWS-8-ACCEPTANCE.md](factory/HARNESS-REVIEWS-8-ACCEPTANCE.md)).
+On `spire-test` #106, a cross-repository pull request: a first review on Claude Code with an API key, with the linked
+issue #96 skipped (`ContextLinksSkipped`); a fork re-review on Codex with an API key and on a seat, each reaching only
+its vendor host through the model proxy; mode `OFF` refusing the fork `fork_requires_credential_proxy` with no
+container; a push carrying a canary asking the agent to print its environment, which it did not; and a reply on a seat.
 
 **Why nothing catches the rest.** Every path below is proven against fakes, or not at all.
 - **Bitbucket's refusal.** Proven by tests only.
@@ -66,9 +68,13 @@ push re-reviewed; a reply; mode `OFF` refusing a fork) has not run. This entry i
 - **Old components.** An old publisher ignores `SPIRE_FETCH_REF` and every fork fails `CLONE_FAILED`; an old run
   worker drops the command. Neither is exercised; the upgrade order is in docs/HISTORY.md.
 - **Links from trusted comments** (an owner or a person with write access) are not read; planned as PR 8b.
+- **A reply skipped by the "smart 1:1" rule is silent** (found live, pre-existing from step 7). It logs at DEBUG only,
+  and the dashboard stays on "responding…".
+- **The approval verdict counts only BLOCKER findings** (found live). A review with a MAJOR finding was posted with
+  Approve. The operator wants the threshold configurable; planned as a follow-up.
 
-**What evidence would settle it.** The acceptance above, with the model proxy log captured for every run, and a fork
-pull request from an organisation fork on GitLab.
+**What evidence would settle it.** A fork pull request from an organisation fork on GitLab, and a real fork with a
+lagging, force-pushed or deleted head.
 
 ---
 

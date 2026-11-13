@@ -236,14 +236,15 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   canaries ignored, #104 (40 files) reviewed, a refused key failed #105 `CREDENTIAL_REJECTED` and was marked, an API
   subscription request refused. 27 of 28 guards mutation-checked; the 28th is unreachable defence in depth.
 
-- **Harness reviews 8: fork pull requests** (PR #419, ADR-050 "Step 8"; **live acceptance pending**, nothing has run
-  on `spire-test`). A fork or unknown-provenance pull request on GitHub or GitLab is reviewed on a harness as
+- **Harness reviews 8: fork pull requests** (PR #419, ADR-050 "Step 8"; live-proven 2026-11-13 to 2026-11-14 in
+  docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md). A fork or unknown-provenance pull request on GitHub or GitLab is reviewed on a harness as
   `ExecuteUntrustedReviewRun`: init fetches the forge's pull ref onto `spire/review-<prId>` (3 tries, 2 s apart), the
   run worker refuses the unit `fork_requires_credential_proxy` unless a model proxy holds the credential (Codex and
   Claude Code), the refusal is a named `Refused` or `FollowUpRefused`, and no linked context is gathered. Bitbucket
   is refused `fork_pull_request_has_no_pull_ref`. Upgrade: rebuild `spire-publisher:latest` and roll the run worker
-  before the orchestrator (docs/HISTORY.md). Proven against fakes only; links from trusted comments are PR 8b
-  (docs/UNVERIFIED.md, the step 8 entry).
+  before the orchestrator (docs/HISTORY.md). Live on `spire-test` #106: Claude Code on a key, Codex on a key and on a seat reviewed a fork, mode `OFF` refused it
+  with no container, a canary push and a reply were handled. Bitbucket, a lagging ref, a force-pushed or deleted fork
+  and GitLab are proven against fakes only; links from trusted comments are PR 8b (docs/UNVERIFIED.md, the step 8 entry).
 
 **Limits that remain:**
 

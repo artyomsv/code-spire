@@ -2391,7 +2391,7 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `./deploy/agent/build-claude-code.sh` and set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE=spire-agent-claude-code:latest`;
   unset (`none`) leaves Claude Code unconfigured and in no list.
 
-- **Harness reviews step 8: fork pull requests (2026-11-13, PR #419; live acceptance pending).** A repository that
+- **Harness reviews step 8: fork pull requests (2026-11-13, PR #419; live-proven 2026-11-14).** A repository that
   reviews with a harness now reviews fork pull requests on GitHub and GitLab, first reviews, re-reviews and replies
   (ADR-050, "Step 8"). An untrusted pull request (a fork, or fork status unknown) is sent as a new command,
   `ExecuteUntrustedReviewRun`, with its own wire discriminator and the forge's pull ref; init fetches the ref after
@@ -2405,7 +2405,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   gathers no linked context on the API and the harness path (operator ruling 2026-11-13; links from owner or
   write-access comments are planned as PR 8b). Review rounds: the clone's inputs moved into
   `WorkspaceClone.CloneRequest`, the manual-registration fix, a real-saga refusal test and the fork artifact assertion.
-  Left open: nothing ran live, the Bitbucket refusal, a lagging ref, a force-pushed fork, a fork re-review's
+  Live proof: on `spire-test` #106 a fork was reviewed on Claude Code (key), Codex (key) and Codex (seat), each
+  through the model proxy; mode `OFF` refused it with no container, a canary push printed nothing and a reply was
+  answered (docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md). Left open: the Bitbucket refusal, a lagging ref, a force-pushed fork, a fork re-review's
   unreachable prior head and a deleted fork are proven against fakes only, and the init container holds the reviewer's
   clone token (docs/UNVERIFIED.md, the step 8 entry; docs/SECURITY.md).
 

@@ -305,8 +305,8 @@ PR #404; live proof 2026-11-12 in docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md)
   step (the terms above); Claude Code builds in this PR (deferred: only the read-only review shape was measured); letting the agent
   load project memory (a review's working directory is the change under review).
 
-**Step 8: fork pull requests** ([step 8 plan](superpowers/plans/2026-11-13-harness-reviews-8-forks.md), PR #419; live
-acceptance pending).
+**Step 8: fork pull requests** ([step 8 plan](superpowers/plans/2026-11-13-harness-reviews-8-forks.md), PR #419; live-proven
+in [HARNESS-REVIEWS-8-ACCEPTANCE.md](factory/HARNESS-REVIEWS-8-ACCEPTANCE.md)).
 - **Untrusted, not "fork".** A pull request is untrusted when `from_fork` is true, NULL or has no row
   (`PushTarget.isUntrusted()`, derived in one place). Unknown is untrusted. A deleted fork reads as `false` at ingress
   and stays a trusted command; its head is on no branch and init fails it as before.
