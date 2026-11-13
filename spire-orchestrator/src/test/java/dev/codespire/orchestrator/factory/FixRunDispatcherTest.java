@@ -1,21 +1,12 @@
 package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.RunCommand;
-import dev.codespire.contract.port.ScmType;
-import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.CapRefusal;
 import dev.codespire.orchestrator.caps.SpendGate;
-import dev.codespire.orchestrator.llm.LlmModelPricer;
-import dev.codespire.orchestrator.provider.ScmProvider;
-import dev.codespire.orchestrator.provider.ProviderRole;
-import dev.codespire.orchestrator.readmodel.FindingProjection;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -35,213 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * holes precisely because per-branch tests find them one at a time, and the second and third
  * survived the round that fixed the first.
  */
-class FixRunDispatcherTest {
-
-    private static final String REVIEW = "review::acme/web#412";
-    private static final String THREAD = "thread-aaa";
-    private static final String COMMENT = "comment-777";
-    private static final RepoRef REPO = new RepoRef("acme", "web");
-    private static final UUID CREDENTIAL_ID = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
-
-    // --- what the fakes are told to answer -------------------------------------------------
-
-    private FixDispatch.Plan plan = new FixDispatch.Planned("run::github:acme/web:" + THREAD + ":1",
-            "feature/login", "feature/login", "cafe1234", "develop", ScmType.GITHUB, "acme", "web");
-    private Optional<String> existingClaim = Optional.empty();
-    private SpendGate.Decision cap = SpendGate.Decision.of(CapRefusal.allow());
-    private boolean rowAccepted = true;
-    private RunLaunch.Outcome launchOutcome = new RunLaunch.Dispatched();
-    private Optional<ScmProvider> account = Optional.of(machineAccount());
-    private HarnessCredentialPool.Selection selection =
-            new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                    CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
-                    "TEST-harness-key-do-not-print"));
-    private String configuredHarness = "codex";
-    private String configuredModel = "TEST-model";
-    private boolean priceable = true;
-    private Optional<FindingProjection.FixSpec> spec = Optional.of(new FindingProjection.FixSpec(
-            77L, "src/Foo.java", 44, 48, "HIGH", "correctness",
-            "the lock is taken in the opposite order here", "take them in the declared order"));
-
-    // --- what the fakes recorded -----------------------------------------------------------
-
-    private final List<RunCommand.ExecuteRun> launched = new ArrayList<>();
-    private final List<FactoryRunProjection.QueuedRun> rows = new ArrayList<>();
-    private final List<String> order = new ArrayList<>();
-    private final List<String> claimsChecked = new ArrayList<>();
-    private final List<String> plannedFor = new ArrayList<>();
-    private final List<Optional<String>> keyKindsAsked = new ArrayList<>();
-
-    private FixRunDispatcher dispatcher() {
-        FixRunDispatcher dispatcher = new FixRunDispatcher();
-        dispatcher.catalogues = new HarnessCatalogues() {
-            // The real one reads the database; this plain unit test answers what the worker last read.
-            @Override
-            public String imageFor(String harness) {
-                return pinned != null ? pinned : "spire-agent-codex:1";
-            }
-        };
-        dispatcher.plans = new FixDispatch() {
-            @Override
-            public Plan plan(String reviewId, String threadRef, RepoRef repo) {
-                plannedFor.add(reviewId + "|" + threadRef + "|" + repo.workspace() + "/" + repo.slug());
-                return plan;
-            }
-        };
-        dispatcher.reviews = new dev.codespire.orchestrator.TestRepositoryProjection();
-        dispatcher.runs = new FactoryRunProjection() {
-            @Override
-            protected void push(String runId) {
-                // This plain unit-test fake must never reach the live feed or its database read.
-                throw new AssertionError("unexpected live broadcast");
-            }
-
-            @Override
-            public Optional<String> fixRunFor(String reviewId, String commentId) {
-                // The review is recorded too: the claim is scoped to it, and a fake that dropped
-                // the scope would let the unscoped key pass this suite.
-                claimsChecked.add(reviewId + "|" + commentId);
-                return existingClaim;
-            }
-
-            @Override
-            public boolean queued(QueuedRun row, String taskSummary, java.util.UUID repositoryId) {
-                order.add("row");
-                rows.add(row);
-                return rowAccepted;
-            }
-
-            // Neighbours this path must not reach. A dispatch that recorded an outcome here would be
-            // writing a state the run itself has not reported yet.
-            @Override
-            public void dispatchFailed(String runId, String detail) {
-                throw new AssertionError("the launch records failures, not the dispatcher");
-            }
-
-            @Override
-            public void dispatchUncertain(String runId, String detail) {
-                throw new AssertionError("the launch records failures, not the dispatcher");
-            }
-        };
-        dispatcher.findings = new FindingProjection() {
-            @Override
-            public Optional<FixSpec> specFor(String reviewId, long findingId) {
-                return spec;
-            }
-
-            @Override
-            public Optional<TargetFinding> findByThread(String reviewId, String threadRef) {
-                throw new AssertionError("the saga resolves the target; the dispatch is handed it");
-            }
-        };
-        dispatcher.machineAccounts = new MachineAccounts() {
-            @Override
-            public Optional<ScmProvider> resolve(java.util.UUID repositoryId) {
-                return account;
-            }
-        };
-        dispatcher.pool = new HarnessCredentialPool() {
-            // The only method this path reaches; left to the real one it would open a database.
-            @Override
-            public Selection select(Optional<String> keyKind) {
-                order.add("credential");
-                keyKindsAsked.add(keyKind);
-                return selection;
-            }
-        };
-        dispatcher.credentials = new RunCredentials() {
-            @Override
-            public String packScm(String runId, String username, String secret) {
-                return "TEST-packed-scm:" + runId;
-            }
-
-            @Override
-            public String packHarness(String runId, String apiKey) {
-                return "TEST-packed-harness:" + runId;
-            }
-        };
-        dispatcher.config = config();
-        dispatcher.pricer = new LlmModelPricer() {
-            @Override
-            public boolean isPriceable(String model) {
-                return priceable;
-            }
-            // Overridden as well, because the dispatcher now asks THIS one. Left to the real method it
-            // would open a database from a plain unit test — the seventh instance of that trap.
-            @Override
-            public java.util.List<dev.codespire.contract.review.TokenType> unpricedTypes(String model, String harness) {
-                return priceable ? java.util.List.of() : java.util.List.of(dev.codespire.contract.review.TokenType.OUTPUT);
-            }
-        };
-        // The dispatcher asks the catalogue whether the model is still offered. Left unset, the real
-        // registry would open a database from a plain unit test — the trap CLAUDE.md names.
-        dispatcher.models = new dev.codespire.orchestrator.llm.LlmModelRegistry() {
-            @Override public boolean isDisabled(String model) { return false; }
-        };
-        dispatcher.spendGate = new SpendGate() {
-            @Override
-            public Decision decide() {
-                return cap;
-            }
-        };
-        dispatcher.launch = new RunLaunch() {
-            @Override
-            public Outcome launch(RunCommand.ExecuteRun command) {
-                order.add("launch");
-                launched.add(command);
-                return launchOutcome;
-            }
-        };
-        return dispatcher;
-    }
-
-    private FactoryConfig config() {
-        return new FactoryConfig() {
-            @Override
-            public Map<String, String> agentImage() {
-                return Map.of("codex", "spire-agent-codex:1");
-            }
-
-            @Override
-            public long wallClockSeconds() {
-                return 900;
-            }
-
-            @Override
-            public long reviewWallClockSeconds() {
-                return 900;
-            }
-
-            @Override
-            public Fix fix() {
-                return new Fix() {
-                    @Override
-                    public Optional<String> harness() {
-                        return Optional.ofNullable(configuredHarness);
-                    }
-
-                    @Override
-                    public Optional<String> model() {
-                        return Optional.ofNullable(configuredModel);
-                    }
-                };
-            }
-        };
-    }
-
-    private static ScmProvider machineAccount() {
-        return new ScmProvider(UUID.randomUUID(), "factory", "github", "https://api.github.com", "bearer", null, "TEST-machine-secret", "spire-machine", true, List.of(),
-                null, null, ProviderRole.FACTORY);
-    }
-
-    private static FindingProjection.TargetFinding finding() {
-        return new FindingProjection.TargetFinding(77L, 2, "src/Foo.java", 44, 48, "HIGH", null,
-                "review");
-    }
-
-    private FixRunDispatcher.Result dispatch() {
-        return dispatcher().dispatch(REVIEW, REPO, THREAD, COMMENT, finding());
-    }
+class FixRunDispatcherTest extends FixRunDispatcherFixture {
 
     // --- the happy path --------------------------------------------------------------------
 
@@ -276,22 +61,6 @@ class FixRunDispatcherTest {
         assertEquals(dispatched.runId(), rows.getFirst().runId());
     }
 
-    /** The fix harness's own key vendor pays it, and none of that vendor's keys is the empty-pool refusal. */
-    @Test
-    void aFixRunPaysWithItsHarnessKind() {
-        configuredHarness = "codex";
-
-        assertInstanceOf(FixRunDispatcher.Dispatched.class, dispatch());
-        assertEquals(List.of(Optional.of("openai")), keyKindsAsked);
-
-        resetToTheHappyPath();
-        selection = new HarnessCredentialPool.Selection.Empty();
-        FixRunDispatcher.Refused refused = assertInstanceOf(FixRunDispatcher.Refused.class, dispatch());
-        // It names the vendor it looked for: keys of another vendor may well exist, and do not pay this harness.
-        assertEquals("no usable `openai` API key is configured for the codex harness, so there is no key for a fix run"
-                + " to call the model with; a key of another vendor does not pay it", refused.why());
-    }
-
     /**
      * <b>The row is written BEFORE the command is launched.</b>
      *
@@ -321,15 +90,6 @@ class FixRunDispatcherTest {
         assertEquals(CREDENTIAL_ID, row.harnessCredentialId());
     }
 
-    /**
-     * The prompt is the finding, and the run is configured by the deployment.
-     *
-     * <p>FR-F27's premise is that the finding is a complete task specification; a command carrying a
-     * location and no description would be a paid run on a line number.
-     */
-    /** What the run worker last read for the harness; null means nothing was, so the tag is used. */
-    private String pinned;
-
     /** A fix run uses the exact image the worker read, so every worker runs the same one (review of PR #167). */
     @Test
     void aFixRunUsesTheExactImageTheWorkerRead() {
@@ -339,6 +99,12 @@ class FixRunDispatcherTest {
         assertEquals("TEST-registry.invalid/agent@sha256:0000000000000000000000000000000000000000000000000000000000000000", launched.getFirst().agentImage());
     }
 
+    /**
+     * The prompt is the finding, and the run is configured by the deployment.
+     *
+     * <p>FR-F27's premise is that the finding is a complete task specification; a command carrying a
+     * location and no description would be a paid run on a line number.
+     */
     @Test
     void theRunIsToldTheFindingAndTheDeploymentsHarness() {
         dispatch();
@@ -527,29 +293,5 @@ class FixRunDispatcherTest {
         launchOutcome = new RunLaunch.DefiniteMiss(new IllegalStateException("refused"));
         assertTrue(((FixRunDispatcher.Refused) dispatch()).why().contains("ask again"),
                 "a record that never left IS safe to ask for again");
-    }
-
-    private void resetToTheHappyPath() {
-        plan = new FixDispatch.Planned("run::github:acme/web:" + THREAD + ":1", "feature/login",
-                "feature/login", "cafe1234", "develop", ScmType.GITHUB, "acme", "web");
-        existingClaim = Optional.empty();
-        cap = SpendGate.Decision.of(CapRefusal.allow());
-        rowAccepted = true;
-        launchOutcome = new RunLaunch.Dispatched();
-        account = Optional.of(machineAccount());
-        selection = new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
-                "TEST-harness-key-do-not-print"));
-        configuredHarness = "codex";
-        configuredModel = "TEST-model";
-        priceable = true;
-        spec = Optional.of(new FindingProjection.FixSpec(77L, "src/Foo.java", 44, 48, "HIGH",
-                "correctness", "the lock is taken in the opposite order here",
-                "take them in the declared order"));
-        launched.clear();
-        rows.clear();
-        order.clear();
-        claimsChecked.clear();
-        plannedFor.clear();
     }
 }

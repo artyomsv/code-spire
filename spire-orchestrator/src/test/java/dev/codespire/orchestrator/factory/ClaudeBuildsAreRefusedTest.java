@@ -136,10 +136,16 @@ class ClaudeBuildsAreRefusedTest {
         assertThrows(ForbiddenException.class, () -> WorkTestDoors.register("TEST-item", preparationOn(CLAUDE)));
     }
 
-    /** Past the guard, the next check is the operator's identity, which this hand-built resource has none of. */
+    /**
+     * A verified operator, so the identity check passes and the harness guard is what answers: Codex passes it and
+     * reaches the item store, which this hand-built resource has none of.
+     */
     @Test
     void itemPreparationOnCodexIsNotRefusedForIt() {
-        assertThrows(ForbiddenException.class, () -> WorkTestDoors.register("TEST-item", preparationOn(CODEX)));
+        RuntimeException past = assertThrows(RuntimeException.class,
+                () -> WorkTestDoors.registerAs("TEST-operator", "TEST-item", preparationOn(CODEX)));
+
+        assertInstanceOf(NullPointerException.class, past, "not the " + REVIEWS_ONLY + " 400: " + past);
     }
 
     // --- a work item's build and draft runs -----------------------------------------------------------

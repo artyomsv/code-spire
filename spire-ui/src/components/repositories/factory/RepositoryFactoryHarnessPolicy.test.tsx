@@ -73,6 +73,9 @@ describe('build setup', () => {
     renderFactory();
     fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
     await screen.findByRole('option', { name: 'TEST model (TEST-model)' });
+    // What is saved is what the select shows: the stored seat, named as one this server does not offer.
+    expect(screen.getByRole('combobox', { name: 'Pay with' })).toHaveValue('SUBSCRIPTION');
+    expect(screen.getByRole('option', { name: 'a subscription seat (not offered here)' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
     await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,

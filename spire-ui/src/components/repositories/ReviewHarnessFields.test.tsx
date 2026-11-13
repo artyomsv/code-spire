@@ -114,5 +114,8 @@ it('keeps a stored subscription when the server sends no subscription list', asy
   await screen.findByRole('option', { name: 'Claude Code' });
   await act(async () => { await Promise.resolve(); });
   expect(latest.payWith).toBe('SUBSCRIPTION');
-  expect(payValues()).toEqual(['API_KEY']);
+  // Shown as what it is, so the screen and the save agree; it is not offered anew under its usual name.
+  expect(screen.getByRole('combobox', { name: 'Pay with' })).toHaveValue('SUBSCRIPTION');
+  expect(screen.getByRole('option', { name: 'a subscription seat (not offered here)' })).toBeInTheDocument();
+  expect(payValues()).toEqual(['API_KEY', 'SUBSCRIPTION']);
 });
