@@ -8,21 +8,17 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Fork provenance a manual registration records (harness reviews, step 8). The saga is wired by
- * {@link IntegrationSagaPolicyTest}'s fakes, which record each write of the provenance column.
+ * Fork provenance a manual registration records (harness reviews, step 8), over {@link IntegrationSagaFixture}'s
+ * fakes, which record each write of the provenance column.
  */
-class IntegrationSagaForkProvenanceTest {
-
-    private final IntegrationSagaPolicyTest wiring = new IntegrationSagaPolicyTest();
+class IntegrationSagaForkProvenanceTest extends IntegrationSagaFixture {
 
     private IntegrationSaga saga() {
-        return wiring.sagaWith(IntegrationSagaPolicyTest.policyMode(false),
-                IntegrationSagaPolicyTest.provider(List.of()));
+        return sagaWith(policyMode(false), provider(List.of()));
     }
 
     private static void register(IntegrationSaga saga, Boolean fromFork) {
-        saga.onRepository(IntegrationSagaPolicyTest.pr("acc-1", "alice").withFromFork(fromFork),
-                TestRepositoryProjection.REPOSITORY_ID);
+        saga.onRepository(pr("acc-1", "alice").withFromFork(fromFork), TestRepositoryProjection.REPOSITORY_ID);
     }
 
     /**
@@ -33,12 +29,11 @@ class IntegrationSagaForkProvenanceTest {
     void aManualRegistrationAfterAForkWebhookStaysUntrusted() {
         IntegrationSaga saga = saga();
         register(saga, true);
-        wiring.fromForkCalls.clear();
+        fromForkCalls.clear();
 
         register(saga, null);
 
-        assertTrue(wiring.fromForkCalls.isEmpty(),
-                "unknown never overwrites the recorded answer: " + wiring.fromForkCalls);
+        assertTrue(fromForkCalls.isEmpty(), "unknown never overwrites the recorded answer: " + fromForkCalls);
     }
 
     /** Nothing is written for a new pull request either, so its column stays NULL, which every reader treats as untrusted. */
@@ -46,7 +41,7 @@ class IntegrationSagaForkProvenanceTest {
     void aManualRegistrationOfANewPullRequestIsUntrusted() {
         register(saga(), null);
 
-        assertTrue(wiring.fromForkCalls.isEmpty(), "a NULL provenance is left NULL: " + wiring.fromForkCalls);
+        assertTrue(fromForkCalls.isEmpty(), "a NULL provenance is left NULL: " + fromForkCalls);
     }
 
     /** A webhook's known false still records, so a branch pull request is trusted. */
@@ -54,6 +49,6 @@ class IntegrationSagaForkProvenanceTest {
     void aWebhooksKnownFalseStillMakesItTrusted() {
         register(saga(), false);
 
-        assertTrue(wiring.fromForkCalls.contains("review::acme/web#412:false"), wiring.fromForkCalls.toString());
+        assertTrue(fromForkCalls.contains("review::acme/web#412:false"), fromForkCalls.toString());
     }
 }
