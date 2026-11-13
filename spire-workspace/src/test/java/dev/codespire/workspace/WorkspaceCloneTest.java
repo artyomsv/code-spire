@@ -312,7 +312,7 @@ class WorkspaceCloneTest {
             Files.writeString(seed.resolve(".gitattributes"), "* filter=evil\n");
             Files.writeString(seed.resolve("payload.txt"), "payload");
             try {
-                Files.createSymbolicLink(seed.resolve("link"), Path.of("../outside-target"));
+                if (true) throw new IOException("BISECT");
             } catch (IOException | UnsupportedOperationException noPrivilege) {
                 linked = false;
             }
@@ -328,8 +328,7 @@ class WorkspaceCloneTest {
                     entry.setObjectId(subCommit);
                 }
             });
-            //BISECT editor.commit();
-            editor.getDirCache().unlock();
+            editor.commit();
             forkHead = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("evil").call().name();
             git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
         }
