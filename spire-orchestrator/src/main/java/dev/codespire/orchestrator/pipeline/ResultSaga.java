@@ -188,6 +188,19 @@ public class ResultSaga {
         }
     }
 
+    /**
+     * A harness review run the run worker refused to start (an unproxied fork): the review is refused with the
+     * attention row, as a start's refusal is, never retried as a failure. Same guards as {@link #acceptHarnessOutcome}.
+     */
+    public void acceptHarnessRefusal(String reviewId, String commit, HarnessReviewStart.Refused refused) {
+        MDC.put("reviewId", reviewId);
+        try {
+            ifCurrentRun(reviewId, commit, HARNESS_OUTCOME, () -> refuseHarness(reviewId, commit, refused));
+        } finally {
+            MDC.remove("reviewId");
+        }
+    }
+
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {

@@ -1,5 +1,7 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.PullRefs;
 import dev.codespire.contract.scm.RepoRef;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -90,6 +92,11 @@ public class FixTargets {
     @Inject
     DataSource dataSource;
 
+    /** {@link PushTarget#isUntrusted()} for a review that may have no row: no row is unknown provenance, so untrusted. */
+    public static boolean isUntrusted(Optional<PushTarget> target) {
+        return target.map(PushTarget::isUntrusted).orElse(true);
+    }
+
     /**
      * What the review row says about where a fix would go, or empty when there is no such review.
      *
@@ -174,6 +181,26 @@ public class FixTargets {
                 return Optional.of(Unpushable.SOURCE_IS_DESTINATION);
             }
             return Optional.empty();
+        }
+
+        /**
+         * Whether this pull request is untrusted: a fork, or one whose provenance was never recorded (harness reviews,
+         * step 8). Unknown is untrusted. The ONE place this is derived: a review run's command, the start's refusal and
+         * the linked-context cut all ask here, so no two of them can read {@code fromFork} differently.
+         */
+        public boolean isUntrusted() {
+            return !Boolean.FALSE.equals(fromFork);
+        }
+
+        /**
+         * The forge's own ref for this pull request's head, which an untrusted review fetches instead of the fork's
+         * branch; empty on Bitbucket, on a provider type the core does not know and for a pull request number below 1.
+         */
+        public Optional<String> pullRef() {
+            if (prId < 1) {
+                return Optional.empty();
+            }
+            return ScmType.fromProviderType(providerType).flatMap(type -> PullRefs.forType(type, prId));
         }
 
         /**

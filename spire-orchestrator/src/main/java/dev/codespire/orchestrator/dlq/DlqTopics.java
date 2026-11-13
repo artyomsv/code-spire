@@ -89,7 +89,7 @@ final class DlqTopics {
         if (RUN_COMMAND_TYPES.contains(type)) {
             return RUN_COMMANDS;
         }
-        if ("ExecuteReviewRun".equals(type)) return REVIEW_RUNS;
+        if ("ExecuteReviewRun".equals(type) || "ExecuteUntrustedReviewRun".equals(type)) return REVIEW_RUNS;
         if (RUN_CONTROL_TYPES.contains(type)) {
             return RUN_CONTROL;
         }
