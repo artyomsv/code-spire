@@ -54,6 +54,7 @@ class HarnessReviewStartTest {
             Optional.of(new ReviewHarness("TEST-harness", "TEST-model", "high", "SUBSCRIPTION"));
     private Optional<PriorRun> prior = Optional.empty();
     private Boolean fromFork = false;
+    private String providerType = "github";
     private int round = CURRENT_RUN;
     private Optional<String> reviewerCredential = Optional.of("TEST-packed-scm");
 
@@ -116,25 +117,70 @@ class HarnessReviewStartTest {
         assertNull(prepare.priorRun());
     }
 
-    /** Forks wait for step 8: refused with a reason the attention feed shows, never sent to the API either. */
+    /** Step 8: a GitHub fork is reviewed, from the pull ref of the base repository. */
     @Test
-    void aForkIsRefusedAndNeverPrepared() {
+    void aGitHubForkIsPrepared() {
         fromFork = true;
 
-        HarnessReviewStart.Decision decision = start().start(EVENT);
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), start().start(EVENT));
+        onlyPrepare();
+    }
 
-        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_not_reviewed_on_harness"), decision);
+    @Test
+    void aGitLabForkIsPrepared() {
+        fromFork = true;
+        providerType = "gitlab";
+
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), start().start(EVENT));
+        onlyPrepare();
+    }
+
+    /** Unknown is untrusted, not refused: a pull ref exists, so it is reviewed as a fork. */
+    @Test
+    void anUnknownForkStatusOnGitHubIsPrepared() {
+        fromFork = null;
+
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), start().start(EVENT));
+        onlyPrepare();
+    }
+
+    @Test
+    void aBitbucketForkIsRefusedNamingTheMissingRef() {
+        fromFork = true;
+        providerType = "bitbucket-cloud";
+
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"),
+                start().start(EVENT));
         assertNothingSent();
     }
 
     @Test
-    void anUnknownForkStatusIsRefused() {
-        fromFork = null;
+    void aBitbucketDataCenterForkIsRefused() {
+        fromFork = true;
+        providerType = "bitbucket-dc";
 
-        HarnessReviewStart.Decision decision = start().start(EVENT);
-
-        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_not_reviewed_on_harness"), decision);
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"),
+                start().start(EVENT));
         assertNothingSent();
+    }
+
+    @Test
+    void aBitbucketUnknownForkStatusIsRefused() {
+        fromFork = null;
+        providerType = "bitbucket-cloud";
+
+        assertEquals(new HarnessReviewStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"),
+                start().start(EVENT));
+        assertNothingSent();
+    }
+
+    /** A same-repository Bitbucket pull request needs no pull ref: only an untrusted one does. */
+    @Test
+    void aSameRepositoryBitbucketPullRequestIsPrepared() {
+        providerType = "bitbucket-cloud";
+
+        assertEquals(new HarnessReviewStart.Preparing("TEST-harness"), start().start(EVENT));
+        onlyPrepare();
     }
 
     /** A round that cannot be read is refused, never guessed (review of PR #368, code-quality/M-1). */
@@ -208,7 +254,7 @@ class HarnessReviewStartTest {
         return new FixTargets() {
             @Override
             public Optional<PushTarget> forReview(String reviewId) {
-                return Optional.of(new PushTarget("github", REPO.workspace(), REPO.slug(), PR, "TEST-source",
+                return Optional.of(new PushTarget(providerType, REPO.workspace(), REPO.slug(), PR, "TEST-source",
                         "TEST-main", HEAD, "OPEN", fromFork));
             }
         };

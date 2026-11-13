@@ -86,13 +86,13 @@ class ConversationHarnessReplyTest {
 
     @Test
     void aRefusedHarnessReplyIsSaidOutLoud() {
-        decision = new HarnessReplyStart.Refused("TEST-harness", "fork_pull_request_not_reviewed_on_harness");
+        decision = new HarnessReplyStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref");
 
         Optional<ActionCommand> command = saga().planFollowUp(reply());
 
         assertTrue(command.isEmpty(), "never answered by the API instead");
         assertEquals(List.of("FollowUpRefused@TEST-summary: harness reply refused: TEST-harness: "
-                + "fork_pull_request_not_reviewed_on_harness"), events);
+                + "fork_pull_request_has_no_pull_ref"), events);
         assertTrue(timelineTypes.contains("refused:AnswerFollowUp"), timelineTypes.toString());
     }
 

@@ -45,6 +45,7 @@ class HarnessReplyStartTest {
     private Optional<ReviewHarness> harness =
             Optional.of(new ReviewHarness("TEST-harness", "TEST-model", "high", "SUBSCRIPTION"));
     private Boolean fromFork = false;
+    private String providerType = "github";
     private int round = 3;
     private Optional<String> reviewerCredential = Optional.of("TEST-packed-scm");
 
@@ -88,17 +89,49 @@ class HarnessReplyStartTest {
     }
 
     @Test
-    void aForkIsRefused() {
+    void aGitHubForkIsPrepared() {
         fromFork = true;
 
-        assertEquals(new HarnessReplyStart.Refused("TEST-harness", HarnessReviewStart.FORK_REFUSED), start());
+        assertInstanceOf(HarnessReplyStart.Preparing.class, start());
     }
 
     @Test
-    void anUnknownForkStatusIsRefused() {
+    void aGitLabForkIsPrepared() {
+        fromFork = true;
+        providerType = "gitlab";
+
+        assertInstanceOf(HarnessReplyStart.Preparing.class, start());
+    }
+
+    @Test
+    void anUnknownForkStatusOnGitHubIsPrepared() {
         fromFork = null;
 
-        assertEquals(new HarnessReplyStart.Refused("TEST-harness", HarnessReviewStart.FORK_REFUSED), start());
+        assertInstanceOf(HarnessReplyStart.Preparing.class, start());
+    }
+
+    @Test
+    void aBitbucketForkIsRefusedNamingTheMissingRef() {
+        fromFork = true;
+        providerType = "bitbucket-cloud";
+
+        assertEquals(new HarnessReplyStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"), start());
+    }
+
+    @Test
+    void aBitbucketDataCenterForkIsRefused() {
+        fromFork = true;
+        providerType = "bitbucket-dc";
+
+        assertEquals(new HarnessReplyStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"), start());
+    }
+
+    @Test
+    void aBitbucketUnknownForkStatusIsRefused() {
+        fromFork = null;
+        providerType = "bitbucket-cloud";
+
+        assertEquals(new HarnessReplyStart.Refused("TEST-harness", "fork_pull_request_has_no_pull_ref"), start());
     }
 
     @Test
@@ -145,7 +178,7 @@ class HarnessReplyStartTest {
         return new FixTargets() {
             @Override
             public Optional<PushTarget> forReview(String reviewId) {
-                return Optional.of(new PushTarget("github", REPO.workspace(), REPO.slug(), PR, "TEST-source",
+                return Optional.of(new PushTarget(providerType, REPO.workspace(), REPO.slug(), PR, "TEST-source",
                         "TEST-main", "a".repeat(40), "OPEN", fromFork));
             }
         };

@@ -48,6 +48,9 @@ class ReviewRunDispatchTest {
     private boolean rowAccepted = true;
     private RunLaunch.Outcome launchOutcome = new RunLaunch.Dispatched();
     private String destBranch = "TEST-main";
+    private String sourceBranch = "TEST-source";
+    private String providerType = "github";
+    private Boolean fromFork = false;
 
     private final List<FactoryRunProjection.QueuedRun> rows = new ArrayList<>();
     private final List<RunCommand> reviewLane = new ArrayList<>();
@@ -131,6 +134,85 @@ class ReviewRunDispatchTest {
         assertFalse(command.execution().pushesToAnExistingBranch(), "a review still pushes nothing");
     }
 
+    /** Step 8: an untrusted pull request is sent on its own command, with the forge's pull ref and a fixed local branch. */
+    @Test
+    void aForkIsSentUntrustedWithItsRefAndFixedBranch() {
+        fromFork = true;
+
+        dispatch().dispatch(REQUEST);
+
+        RunCommand.ExecuteUntrustedReviewRun command =
+                assertInstanceOf(RunCommand.ExecuteUntrustedReviewRun.class, reviewLane.getFirst());
+        assertEquals("refs/pull/7/head", command.pullRef());
+        assertEquals("spire/review-7", command.execution().branch());
+        assertEquals("spire/review-7", command.execution().baseBranch());
+        assertEquals(HEAD, command.execution().baseCommit());
+        assertEquals("TEST-main", command.execution().protectedBranch());
+        assertEquals(CALL, command.review());
+        assertEquals("spire/review-7", rows.getFirst().branch(), "the row names the local branch too");
+    }
+
+    @Test
+    void aSameRepositoryPullRequestIsSentAsBefore() {
+        fromFork = false;
+
+        dispatch().dispatch(REQUEST);
+
+        RunCommand.ExecuteReviewRun command = assertInstanceOf(RunCommand.ExecuteReviewRun.class, reviewLane.getFirst());
+        assertEquals("TEST-source", command.execution().branch());
+        assertEquals("TEST-source", command.execution().baseBranch());
+    }
+
+    /** Unknown is untrusted. */
+    @Test
+    void anUnknownForkStatusIsSentUntrusted() {
+        fromFork = null;
+
+        dispatch().dispatch(REQUEST);
+
+        assertInstanceOf(RunCommand.ExecuteUntrustedReviewRun.class, reviewLane.getFirst());
+    }
+
+    @Test
+    void aGitLabForkNamesTheMergeRequestRef() {
+        fromFork = true;
+        providerType = "gitlab";
+
+        dispatch().dispatch(REQUEST);
+
+        RunCommand.ExecuteUntrustedReviewRun command =
+                assertInstanceOf(RunCommand.ExecuteUntrustedReviewRun.class, reviewLane.getFirst());
+        assertEquals("refs/merge-requests/7/head", command.pullRef());
+    }
+
+    /** The fork author chooses the branch name: it never reaches the unit, whatever it is called. */
+    @Test
+    void aForkBranchNamedMainNeverReachesTheCommand() {
+        fromFork = true;
+        sourceBranch = "main";
+
+        dispatch().dispatch(REQUEST);
+
+        RunCommand.ExecuteUntrustedReviewRun command =
+                assertInstanceOf(RunCommand.ExecuteUntrustedReviewRun.class, reviewLane.getFirst());
+        assertEquals("spire/review-7", command.execution().branch());
+        assertEquals("spire/review-7", command.execution().baseBranch());
+        assertEquals("spire/review-7", rows.getFirst().branch());
+        assertEquals("spire/review-7", rows.getFirst().baseBranch());
+    }
+
+    /** Bitbucket has no pull ref: nothing is funded, written or sent. */
+    @Test
+    void anUntrustedBitbucketPullRequestIsRefusedBeforeFunding() {
+        fromFork = true;
+        providerType = "bitbucket-cloud";
+
+        ReviewRunDispatch.Outcome outcome = dispatch().dispatch(REQUEST);
+
+        assertEquals(new ReviewRunDispatch.Refused("review_run_target_unavailable"), outcome);
+        assertTrue(rows.isEmpty() && reviewLane.isEmpty());
+    }
+
     /** With no target branch the agent has nothing to diff against, so nothing is funded or sent. */
     @Test
     void aReviewWithNoTargetBranchIsRefused() {
@@ -173,6 +255,7 @@ class ReviewRunDispatchTest {
     private RunLaunch launch() {
         return new RunLaunch() {
             @Override public Outcome launch(RunCommand.ExecuteReviewRun command) { reviewLane.add(command); return launchOutcome; }
+            @Override public Outcome launch(RunCommand.ExecuteUntrustedReviewRun command) { reviewLane.add(command); return launchOutcome; }
             @Override public Outcome launch(RunCommand.ExecuteRun command) { buildLane.add(command); return launchOutcome; }
             @Override public Outcome launch(RunCommand.ExecuteWorkRun command) { buildLane.add(command); return launchOutcome; }
             @Override public Outcome launch(RunCommand.ExecuteWorkDraftRun command) { buildLane.add(command); return launchOutcome; }
@@ -194,7 +277,7 @@ class ReviewRunDispatchTest {
         return new FixTargets() {
             @Override
             public Optional<PushTarget> forReview(String reviewId) {
-                return Optional.of(new PushTarget("github", "TEST-WS", "TEST-REPO", 7, "TEST-source", destBranch, HEAD, "OPEN", false));
+                return Optional.of(new PushTarget(providerType, "TEST-WS", "TEST-REPO", 7, sourceBranch, destBranch, HEAD, "OPEN", fromFork));
             }
         };
     }

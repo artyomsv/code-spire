@@ -83,6 +83,11 @@ public final class RealHarnessResults {
     private static FactoryRunProjection runRows() {
         return new FactoryRunProjection() {
             @Override
+            public Optional<String> harnessOf(String runId) {
+                return Optional.of("TEST-harness");
+            }
+
+            @Override
             public Optional<String> modelOf(String runId) {
                 return Optional.of("TEST-model");
             }
