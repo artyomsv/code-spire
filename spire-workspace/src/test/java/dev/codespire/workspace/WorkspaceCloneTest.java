@@ -328,7 +328,8 @@ class WorkspaceCloneTest {
                     entry.setObjectId(subCommit);
                 }
             });
-            editor.commit();
+            //BISECT editor.commit();
+            editor.getDirCache().unlock();
             forkHead = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("evil").call().name();
             git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
         }
