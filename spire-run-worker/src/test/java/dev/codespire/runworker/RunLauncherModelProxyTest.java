@@ -88,6 +88,50 @@ class RunLauncherModelProxyTest {
                 dev.codespire.contract.review.HarnessReviewInputs.NONE);
     }
 
+    /** A fork's review (step 8): its branch is the local review branch, its head is read from the pull ref. */
+    private static RunCommand.ExecuteUntrustedReviewRun fork() {
+        RunCommand.ExecuteRun base = command();
+        RunCommand.ExecuteRun execution = new RunCommand.ExecuteRun(base.runId(), base.repo(), base.remoteUri(),
+                base.baseBranch(), base.baseCommit(), dev.codespire.contract.review.PullRefs.localBranch(7),
+                base.prompt(), base.harness(), base.model(), base.agentImage(), base.protectedPaths(),
+                base.maxWallClockSeconds(), base.scmCredential(), base.harnessCredential());
+        return new RunCommand.ExecuteUntrustedReviewRun(base.runId(), execution,
+                new dev.codespire.contract.review.ReviewRunBinding("TEST-review",
+                        dev.codespire.contract.review.ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1),
+                dev.codespire.contract.review.HarnessReviewInputs.NONE, "refs/pull/7/head");
+    }
+
+    /**
+     * A fork's review whose unit has no model proxy (a mode, egress or an arm that does not proxy it) is refused by the
+     * real builder as BAD_COMMAND before anything is created: the fork's code never runs beside a real credential. The
+     * detail is the constant, which carries no credential text.
+     */
+    @Test
+    void anUnproxiedForkFailsBadCommandBeforeAnyContainer() {
+        building(launcher, directUnit());
+
+        RunResult.RunFailed failed = assertInstanceOf(RunResult.RunFailed.class,
+                launcher.launchUntrustedReview(fork(), RunObserver.IGNORING));
+
+        assertEquals("BAD_COMMAND", failed.cause());
+        assertTrue(failed.detail().contains(RunUnitBuilder.FORK_PROXY_REQUIRED), failed.detail());
+        assertEquals("fork_requires_credential_proxy", RunUnitBuilder.FORK_PROXY_REQUIRED);
+        assertEquals(0, runtime.created, "no unit is created for a fork whose credential would sit in its agent");
+        assertEquals(List.of(), runtime.described);
+    }
+
+    /** The same fork on a proxied unit is created, through the same launcher path as a trusted review. */
+    @Test
+    void aProxiedForkIsCreated() {
+        runtime.images.add(PROXY_IMAGE);
+        building(launcher, proxiedUnit());
+
+        launcher.launchUntrustedReview(fork(), RunObserver.IGNORING);
+
+        assertEquals(1, runtime.created);
+        assertEquals(List.of(PROXY_IMAGE), runtime.described);
+    }
+
     /** The launcher's builder answering every kind of unit with the given one. */
     private static void building(RunLauncher launcher, dev.codespire.runtime.RunUnitSpec unit) {
         launcher.builder = new RunUnitBuilder() {
