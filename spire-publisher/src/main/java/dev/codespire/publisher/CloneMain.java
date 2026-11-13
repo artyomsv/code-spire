@@ -66,8 +66,11 @@ public final class CloneMain {
 
             // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge.
             String fetchBranch = env.get("SPIRE_FETCH_BRANCH");
+            // A fork's head is on no branch (harness reviews step 8): init fetches the pull request's own ref.
+            String fetchRef = env.get("SPIRE_FETCH_REF");
             populate(remote, base, branch, workspace, new GitCredential(username, secret), username, checkpointOf(env),
-                    fetchBranch == null || fetchBranch.isBlank() ? null : fetchBranch);
+                    fetchBranch == null || fetchBranch.isBlank() ? null : fetchBranch,
+                    fetchRef == null || fetchRef.isBlank() ? null : fetchRef);
             return 0;
         } catch (CheckpointMissingException missing) {
             outcome.failed("CHECKPOINT_MISSING", missing.getMessage());
@@ -109,8 +112,14 @@ public final class CloneMain {
 
     static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
                          String username, Checkpoint checkpoint, String fetchBranch) throws IOException, GitAPIException {
+        populate(remote, base, branch, workspace, credential, username, checkpoint, fetchBranch, null);
+    }
+
+    static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
+                         String username, Checkpoint checkpoint, String fetchBranch, String fetchRef)
+            throws IOException, GitAPIException {
         WorkspaceClone.populate(remote, base, branch, workspace, credential, username, username + "@" + IDENTITY_DOMAIN,
-                fetchBranch);
+                fetchBranch, fetchRef);
         if (checkpoint != null) CheckpointBundles.importInto(workspace, checkpoint.bundles(), checkpoint.head(), checkpoint.maxBytes());
     }
 }
