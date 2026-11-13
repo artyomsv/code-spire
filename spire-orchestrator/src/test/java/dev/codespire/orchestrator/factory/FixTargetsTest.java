@@ -224,8 +224,12 @@ class FixTargetsTest {
         assertFalse(target("github", false).isUntrusted());
         assertTrue(target("github", null).isUntrusted());
         assertTrue(target("github", true).isUntrusted());
-        assertTrue(FixTargets.isUntrusted(Optional.empty()), "no row is unknown");
-        assertFalse(FixTargets.isUntrusted(Optional.of(target("github", false))));
+        assertTrue(targets.isUntrustedReview("review::TEST-WS/TEST-NONE#8999"), "no row is unknown");
+        assertTrue(targets.isUntrustedReviewWithoutPullRef("review::TEST-WS/TEST-NONE#8999"));
+        assertFalse(target("github", true).isUntrustedWithoutPullRef());
+        assertTrue(target("bitbucket-cloud", true).isUntrustedWithoutPullRef());
+        assertTrue(target("bitbucket-cloud", null).isUntrustedWithoutPullRef());
+        assertFalse(target("bitbucket-cloud", false).isUntrustedWithoutPullRef(), "a trusted pull request needs no ref");
     }
 
     @Test

@@ -120,8 +120,7 @@ public class HarnessReviewStart {
         if (harness.isEmpty()) {
             return new NotHarness();
         }
-        Optional<FixTargets.PushTarget> target = targets.forReview(event.reviewId());
-        if (refusedForNoPullRef(target)) {
+        if (targets.isUntrustedReviewWithoutPullRef(event.reviewId())) {
             return new Refused(harness.orElseThrow(), FORK_REFUSED);
         }
         // Fail-closed: the ledger's read answers run 1 on a failed read, and a run bound to a guessed round is either
@@ -131,15 +130,6 @@ public class HarnessReviewStart {
             return new Refused(harness.orElseThrow(), ROUND_UNKNOWN);
         }
         return prepare(event, harness.orElseThrow(), round);
-    }
-
-    /**
-     * True for an untrusted pull request (a fork, or unknown provenance) that has no pull ref to fetch: the review
-     * would have to clone the fork's branch from the wrong repository. Shared with {@link HarnessReplyStart}, so a
-     * review and its replies are refused alike. A trusted pull request needs no ref.
-     */
-    static boolean refusedForNoPullRef(Optional<FixTargets.PushTarget> target) {
-        return FixTargets.isUntrusted(target) && target.flatMap(FixTargets.PushTarget::pullRef).isEmpty();
     }
 
     /**

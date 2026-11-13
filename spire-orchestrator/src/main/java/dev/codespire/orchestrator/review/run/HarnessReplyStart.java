@@ -84,8 +84,7 @@ public class HarnessReplyStart {
             return new NotHarness();
         }
         // An untrusted pull request with no pull ref is refused, as a review is (step 8).
-        Optional<FixTargets.PushTarget> target = targets.forReview(reviewId);
-        if (HarnessReviewStart.refusedForNoPullRef(target)) {
+        if (targets.isUntrustedReviewWithoutPullRef(reviewId)) {
             return new Refused(harness.orElseThrow(), HarnessReviewStart.FORK_REFUSED);
         }
         int round = runs.roundOrUnknown(reviewId);

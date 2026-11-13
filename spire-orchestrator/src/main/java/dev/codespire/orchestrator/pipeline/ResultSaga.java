@@ -716,7 +716,7 @@ public class ResultSaga {
      */
     private Set<String> linksToGather(DiffFetched e) {
         Set<String> links = e.references() == null ? Set.of() : e.references();
-        if (links.isEmpty() || !FixTargets.isUntrusted(targets.forReview(e.reviewId()))) {
+        if (links.isEmpty() || !targets.isUntrustedReview(e.reviewId())) {
             return links;
         }
         projection.appendEvent(e.reviewId(), "result", "ContextLinksSkipped",
