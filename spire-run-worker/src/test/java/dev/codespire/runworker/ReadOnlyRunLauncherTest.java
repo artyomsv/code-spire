@@ -176,8 +176,7 @@ class ReadOnlyRunLauncherTest {
     /** A fork's answer is read against the review cap too: 40 KiB in parts arrives whole, not capped as a draft's. */
     @Test
     void aForkAnswerOverADraftsCapArrivesWhole() throws Exception {
-        String answer = "TEST-finding
-".repeat(40 * 1024 / 13);
+        String answer = "TEST-finding\n".repeat(40 * 1024 / 13);
         List<String> lines = new ArrayList<>();
         int count = (answer.length() + 8191) / 8192;
         for (int index = 0; index < count; index++) {
