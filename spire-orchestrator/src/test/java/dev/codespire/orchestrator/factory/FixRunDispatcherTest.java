@@ -287,8 +287,9 @@ class FixRunDispatcherTest {
         resetToTheHappyPath();
         selection = new HarnessCredentialPool.Selection.Empty();
         FixRunDispatcher.Refused refused = assertInstanceOf(FixRunDispatcher.Refused.class, dispatch());
-        assertEquals("no harness credential is configured, so there is no key for a fix run to call the model with",
-                refused.why());
+        // It names the vendor it looked for: keys of another vendor may well exist, and do not pay this harness.
+        assertEquals("no usable `openai` API key is configured for the codex harness, so there is no key for a fix run"
+                + " to call the model with; a key of another vendor does not pay it", refused.why());
     }
 
     /**

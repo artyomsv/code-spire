@@ -1,6 +1,8 @@
 package dev.codespire.orchestrator.work;
 
 import dev.codespire.orchestrator.factory.FactoryConfig;
+import io.quarkus.security.runtime.QuarkusPrincipal;
+import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import jakarta.ws.rs.core.Response;
 
 /**
@@ -29,5 +31,15 @@ public final class WorkTestDoors {
      */
     public static Response register(String id, WorkPreparationResource.Input input) {
         return new WorkPreparationResource().register(id, input);
+    }
+
+    /**
+     * A hand registration by a verified operator, still with no store, sources or transitions: a guard after the
+     * identity check and before them answers, and anything later fails on the missing store.
+     */
+    public static Response registerAs(String operator, String id, WorkPreparationResource.Input input) {
+        WorkPreparationResource resource = new WorkPreparationResource();
+        resource.identity = QuarkusSecurityIdentity.builder().setPrincipal(new QuarkusPrincipal(operator)).build();
+        return resource.register(id, input);
     }
 }

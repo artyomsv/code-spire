@@ -499,6 +499,39 @@ describe('build setup', () => {
       expect.objectContaining({ harness: 'codex', payWith: 'SUBSCRIPTION' })));
   });
 
+  // An older server sends no subscription list: that is not a refusal, so the stored seat is saved back unchanged.
+  it('keeps a stored subscription when the server sends no subscription list', async () => {
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'],
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] } } as unknown as build.BuildOptions);
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', payWith: 'SUBSCRIPTION' }));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    await screen.findByRole('option', { name: 'TEST model (TEST-model)' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save build setup' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save build setup' }));
+    await waitFor(() => expect(build.saveBuildDefaults).toHaveBeenCalledWith(repository.id,
+      expect.objectContaining({ harness: 'codex', payWith: 'SUBSCRIPTION' })));
+  });
+
+  // A model belongs to the harness that offers it: the old slug must not ride along to a harness that never listed it.
+  it('drops a model the new harness does not offer', async () => {
+    const types = ['INPUT', 'OUTPUT'];
+    const offering = (slug: string) => ({ status: 'OK' as const,
+      offered: [{ slug, displayName: slug, defaultEffort: '', efforts: [], visible: true, priority: 1 }] });
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-other'], buildHarnesses: ['codex', 'TEST-other'],
+      subscriptionHarnesses: ['codex'], reportedTypes: { codex: types, 'TEST-other': types },
+      models: { codex: offering('TEST-model'), 'TEST-other': offering('TEST-other-model') } });
+    vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
+    renderFactory();
+    fireEvent.click(within(await step(5)).getByRole('button', { name: 'Change' }));
+    await screen.findByRole('option', { name: 'TEST-other' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Harness' }), { target: { value: 'TEST-other' } });
+    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('');
+    expect(screen.queryByRole('option', { name: /TEST-model/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save build setup' })).toBeDisabled();
+    expect(build.saveBuildDefaults).not.toHaveBeenCalled();
+  });
+
   // Harness reviews 3b: a review-only harness is configured but may not build.
   it('lists only build harnesses in the build setup', async () => {
     vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'claude_code'], buildHarnesses: ['codex'],
@@ -538,10 +571,12 @@ describe('build setup', () => {
     expect(await screen.findByRole('option', { name: 'TEST partial (TEST-partial)' })).toBeEnabled();
   });
 
-  // A grey option is not a guard: the value stays in the form when the harness changes under it.
+  // A grey option is not a guard: a model both harnesses list stays in the form when the harness changes under it.
   it('will not save a model the chosen harness would refuse', async () => {
+    const both = { status: 'OK' as const, offered: [{ slug: 'TEST-partial', displayName: 'TEST partial', defaultEffort: '', efforts: [], visible: true, priority: 1 }] };
     vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'], buildHarnesses: ['codex', 'TEST-two-types'], subscriptionHarnesses: ['codex'],
-      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] } });
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] },
+      models: { codex: both, 'TEST-two-types': both } });
     vi.mocked(api.fetchLlmModels).mockResolvedValue([{ id: 'TEST-partial-id', type: 'openai', name: 'TEST-partial',
       label: 'TEST partial', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 }, notBilled: [],
       outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,

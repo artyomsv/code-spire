@@ -113,6 +113,17 @@ it('adds a key beside the list and never asks for it again', async () => {
   expect(await screen.findByText(/Added TEST-new/)).toBeInTheDocument();
 });
 
+// The endpoint example follows the vendor: an Anthropic key pointed at OpenAI's URL is refused on every run.
+it('suggests the endpoint of the chosen kind', async () => {
+  render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
+  fireEvent.click(await screen.findByRole('button', { name: 'Add an API key' }));
+  expect(screen.getByLabelText('Endpoint', field)).toHaveAttribute('placeholder', 'https://api.openai.com/v1');
+  fireEvent.change(screen.getByLabelText('Kind', field), { target: { value: 'anthropic' } });
+  expect(screen.getByLabelText('Endpoint', field)).toHaveAttribute('placeholder', 'https://api.anthropic.com');
+  fireEvent.change(screen.getByLabelText('Kind', field), { target: { value: 'gemini' } });
+  expect(screen.getByLabelText('Endpoint', field)).toHaveAttribute('placeholder', 'https://generativelanguage.googleapis.com');
+});
+
 it('will not add a key with a field missing', async () => {
   render(<SettingsHarnessCredentials />, { wrapper: queryWrapper() });
   fireEvent.click(await screen.findByRole('button', { name: 'Add an API key' }));

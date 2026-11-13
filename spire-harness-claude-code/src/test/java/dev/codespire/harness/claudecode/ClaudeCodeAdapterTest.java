@@ -163,14 +163,26 @@ class ClaudeCodeAdapterTest {
         assertEquals(report, adapter.usage(RunEventSummary.of(events)));
     }
 
-    /** Measured: the error result said {@code "subtype":"success"}; {@code is_error} decides. */
+    /**
+     * Measured: the error result said {@code "subtype":"success"} with no API status; {@code is_error} decides, and
+     * the detail names the first of {@code api_error_status}, {@code api_error}, {@code terminal_reason} and
+     * {@code subtype} that says something, never {@code error:success}.
+     */
     @Test
     void anErrorResultIsAnErrorWhateverItsSubtype() {
         List<RunEvent> events = adapter.parseAll(ClaudeCodeLines.RESULT_ERROR);
 
         RunEvent.StateChange state = assertInstanceOf(RunEvent.StateChange.class, events.get(1));
         assertEquals("result", state.state());
-        assertEquals("error:success", state.detail());
+        assertEquals("error:connection_failed", state.detail());
+    }
+
+    @Test
+    void anErrorResultWithNoApiErrorNamesItsTerminalReason() {
+        String line = ClaudeCodeLines.RESULT_ERROR.replace("\"api_error\":\"connection_failed\"", "\"api_error\":\" \"");
+
+        RunEvent.StateChange state = assertInstanceOf(RunEvent.StateChange.class, adapter.parseAll(line).get(1));
+        assertEquals("error:api_error", state.detail());
     }
 
     @Test

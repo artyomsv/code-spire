@@ -124,10 +124,16 @@ class ClaudeBuildsAreRefusedTest {
     @Test
     void itemPreparationOnClaudeCodeIsRefused() {
         WebApplicationException refused = assertThrows(WebApplicationException.class,
-                () -> WorkTestDoors.register("TEST-item", preparationOn(CLAUDE)));
+                () -> WorkTestDoors.registerAs("TEST-operator", "TEST-item", preparationOn(CLAUDE)));
 
         assertEquals(400, refused.getResponse().getStatus());
         assertEquals(Map.of("reason", REVIEWS_ONLY), refused.getResponse().getEntity());
+    }
+
+    /** Who is asking is checked first: an unidentified caller learns nothing about the harness rules. */
+    @Test
+    void anUnidentifiedPreparationOnClaudeCodeIsForbiddenFirst() {
+        assertThrows(ForbiddenException.class, () -> WorkTestDoors.register("TEST-item", preparationOn(CLAUDE)));
     }
 
     /** Past the guard, the next check is the operator's identity, which this hand-built resource has none of. */

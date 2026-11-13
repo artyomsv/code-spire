@@ -45,6 +45,17 @@ class HarnessPolicyTest {
         assertTrue(HarnessPolicy.allowsBuilds("codex"));
     }
 
+    /**
+     * The worker resolves an adapter by an uppercased name, so an agent-image key spelled in another case still runs
+     * Claude Code. The policy must read the same name the worker does, or such a key escapes every rule above.
+     */
+    @Test
+    void aHarnessNameIsReadWhateverItsCaseAndSpacing() {
+        assertEquals(Optional.of("anthropic"), HarnessPolicy.keyKind("Claude_Code"));
+        assertFalse(HarnessPolicy.allowsSubscription("CLAUDE_CODE"));
+        assertFalse(HarnessPolicy.allowsBuilds(" claude_code "));
+    }
+
     @Test
     void claudeCodeReportsNoReasoningBucket() {
         assertEquals(Set.of(TokenType.INPUT, TokenType.CACHED_INPUT, TokenType.CACHE_WRITE, TokenType.OUTPUT),
