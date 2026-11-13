@@ -305,14 +305,15 @@ class WorkspaceCloneTest {
         try (Git git = Git.open(seed.toFile())) {
             git.checkout().setCreateBranch(true).setName("evil").setStartPoint(base).call();
             // The driver is defined only here, in the seed's config; it is not pushed, so the clone has none.
-            String command = "touch " + marker.toUri().getPath();
+            // clean passes content through (an empty clean would blank the symlink target); smudge leaves the marker.
+            String command = "touch " + marker.toUri().getPath() + "; cat";
             git.getRepository().getConfig().setString("filter", "evil", "smudge", command);
-            git.getRepository().getConfig().setString("filter", "evil", "clean", command);
+            git.getRepository().getConfig().setString("filter", "evil", "clean", "cat");
             git.getRepository().getConfig().save();
             Files.writeString(seed.resolve(".gitattributes"), "* filter=evil\n");
             Files.writeString(seed.resolve("payload.txt"), "payload");
             try {
-                if (true) throw new IOException("BISECT");
+                Files.createSymbolicLink(seed.resolve("link"), Path.of("../outside-target"));
             } catch (IOException | UnsupportedOperationException noPrivilege) {
                 linked = false;
             }
