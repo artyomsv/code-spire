@@ -134,7 +134,7 @@ class RunLauncherModelProxyTest {
 
     /** The launcher's builder answering every kind of unit with the given one. */
     private static void building(RunLauncher launcher, dev.codespire.runtime.RunUnitSpec unit) {
-        launcher.builder = new RunUnitBuilder() {
+        RunUnitBuilder builder = new RunUnitBuilder() {
             @Override
             public dev.codespire.runtime.RunUnitSpec build(RunCommand.ExecuteRun command,
                                                            dev.codespire.harness.HarnessAdapter adapter) {
@@ -147,6 +147,10 @@ class RunLauncherModelProxyTest {
                 return unit;
             }
         };
+        // The mode that proxies reviews, so a fork reaches the built-unit check (an arm with no route) these tests fake.
+        builder.credentialProxyMode = CredentialProxyMode.REVIEWS;
+        builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.ENFORCE;
+        launcher.builder = builder;
     }
 
     /**
