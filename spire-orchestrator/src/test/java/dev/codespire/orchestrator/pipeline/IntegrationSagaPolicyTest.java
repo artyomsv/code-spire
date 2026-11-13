@@ -451,6 +451,41 @@ class IntegrationSagaPolicyTest {
     }
 
     /**
+     * A manual registration cannot tell a fork from a branch pull request, so it asserts nothing: a webhook's recorded
+     * answer survives it (step 8: a false here would turn a fork into a trusted pull request).
+     */
+    @Test
+    void aManualRegistrationAfterAForkWebhookStaysUntrusted() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+        saga.onRepository(pr("acc-1", "alice").withFromFork(true), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+        fromForkCalls.clear();
+
+        saga.onRepository(pr("acc-1", "alice").withFromFork(null), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+
+        assertTrue(fromForkCalls.isEmpty(), "unknown never overwrites the recorded answer: " + fromForkCalls);
+    }
+
+    /** Nothing is written for a new pull request either, so its column stays NULL, which every reader treats as untrusted. */
+    @Test
+    void aManualRegistrationOfANewPullRequestIsUntrusted() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+
+        saga.onRepository(pr("acc-1", "alice").withFromFork(null), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+
+        assertTrue(fromForkCalls.isEmpty(), "a NULL provenance is left NULL: " + fromForkCalls);
+    }
+
+    /** A webhook's known false still records, so a branch pull request is trusted. */
+    @Test
+    void aWebhooksKnownFalseStillMakesItTrusted() {
+        var saga = sagaWith(policyMode(false), provider(List.of()));
+
+        saga.onRepository(pr("acc-1", "alice").withFromFork(false), dev.codespire.orchestrator.TestRepositoryProjection.REPOSITORY_ID);
+
+        assertTrue(fromForkCalls.contains("review::acme/web#412:false"), fromForkCalls.toString());
+    }
+
+    /**
      * Observe mode's contract is "register only, no diff, no LLM, no comments". Every
      * {@code /command} reached {@code onManualCommand}, which never consulted the policy — so an
      * operator evaluating a deployment could still be billed for a paid re-review by anyone

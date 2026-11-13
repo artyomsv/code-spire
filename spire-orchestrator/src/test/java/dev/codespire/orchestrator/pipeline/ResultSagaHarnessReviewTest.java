@@ -81,6 +81,29 @@ class ResultSagaHarnessReviewTest {
         assertFalse(failure.retryable(), "a refusal leaves REVIEWING terminally");
     }
 
+    /** Step 8: a run the run worker refused (an unproxied fork) is refused with attention on the REAL saga path. */
+    @Test
+    void aRunRefusedByTheRunWorkerIsRefusedWithAttentionReason() {
+        saga().acceptHarnessRefusal(REVIEW_ID, COMMIT,
+                new HarnessReviewStart.Refused("codex", "fork_requires_credential_proxy"));
+
+        assertEquals("refused", projection.statuses.getLast());
+        assertEquals("codex: fork_requires_credential_proxy", projection.harnessRefusals.getLast());
+        RecordCommand.RecordFailure failure = assertInstanceOf(RecordCommand.RecordFailure.class, recorded.getLast());
+        assertEquals("harness-review", failure.phase());
+        assertFalse(failure.retryable(), "a refusal is never retried");
+        assertTrue(emitted.isEmpty(), emitted.toString());
+    }
+
+    @Test
+    void aRefusalForAnOldCommitIsDropped() {
+        saga().acceptHarnessRefusal(REVIEW_ID, "fedcba9876543210fedcba9876543210fedcba98",
+                new HarnessReviewStart.Refused("codex", "fork_requires_credential_proxy"));
+
+        assertTrue(projection.statuses.isEmpty(), projection.statuses.toString());
+        assertTrue(projection.harnessRefusals.isEmpty(), projection.harnessRefusals.toString());
+    }
+
     /** The control: a repository on the API reviews exactly as today. */
     @Test
     void aNonHarnessReviewSendsGenerateReviewAsToday() {

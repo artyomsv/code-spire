@@ -165,6 +165,15 @@ class HarnessReviewResultsTest {
     }
 
     @Test
+    void aDetailThatOnlyQuotesTheProxyTextStaysAFailure() {
+        fixture.results().accept(failed("BAD_COMMAND", "IllegalStateException: not fork_requires_credential_proxy at all"),
+                ROUND_ONE);
+
+        assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertTrue(fixture.refusals.isEmpty(), fixture.refusals.toString());
+    }
+
+    @Test
     void theProxyDetailOnAnotherCauseStaysAFailure() {
         fixture.results().accept(failed("AGENT_FAILED", "IllegalStateException: fork_requires_credential_proxy"), ROUND_ONE);
 

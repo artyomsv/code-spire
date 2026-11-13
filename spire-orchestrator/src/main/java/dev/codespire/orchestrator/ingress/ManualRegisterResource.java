@@ -124,10 +124,7 @@ public class ManualRegisterResource {
                     .build());
         }
 
-        IntegrationEvent event = new PullRequestEventReceived(
-                pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
-                pr.sourceBranch(), pr.targetBranch(), pr.headCommit(), pr.author(), pr.htmlUrl(),
-                provider.type());
+        IntegrationEvent event = registrationEvent(pr, provider.type());
         integration.send(new dev.codespire.contract.event.RepositoryDelivery(target.repositoryId, null, 0,
                 target.providerType, target.forgeOrigin, dev.codespire.contract.event.RepositoryEventKind.REVIEWER,
                 java.util.UUID.randomUUID().toString(), event));
@@ -207,5 +204,15 @@ public class ManualRegisterResource {
         java.util.UUID repositoryId = repositories.find(match.type().providerType(), origin, repo.workspace(), repo.slug())
                 .map(dev.codespire.orchestrator.repository.RepositoryView::id).orElse(null);
         return new Target(repo.workspace(), repo.slug(), match.coordinates().prId(), match.type().providerType(), origin, repositoryId);
+    }
+
+    /**
+     * The event a manual registration sends. Its fork status is UNKNOWN (null), never false: the forge was asked for the
+     * pull request's text, not its provenance, so asserting false would overwrite a webhook's true and make a fork
+     * trusted (harness reviews, step 8). Unknown is untrusted and never replaces a recorded value.
+     */
+    static PullRequestEventReceived registrationEvent(PullRequest pr, String providerType) {
+        return new PullRequestEventReceived(pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),
+                pr.sourceBranch(), pr.targetBranch(), pr.headCommit(), pr.author(), pr.htmlUrl(), providerType, null);
     }
 }

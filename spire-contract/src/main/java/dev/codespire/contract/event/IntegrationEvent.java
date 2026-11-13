@@ -101,9 +101,13 @@ public sealed interface IntegrationEvent {
                                     String title, String description,
                                     String sourceBranch, String targetBranch,
                                     String headCommit, Author author,
-                                    String htmlUrl, String providerType, boolean fromFork)
+                                    String htmlUrl, String providerType, Boolean fromFork)
             implements IntegrationEvent {
 
+        // fromFork is nullable: null is "unknown", which a manual registration is (the forge was asked for the
+        // pull request's text, not its provenance) and which a record serialized before the component existed
+        // now reads as. Unknown is untrusted downstream and never overwrites a value a webhook recorded.
+        //
         // Kept so every existing call site and every record already on the wire keeps working — the
         // additive treatment AuthorReplied took when it grew mentions, then location. A pull request
         // that predates the component reads as not-from-a-fork, which is what every such record was.
@@ -124,7 +128,7 @@ public sealed interface IntegrationEvent {
          * components once, here, is what this repository does instead — the same reason
          * {@code RunFinished} has {@code withTruncated} and {@code withFindings}.
          */
-        public PullRequestEventReceived withFromFork(boolean fromFork) {
+        public PullRequestEventReceived withFromFork(Boolean fromFork) {
             return new PullRequestEventReceived(repo, prId, action, title, description, sourceBranch,
                     targetBranch, headCommit, author, htmlUrl, providerType, fromFork);
         }

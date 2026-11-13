@@ -65,6 +65,8 @@ class DlqTopicsTest {
     @Test
     void aReviewRunRecordReplaysOntoTheReviewLane() {
         assertEquals("cs.review-runs", DlqTopics.forType("ExecuteReviewRun"));
+        assertEquals("cs.review-runs", DlqTopics.forType("ExecuteUntrustedReviewRun"),
+                "a fork review run replays onto the review lane, never the build lane");
         assertEquals("cs.run-results", DlqTopics.forType("RunReviewArtifact"));
     }
 

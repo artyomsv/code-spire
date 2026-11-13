@@ -105,6 +105,22 @@ class HarnessReplyResultsTest {
     }
 
     @Test
+    void theProxyDetailOnAnotherCauseFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "IllegalStateException: fork_requires_credential_proxy",
+                false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: AGENT_FAILED");
+    }
+
+    @Test
+    void aDetailThatOnlyQuotesTheProxyTextFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "x fork_requires_credential_proxy y",
+                false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: BAD_COMMAND");
+    }
+
+    @Test
     void anotherBadCommandFailsTheReply() {
         results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "IllegalStateException: something_else",
                 false, null, List.of()), REPLY);

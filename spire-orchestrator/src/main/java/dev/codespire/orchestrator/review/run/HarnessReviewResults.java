@@ -51,10 +51,15 @@ public class HarnessReviewResults implements ReviewRunResults {
 
     static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
 
-    /** True when the run worker refused to start the run because a fork review would have run unproxied. */
+    /**
+     * True when the run worker refused to start the run because a fork review would have run unproxied. The detail is
+     * the exception's text, so it is the constant alone or {@code <ExceptionType>: <constant>}: matched at the end, never
+     * anywhere in the text, so a message that merely quotes the constant is still a failure.
+     */
     static boolean isUnproxiedFork(RunResult.RunFailed failed) {
-        return BAD_COMMAND.equals(failed.cause()) && failed.detail() != null
-                && failed.detail().contains(FORK_PROXY_REQUIRED);
+        String detail = failed.detail();
+        return BAD_COMMAND.equals(failed.cause()) && detail != null
+                && (detail.equals(FORK_PROXY_REQUIRED) || detail.endsWith(": " + FORK_PROXY_REQUIRED));
     }
 
     /** The phase a failure to send the answer to the worker is recorded under, as the worker's own finish failure. */
