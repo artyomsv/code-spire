@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class WorkspaceCloneTest {
 
@@ -250,6 +251,44 @@ class WorkspaceCloneTest {
     }
 
     @Test
+    void anAbsentRefIsRefetched() throws Exception {
+        Path seed = tmp.resolve("seed");
+        String forkHead = pushToPullRef(seed, "FORK.md", "fork", "refs/pull/8/head");
+        List<Long> sleeps = new ArrayList<>();
+        Path ws = tmp.resolve("ws");
+
+        // refs/pull/7/head does not exist on the first fetch; the forge creates it while init waits.
+        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF, millis -> {
+                    sleeps.add(millis);
+                    try (Git git = Git.open(seed.toFile())) {
+                        git.push().setRemote(origin).setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
+                    } catch (Exception failure) {
+                        throw new IllegalStateException(failure);
+                    }
+                });
+
+        assertEquals(List.of(2000L), sleeps);
+        assertTrue(Files.exists(ws.resolve("FORK.md")));
+    }
+
+    @Test
+    void aRefThatNeverExistsFails() throws Exception {
+        String forkHead = pushToPullRef(tmp.resolve("seed"), "FORK.md", "fork", "refs/pull/8/head");
+        List<Long> sleeps = new ArrayList<>();
+        Path ws = tmp.resolve("ws");
+
+        IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class, () ->
+                WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                        "spire-bot@factory.invalid", null, PULL_REF, sleeps::add));
+
+        assertTrue(refusal.getMessage().contains(forkHead), refusal.getMessage());
+        assertTrue(refusal.getMessage().contains(PULL_REF), refusal.getMessage());
+        assertFalse(refusal.getMessage().contains(CREDENTIAL.secret()), refusal.getMessage());
+        assertEquals(List.of(2000L, 2000L), sleeps, "three attempts in all");
+    }
+
+    @Test
     void anInvalidRefIsRefusedBeforeAnyFetch() {
         List<Long> sleeps = new ArrayList<>();
         int index = 0;
@@ -281,11 +320,11 @@ class WorkspaceCloneTest {
     }
 
     /**
-     * The fork's tree is hostile input. The clone's own config declares no filter driver, so a gitattributes
-     * {@code filter=} must run nothing; a gitlink and a .gitmodules entry must clone nothing; a symlink stays a link.
+     * A regression tripwire, not a proof: the fork's tree is hostile input, and a fresh clone's config defines no
+     * driver, so an undefined gitattributes {@code filter=} must run nothing (a driver in host config is not covered); a gitlink and a .gitmodules entry must clone nothing; a symlink stays a link.
      */
     @Test
-    void aGitattributesFilterASubmoduleAndASymlinkRunNothing() throws Exception {
+    void aHostileForkTreeRunsNothingInAFreshClone() throws Exception {
         Path marker = tmp.resolve("marker.txt");
         Path outside = tmp.resolve("outside-target");
         Files.writeString(outside, "untouched");
@@ -344,8 +383,7 @@ class WorkspaceCloneTest {
         assertFalse(Files.exists(ws.resolve(".git/modules")), "a submodule must not be cloned");
         assertFalse(Files.exists(ws.resolve("sub/S.md")), "a submodule must not be populated");
         assertEquals("untouched", Files.readString(outside), "nothing outside the workspace is written");
-        if (linked) {
-            assertTrue(Files.isSymbolicLink(ws.resolve("link")), "a symlink stays a link");
-        }
+        assumeTrue(linked, "symlinks need a privilege here");
+        assertTrue(Files.isSymbolicLink(ws.resolve("link")), "a symlink stays a link");
     }
 }

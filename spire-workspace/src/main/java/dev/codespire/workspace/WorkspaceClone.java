@@ -3,6 +3,7 @@ package dev.codespire.workspace;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Ref;
@@ -74,18 +75,29 @@ public final class WorkspaceClone {
      */
     private static void fetchPullRef(Git git, String baseCommit, String fetchRef, GitCredential credential,
                                      LongConsumer sleeper) throws GitAPIException, IOException {
+        String lastError = null;
         for (int attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
-            git.fetch().setRemote("origin")
-                    .setRefSpecs(new RefSpec("+" + fetchRef + ":" + PULL_HEAD_REF))
-                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(
-                            credential.username(), credential.secret()))
-                    .call();
-            ObjectId resolved = git.getRepository().resolve(baseCommit);
-            if (resolved != null && git.getRepository().getObjectDatabase().has(resolved)) return;
+            try {
+                git.fetch().setRemote("origin")
+                        .setRefSpecs(new RefSpec("+" + fetchRef + ":" + PULL_HEAD_REF))
+                        .setCheckFetchedObjects(true)
+                        .setCredentialsProvider(new UsernamePasswordCredentialsProvider(
+                                credential.username(), credential.secret()))
+                        .call();
+                lastError = null;
+                ObjectId resolved = git.getRepository().resolve(baseCommit);
+                if (resolved != null && git.getRepository().getObjectDatabase().has(resolved)) return;
+            } catch (TransportException transport) {
+                // A ref the forge has not created yet makes JGit throw ("Remote does not have <ref> available for
+                // fetch"), which cannot be told from an unreachable host or a refused credential by type, so any
+                // transport error uses an attempt; the last message is kept for the final failure.
+                lastError = transport.getMessage();
+            }
             if (attempt < FETCH_ATTEMPTS) sleeper.accept(FETCH_RETRY_MILLIS);
         }
         throw new IllegalArgumentException("base commit " + baseCommit + " is not on " + fetchRef
-                + " after " + FETCH_ATTEMPTS + " fetches; the forge does not hold the pull request head");
+                + " after " + FETCH_ATTEMPTS + " fetches; the forge does not hold the pull request head"
+                + (lastError == null ? "" : " (last error: " + lastError + ")"));
     }
 
     private static void keepBase(Repository repository, String baseBranch) throws IOException {
