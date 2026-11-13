@@ -75,8 +75,9 @@ subscription is refused `subscription_not_allowed` at every door.
   not refuse it first.
 - **Review refusals show the raw reason in attention** (`HarnessRefusalAttentionRows.java:38`): "Harness review
   refused: subscription_not_allowed", not a label.
-- **A repository save refusal has an empty 400 body** (pre-existing). `BadRequestException(message)` never puts its
-  message in the response, so the dashboard cannot show `subscription_not_allowed` (live check 5 saw the empty 400).
+- **A repository save refusal's reason is proven by tests only.** Live check 5 saw an empty 400 body
+  (`BadRequestException(message)` kept the message off the response); #418 returns it as the `text/plain` body and
+  the dashboard shows it, tested in `RepositoryResourceTest` and `repositoriesApi.test.ts` but not seen live.
 - **The sign-in catch in `HarnessSignIns` has no test.** Mutant #26 survived: the completion guard refuses first on
   every path today, so the catch is defence in depth.
 - **No live run reached:** a re-review (`RECONCILE`), a reply (`FOLLOWUP`), a rate limit, an error result, a run killed
