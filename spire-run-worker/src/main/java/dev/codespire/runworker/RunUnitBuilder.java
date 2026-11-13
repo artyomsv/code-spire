@@ -164,8 +164,32 @@ public class RunUnitBuilder {
                         dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)), review.inputs());
     }
 
+    /**
+     * A fork pull request's review unit (harness reviews, step 8). The fork's code runs in the agent, so the agent must
+     * never be beside a real model credential: the unit is refused unless its model proxy holds it. The refusal tests the
+     * built unit, because the three ways {@link #agentCredential} falls back to a direct credential (a mode that does not
+     * proxy reviews, egress off, an arm with no route) all leave the unit without a model proxy. Init is given the pull
+     * ref to fetch the head from, since a fork's head is on no branch of the base repository.
+     */
+    public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter adapter) {
+        RunUnitSpec unit = buildReview(review.asReview(), adapter);
+        if (unit.modelProxy() == null) {
+            throw new IllegalStateException(FORK_PROXY_REQUIRED);
+        }
+        if (!dev.codespire.contract.review.PullRefs.isValid(review.pullRef())) {
+            throw new IllegalArgumentException("A fork review fetches a pull ref");
+        }
+        return unit.withInit(withVariable(unit.init(), FETCH_REF, review.pullRef()));
+    }
+
     /** The variable a trusted init reads the branch to keep under refs/spire-base from (spire-publisher's CloneMain). */
     static final String FETCH_BRANCH = "SPIRE_FETCH_BRANCH";
+
+    /** The variable init reads a fork's pull ref from, to fetch the head onto the review branch (CloneMain). */
+    static final String FETCH_REF = "SPIRE_FETCH_REF";
+
+    /** The detail of a fork review refused because no model proxy would hold its credential. Carries no credential text. */
+    static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
 
     /** The same container with one more environment variable. */
     private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
