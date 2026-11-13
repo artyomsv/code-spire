@@ -1,6 +1,7 @@
 package dev.codespire.workspace;
 
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.PushCommand;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.transport.RefSpec;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.LongConsumer;
+import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -52,12 +54,21 @@ class WorkspaceCloneForkTest extends SeededOriginTest {
     }
 
     /** Pushes the commit to the pull ref the first time init waits, as the forge catching up would. */
-    private LongConsumer forgeCatchesUp(Path seed, String forkHead, boolean force, List<Long> sleeps) {
+    private LongConsumer forgeCatchesUp(Path seed, String forkHead, List<Long> sleeps) {
+        return afterWait(seed, sleeps, push -> push.setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)));
+    }
+
+    /** The same, overwriting a pull ref that holds another commit. */
+    private LongConsumer forgeOverwrites(Path seed, String forkHead, List<Long> sleeps) {
+        return afterWait(seed, sleeps, push -> push.setForce(true)
+                .setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)));
+    }
+
+    private LongConsumer afterWait(Path seed, List<Long> sleeps, UnaryOperator<PushCommand> configure) {
         return millis -> {
             sleeps.add(millis);
             try (Git git = Git.open(seed.toFile())) {
-                git.push().setRemote(origin).setForce(force)
-                        .setRefSpecs(new RefSpec(forkHead + ":" + PULL_REF)).call();
+                configure.apply(git.push().setRemote(origin)).call();
             } catch (Exception failure) {
                 throw new IllegalStateException(failure);
             }
@@ -92,7 +103,7 @@ class WorkspaceCloneForkTest extends SeededOriginTest {
         List<Long> sleeps = new ArrayList<>();
         Path ws = tmp.resolve("ws");
 
-        WorkspaceClone.populate(request(forkHead, ws), forgeCatchesUp(seed, forkHead, true, sleeps));
+        WorkspaceClone.populate(request(forkHead, ws), forgeOverwrites(seed, forkHead, sleeps));
 
         assertEquals(List.of(2000L), sleeps, "one wait, then the second fetch found it");
         assertTrue(Files.exists(ws.resolve("FORK.md")));
@@ -122,7 +133,7 @@ class WorkspaceCloneForkTest extends SeededOriginTest {
         Path ws = tmp.resolve("ws");
 
         // refs/pull/7/head does not exist on the first fetch; the forge creates it while init waits.
-        WorkspaceClone.populate(request(forkHead, ws), forgeCatchesUp(seed, forkHead, false, sleeps));
+        WorkspaceClone.populate(request(forkHead, ws), forgeCatchesUp(seed, forkHead, sleeps));
 
         assertEquals(List.of(2000L), sleeps);
         assertTrue(Files.exists(ws.resolve("FORK.md")));
