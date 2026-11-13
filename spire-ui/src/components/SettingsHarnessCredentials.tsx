@@ -18,6 +18,14 @@ const SUBSCRIPTION_HARNESS = 'codex';
 /** The vendor kinds the pool accepts, as the API validates them. */
 const TYPES = ['openai', 'anthropic', 'gemini'] as const;
 
+/** Each kind's own API base URL, offered as the example: a key pointed at another vendor's URL is refused on every run. */
+const ENDPOINT_EXAMPLE: Record<(typeof TYPES)[number], string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
+};
+const endpointExample = (type: string): string => ENDPOINT_EXAMPLE[type as (typeof TYPES)[number]] ?? ENDPOINT_EXAMPLE.openai;
+
 /** What the row is doing right now, in the order that decides what an operator can act on. */
 function state(member: HarnessCredentialView): { label: string; tone: string } {
   // A refused seat cannot be renewed: only a new sign-in brings it back (seat renewal, 2026-10-08).
@@ -229,8 +237,8 @@ export default function SettingsHarnessCredentials() {
               {TYPES.map(type => <option key={type} value={type}>{type}</option>)}
             </select>
           </SettingField>
-          <SettingField label="Endpoint" scope="harness credential" hint="Required. The API base URL, for example https://api.openai.com/v1.">
-            <input aria-label="Endpoint" value={form.baseUrl} placeholder="https://api.openai.com/v1"
+          <SettingField label="Endpoint" scope="harness credential" hint={`Required. The API base URL, for example ${endpointExample(form.type)}.`}>
+            <input aria-label="Endpoint" value={form.baseUrl} placeholder={endpointExample(form.type)}
               onChange={event => setForm({ ...form, baseUrl: event.target.value })} />
           </SettingField>
           <SettingField label="Key" scope="harness credential" hint="Required. Stored encrypted and never shown again — not here, not in a log, not in a run's environment dump.">

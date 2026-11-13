@@ -132,10 +132,11 @@ public class WorkPreparationResource {
 
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
+        // Who is asking comes first: an unidentified caller is told nothing about the harness rules.
+        String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         // A harness that only reviews cannot build this item, so it is refused by name before anything is read.
         if(!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
             throw refused(400,dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
-        String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
         WorkPreparation preparation;
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();
         // A hand-registered task verifies with the repository's checks too, copied and bound like the sweep's (M4):

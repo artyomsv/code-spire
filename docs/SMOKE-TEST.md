@@ -1863,7 +1863,7 @@ against a forge, authenticated as a machine account.
 | Symptom | Likely cause |
 |---|---|
 | `409` naming `FACTORY` | No FACTORY-role provider for that workspace; a REVIEWER row does not count and is never used as a fallback |
-| `409` naming `No harness credential is configured` | The pool is empty. Add one at `POST /api/harness-credentials`; the reviewer's LLM provider is deliberately not used as a fallback |
+| `409` naming `No harness credential is configured`, or ``No usable `<kind>` API key is configured`` | The pool is empty, or holds no key of the harness's vendor (`codex` is paid by `openai`, `claude_code` by `anthropic`). Add one at `POST /api/harness-credentials`; the reviewer's LLM provider is deliberately not used as a fallback |
 | `409` naming `Capacity returns at ...` | Every member is exhausted. The message says when the earliest rate limit lifts, and how many were refused outright and will NOT come back without a new key |
 | `409` naming `were refused by their provider` | Every member was refused. Nothing recovers on its own — replace the keys, or `POST /{id}/clear-rejection` on one you have fixed |
 | `400` naming `llmProviderId is no longer accepted` | The request pinned a credential. The pool chooses now; drop the field |

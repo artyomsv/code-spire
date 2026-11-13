@@ -201,8 +201,13 @@ public class FixRunDispatcher {
                         + "replace them");
             }
             case HarnessCredentialPool.Selection.Empty ignored -> {
-                return new Refused("no harness credential is configured, so there is no key for a fix "
-                        + "run to call the model with");
+                // Empty is per key kind: keys of another vendor may exist, so the refusal names the one it looked for.
+                return new Refused(HarnessPolicy.keyKind(harness)
+                        .map(kind -> "no usable `" + kind + "` API key is configured for the " + harness
+                                + " harness, so there is no key for a fix run to call the model with; a key of"
+                                + " another vendor does not pay it")
+                        .orElse("no harness credential is configured, so there is no key for a fix "
+                                + "run to call the model with"));
             }
         }
 

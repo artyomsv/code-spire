@@ -34,6 +34,8 @@ final class ClaudeCodeEvents {
 
     /** The prefix of a result's detail when the CLI said it failed. */
     static final String ERROR_PREFIX = "error:";
+    /** Where an error result names its cause, most specific first. */
+    private static final List<String> ERROR_REASON_FIELDS = List.of("api_error_status", "api_error", "terminal_reason", "subtype");
 
     static final String SUCCESS = "success";
 
@@ -127,9 +129,22 @@ final class ClaudeCodeEvents {
         if (!node.path("is_error").asBoolean(false)) {
             return SUCCESS;
         }
-        JsonNode status = node.path("api_error_status");
-        String reason = status.isMissingNode() || status.isNull() ? node.path("subtype").asText("") : status.asText();
-        return clip(ERROR_PREFIX + reason);
+        return clip(ERROR_PREFIX + errorReason(node));
+    }
+
+    /**
+     * Measured: an error result can say {@code "subtype":"success"} with {@code api_error_status} null and the cause in
+     * {@code api_error} ({@code connection_failed}) or {@code terminal_reason}, so the first field that says something
+     * names it; the subtype is the last resort.
+     */
+    private static String errorReason(JsonNode node) {
+        for (String field : ERROR_REASON_FIELDS) {
+            JsonNode value = node.path(field);
+            if (value.isValueNode() && !value.isNull() && !value.asText().isBlank()) {
+                return value.asText().trim();
+            }
+        }
+        return "";
     }
 
     /**

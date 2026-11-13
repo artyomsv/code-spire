@@ -153,8 +153,9 @@ available ──429 / window exhausted──► rate_limited(until) ──expiry
 > arrow for unproxied units, are taken by an operator today, through
 > `POST /api/harness-credentials/{id}/rest` and `/clear-rejection`. `spire-arch`'s
 > `CredentialRefusalHasNoProducerTest` was deleted with the first producer. The worker half is proven by
-> `RunLauncherModelProxyTest`, the orchestrator half (marking the member) by `RunResultSagaTest`; no live
-> run has produced it yet. See `docs/UNVERIFIED.md` §A1–A2 for what evidence would close the rest.
+> `RunLauncherModelProxyTest`, the orchestrator half (marking the member) by `RunResultSagaTest`; live runs
+> produced it on a refused OpenAI key (harness reviews step 3, #99) and a refused Anthropic key (3b, #105). See
+> `docs/UNVERIFIED.md` §A1–A2 for what evidence would close the rest.
 
 Four rules:
 

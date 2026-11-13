@@ -5,7 +5,7 @@ import { preparationKeys } from '../work-items/workQueries';
 import SettingField from '../SettingField';
 import BuildModelFields, { modelChoices } from './factory/BuildModelFields';
 import { harnessLabel } from '../harnessLabels';
-import { PAY_WITH_LABEL, buildOptions, buildOptionsKey, mayPayWithSubscription, type PayWith } from './factory/buildDefaultsApi';
+import { PAY_WITH_LABEL, buildOptions, buildOptionsKey, harnessOffersModel, mayPayWithSubscription, subscriptionRefused, type PayWith } from './factory/buildDefaultsApi';
 import type { ReviewHarness } from './repositoriesApi';
 
 interface Props {
@@ -31,12 +31,14 @@ export default function ReviewHarnessFields({ repositoryId, value, onChange }: P
   const choices = modelChoices(value.harness, known, priced, optionsRead.data?.reportedTypes ?? {}, value.payWith);
   const subscriptionOffered = mayPayWithSubscription(optionsRead.data?.subscriptionHarnesses, value.harness);
   const patch = (next: Partial<ReviewHarness>) => onChange(previous => ({ ...previous, ...next }));
-  // The level belongs to the harness's model list, and a payment one harness allows another may not.
+  // The model and level belong to the harness's model list, and a payment one harness allows another may not.
   const changeHarness = (harness: string) => onChange(previous => ({ ...previous, harness, effort: null,
-    payWith: mayPayWithSubscription(optionsRead.data?.subscriptionHarnesses, harness) ? previous.payWith : 'API_KEY' }));
-  // A stored subscription on a harness that does not allow one is not shown, so it must not be sent either.
+    model: harnessOffersModel(optionsRead.data?.models, harness, previous.model) ? previous.model : '',
+    payWith: subscriptionRefused(optionsRead.data?.subscriptionHarnesses, harness) ? 'API_KEY' : previous.payWith }));
+  // A stored subscription on a harness the list leaves out is not shown, so it must not be sent either.
   const loaded = optionsRead.isSuccess;
-  const staleSubscription = loaded && !!value.harness && value.payWith === 'SUBSCRIPTION' && !subscriptionOffered;
+  const staleSubscription = loaded && !!value.harness && value.payWith === 'SUBSCRIPTION'
+    && subscriptionRefused(optionsRead.data?.subscriptionHarnesses, value.harness);
   useEffect(() => { if (staleSubscription) onChange(previous => ({ ...previous, payWith: 'API_KEY' })); }, [staleSubscription, onChange]);
   return <>
     <SettingField label="Harness" scope={SCOPE} hint="Required. The agent image that reviews this repository's pull requests, read-only. A refused run never falls back to an API provider.">

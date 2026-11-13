@@ -100,3 +100,17 @@ export const repositoryBranchHead = (repository: string, branch: string) =>
 /** Whether the Subscription payment is offered to this harness. A list that did not arrive offers it to none. */
 export const mayPayWithSubscription = (subscriptionHarnesses: string[] | undefined, harness: string): boolean =>
   (subscriptionHarnesses ?? []).includes(harness);
+
+/**
+ * Whether a subscription must become an API key on this harness: only when the list ARRIVED and leaves the harness
+ * out. An older server sends no list, which refuses nothing, so a stored seat is kept (though not offered anew).
+ * Checked at runtime because the wire may lack a field the type calls required.
+ */
+export const subscriptionRefused = (subscriptionHarnesses: string[] | undefined, harness: string): boolean =>
+  Array.isArray(subscriptionHarnesses) && !subscriptionHarnesses.includes(harness);
+
+/** Whether a model survives a change to this harness: only when the harness's own list says it runs it. */
+export const harnessOffersModel = (models: Record<string, HarnessModels> | undefined, harness: string, model: string): boolean => {
+  const known = models?.[harness];
+  return known?.status === 'OK' && known.offered.some(offered => offered.slug === model);
+};
