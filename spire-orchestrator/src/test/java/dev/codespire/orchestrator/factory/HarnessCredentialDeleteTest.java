@@ -129,7 +129,7 @@ class HarnessCredentialDeleteTest {
                 ps.executeUpdate();
             }
             java.util.concurrent.CompletableFuture<HarnessCredentialPool.Selection> picking =
-                    java.util.concurrent.CompletableFuture.supplyAsync(pool::select);
+                    java.util.concurrent.CompletableFuture.supplyAsync(() -> pool.select(java.util.Optional.empty()));
 
             assertThrows(java.util.concurrent.TimeoutException.class,
                     () -> picking.get(1, java.util.concurrent.TimeUnit.SECONDS), "the pick waits for the held rows");

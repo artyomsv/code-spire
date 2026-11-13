@@ -35,8 +35,11 @@ public class WorkDraftAssembly {
 
     /** Caller holds the registry and item locks. Local reads and encryption only, no network calls. */
     public Prepared assemble(Connection c, Request request) throws SQLException {
-        WorkSourceRegistry.Source source = request.source();
         BuildDefaults.Defaults setup = request.setup();
+        // Before the parse: it would refuse it too, in prose the item cannot show.
+        if (!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(setup.harness()))
+            throw new IllegalStateException(dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
+        WorkSourceRegistry.Source source = request.source();
         String subject = "draft-" + request.binding().attemptId();
         DispatchRequestParser.Parsed in = DispatchRequestParser.parse(new RunResource.DispatchRequest(source.repository().workspace(),
                 source.repository().slug(), source.scm().providerType(), setup.baseBranch(), request.baseCommit(), request.prompt(),

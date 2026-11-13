@@ -8,35 +8,10 @@ import * as build from './buildDefaultsApi';
 import * as land from './landSettingsApi';
 import RepositoryFactory from './RepositoryFactory';
 import { account, buildSetup, landSetup, policy, profile, repository, source } from './factoryFixtures';
+import { field, renderFactory, step, stubFactoryApis } from './factoryTestSetup';
 import { createQueryClient } from '../../../queryClient';
-import { queryWrapper } from '../../../test/queryWrapper';
 
-const field = { selector: 'input,select,textarea' };
-const renderFactory = (repo = repository) => render(<RepositoryFactory repository={repo} accounts={[account()]}
-  webhooks={{ hooks: [], unavailable: false, changed: vi.fn() }} />, { wrapper: queryWrapper() });
-const step = (number: number) => screen.findByRole('listitem', { name: (accessible) => accessible.startsWith(`Step ${number}:`) });
-beforeEach(() => {
-  vi.spyOn(sources, 'fetchWorkSources').mockResolvedValue([source()]);
-  vi.spyOn(sources, 'saveWorkActor').mockResolvedValue(source());
-  vi.spyOn(sources, 'removeWorkActor').mockResolvedValue(source());
-  vi.spyOn(policies, 'profiles').mockResolvedValue([profile]);
-  vi.spyOn(policies, 'policy').mockResolvedValue(policy());
-  vi.spyOn(policies, 'savePolicy').mockResolvedValue(policy({ revision: 8 }));
-  vi.spyOn(policies, 'saveProfile').mockImplementation(async value => value);
-  vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
-  vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: ['INPUT','CACHED_INPUT','CACHE_WRITE','OUTPUT','REASONING'] } });
-  vi.spyOn(build, 'saveBuildDefaults').mockResolvedValue(buildSetup({ revision: 1, baseBranch: 'main', harness: 'codex', model: 'TEST-model' }));
-  vi.spyOn(land, 'landSettings').mockResolvedValue(landSetup());
-  vi.spyOn(land, 'landOptions').mockResolvedValue({ checked: true, allowed: ['merge', 'squash', 'rebase'] });
-  vi.spyOn(build, 'repositoryBranchHead').mockResolvedValue({ branch: 'main', commit: 'a'.repeat(40), account: 'FACTORY' });
-  vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
-    // Complete for codex: priced where this fake vendor bills, asserted where it does not.
-    { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
-    { id: 'TEST-unpriced-id', type: 'openai', name: 'TEST-unpriced', label: 'TEST unpriced', pricingMode: 'METERED', rates: { INPUT: 100 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: [] },
-  ]);
-});
+beforeEach(stubFactoryApis);
 
 describe('outcome', () => {
   it('says what a complete setup does, naming the person, label, profile and ceiling', async () => {
@@ -303,7 +278,7 @@ describe('build setup', () => {
   });
 
   // M4 slice 3 (§6.1, A20): the preparation setting, offered only when the server can honour it.
-  const offeringGenerated = () => vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'],
+  const offeringGenerated = () => vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'],
     reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, preparations: ['composed', 'generated'] });
   const fillCoordinates = async () => {
     fireEvent.change(await screen.findByLabelText('Base branch', field), { target: { value: 'main' } });
@@ -331,7 +306,7 @@ describe('build setup', () => {
   });
 
   it('the choice is hidden when the server does not offer it', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'],
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'],
       reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, preparations: ['composed'] });
     renderFactory();
     await open();
@@ -355,7 +330,7 @@ describe('build setup', () => {
   // A subscription is not priced per token (M3.5 part F): an unpriced model can be picked and saved.
   it('pays with a subscription without needing a price for the model', async () => {
     const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: types },
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'], reportedTypes: { codex: types },
       models: { codex: { status: 'OK', offered: [{ slug: 'TEST-unpriced-only', displayName: 'TEST unpriced only',
         defaultEffort: 'medium', efforts: ['medium'], visible: true, priority: 1 }] } } });
     renderFactory();
@@ -386,7 +361,7 @@ describe('build setup', () => {
   // Every option disabled: the select ignores clicks and keys, which the operator read as broken.
   it('says why no model can be picked when every one lacks a price', async () => {
     const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], reportedTypes: { codex: types },
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'], reportedTypes: { codex: types },
       models: { codex: { status: 'OK', offered: [{ slug: 'TEST-unpriced-only', displayName: 'TEST unpriced only',
         defaultEffort: 'medium', efforts: ['medium'], visible: true, priority: 1 }] } } });
     renderFactory();
@@ -445,7 +420,7 @@ describe('build setup', () => {
 
   // M3.5 part D: the harness's own reported types decide, and the server sends them with the list.
   it('refuses a model that cannot price what the chosen harness reports', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'],
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'], buildHarnesses: ['codex', 'TEST-two-types'], subscriptionHarnesses: ['codex'],
       reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] } });
     vi.mocked(api.fetchLlmModels).mockResolvedValue([{ id: 'TEST-partial-id', type: 'openai', name: 'TEST-partial',
       label: 'TEST partial', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 }, notBilled: [],
@@ -462,10 +437,12 @@ describe('build setup', () => {
     expect(await screen.findByRole('option', { name: 'TEST partial (TEST-partial)' })).toBeEnabled();
   });
 
-  // A grey option is not a guard: the value stays in the form when the harness changes under it.
+  // A grey option is not a guard: a model both harnesses list stays in the form when the harness changes under it.
   it('will not save a model the chosen harness would refuse', async () => {
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'],
-      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] } });
+    const both = { status: 'OK' as const, offered: [{ slug: 'TEST-partial', displayName: 'TEST partial', defaultEffort: '', efforts: [], visible: true, priority: 1 }] };
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-two-types'], buildHarnesses: ['codex', 'TEST-two-types'], subscriptionHarnesses: ['codex'],
+      reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'], 'TEST-two-types': ['INPUT', 'OUTPUT'] },
+      models: { codex: both, 'TEST-two-types': both } });
     vi.mocked(api.fetchLlmModels).mockResolvedValue([{ id: 'TEST-partial-id', type: 'openai', name: 'TEST-partial',
       label: 'TEST partial', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 }, notBilled: [],
       outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
@@ -505,7 +482,7 @@ describe('build setup', () => {
     const types = ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'];
     const runs = { status: 'OK' as const, offered: [{ slug: 'TEST-model', displayName: 'TEST model', defaultEffort: 'medium',
       efforts: ['medium', 'high'], visible: true, priority: 1 }] };
-    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-other'], reportedTypes: { codex: types, 'TEST-other': types },
+    vi.mocked(build.buildOptions).mockResolvedValue({ harnesses: ['codex', 'TEST-other'], buildHarnesses: ['codex', 'TEST-other'], subscriptionHarnesses: ['codex'], reportedTypes: { codex: types, 'TEST-other': types },
       models: { codex: runs, 'TEST-other': runs } });
     vi.mocked(build.buildDefaults).mockResolvedValue(buildSetup({ revision: 2, baseBranch: 'main', harness: 'codex', model: 'TEST-model', effort: 'high' }));
     renderFactory();

@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -209,7 +210,7 @@ class HarnessSubscriptionSeatsTest {
     void theKeySelectorNeverHandsOutASeat() throws SQLException {
         UUID seat = seat("TEST-seat-containment");
 
-        HarnessCredentialPool.Selection selection = pool.select();
+        HarnessCredentialPool.Selection selection = pool.select(Optional.empty());
 
         assertFalse(selection instanceof HarnessCredentialPool.Selection.Chosen chosen && chosen.member().id().equals(seat));
     }

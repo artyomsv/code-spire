@@ -69,11 +69,11 @@ final class DispatchRequestParser {
         if (prompt.length() > MAX_PROMPT_CHARS) {
             throw badRequest("prompt exceeds " + MAX_PROMPT_CHARS + " characters");
         }
-        String harness = required(req.harness(), "harness");
-        String agentImage = config.agentImage().get(harness);
+        String harness = HarnessRefusals.requireBuildHarness(required(req.harness(), "harness"));
+        String agentImage = config.configuredAgentImages().get(harness);
         if (agentImage == null) {
             throw badRequest("no agent image is configured for harness '" + harness
-                    + "'; this deployment configures " + config.agentImage().keySet()
+                    + "'; this deployment configures " + config.configuredAgentImages().keySet()
                     + " (spire.factory.agent-image.<harness>)");
         }
         String model = required(req.model(), "model");

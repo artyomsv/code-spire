@@ -33,6 +33,62 @@ evidence would settle it**.
 
 ---
 
+## Claude Code reviews on an API key (harness reviews 3b, PR #404, 2026-11-12)
+
+**The claim.** Claude Code reviews a same-repository pull request on an `anthropic` API key, only behind the model
+proxy and only with the repository's guidance ignored. Its agent holds `TEST-PLACEHOLDER` and reaches only
+`http://spire-model:8080`; the model proxy injects the key as `x-api-key` and forwards `POST /v1/messages` only;
+`GUARDED_FLAGS` keep the reviewed branch from steering the agent or moving its traffic; an error `result` fails the
+run as `PROVIDER_ERROR` and its usage is still charged; a 401 on `/v1/messages` fails it as `CREDENTIAL_REJECTED`
+and marks the key. Builds, fixes and factory runs on Claude Code are refused `harness_reviews_only`, and a Claude
+subscription is refused `subscription_not_allowed` at every door.
+
+> NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+> through a Claude subscription or to hold claude.ai tokens:
+> https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+
+**Why nothing catches it today.**
+- **Live once, on one model (2026-11-12, docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md).** On `spire-test` with
+  Claude Code 2.1.319 and `claude-sonnet-5-5`: a review (#102), a branch carrying canaries and a base-URL redirect
+  (#103), a 40-file pull request (#104) and a refused key (#105). The rest is proven by tests and the 2026-11-11
+  measurement only.
+- **Only the measured canaries are proven absent.** `GUARDED_FLAGS` (`--bare --safe-mode --strict-mcp-config
+  --disable-slash-commands --setting-sources user`) cover the vectors measured on CLI 2.1.319: `CLAUDE.md` and its
+  `@import`, `CLAUDE.local.md`, `.claude/` rules, skills, agents and commands, both settings files with hooks, `env`
+  and `apiKeyHelper`, and `.mcp.json`, and (measured 2026-11-13) a nested `CLAUDE.md` in a folder the agent reads,
+  which the positive control loaded and the guarded run did not. A vector outside the list is not measured, and a CLI upgrade may change what a flag covers: an upgrade
+  must re-run the canaries (the measurement is in the acceptance record).
+- **The agent has only `Bash`, `Edit` and `Read` under `--bare`.** Measured once; a review that needs another tool
+  (a search tool, a web fetch) does without it, and whether that lowers review quality is not measured.
+- **The charge is not reconciled with the vendor.** #102's charge was not compared with the run's `total_cost_usd`
+  or the Anthropic console. `CACHE_WRITE` is one rate, so one-hour cache writes are priced at the five-minute rate; a
+  second model in `modelUsage` is priced at the run model's rates; Haiku's second price tier is not modelled.
+- **A run killed before its `result` line reports unknown usage**, though the vendor billed every call it made
+  (the wall clock, a cancel, a crash). The usage comes from the `result` line only.
+- **An error result with zero usage is billed as zero.** It is reported as four zero buckets, which matches the
+  measured error's `usage`, but no live error result was charged, so its ledger and dashboard rows are unseen.
+- **Rate-limit headers are not passed back.** The model proxy's response allowlist (`ResponseHeaders.java:39-43`)
+  keeps `retry-after` and `x-ratelimit-*` but not Anthropic's `anthropic-ratelimit-*`, so Claude Code cannot pace
+  itself by them. No rate limit was seen live (#104 showed no retry).
+- **`OFF` mode funds a review that cannot run.** With `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`, or egress `off`, a Claude
+  Code review is funded and then fails `BAD_COMMAND` at the worker (`credential_proxy_required`); the orchestrator does
+  not refuse it first.
+- **Review refusals show the raw reason in attention** (`HarnessRefusalAttentionRows.java:38`): "Harness review
+  refused: subscription_not_allowed", not a label.
+- **A repository save refusal has an empty 400 body** (pre-existing). `BadRequestException(message)` never puts its
+  message in the response, so the dashboard cannot show `subscription_not_allowed` (live check 5 saw the empty 400).
+- **The sign-in catch in `HarnessSignIns` has no test.** Mutant #26 survived: the completion guard refuses first on
+  every path today, so the catch is defence in depth.
+- **No live run reached:** a re-review (`RECONCILE`), a reply (`FOLLOWUP`), a rate limit, an error result, a run killed
+  before `result`, `ALL` mode, or a key whose kind is not its vendor's (`harness_credential.type` now picks the key).
+- **The image is opt-in and not on GHCR** (`SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE`, default `none`).
+
+**What evidence would settle it.** A run's charge compared with its `total_cost_usd` and the console; a re-review and
+a reply on Claude Code; a rate-limited run; the canaries, the nested `CLAUDE.md` pair included, re-run on every CLI
+upgrade.
+
+---
+
 ## Model proxy for run credentials (harness reviews step 3, PR #394, 2026-11-09)
 
 **The claim.** In a model-proxied unit (review-lane units under the default `SPIRE_RUN_CREDENTIAL_PROXY_MODE=REVIEWS`,
@@ -74,8 +130,8 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 - **`ALL` mode is not proven live**, and in `ALL` mode a held factory unit's retained spec (Tink-encrypted) would
   carry `SPIRE_MODEL_SECRET`, the real credential, for as long as the unit is held.
 - **A harness with no route runs unproxied silently.** Under `REVIEWS` a review on a harness that declares no
-  credential route gets the real credential in its agent, with no log line saying so. Only Codex declares one;
-  Claude Code and opencode arrive in later PRs.
+  credential route gets the real credential in its agent, with no log line saying so. Codex and Claude Code (3b)
+  declare one, and Claude Code refuses to run without it; opencode arrives in a later PR.
 - **A 403 names no path.** A run that failed after a 403 keeps the adapter's own cause and detail, so the failure
   does not say which model path was forbidden.
 - **Some refusals leave no line.** A request the JDK HTTP server rejects before the proxy's handler runs is refused,

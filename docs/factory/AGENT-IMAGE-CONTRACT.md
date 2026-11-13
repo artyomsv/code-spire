@@ -1,8 +1,16 @@
 # The agent image contract (FR-F13)
 
-A run unit's agent container is **your** image. Code Spire ships a reference one
-(`deploy/agent/codex/Dockerfile`) and it is a reference, never a requirement: any image that
-satisfies the clauses below can run a factory job.
+A run unit's agent container is **your** image. Code Spire ships two reference ones
+(`deploy/agent/codex/Dockerfile`, and `deploy/agent/claude-code/Dockerfile` for Claude Code reviews) and they are
+references, never a requirement: any image that satisfies the clauses below can run a factory job.
+
+The Claude Code image is opt-in: `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` unset leaves it at `none`, which the
+orchestrator reads as not configured. It reviews pull requests only, behind the per-run model proxy, and pays with an
+Anthropic API key.
+
+> NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+> through a Claude subscription or to hold claude.ai tokens:
+> https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
 
 This page is the contract. `spire-agent-image verify <image>` checks it, and
 `ContractAndCheckerAgreeTest` fails the build if this page and that command ever disagree — every
@@ -192,7 +200,7 @@ that can.
 
 ### `harness` — `dev.codespire.agent.harness`
 
-Which harness the image provides, matching a `HarnessAdapter` name (`codex`).
+Which harness the image provides, matching a `HarnessAdapter` name (`codex`, `claude_code`).
 
 *Why it cannot be verified:* the checker can see that *a* command exists; it cannot tell whether it
 behaves as that harness without a model credential and a paid call. Running one to find out would
@@ -236,6 +244,11 @@ credential, for money.
 rather than guessing. `deploy/agent/build-codex.sh` is what produces it for the reference image — a
 plain `docker build` of the same Dockerfile leaves it empty, because a `LABEL` cannot read a `RUN`'s
 output and the value must exist before the build that carries it.
+
+The Claude Code image is the exception to "generated from the binary": Claude Code has no command that prints its
+model list without a credential, so the list is `deploy/agent/claude-code/models.json`, written from Anthropic's model
+list (`d` is `null` and `e` is empty: no thinking levels are offered), and `deploy/agent/build-claude-code.sh` bakes it
+in with one pass. It is re-read against Anthropic's list whenever the pinned CLI version changes.
 
 ---
 

@@ -303,7 +303,7 @@ class RunLauncherTest {
         };
     }
 
-    static RunLauncher launcher(FakeRuntime runtime, FakeAdapter adapter) {
+    static RunLauncher launcher(FakeRuntime runtime, HarnessAdapter adapter) {
         RunLauncher launcher = new RunLauncher();
         launcher.runtime = runtime;
         launcher.harnesses = new HarnessRegistry() {

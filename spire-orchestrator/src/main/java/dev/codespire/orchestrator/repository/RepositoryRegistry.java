@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.repository;
 
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.contract.scm.ForgeOrigin;
 import dev.codespire.contract.work.PayWith;
 import dev.codespire.contract.work.ThinkingLevel;
@@ -183,7 +184,15 @@ public class RepositoryRegistry {
         if (input.reviewLlmProviderId() != null) {
             throw new IllegalArgumentException("Review with: choose an API provider or a harness, not both");
         }
-        if (harness.harness() == null || !factoryConfig.agentImage().containsKey(harness.harness())) {
+        // Before the image is looked up: the refusal is about the harness, whatever this deployment configures.
+        // NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+        // through a Claude subscription or to hold claude.ai tokens:
+        // https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+        if (harness.subscription() && !HarnessPolicy.allowsSubscription(harness.harness())) {
+            throw new IllegalArgumentException("Review with: " + HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED + " — the "
+                    + harness.harness() + " harness pays with an API key only");
+        }
+        if (harness.harness() == null || !factoryConfig.configuredAgentImages().containsKey(harness.harness())) {
             throw new IllegalArgumentException("Review with: unknown harness " + harness.harness()
                     + "; choose one with an agent image (spire.factory.agent-image.<harness>)");
         }

@@ -155,7 +155,7 @@ public class RunResource {
         // needs the member's id. So a duplicate-subject request does still stamp a tiebreaker. That
         // costs one rotation position and no key, which is the residue rather than a fix, and it is
         // said here rather than left to be rediscovered.
-        HarnessCredentialPool.PoolMember credential = harnessCredential();
+        HarnessCredentialPool.PoolMember credential = harnessCredential(in.harness());
 
         RepoRef repo = new RepoRef(in.workspace(), in.slug());
         String runId = RunIds.of(in.scmType(), in.workspace(), in.slug(), in.subject(), FIRST_ATTEMPT);
@@ -387,13 +387,14 @@ public class RunResource {
      * the same call {@link #machineAccount} already makes for the push identity: the factory never
      * borrows the reviewer's identity, in either direction.
      *
-     * <p>Each refusal says which of the three states the pool is in, because they need three
-     * different actions — wait, replace a key, or configure one at all.
+     * <p>Each refusal says which of the three states the pool is in, because they need three different actions —
+     * wait, replace a key, or configure one at all. Package-private so {@code RunResourceKeyKindTest} can check
+     * that the harness's key kind reaches the pool.
      */
-    private HarnessCredentialPool.PoolMember harnessCredential() {
+    HarnessCredentialPool.PoolMember harnessCredential(String harness) {
         HarnessCredentialPool.Selection selection;
         try {
-            selection = pool.select();
+            selection = HarnessKeys.select(pool, harness);
         } catch (IllegalStateException e) {
             // A read fault, not an empty pool. The pool throws rather than answering Empty
             // precisely to preserve that distinction, and nothing downstream of a bare 500 says
@@ -419,11 +420,9 @@ public class RunResource {
                             + "Nothing recovers on its own: rotating onto a refused key spends a request "
                             + "per run to rediscover it is dead. Replace the keys, or clear one you have "
                             + "fixed, with POST /api/harness-credentials.");
-            case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(
-                    "No harness credential is configured, so there is no key for this run to call the"
-                            + " model with. Add one with POST /api/harness-credentials. The factory"
-                            + " deliberately does NOT borrow the reviewer's key: it goes into a sandbox"
-                            + " that runs an untrusted work item at full access.");
+            case HarnessCredentialPool.Selection.Empty ignored -> throw conflict(HarnessKeys.noKeySentence(harness, "this run")
+                    + " Add one with POST /api/harness-credentials. The factory deliberately does NOT borrow the"
+                    + " reviewer's key: it goes into a sandbox that runs an untrusted work item at full access.");
         };
     }
 

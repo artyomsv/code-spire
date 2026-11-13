@@ -44,6 +44,7 @@ public class WorkRunAssembly {
      */
     public Prepared assemble(Connection c,WorkSourceRegistry.Source source,WorkItemEvent item,WorkArtifacts.Evidence evidence,
                              dev.codespire.orchestrator.work.WorkLandFixes.Fix fix) throws SQLException {
+        HarnessRefusals.refuseReviewOnlyBuild(item.preparation().harness());
         String subject="work-"+item.progress().attemptId();
         // A plan step (M4 slice 3) builds its own prompt and start; a land fix after the plan is no step (decision 12),
         // and is told the whole plan is already built, never given step 1 as a single-step task.
@@ -59,8 +60,7 @@ public class WorkRunAssembly {
         String id=RunIds.of(source.scm(),in.workspace(),in.slug(),subject,1),branch=fix==null?DispatchRequestParser.RUN_BRANCH_PREFIX+subject:fix.branch();
         String baseBranch=fix==null?in.baseBranch():fix.branch(),baseCommit=fix==null?in.baseCommit():fix.approvedHead();
         long wall=Math.min(config.wallClockSeconds(),Math.subtractExact(item.policy().limits().maxWallClockSeconds(),item.progress().wallSeconds()));
-        // A retried build (M4): the failure goes in its prompt, and it continues from the failed checkpoint
-        // unless that could not be read.
+        // A retried build (M4): the failure goes in its prompt, and it continues from the failed checkpoint unless that could not be read.
         // Inside a land fix only that fix's own verify counts; a failure from before the pull request was opened is history.
         java.util.Optional<dev.codespire.orchestrator.work.WorkVerifyHistory.Previous> previous=verifyHistory.lastNotPassed(c,item.workItemId(),item.generation())
                 .filter(p->fix==null || fix.runs().contains(p.runId()));

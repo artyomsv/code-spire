@@ -2,6 +2,7 @@ package dev.codespire.runworker;
 
 import dev.codespire.harness.HarnessAdapter;
 import dev.codespire.harness.HarnessType;
+import dev.codespire.harness.claudecode.ClaudeCodeAdapter;
 import dev.codespire.harness.codex.CodexAdapter;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -25,6 +26,7 @@ public class HarnessRegistry {
     private static Map<HarnessType, HarnessAdapter> arms() {
         Map<HarnessType, HarnessAdapter> byType = new LinkedHashMap<>();
         byType.put(HarnessType.CODEX, new CodexAdapter());
+        byType.put(HarnessType.CLAUDE_CODE, new ClaudeCodeAdapter());
         return Map.copyOf(byType);
     }
 

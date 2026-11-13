@@ -154,7 +154,7 @@ class FixRunsTest {
      *
      * <p>Keyed on the comment alone it does two things, and both are wrong: a legitimate
      * {@code /fix} is refused while naming ANOTHER workspace's run id in this review's durable
-     * history, and the race the unique index backstops dead-letters after {@code pool.select()}
+     * history, and the race the unique index backstops dead-letters after {@code pool.select(...)}
      * has already spent a rotation slot. The second half of this test is the discriminating one —
      * without the scope in the query, the second insert cannot even be written.
      */

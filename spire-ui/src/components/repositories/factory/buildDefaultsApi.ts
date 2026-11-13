@@ -25,7 +25,7 @@ export interface BuildDefaults {
 }
 export type PayWith = 'API_KEY' | 'SUBSCRIPTION';
 /** How a run pays, in the words the build setup and the review setting show. */
-export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a Codex subscription' };
+export const PAY_WITH_LABEL: Record<PayWith, string> = { API_KEY: 'an API key', SUBSCRIPTION: 'a subscription seat' };
 /** `composed` copies the ticket as one step; `generated` writes a specification and plan with the build model. */
 export type Preparation = 'composed' | 'generated';
 
@@ -53,7 +53,12 @@ export interface HarnessModels {
 }
 
 export interface BuildOptions {
+  /** Every configured harness, review-only ones included. */
   harnesses: string[];
+  /** The harnesses that may pay with a subscription seat. */
+  subscriptionHarnesses: string[];
+  /** The harnesses that may run builds. */
+  buildHarnesses: string[];
   /** Per harness, the token types it can report. A model that cannot price one of them is refused. */
   reportedTypes: Record<string, string[]>;
   /** Per harness, the models its image says it runs. Absent from an older server. */
@@ -88,3 +93,24 @@ export const saveBuildDefaults = (repository: string, input: { expectedRevision:
   read<BuildDefaults>(`${base(repository)}/build`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
 export const repositoryBranchHead = (repository: string, branch: string) =>
   read<BranchHead>(`${base(repository)}/branch-head?branch=${encodeURIComponent(branch)}`);
+
+// NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+// through a Claude subscription or to hold claude.ai tokens:
+// https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
+/** Whether the Subscription payment is offered to this harness. A list that did not arrive offers it to none. */
+export const mayPayWithSubscription = (subscriptionHarnesses: string[] | undefined, harness: string): boolean =>
+  (subscriptionHarnesses ?? []).includes(harness);
+
+/**
+ * Whether a subscription must become an API key on this harness: only when the list ARRIVED and leaves the harness
+ * out. An older server sends no list, which refuses nothing, so a stored seat is kept (though not offered anew).
+ * Checked at runtime because the wire may lack a field the type calls required.
+ */
+export const subscriptionRefused = (subscriptionHarnesses: string[] | undefined, harness: string): boolean =>
+  Array.isArray(subscriptionHarnesses) && !subscriptionHarnesses.includes(harness);
+
+/** Whether a model survives a change to this harness: only when the harness's own list says it runs it. */
+export const harnessOffersModel = (models: Record<string, HarnessModels> | undefined, harness: string, model: string): boolean => {
+  const known = models?.[harness];
+  return known?.status === 'OK' && known.offered.some(offered => offered.slug === model);
+};

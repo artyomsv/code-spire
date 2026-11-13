@@ -396,7 +396,7 @@ describe('Review with a harness', () => {
     vi.spyOn(accounts, 'fetchLlmProviders').mockResolvedValue([llmProvider('TEST-default-llm', true, true),
       llmProvider('TEST-other-llm', true)]);
     vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
-    vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'],
+    vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'],
       reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, models: { codex: catalogue } });
     vi.spyOn(accounts, 'fetchLlmModels').mockResolvedValue([
       { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },

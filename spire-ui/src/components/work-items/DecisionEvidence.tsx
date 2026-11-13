@@ -70,7 +70,7 @@ export default function DecisionEvidence({ item, approval, evidence, evidenceErr
         <div><dt>Starts from</dt><dd className="v mono">{preparation.baseBranch} @ {preparation.baseCommit.slice(0, 7)}</dd></div>
         <div><dt>Agent</dt><dd className="v">{preparation.harness} · {preparation.model}</dd></div>
         <div><dt>Plan</dt><dd className="v"><ArtifactRef artifact={preparation.plan} /> · one step</dd></div>
-        <div><dt>Pays with</dt><dd className="v">{preparation.payWith === 'SUBSCRIPTION' ? 'a Codex subscription' : 'an API key'}</dd></div>
+        <div><dt>Pays with</dt><dd className="v">{preparation.payWith === 'SUBSCRIPTION' ? 'a subscription seat' : 'an API key'}</dd></div>
         <div><dt>Checks</dt><dd className="v mono">{preparation.verifyCommands?.length ? preparation.verifyCommands.join(' → ') : 'none — builds stop as unverified'}</dd></div>
       </dl>
       {evidence?.specification && <>

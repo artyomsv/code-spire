@@ -141,3 +141,13 @@ describe('plan step reasons (M4 slice 3)', () => {
     expect(workReason('plan_steps_unavailable')).toBe('plan_steps_unavailable');
   });
 });
+
+describe('harness refusal reasons (harness reviews 3b)', () => {
+  it('labels subscription_not_allowed and harness_reviews_only', () => {
+    expect(workReason('subscription_not_allowed')).not.toBe('subscription_not_allowed');
+    expect(workReason('harness_reviews_only')).not.toBe('harness_reviews_only');
+  });
+  it('no longer names Codex when no seat is signed in', () => {
+    expect(workReason('subscription_not_signed_in')).toContain('No subscription seat');
+  });
+});

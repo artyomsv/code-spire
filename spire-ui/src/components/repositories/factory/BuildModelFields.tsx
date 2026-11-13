@@ -83,7 +83,7 @@ export default function BuildModelFields({ harness, known, choices, model, effor
           {choice.label}{choice.blocked ? ` — ${choice.blocked}` : ''}</option>)}
         {model && !choices.some(choice => choice.value === model) && <option value={model}>{model} (not offered here)</option>}
       </select></SettingField>
-    {runs && <SettingField label="Thinking level" scope={scope} hint="How hard the model thinks. The levels are the ones this model offers; deeper costs more and takes longer.">
+    {runs && runs.efforts.length > 0 && <SettingField label="Thinking level" scope={scope} hint="How hard the model thinks. The levels are the ones this model offers; deeper costs more and takes longer.">
       <select aria-label="Thinking level" value={effort} onChange={event => setEffort(event.target.value)}>
         <option value="">Model default ({runs.defaultEffort})</option>
         {runs.efforts.map(level => <option key={level} value={level}>{level}</option>)}

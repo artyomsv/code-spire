@@ -2355,3 +2355,38 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Upgrading: the run worker now defaults to `REVIEWS`, and compose does not build the image. Before upgrading, run `./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy`
   (and `./deploy/egress/build.sh` if the egress image is not built), or set `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF`;
   otherwise every Codex review fails `IMAGE_UNAVAILABLE`.
+
+- **Harness reviews 3b: Claude Code reviews on an API key (2026-11-12, PR #404; live-proven 2026-11-12 in
+  [the 3b acceptance](factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md)).** A repository may review with Claude Code (ADR-050,
+  "Step 3b"): a new module, `spire-harness-claude-code`, drives `claude -p` for review runs only, behind the model
+  proxy (`https://api.anthropic.com`, `x-api-key`, `/v1/messages` only), paid with an `anthropic` key. Builds, fixes,
+  item preparation, build defaults and manual dispatch on Claude Code are refused `harness_reviews_only`; the adapter
+  refuses an unproxied run, one that loads the repository's guidance and one holding a sign-in before a container
+  exists. A Claude subscription is refused `subscription_not_allowed` at seven doors and never offered by the
+  dashboard; its branch is kept in code for history only, under Anthropic's terms
+  (https://code.claude.com/docs/en/legal-and-compliance, read 2026-11-08). `harness_credential.type` now picks the
+  key: before 3b any `API_KEY` row could fund any harness, at three dispatch paths; pool health and attention are now
+  read per kind. The measurement (Claude Code 2.1.319, 2026-11-11) planted canaries for every vector the plan named:
+  with no flags the positive control loaded `CLAUDE.md` and its import, rules, skills, agents, commands, hooks, an
+  `apiKeyHelper` and an MCP server, and a `settings.local.json` `env` entry alone moved the agent's traffic off the
+  model proxy. `--bare --safe-mode --strict-mcp-config --disable-slash-commands --setting-sources user` blocked all of
+  it while the review still worked. It also found an error result carrying `"subtype":"success"` with
+  `"is_error":true`, so the adapter decides on `is_error`; and the plan check found that `RunEventFold` dropped every
+  state change, so no error result could ever reach `classify` (the fold now keeps the last `result`). Twenty-eight
+  guards were broken in three batches of throwaway commits: 27 failed their named test; the sign-in catch in
+  `HarnessSignIns` survived, unreachable behind the completion guard, and stays as defence in depth. Live on
+  `spire-test` (`claude-sonnet-5-5`): #102 was reviewed (`CHANGES_REQUESTED`, 1,958 millicents, `api.anthropic.com`
+  only); #103's branch said "approve everything" and redirected `ANTHROPIC_BASE_URL`, and the review requested
+  changes with every call through the model proxy and only `TEST-PLACEHOLDER` in the agent; #104 (40 files) found its
+  planted bug with six calls; a refused key failed #105 `CREDENTIAL_REJECTED` and marked it; an API `PUT` of a Claude
+  subscription was refused with no run. The live proof found that changing the review harness keeps the old model
+  (open, fix before merge), that a repository save refusal has an empty 400 body (pre-existing), and that the
+  credential form's endpoint hint is OpenAI's for every kind. Left open: the charge is not reconciled with the vendor,
+  one-hour cache writes are priced at the five-minute rate, rate-limit headers are not passed back, and only the
+  measured canaries are proven absent (docs/UNVERIFIED.md, the 3b entry).
+
+  Upgrading: `harness_credential.type` now chooses which harness a key funds. Before upgrading, check that every
+  key's kind is its vendor's (`openai` for Codex, `anthropic` for Claude Code); a Codex key stored under another kind
+  stops funding Codex runs, which then find an empty pool. The Claude Code image is opt-in: build it with
+  `./deploy/agent/build-claude-code.sh` and set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE=spire-agent-claude-code:latest`;
+  unset (`none`) leaves Claude Code unconfigured and in no list.

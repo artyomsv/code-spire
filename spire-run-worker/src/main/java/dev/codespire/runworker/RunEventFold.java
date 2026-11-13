@@ -18,7 +18,12 @@ import java.util.List;
  * <p>What the adapters actually read from a summary is small and known: {@code classify} asks
  * whether any output was seen at all, and {@code usage} walks the {@code Usage} events in order to
  * take the latest cumulative report and to notice a total that shrank. So the fold keeps the usage
- * events, bounded, and one flag; every other event is counted and dropped.
+ * events, bounded, one flag, and the last {@code result} state change; every other event is counted and dropped.
+ *
+ * <p>The {@code result} state is how an arm whose stream ends with a verdict line says the model failed even when the
+ * process exits 0 (Claude Code's {@code "is_error":true}, measured with {@code "subtype":"success"}). Dropped here, an
+ * error result would classify on the exit code alone and succeed. Only the last is kept, since a later verdict
+ * replaces an earlier one; the replaced one counts as dropped.
  *
  * <p><b>The bound holds the FIRST usage events and always the latest.</b> The usage reading depends
  * on order — a later total smaller than an earlier one marks the run unreconciled — so dropping the
@@ -30,8 +35,12 @@ final class RunEventFold {
 
     static final int MAX_USAGE_EVENTS = 1_000;
 
+    /** The state an arm's verdict line is reported under; neutral, so no arm is named here. */
+    static final String RESULT_STATE = "result";
+
     private final List<RunEvent.Usage> usage = new ArrayList<>();
     private RunEvent.Usage latestBeyondCap;
+    private RunEvent.StateChange result;
     private boolean sawAnyOutput;
     private long dropped;
 
@@ -46,6 +55,12 @@ final class RunEventFold {
                 }
             }
             case RunEvent.Output o -> sawAnyOutput = true;
+            case RunEvent.StateChange s when RESULT_STATE.equals(s.state()) -> {
+                if (result != null) {
+                    dropped++;
+                }
+                result = s;
+            }
             default -> dropped++;
         }
     }
@@ -54,6 +69,9 @@ final class RunEventFold {
         List<RunEvent> events = new ArrayList<>(usage);
         if (latestBeyondCap != null) {
             events.add(latestBeyondCap);
+        }
+        if (result != null) {
+            events.add(result);
         }
         return new RunEventSummary(events, sawAnyOutput);
     }

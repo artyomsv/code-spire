@@ -96,3 +96,14 @@ it('clears the thinking level when the model changes', () => {
 
   expect(cleared).toBe('');
 });
+
+// A harness may run models with no thinking levels at all; an empty level list is not a choice.
+it('hides the thinking level when a model declares none', () => {
+  const known: HarnessModels = { status: 'OK', offered: [
+    { slug: 'TEST-plain', displayName: 'Test Plain', defaultEffort: '', efforts: [], visible: true, priority: 1 }] };
+  render(<BuildModelFields harness="codex" known={known} choices={modelChoices('codex', known, [priced('TEST-plain')], REPORTED)}
+    model="TEST-plain" effort="" setModel={() => { }} setEffort={() => { }} />);
+
+  expect(screen.queryByRole('combobox', { name: 'Thinking level' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Model default/)).not.toBeInTheDocument();
+});

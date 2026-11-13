@@ -54,7 +54,7 @@ class FixRunDispatcherTest {
     private Optional<ScmProvider> account = Optional.of(machineAccount());
     private HarnessCredentialPool.Selection selection =
             new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                    CREDENTIAL_ID, "pool-1", "anthropic", "https://example.invalid",
+                    CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
                     "TEST-harness-key-do-not-print"));
     private String configuredHarness = "codex";
     private String configuredModel = "TEST-model";
@@ -70,6 +70,7 @@ class FixRunDispatcherTest {
     private final List<String> order = new ArrayList<>();
     private final List<String> claimsChecked = new ArrayList<>();
     private final List<String> plannedFor = new ArrayList<>();
+    private final List<Optional<String>> keyKindsAsked = new ArrayList<>();
 
     private FixRunDispatcher dispatcher() {
         FixRunDispatcher dispatcher = new FixRunDispatcher();
@@ -140,9 +141,11 @@ class FixRunDispatcherTest {
             }
         };
         dispatcher.pool = new HarnessCredentialPool() {
+            // The only method this path reaches; left to the real one it would open a database.
             @Override
-            public Selection select() {
+            public Selection select(Optional<String> keyKind) {
                 order.add("credential");
+                keyKindsAsked.add(keyKind);
                 return selection;
             }
         };
@@ -271,6 +274,22 @@ class FixRunDispatcherTest {
         assertEquals("run::github:acme/web:" + THREAD + ":1", dispatched.runId());
         assertEquals(dispatched.runId(), launched.getFirst().runId());
         assertEquals(dispatched.runId(), rows.getFirst().runId());
+    }
+
+    /** The fix harness's own key vendor pays it, and none of that vendor's keys is the empty-pool refusal. */
+    @Test
+    void aFixRunPaysWithItsHarnessKind() {
+        configuredHarness = "codex";
+
+        assertInstanceOf(FixRunDispatcher.Dispatched.class, dispatch());
+        assertEquals(List.of(Optional.of("openai")), keyKindsAsked);
+
+        resetToTheHappyPath();
+        selection = new HarnessCredentialPool.Selection.Empty();
+        FixRunDispatcher.Refused refused = assertInstanceOf(FixRunDispatcher.Refused.class, dispatch());
+        // It names the vendor it looked for: keys of another vendor may well exist, and do not pay this harness.
+        assertEquals("no usable `openai` API key is configured for the codex harness, so there is no key for a fix run"
+                + " to call the model with; a key of another vendor does not pay it", refused.why());
     }
 
     /**
@@ -519,7 +538,7 @@ class FixRunDispatcherTest {
         launchOutcome = new RunLaunch.Dispatched();
         account = Optional.of(machineAccount());
         selection = new HarnessCredentialPool.Selection.Chosen(new HarnessCredentialPool.PoolMember(
-                CREDENTIAL_ID, "pool-1", "anthropic", "https://example.invalid",
+                CREDENTIAL_ID, "pool-1", "openai", "https://example.invalid",
                 "TEST-harness-key-do-not-print"));
         configuredHarness = "codex";
         configuredModel = "TEST-model";

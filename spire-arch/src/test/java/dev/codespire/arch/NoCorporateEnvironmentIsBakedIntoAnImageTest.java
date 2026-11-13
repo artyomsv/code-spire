@@ -43,7 +43,8 @@ class NoCorporateEnvironmentIsBakedIntoAnImageTest {
      * unit is made of (the model proxy runs beside the agent in a review unit).
      */
     private static final List<String> RUN_UNIT_IMAGES =
-            List.of("deploy/agent/codex/Dockerfile", "spire-publisher/Dockerfile", "spire-model-proxy/Dockerfile");
+            List.of("deploy/agent/codex/Dockerfile", "deploy/agent/claude-code/Dockerfile", "spire-publisher/Dockerfile",
+                    "spire-model-proxy/Dockerfile");
 
     /**
      * Names that change TLS or routing for every process in the container.

@@ -177,7 +177,7 @@ public class FixRunDispatcher {
         // they then refused -- and it holds a decrypted key from here on.
         HarnessCredentialPool.Selection selection;
         try {
-            selection = pool.select();
+            selection = HarnessKeys.select(pool, harness);
         } catch (IllegalStateException readFault) {
             // A read fault is NOT an empty pool, and the pool throws rather than answering Empty
             // precisely to keep the two apart. Answering "no credential is configured" to a database
@@ -199,8 +199,7 @@ public class FixRunDispatcher {
                         + "replace them");
             }
             case HarnessCredentialPool.Selection.Empty ignored -> {
-                return new Refused("no harness credential is configured, so there is no key for a fix "
-                        + "run to call the model with");
+                return new Refused(HarnessKeys.noKey(harness, "a fix run"));
             }
         }
 
@@ -278,16 +277,14 @@ public class FixRunDispatcher {
      */
     private Refused refuseIfUnconfigured() {
         String harness = config.fix().harness().orElse("");
-        if (harness.isBlank()) {
-            return new Refused("this deployment has not enabled /fix — an operator must "
-                    + "set SPIRE_FACTORY_FIX_HARNESS");
-        }
+        String unusable = HarnessRefusals.fixHarnessRefusal(harness);
+        if (unusable != null) return new Refused(unusable);
         String model = config.fix().model().orElse("");
         if (model.isBlank()) {
             return new Refused("this deployment has not enabled /fix — an operator must "
                     + "set SPIRE_FACTORY_FIX_MODEL");
         }
-        String image = config.agentImage().get(harness);
+        String image = config.configuredAgentImages().get(harness);
         if (image == null || image.isBlank()) {
             return new Refused("no agent image is configured for the '" + harness
                     + "' harness, so a fix run has nothing to execute in");

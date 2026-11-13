@@ -220,6 +220,7 @@ val fastTestModules = listOf(
     "spire-context-code",
     "spire-harness",
     "spire-harness-codex",
+    "spire-harness-claude-code",
     "spire-secrets",
     "spire-workspace",
     "spire-worksource",

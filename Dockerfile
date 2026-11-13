@@ -32,6 +32,7 @@ COPY spire-e2e/build.gradle.kts spire-e2e/
 COPY spire-encryption/build.gradle.kts spire-encryption/
 COPY spire-gateway/build.gradle.kts spire-gateway/
 COPY spire-harness/build.gradle.kts spire-harness/
+COPY spire-harness-claude-code/build.gradle.kts spire-harness-claude-code/
 COPY spire-harness-codex/build.gradle.kts spire-harness-codex/
 COPY spire-http/build.gradle.kts spire-http/
 COPY spire-llm/build.gradle.kts spire-llm/

@@ -18,7 +18,7 @@ worker and not in `spire-harness` — the same reason the LLM circuit breaker co
 | `spire-harness-codex` | Apache-2.0 | adapter | M0 |
 | `spire-harness-pi` | Apache-2.0 | adapter | M5 |
 | `spire-harness-opencode` | Apache-2.0 | adapter | later |
-| `spire-harness-claude` | Apache-2.0 | adapter | later |
+| `spire-harness-claude-code` | Apache-2.0 | adapter, review runs only | harness reviews 3b |
 | `spire-runtime` | Apache-2.0 | SPI + capabilities | M0 |
 | `spire-runtime-docker` | Apache-2.0 | adapter | M0 |
 | `spire-runtime-k8s` | Apache-2.0 | adapter | M5 |
@@ -95,7 +95,7 @@ arm second is what turns `spire-harness` from an assertion into a seam.
 
 ---
 
-## 5. `spire-harness-opencode`, `spire-harness-claude` — later arms
+## 5. `spire-harness-opencode` (later), `spire-harness-claude-code` (review runs)
 
 `opencode` (MIT) is shaped like `pi`: provider-agnostic, `opencode run` headless, with `opencode
 serve` available where a plain-text stream is too weak to parse.
@@ -103,6 +103,21 @@ serve` available where a plain-text stream is too weak to parse.
 Claude Code carries **no open-source licence**, so it is installed into an image, never redistributed,
 and is API-key only — Anthropic's Consumer Terms prohibit automated access except via an API key. See
 [EXECUTION-LAYER.md](./EXECUTION-LAYER.md) for the quoted terms.
+
+`spire-harness-claude-code` (harness reviews 3b) runs `claude -p --output-format stream-json` for review runs only.
+Its adapter refuses, before any container exists, a run that is not behind the model proxy
+(`credential_proxy_required`), a run that would load the repository's guidance (`harness_reviews_only`) and a
+sign-in (`subscription_not_allowed`). Every run carries `--bare --safe-mode --strict-mcp-config
+--disable-slash-commands --setting-sources user`, the most restrictive set measured to load nothing from the reviewed
+branch (`CLAUDE.md`, `.claude/` settings, hooks, skills, `.mcp.json`) while the review still works. The agent holds
+the placeholder `ANTHROPIC_API_KEY` and reaches only `spire-model:8080`; the model proxy injects the key as
+`x-api-key` on `POST /v1/messages` and nothing else. A `result` line decides on its `is_error`, not its
+`subtype`: an error result was measured with `"subtype":"success"`. Capabilities: streaming yes, cancel yes, steer
+no, resume no, structured output no.
+
+> NOT ALLOWED — kept for history only. Anthropic's terms forbid a third-party product to route requests
+> through a Claude subscription or to hold claude.ai tokens:
+> https://code.claude.com/docs/en/legal-and-compliance (read 2026-11-08). Claude Code pays with an API key.
 
 ---
 

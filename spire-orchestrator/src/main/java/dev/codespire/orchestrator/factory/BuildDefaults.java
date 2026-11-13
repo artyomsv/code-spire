@@ -126,13 +126,11 @@ public class BuildDefaults {
         // refusal back where this slice is taking it away from: after an approval, mid-item.
         if (!DispatchRequestParser.isRefName(branch)) throw new Refused("base_branch_invalid");
         // An exact key, no case folding, as at DispatchRequestParser.java:73.
-        if (harness == null || !config.agentImage().containsKey(harness))
+        if (harness == null || !config.configuredAgentImages().containsKey(harness))
             throw new Refused("harness_unconfigured");
         if (model == null || !DispatchRequestParser.isModelName(model)) throw new Refused("model_name_invalid");
+        String payWith = HarnessRefusals.buildSetupPayWith(harness, input.payWith());
         checkAgainstTheHarness(harness, model, effort);
-        String payWith;
-        try { payWith = dev.codespire.contract.work.PayWith.normalise(input.payWith()); }
-        catch (IllegalArgumentException unknown) { throw new Refused("pay_with_invalid"); }
         if (payWith.equals(dev.codespire.contract.work.PayWith.SUBSCRIPTION)) {
             // A subscription is not priced per token, so the model needs no rates and no catalogue entry
             // — the harness's own list above is what says it can run. What it does need is a seat.

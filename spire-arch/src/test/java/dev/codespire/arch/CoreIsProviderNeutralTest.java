@@ -64,8 +64,7 @@ class CoreIsProviderNeutralTest {
      * ({@code githubConfig}) or a string ({@code "gitlab"}), and an anchored pattern would miss names
      * embedded in a longer identifier.
      */
-    private static final Pattern PROVIDER_NAME =
-            Pattern.compile("(?i)(bitbucket|github|gitlab|jira|confluence)");
+    private static final Pattern PROVIDER_NAME = Pattern.compile("(?i)(bitbucket|github|gitlab|jira|confluence)");
 
     /**
      * The factory's axes: the harness arm that runs the agent and the runtime that places it.
@@ -158,6 +157,10 @@ class CoreIsProviderNeutralTest {
                         + "heard of is refused rather than silently under-priced — the failure mode the "
                         + "neutrality rule exists to prevent cannot occur here. Drift is caught in the "
                         + "adapter's own module by CodexReportsWhatTheContractDeclaresTest.");
+        allowed.put("spire-contract/src/main/java/dev/codespire/contract/llm/HarnessPolicy.java", "Restricts the harnesses it lists: "
+                + "which key vendor pays them, whether a subscription is allowed, whether they may build. The orchestrator decides "
+                + "payment and has no dependency on the harness tier, so this cannot live on an adapter. An unlisted name is not "
+                + "constrained here and has no adapter, so the worker refuses it before it runs.");
         return Collections.unmodifiableMap(allowed);
     }
 
@@ -170,9 +173,7 @@ class CoreIsProviderNeutralTest {
                 violations.addAll(providerNamesIn(source, relative));
             }
         }
-        if (!violations.isEmpty()) {
-            fail(report(violations));
-        }
+        if (!violations.isEmpty()) fail(report(violations));
     }
 
     /**
@@ -207,8 +208,7 @@ class CoreIsProviderNeutralTest {
     @Test
     void theScanReachesEveryCoreModulesSources() {
         List<Path> sources = coreSources();
-        assertTrue(sources.size() > 100,
-                "expected the core modules' sources (~165 files), scanned only " + sources.size());
+        assertTrue(sources.size() > 100, "expected the core modules' sources (~165 files), scanned only " + sources.size());
         for (String module : CORE_MODULES) {
             long scanned = sources.stream().filter(p -> relative(p).startsWith(module + "/")).count();
             assertTrue(scanned >= 5, "only " + scanned + " sources scanned for " + module);

@@ -30,8 +30,10 @@ public class WorkPreparationResource {
     /**
      * The harnesses this deployment can run, each with the token types it can report: a key without an
      * agent image refuses at dispatch, and so does a model with no price for a type the harness reports.
+     * {@code subscriptionHarnesses} and {@code buildHarnesses} are the ones a seat may pay for and that may build.
      */
-    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes) {}
+    public record Options(java.util.List<String> harnesses, Map<String,java.util.List<String>> reportedTypes,
+                          java.util.List<String> subscriptionHarnesses, java.util.List<String> buildHarnesses) {}
     public record Head(String branch,String commit) {}
     /**
      * What an approver is asked to approve, read from the tracker now: the specification text and the
@@ -54,9 +56,11 @@ public class WorkPreparationResource {
 
     @GET @Path("/options")
     public Options options() {
-        java.util.List<String> harnesses=factoryConfig.agentImage().keySet().stream().sorted().toList();
+        java.util.List<String> harnesses=factoryConfig.configuredAgentImages().keySet().stream().sorted().toList();
         return new Options(harnesses,harnesses.stream().collect(java.util.stream.Collectors.toMap(harness->harness,
-                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())));
+                harness->dev.codespire.contract.llm.HarnessTokenReport.reportedBy(harness).stream().map(Enum::name).sorted().toList())),
+                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsSubscription).toList(),
+                harnesses.stream().filter(dev.codespire.contract.llm.HarnessPolicy::allowsBuilds).toList());
     }
 
     /**
@@ -128,7 +132,11 @@ public class WorkPreparationResource {
 
     @POST public Response register(@PathParam("id") String id,Input input) {
         if(input==null || input.expectedRevision()<1)throw new BadRequestException("The current item revision is required");
+        // Who is asking comes first: an unidentified caller is told nothing about the harness rules.
         String actor=OidcSubjects.of(identity);if(actor.isBlank())throw new ForbiddenException("A verified operator identity is required");
+        // A harness that only reviews cannot build this item, so it is refused by name before anything is read.
+        if(!dev.codespire.contract.llm.HarnessPolicy.allowsBuilds(input.harness()))
+            throw refused(400,dev.codespire.contract.llm.HarnessPolicy.HARNESS_REVIEWS_ONLY);
         WorkPreparation preparation;
         WorkItemEvent item=store.load(id);if(item==null)throw new NotFoundException();
         // A hand-registered task verifies with the repository's checks too, copied and bound like the sweep's (M4):

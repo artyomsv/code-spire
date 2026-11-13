@@ -17,9 +17,11 @@ public record ModelProxyReport(int requests, int rejected, List<String> refusedP
 
     /**
      * The routes whose 401 means the vendor refused the injected credential. The model proxy logs a declared exact path
-     * by name, so a harness names its model call exactly (Codex's seat route does, beside its prefix).
+     * by name, so a harness names its model call exactly (Codex's seat route does, beside its prefix). Claude Code
+     * calls Anthropic's Messages route.
      */
-    public static final Set<String> MODEL_CALL_PATHS = Set.of("/v1/responses", "/backend-api/codex/responses");
+    public static final Set<String> MODEL_CALL_PATHS = Set.of("/v1/responses", "/backend-api/codex/responses",
+            "/v1/messages");
 
     /** A unit with no model proxy, or one whose log could not be read. */
     public static final ModelProxyReport NONE = new ModelProxyReport(0, 0, List.of());

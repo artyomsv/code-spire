@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Optional;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
@@ -265,7 +266,7 @@ class RunCredentialFeedbackTest {
     }
 
     private UUID assertChosen() {
-        return ((HarnessCredentialPool.Selection.Chosen) pool.select()).member().id();
+        return ((HarnessCredentialPool.Selection.Chosen) pool.select(Optional.empty())).member().id();
     }
 
     private HarnessCredentialPool.MemberView view(UUID id) {

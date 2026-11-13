@@ -5,6 +5,7 @@ import { canAdminister } from '../../auth';
 import { useMe } from '../../hooks/useMe';
 import { branchHead, preparationOptions, resolveArtifact, registerPreparation, type ArtifactReference } from './workPreparationApi';
 import { buildDefaults, buildDefaultsKey } from '../repositories/factory/buildDefaultsApi';
+import { harnessLabel } from '../harnessLabels';
 import { preparationKeys } from './workQueries';
 import { TOKEN_TYPE_LABEL, unpricedTypesFor } from '../../llmPricing';
 
@@ -38,7 +39,7 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
   const models = useQuery({ queryKey: preparationKeys.llmModels(), queryFn: () => fetchLlmModels() });
   // A wire answer of the wrong shape degrades to "nothing offered" rather than blanking the page.
   const choices: { harnesses: string[]; models: LlmModelView[]; reportedTypes: Record<string, string[]> } = options.data && models.data
-    ? { harnesses: options.data.harnesses ?? [], models: (models.data ?? []).filter(model => model.enabled), reportedTypes: options.data.reportedTypes ?? {} }
+    ? { harnesses: options.data.buildHarnesses ?? [], models: (models.data ?? []).filter(model => model.enabled), reportedTypes: options.data.reportedTypes ?? {} }
     : { harnesses: [], models: [], reportedTypes: {} };
   // The repository's saved build setup, on its OWN request: it is optional, and a slow answer for it
   // must not hold back the harness and model this deployment can run. What is registered is what a gate binds, so
@@ -106,8 +107,8 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
         {busy === 'head' ? 'Reading…' : 'Use current head'}</button>
       <label className="field">Harness<select value={form.harness} onChange={event => edit('harness', event.target.value)}>
         <option value="">{choices.harnesses.length ? 'Select a harness' : 'No harness is configured'}</option>
-        {choices.harnesses.map(harness => <option key={harness} value={harness}>{harness}</option>)}
-        {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{form.harness} (not configured here)</option>}
+        {choices.harnesses.map(harness => <option key={harness} value={harness}>{harnessLabel(harness)}</option>)}
+        {form.harness && !choices.harnesses.includes(form.harness) && <option value={form.harness}>{harnessLabel(form.harness)} (not configured here)</option>}
       </select></label>
       <label className="field">Model<select value={form.model} onChange={event => edit('model', event.target.value)}>
         <option value="">{choices.models.length ? 'Select a model' : 'No model is enabled'}</option>

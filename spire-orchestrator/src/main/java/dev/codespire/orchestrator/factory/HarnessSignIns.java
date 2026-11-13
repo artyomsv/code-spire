@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.factory;
 
 import dev.codespire.contract.command.HarnessSignInCommand;
 import dev.codespire.contract.event.HarnessSignInResult;
+import dev.codespire.contract.llm.HarnessPolicy;
 import dev.codespire.encryption.EncryptionService;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -77,9 +78,9 @@ public class HarnessSignIns {
         // Stored as the row's own start time and sent with every start, so the wait is counted from the
         // operator's press however late, or however often, the start is delivered.
         Instant requested = Instant.now();
-        String image = config.agentImage().get(harness);
+        if (HarnessRefusals.refusesSubscription(harness)) return new Started(null, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+        String image = config.configuredAgentImages().get(harness);
         if (image == null) return new Started(null, "harness_unconfigured");
-
         // COMMIT FIRST, then publish. The earlier order inserted the row, awaited the broker and
         // committed last, which meant a fast Prompted could arrive while the row was still invisible to
         // every other transaction: the update matched nothing, the consumer acknowledged it, and the
@@ -172,7 +173,7 @@ public class HarnessSignIns {
             ps.setTimestamp(2, Timestamp.from(Instant.now().minus(EXPIRY_GRACE)));
         });
         for (Unclaimed row : unclaimed(Instant.now().minus(RESEND_AFTER))) {
-            String image = config.agentImage().get(row.harness());
+            String image = config.configuredAgentImages().get(row.harness());
             boolean windowClosed = !row.requestedAt().plus(START_WITHIN).isAfter(Instant.now());
             if (row.requestedAt().plus(UNCLAIMED_DEADLINE).isBefore(Instant.now()) || image == null) {
                 failUnclaimed(row.id(), image == null ? "harness_unconfigured" : HarnessSignInResult.Failed.NOT_STARTED);
@@ -268,14 +269,19 @@ public class HarnessSignIns {
                             pending.map(View::state).orElse("gone"));
                     return;
                 }
+                // A row opened before start refused this harness: closed by name, before the sealed file is opened.
+                if (HarnessRefusals.refusesSubscription(pending.get().harness())) {
+                    fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
+                    return;
+                }
                 String body = encryption.decryptString(result.sealedAuth(), HarnessSignInResult.sealedAad(result.signInId()));
                 // Judged on the SEALED BYTES, not on what the result claimed. The claim is a
                 // convenience for the wire; deciding a credential's kind from it means deciding from a
                 // field beside the thing it describes, and the two can disagree. What must never happen
                 // is a per-token key stored as a subscription: it would be billed as an asserted zero
                 // while the vendor charged for every token, and both look like a pool member afterwards.
-                String mode = topLevelAuthMode(body);
-                if (mode == null || isApiKeyMode(mode)) {
+                String mode = SignInFiles.topLevelAuthMode(body);
+                if (mode == null || SignInFiles.isApiKeyMode(mode)) {
                     fail(c, id, HarnessSignInResult.Failed.WRONG_MODE);
                     return;
                 }
@@ -304,22 +310,13 @@ public class HarnessSignIns {
                     fail(c, id, "harness_credential_label_taken");
                     return;
                 }
-                UUID credential;
                 // The check above narrows the window; it cannot close it, because an ordinary key can
                 // be added between that read and this insert. A savepoint is what makes the collision
                 // answerable: in PostgreSQL a failed statement aborts the whole transaction, so without
                 // one there would be no way to mark the sign-in failed after catching it — which is
                 // exactly how the credential used to be lost with the row left open.
-                java.sql.Savepoint attempt = c.setSavepoint("subscription");
-                try {
-                    credential = pool.addSubscription(c, pending.get().label(), pending.get().harness(), body);
-                    c.releaseSavepoint(attempt);
-                } catch (SQLException collision) {
-                    if (!"23505".equals(collision.getSQLState())) throw collision;
-                    c.rollback(attempt);
-                    fail(c, id, "harness_credential_label_taken");
-                    return;
-                }
+                UUID credential = addSeat(c, id, pending.get(), body);
+                if (credential == null) return;
                 try (PreparedStatement ps = c.prepareStatement("""
                         UPDATE harness_sign_in SET state='COMPLETE', credential_id=?, updated_at=now() WHERE id=?
                         """)) {
@@ -331,57 +328,29 @@ public class HarnessSignIns {
         });
     }
 
-    /** The states a sign-in may still be completed from. Anything else has already been decided. */
-    private static final java.util.Set<String> OPEN = java.util.Set.of("PENDING", "PROMPTED");
-
-    /** The vendor CLI's own word for an API-key sign-in. */
-    private static boolean isApiKeyMode(String authMode) {
-        return "apikey".equalsIgnoreCase(authMode);
-    }
-
-    /**
-     * Reads {@code auth_mode} from the TOP level of the sign-in file, or null.
-     *
-     * <p>Streaming rather than a tree: the document is a credential, and a tree puts every value into
-     * an object graph that a logger or an exception message can print. This reads one string and skips
-     * everything else without holding it.
-     *
-     * <p>Null for anything unreadable, for a nested-only value, and for a field declared twice — JSON
-     * permits duplicates and readers disagree about which wins, so a repeat is treated as no answer
-     * rather than resolved by a rule the vendor never promised. Null refuses the sign-in, which is the
-     * safe direction: nothing is stored.
-     */
-    private static String topLevelAuthMode(String body) {
-        try (com.fasterxml.jackson.core.JsonParser parser = JSON.createParser(body)) {
-            if (parser.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) return null;
-            String found = null;
-            while (parser.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
-                String field = parser.currentName();
-                var value = parser.nextToken();
-                if (!"auth_mode".equals(field)) { parser.skipChildren(); continue; }
-                if (value != com.fasterxml.jackson.core.JsonToken.VALUE_STRING) return null;
-                if (found != null) return null;
-                String declared = parser.getText();
-                // A mode is a short token. The bound is a security one: this value is what a screen
-                // shows as the identity, and an e-mail address must never become one.
-                if (!MODE.matcher(declared).matches()) return null;
-                found = declared;
-            }
-            // The document must END here: a second root object behind the first would otherwise
-            // decide the kind from a value the real file never carried.
-            if (parser.nextToken() != null) return null;
-            return found;
-        } catch (java.io.IOException | RuntimeException notReadable) {
-            // Never log the body or the parser's message: both can quote the credential.
+    /** Stores the seat under a savepoint, or closes the sign-in by name and answers null. */
+    private UUID addSeat(Connection c, UUID id, View pending, String body) throws SQLException {
+        java.sql.Savepoint attempt = c.setSavepoint("subscription");
+        try {
+            UUID credential = pool.addSubscription(c, pending.label(), pending.harness(), body);
+            c.releaseSavepoint(attempt);
+            return credential;
+        } catch (SQLException collision) {
+            if (!"23505".equals(collision.getSQLState())) throw collision;
+            c.rollback(attempt);
+            fail(c, id, "harness_credential_label_taken");
+            return null;
+        } catch (IllegalStateException refused) {
+            // The pool's own refusal, should the completion's guard ever be bypassed: the row is closed, not left open.
+            if (!HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED.equals(refused.getMessage())) throw refused;
+            c.rollback(attempt);
+            fail(c, id, HarnessPolicy.SUBSCRIPTION_NOT_ALLOWED);
             return null;
         }
     }
 
-    private static final com.fasterxml.jackson.core.JsonFactory JSON =
-            new com.fasterxml.jackson.core.JsonFactory();
-
-    /** Letters, digits, underscore and hyphen. No address can pass, and nor can a sentence. */
-    private static final java.util.regex.Pattern MODE = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,32}");
+    /** The states a sign-in may still be completed from. Anything else has already been decided. */
+    private static final java.util.Set<String> OPEN = java.util.Set.of("PENDING", "PROMPTED");
 
     public void failed(HarnessSignInResult.Failed result) {
         UUID id = UUID.fromString(result.signInId());

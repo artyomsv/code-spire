@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The rules every {@link HarnessAdapter} arm must obey, as an executable contract rather than a
@@ -42,9 +43,26 @@ public abstract class HarnessAdapterContract {
     /** A model identifier this arm would really be given. */
     protected abstract String sampleModel();
 
+    /**
+     * The invocation this arm would really be given. Identity by default; an arm that runs only in one shape (behind
+     * the model proxy, without the repository's guidance) overrides it, so the rules below are checked on an
+     * invocation the arm accepts rather than on one it refuses.
+     */
+    protected HarnessInvocation runnable(HarnessInvocation invocation) {
+        return invocation;
+    }
+
+    /**
+     * Whether the agent itself holds the credential it is given. True by default; an arm that runs only behind the
+     * model proxy answers false, and the rule that the environment carries the credential does not apply to it.
+     */
+    protected boolean agentHoldsTheCredential() {
+        return true;
+    }
+
     private HarnessInvocation invocation(String prompt, Map<String, String> credentials) {
-        return new HarnessInvocation("run_contract", prompt, "/workspace", sampleModel(),
-                credentials, Duration.ofMinutes(30));
+        return runnable(new HarnessInvocation("run_contract", prompt, "/workspace", sampleModel(),
+                credentials, Duration.ofMinutes(30)));
     }
 
     @Test
@@ -94,6 +112,7 @@ public abstract class HarnessAdapterContract {
 
     @Test
     void theEnvironmentCarriesTheCredentialInstead() {
+        assumeTrue(agentHoldsTheCredential(), "this arm runs only behind the model proxy, which holds the credential");
         Map<String, String> env = adapter().environment(
                 invocation("do the work", Map.of("HARNESS_TOKEN", "s3cret-contract-value")));
 

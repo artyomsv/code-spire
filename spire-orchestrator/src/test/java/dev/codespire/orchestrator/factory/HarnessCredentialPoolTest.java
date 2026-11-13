@@ -13,6 +13,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -72,7 +73,7 @@ class HarnessCredentialPoolTest {
     }
 
     private UUID chosen() {
-        return assertInstanceOf(HarnessCredentialPool.Selection.Chosen.class, pool.select()).member().id();
+        return assertInstanceOf(HarnessCredentialPool.Selection.Chosen.class, pool.select(Optional.empty())).member().id();
     }
 
     /**
@@ -122,13 +123,13 @@ class HarnessCredentialPoolTest {
     void rateLimitedAndRejectedAreDifferentStates() {
         UUID rateLimited = member("limited");
         pool.markRateLimited(rateLimited, Instant.now().plus(1, ChronoUnit.HOURS));
-        assertInstanceOf(HarnessCredentialPool.Selection.Resting.class, pool.select(),
+        assertInstanceOf(HarnessCredentialPool.Selection.Resting.class, pool.select(Optional.empty()),
                 "a rate limit is a promise: the pool says when capacity returns");
 
         sql("UPDATE harness_credential SET enabled = FALSE");
         UUID rejected = member("refused");
         pool.markRejected(rejected);
-        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select(),
+        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select(Optional.empty()),
                 "a rejection is an answer: nothing returns, and the refusal must not quote a time");
     }
 
@@ -136,7 +137,7 @@ class HarnessCredentialPoolTest {
     void aRateLimitedMemberReturnsWhenItsWindowPasses() {
         UUID id = member("returning");
         pool.markRateLimited(id, Instant.now().plus(1, ChronoUnit.HOURS));
-        assertInstanceOf(HarnessCredentialPool.Selection.Resting.class, pool.select());
+        assertInstanceOf(HarnessCredentialPool.Selection.Resting.class, pool.select(Optional.empty()));
 
         // The window passes. Nothing runs, nothing is cleared -- the pool heals itself, which is the
         // whole difference between this state and a rejection.
@@ -155,10 +156,10 @@ class HarnessCredentialPoolTest {
         UUID id = member("dead");
         pool.markRejected(id);
 
-        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select());
+        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select(Optional.empty()));
         // No amount of time brings it back -- there is no expiry column to age out.
         sql("UPDATE harness_credential SET rejected_at = now() - interval '30 days' WHERE id = '" + id + "'");
-        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select());
+        assertInstanceOf(HarnessCredentialPool.Selection.AllRejected.class, pool.select(Optional.empty()));
 
         assertTrue(pool.clearRejection(id), "the operator's action is the only way back");
         assertEquals(id, chosen());
@@ -179,7 +180,7 @@ class HarnessCredentialPoolTest {
      */
     @Test
     void exhaustingThePoolIsAFirstClassRefusalNamingWhatToDo() {
-        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select(),
+        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select(Optional.empty()),
                 "no members at all is 'configure one', not 'wait'");
 
         UUID resting = member("resting");
@@ -187,7 +188,7 @@ class HarnessCredentialPoolTest {
         pool.markRateLimited(resting, Instant.now().plus(30, ChronoUnit.MINUTES));
         pool.markRejected(dead);
 
-        HarnessCredentialPool.Selection selection = pool.select();
+        HarnessCredentialPool.Selection selection = pool.select(Optional.empty());
         HarnessCredentialPool.Selection.Resting rest =
                 assertInstanceOf(HarnessCredentialPool.Selection.Resting.class, selection,
                         "a mixed pool reports the recoverable half: capacity DOES return, and an "
@@ -264,7 +265,7 @@ class HarnessCredentialPoolTest {
     void aDisabledMemberCanBeBroughtBack() {
         UUID id = member("returning");
         assertTrue(pool.remove(id));
-        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select());
+        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select(Optional.empty()));
 
         assertTrue(pool.enable(id));
 
@@ -287,7 +288,7 @@ class HarnessCredentialPoolTest {
         pool.markRejected(dead);
 
         HarnessCredentialPool.Selection.Resting rest = assertInstanceOf(
-                HarnessCredentialPool.Selection.Resting.class, pool.select());
+                HarnessCredentialPool.Selection.Resting.class, pool.select(Optional.empty()));
 
         assertEquals(1, rest.rejected(),
                 "the wait is only half the story; one of these keys never comes back");
@@ -323,7 +324,7 @@ class HarnessCredentialPoolTest {
         pool.markRateLimited(id, null);
 
         HarnessCredentialPool.Selection.Resting rest = assertInstanceOf(
-                HarnessCredentialPool.Selection.Resting.class, pool.select());
+                HarnessCredentialPool.Selection.Resting.class, pool.select(Optional.empty()));
         assertTrue(rest.capacityReturnsAt().isAfter(Instant.now()));
         assertTrue(rest.capacityReturnsAt().isBefore(Instant.now().plus(2, ChronoUnit.HOURS)),
                 "bounded, not indefinite");
@@ -334,7 +335,7 @@ class HarnessCredentialPoolTest {
         UUID id = member("disabled");
         assertTrue(pool.remove(id));
 
-        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select());
+        assertInstanceOf(HarnessCredentialPool.Selection.Empty.class, pool.select(Optional.empty()));
     }
 
     /**
@@ -357,7 +358,7 @@ class HarnessCredentialPoolTest {
         sql("UPDATE harness_credential SET exhausted_at = now() WHERE id = '" + healthy + "'");
 
         // The broken one sorts first, so it is what select() reaches.
-        HarnessCredentialPool.Selection selection = pool.select();
+        HarnessCredentialPool.Selection selection = pool.select(Optional.empty());
 
         assertTrue(view(broken).rejectedAt() != null,
                 "it must leave the pool; leaving it in makes one dispatch in N fail for ever");
@@ -374,7 +375,7 @@ class HarnessCredentialPoolTest {
         UUID id = member("crypto");
 
         assertEquals("TEST-agent-key-crypto", assertInstanceOf(
-                HarnessCredentialPool.Selection.Chosen.class, pool.select()).member().apiKey());
+                HarnessCredentialPool.Selection.Chosen.class, pool.select(Optional.empty())).member().apiKey());
         assertFalse(column(id, "api_key").contains("TEST-agent-key-crypto"),
                 "the stored form is ciphertext, not the key");
     }
