@@ -334,8 +334,8 @@ class WorkspaceCloneTest {
         Files.deleteIfExists(marker);
 
         Path ws = tmp.resolve("ws");
-        WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
-                "spire-bot@factory.invalid", null, PULL_REF);
+        try { WorkspaceClone.populate(origin, forkHead, "spire/review-7", ws, CREDENTIAL, "spire-bot",
+                "spire-bot@factory.invalid", null, PULL_REF); } catch (RuntimeException e) { e.printStackTrace(System.out); throw e; }
 
         assertTrue(Files.exists(ws.resolve("payload.txt")), "the tree was checked out");
         assertFalse(Files.exists(marker), "a gitattributes filter driver must run nothing");
