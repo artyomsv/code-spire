@@ -36,7 +36,7 @@ function blockingCount(r: ReviewDetailData) {
   const qualifier = level === 'BLOCKER' ? '' : ` (${BLOCK_APPROVAL_AT_LABEL[level]})`;
   return <>
     <span className="sep">·</span>
-    <span className="blocking-count">{r.openBlocking} blocking{qualifier}</span>
+    <span>{r.openBlocking} blocking{qualifier}</span>
   </>;
 }
 
