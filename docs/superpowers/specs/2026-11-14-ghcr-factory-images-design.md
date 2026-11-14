@@ -44,3 +44,12 @@ come from a registry. Next PR after this one: the Kubernetes deployment.
 ## Operator steps after merge
 
 Make the five public packages public in GHCR package settings; confirm `spire-agent-claude-code` is private.
+
+## Changed 2026-11-15
+
+Operator decision: "Publish the Claude Code agent image on GHCR publicly; if Anthropic asks to remove it, we comply."
+The private, unlinked package could not be created: on the first master build (docker.yml run 43649996289) its push was
+denied, since the workflow's `GITHUB_TOKEN` creates only packages linked to this repository (the OCI source label), and
+a package linked to this public repository is created public. `spire-agent-claude-code` now carries the source label,
+is public, and its anonymous-pull privacy check is gone. No manual visibility step remains for any of the six images.
+The sections above describe the earlier plan and are left as written (ADR-032, amended 2026-11-15).

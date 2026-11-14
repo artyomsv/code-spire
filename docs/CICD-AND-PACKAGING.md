@@ -290,7 +290,7 @@ master, scans and pushes `:edge` and `:sha-<short>` for all of them:
 | `spire-publisher`, `spire-model-proxy` | `images` | `:<module>:installDist` on JDK 25, then the module's Dockerfile | public |
 | `spire-egress-proxy` | `images` | `deploy/egress/Dockerfile` | public |
 | `spire-agent-codex` | `agents` | `deploy/agent/build-codex.sh`: two builds around `codex debug models` | public |
-| `spire-agent-claude-code` | `agents` | `deploy/agent/build-claude-code.sh` | **private**, no source label |
+| `spire-agent-claude-code` | `agents` | `deploy/agent/build-claude-code.sh` | public (operator decision 2026-11-15; removed on Anthropic's request) |
 
 The agent images build through their scripts rather than `build-push-action`, so CI publishes the recipe an
 operator runs and a vendor change to the catalogue command fails the build. They get no gha layer cache.

@@ -1,7 +1,7 @@
 # The reference agent image for the Claude Code arm (harness reviews 3b, ADR-050).
 #
 # A copy of deploy/agent/codex/Dockerfile with four changes: the npm package, the harness label,
-# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, and the licence labels (no source label; see below). Build it with the script, which bakes in the model
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, and the licence labels. Build it with the script, which bakes in the model
 # list:
 #
 #   ./deploy/agent/build-claude-code.sh
@@ -23,18 +23,18 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
 # workspace is measured on this version (harness reviews 3b, Task 3).
 RUN npm i -g @anthropic-ai/claude-code@2.1.319 && npm cache clean --force
 
-# CI pushes this image to a PRIVATE package (ghcr.io/artyomsv/spire-agent-claude-code) for the
-# operator's own cluster; it is never public. The CLI above is "All rights reserved", under Anthropic's
-# Commercial Terms, which do not address redistribution (LICENSING.md; ADR-032 as amended 2026-11-14).
+# CI pushes this image to a PUBLIC package (ghcr.io/artyomsv/spire-agent-claude-code). The CLI above is
+# "All rights reserved", under Anthropic's Commercial Terms, which say nothing about redistribution.
+# Operator decision, 2026-11-15: publish it publicly, and if Anthropic asks for its removal we comply
+# (delete the package and stop publishing it; LICENSING.md; ADR-032 as amended 2026-11-15).
 #
-# **No org.opencontainers.image.source label, on purpose.** GHCR links a package to the repository that
-# label names, and a linked package takes its access from that repository — here a public one. Left
-# unlinked, the package is the operator's own, private by default; the operator confirms it after the
-# first push (deploy/README.md). The licences label names both parts: the recipe and entrypoint
-# (Apache-2.0, LICENSE) and the CLI, which has no SPDX identifier.
+# The source label is what links the package to this public repository, and a linked package is created
+# public and may be pushed by the workflow's token; the licences label names both parts: the recipe and
+# entrypoint (Apache-2.0, LICENSE) and the CLI, which has no SPDX identifier.
 COPY LICENSE /usr/share/licenses/code-spire/
 LABEL org.opencontainers.image.title="spire-agent-claude-code" \
-      org.opencontainers.image.description="Code Spire reference agent image for Claude Code reviews (private build)" \
+      org.opencontainers.image.description="Code Spire reference agent image for Claude Code reviews" \
+      org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
       org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-Anthropic-Commercial-Terms"
 
 # The mount points exist, owned by the agent user, so a fresh named volume mounted there inherits
