@@ -214,13 +214,24 @@ services:
       SPIRE_ENCRYPTION_KEYSET: ${SPIRE_ENCRYPTION_KEYSET:?set in .env}
       SPIRE_OIDC_CLIENT_ID: spire-run-worker
       SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_RUN_WORKER_SECRET:?set in .env}
-      # Required, no default: the worker refuses to start without it, because a run unit with
-      # no publisher is a run whose work can never leave the sandbox.
-      SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:?set in .env}
+      # The run unit's three companion images, by the names CLAUDE.md's local builds give them; this
+      # file builds the services and pulls nothing. compose.ghcr.yml defaults the same three to GHCR.
+      #
+      # The worker requires the publisher image (a run unit with no publisher is a run whose work can
+      # never leave the sandbox). Each compose file names its own default rather than .env carrying one,
+      # because one .env serves both files and no single value is right for both: a local tag on a
+      # GHCR install names an image its daemon has never seen.
+      SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:-spire-publisher:latest}
       # Which run units hold their model credential in a model proxy (OFF, REVIEWS, ALL), and its image: the
       # proxied runs fail as IMAGE_UNAVAILABLE without the image, builds run on. See deploy/.env.example.
       SPIRE_RUN_CREDENTIAL_PROXY_MODE: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:-REVIEWS}
       SPIRE_RUN_CREDENTIAL_PROXY_IMAGE: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:-spire-model-proxy:latest}
+      SPIRE_RUN_EGRESS_IMAGE: ${SPIRE_RUN_EGRESS_IMAGE:-spire-egress-proxy:latest}
+      # A private registry for unit images: all three or none (the worker refuses a partial set). Empty is
+      # "unset" here: the worker reads these as optional.
+      SPIRE_RUN_REGISTRY_HOST: ${SPIRE_RUN_REGISTRY_HOST:-}
+      SPIRE_RUN_REGISTRY_USERNAME: ${SPIRE_RUN_REGISTRY_USERNAME:-}
+      SPIRE_RUN_REGISTRY_SECRET: ${SPIRE_RUN_REGISTRY_SECRET:-}
       # The daemon this worker places run units on. Left at the mounted socket below; set it
       # to a remote daemon and the mount can go, which is the cheapest way to stop this
       # container being root on THIS host.

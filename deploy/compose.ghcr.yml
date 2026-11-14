@@ -136,9 +136,14 @@ services:
       # model, and the refusal an author reads names those two variables.
       # The image has a default and an empty value is not "unset": Quarkus reads "" as a missing value, which
       # fails the orchestrator's config validation at startup. Unset falls back to the application's default.
-      SPIRE_FACTORY_AGENT_IMAGE_CODEX: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:-spire-agent-codex:latest}
+      #
+      # The published Codex image, at the same tag as every service here: the run worker pulls it from
+      # GHCR when its daemon lacks it. Pulled ONCE — see SPIRE_VERSION in deploy/.env.example.
+      SPIRE_FACTORY_AGENT_IMAGE_CODEX: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:-ghcr.io/artyomsv/spire-agent-codex:${SPIRE_VERSION:-edge}}
       # Claude Code is opt-in: unset passes `none`, which the orchestrator reads as "not configured" (an empty
-      # value would fail its startup). Set it to the image ./deploy/agent/build-claude-code.sh builds.
+      # value would fail its startup). Its image is a PRIVATE package (LICENSING.md, "Published images"), so
+      # there is no public default to name: set this to your own build or private package, and set the
+      # run worker's SPIRE_RUN_REGISTRY_* below so the pull is authenticated.
       SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE: ${SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE:-none}
       SPIRE_FACTORY_FIX_HARNESS: ${SPIRE_FACTORY_FIX_HARNESS:-}
       SPIRE_FACTORY_FIX_MODEL: ${SPIRE_FACTORY_FIX_MODEL:-}
@@ -192,13 +197,26 @@ services:
       SPIRE_ENCRYPTION_KEYSET: ${SPIRE_ENCRYPTION_KEYSET:?set in .env}
       SPIRE_OIDC_CLIENT_ID: spire-run-worker
       SPIRE_OIDC_CLIENT_SECRET: ${SPIRE_OIDC_RUN_WORKER_SECRET:?set in .env}
-      # Required, no default: the worker refuses to start without it, because a run unit with
-      # no publisher is a run whose work can never leave the sandbox.
-      SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:?set in .env}
+      # The run unit's three companion images, published beside the services and defaulting to the SAME
+      # tag as this worker, so a unit is never a newer worker driving an older publisher. The worker
+      # requires the publisher image (a run unit with no publisher is a run whose work can never leave the
+      # sandbox); this file names the published one, compose.yml the locally built one.
+      #
+      # The worker pulls a unit image only when its daemon does not hold it, so a moving tag is pulled
+      # once and never again. Pin SPIRE_VERSION to a sha-<short> or release tag; on `edge`, pull these
+      # three and the agent image by hand on every upgrade (deploy/README.md).
+      SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:-ghcr.io/artyomsv/spire-publisher:${SPIRE_VERSION:-edge}}
       # Which run units hold their model credential in a model proxy (OFF, REVIEWS, ALL), and its image: the
       # proxied runs fail as IMAGE_UNAVAILABLE without the image, builds run on. See deploy/.env.example.
       SPIRE_RUN_CREDENTIAL_PROXY_MODE: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:-REVIEWS}
-      SPIRE_RUN_CREDENTIAL_PROXY_IMAGE: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:-spire-model-proxy:latest}
+      SPIRE_RUN_CREDENTIAL_PROXY_IMAGE: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:-ghcr.io/artyomsv/spire-model-proxy:${SPIRE_VERSION:-edge}}
+      SPIRE_RUN_EGRESS_IMAGE: ${SPIRE_RUN_EGRESS_IMAGE:-ghcr.io/artyomsv/spire-egress-proxy:${SPIRE_VERSION:-edge}}
+      # A private registry for unit images: all three or none (the worker refuses a partial set). Needed for
+      # a private Claude Code package; the public images pull anonymously. Empty is "unset" here: the worker
+      # reads these as optional.
+      SPIRE_RUN_REGISTRY_HOST: ${SPIRE_RUN_REGISTRY_HOST:-}
+      SPIRE_RUN_REGISTRY_USERNAME: ${SPIRE_RUN_REGISTRY_USERNAME:-}
+      SPIRE_RUN_REGISTRY_SECRET: ${SPIRE_RUN_REGISTRY_SECRET:-}
       # The daemon this worker places run units on. Left at the mounted socket below; set it
       # to a remote daemon and the mount can go, which is the cheapest way to stop this
       # container being root on THIS host.
