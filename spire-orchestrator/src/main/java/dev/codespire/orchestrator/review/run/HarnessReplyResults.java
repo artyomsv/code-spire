@@ -7,6 +7,7 @@ import dev.codespire.contract.event.RunResult;
 import dev.codespire.contract.event.RunReviewArtifact;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
@@ -56,12 +57,17 @@ public class HarnessReplyResults {
     @Inject
     ReviewProjection projection;
 
+    /** The run's row names the harness a refusal is about, as the review's refusal does. */
+    @Inject
+    FactoryRunProjection runRows;
+
     public void accept(RunResult result, ReviewRunBinding binding) {
         ReplyCall call = ReplyCall.ofSlot(binding.callSlot());
         switch (result) {
             case RunReviewArtifact answer -> post(answer, binding, call);
             case RunResult.RunFailed failed when HarnessReviewResults.isUnproxiedFork(failed) -> refuse(binding, call,
-                    HarnessReviewResults.FORK_PROXY_REQUIRED);
+                    runRows.harnessOf(failed.runId()).orElse(HarnessReviewResults.UNRECORDED_HARNESS) + ": "
+                            + HarnessReviewResults.FORK_PROXY_REQUIRED);
             case RunResult.RunFailed failed -> fail(binding, call, HarnessReviewResults.CANCELLED.equals(failed.cause())
                     ? CANCELLED : "Harness reply run failed: " + failed.cause());
             default -> LOG.debugf("reply run %s for %s: %s", result.runId(), binding.reviewId(),

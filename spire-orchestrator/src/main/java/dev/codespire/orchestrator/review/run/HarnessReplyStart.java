@@ -24,9 +24,9 @@ import java.util.Optional;
  * so the {@code PrepareHarnessReply} for the review worker. {@code ConversationSaga} has already applied every policy
  * check (allowlist, ownership or mention, level, turn cap); this decides only where the answer comes from.
  *
- * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request with no pull ref (Bitbucket),
- * is {@link Refused}; a round that cannot be read is refused; no packed reviewer credential is refused; otherwise
- * {@link Preparing}. A refusal never falls back to the API (operator decision 6). The command is returned, not sent:
+ * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request
+ * with no pull ref (Bitbucket) is {@link Refused}; a round that cannot be read is refused; no packed reviewer
+ * credential is refused; otherwise {@link Preparing}. A refusal never falls back to the API (operator decision 6). The command is returned, not sent:
  * {@code IntegrationSaga} sends it as it sends {@code AnswerFollowUp}.
  */
 @ApplicationScoped

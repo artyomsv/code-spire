@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** A fork's review run travels under its own discriminator, so a worker that does not know the type refuses it. */
 class ExecuteUntrustedReviewRunTest {
@@ -91,6 +92,20 @@ class ExecuteUntrustedReviewRunTest {
         assertThrows(IllegalArgumentException.class, () -> new RunCommand.ExecuteUntrustedReviewRun(
                 RUN_ID, execution("spire/review-8"), REVIEW, HarnessReviewInputs.NONE, REF));
         assertDoesNotThrow(() -> command());
+    }
+
+    @Test
+    void theCommandRefusesAPullRefOfAnotherPullRequest() {
+        // Pull request 7 is bound, so a ref of pull request 8 (or a merge request 8) is refused, naming both numbers.
+        IllegalArgumentException github = assertThrows(IllegalArgumentException.class,
+                () -> new RunCommand.ExecuteUntrustedReviewRun(RUN_ID, execution("spire/review-7"), REVIEW,
+                        HarnessReviewInputs.NONE, "refs/pull/8/head"));
+        assertTrue(github.getMessage().contains("7") && github.getMessage().contains("refs/pull/8/head"),
+                github.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> new RunCommand.ExecuteUntrustedReviewRun(
+                RUN_ID, execution("spire/review-7"), REVIEW, HarnessReviewInputs.NONE, "refs/merge-requests/8/head"));
+        assertDoesNotThrow(() -> new RunCommand.ExecuteUntrustedReviewRun(
+                RUN_ID, execution("spire/review-7"), REVIEW, HarnessReviewInputs.NONE, "refs/merge-requests/7/head"));
     }
 
     @Test

@@ -17,6 +17,7 @@ import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeSubject;
 import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -550,13 +551,18 @@ public class ReviewProjection {
         });
     }
 
-    /** The open BLOCKER count the land gate waits on, for the verdict decision (ADR-047 D1, D4). */
+    /** The open BLOCKER count: {@link #openBlocking} at {@code BLOCKER}, the rule before V115 (ADR-047 D1, D4). */
     public int openBlockers(String reviewId) {
+        return openBlocking(reviewId, BlockApprovalAt.BLOCKER);
+    }
+
+    /** The open findings at or above a repository's "Block approval at" (V115), over the set {@link #openCounts} shows. */
+    public int openBlocking(String reviewId, BlockApprovalAt level) {
         try (Connection c = dataSource.getConnection()) {
             ReviewRow row = loadRow(c, reviewId);
-            return row == null ? 0 : openCounts(row).openBlockers();
+            return row == null ? 0 : openCounts(row).atOrAbove(level);
         } catch (SQLException e) {
-            throw new IllegalStateException("Cannot count open blockers", e);
+            throw new IllegalStateException("Cannot count open blocking findings", e);
         }
     }
 
@@ -625,7 +631,7 @@ public class ReviewProjection {
 
     /** Reverse of {@link #severitySlug} — lossy for NIT/INFO (both slug to "nit");
      *  an unrecognized slug falls back to INFO rather than throwing. */
-    private static Severity severityFromSlug(String slug) {
+    static Severity severityFromSlug(String slug) {
         return switch (slug) {
             case "critical" -> Severity.BLOCKER;
             case "warning" -> Severity.MAJOR;
@@ -1683,10 +1689,10 @@ public class ReviewProjection {
                     attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row, reconciliation);
             Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
-            return Optional.of(toDetail(row,
+            return Optional.of(toDetail(row, new DetailParts(
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
                     new ChargeDetail(chargeLines(reviewId), costOf(reviewId).unpricedCalls()),
-                    attached.findings(), reconciliation));
+                    attached.findings(), reconciliation, OpenFindingCounts.levelOf(c, reviewId))));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -2130,7 +2136,7 @@ public class ReviewProjection {
                              String note, String errorDetail, int attempt, Instant createdAt,
                              Instant updatedAt, String prState, Instant archivedAt,
                              boolean degraded, String postedVerdict, String postedReviewRef, String postedReviewUrl) {
-        ReviewSummary toSummary(LedgerSummary ledger, OpenCounts openCounts) {
+        ReviewSummary toSummary(LedgerSummary ledger, OpenFindingCounts openCounts) {
             return new ReviewSummary(id, workspace, slug, slug, pr, title, author, authorId, branch, base, sha,
                     htmlUrl, providerType, status, stage, openCounts.open(), openCounts.openBlockers(),
                     openCounts.carriedOver(), ledger.totalCostMillicents(),
@@ -2182,15 +2188,6 @@ public class ReviewProjection {
     }
 
     /**
-     * @param carriedOver how many of {@code open} came from a previous run rather than this one.
-     *                    Split out because a bare total moving 1 -> 2 between rounds reads as a
-     *                    regression the author caused, when it can equally be one new finding beside
-     *                    one that was already open and simply never fixed.
-     */
-    private record OpenCounts(int open, int openBlockers, int carriedOver) {
-    }
-
-    /**
      * The review's currently-open findings — this run's new findings plus reconciliation
      * entries still open (still-open/unchanged), deduped by thread. This is what the list row
      * must show (fixes #3): a review with a carried-forward open critical is NOT "passed".
@@ -2209,7 +2206,7 @@ public class ReviewProjection {
      * came from that call — attributing it to the run would credit the model with a person's work,
      * the same mislabelling {@code origin} exists to prevent.
      */
-    private OpenCounts openCounts(ReviewRow row) {
+    private OpenFindingCounts openCounts(ReviewRow row) {
         Map<String, String> openSevByKey = new java.util.LinkedHashMap<>();
         List<ReviewDetail.FindingView> findings = parseFindings(row.findingsJson(), row.id());
         for (ReviewDetail.FindingView f : findings) {
@@ -2234,8 +2231,7 @@ public class ReviewProjection {
             // collapse two separate concerns into one and undercount the card it must agree with.
             openSevByKey.putIfAbsent(keyOf(null, f.loc()), f.sev());
         }
-        int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
-        return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised);
+        return OpenFindingCounts.of(openSevByKey, newlyRaised);
     }
 
     private static String keyOf(String threadRef, String loc) {
@@ -2385,20 +2381,24 @@ public class ReviewProjection {
     private record ChargeDetail(List<ReviewDetail.ChargeLineView> lines, int unpricedCalls) {
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
-                                  ChargeDetail charges,
-                                  List<ReviewDetail.FindingView> findings,
-                                  List<ReviewDetail.ReconciliationView> reconciliation) {
+    /** What the detail page is built from besides the row, so toDetail keeps two parameters. */
+    private record DetailParts(List<ReviewDetail.EventView> events, ChargeDetail charges,
+                               List<ReviewDetail.FindingView> findings,
+                               List<ReviewDetail.ReconciliationView> reconciliation, BlockApprovalAt level) {
+    }
+
+    private ReviewDetail toDetail(ReviewRow r, DetailParts parts) {
         // Same reconciled-open figures the list row shows (openCounts) — the header badge must
         // agree with the list instead of quoting this run's raw (possibly stale) outcome.
-        OpenCounts openCounts = openCounts(r);
+        OpenFindingCounts openCounts = openCounts(r);
         return new ReviewDetail(r.id, r.workspace, r.slug, r.slug, r.pr, r.title, r.author, r.authorId,
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
-                List.of("", "", "", "", "", ""), findings, reconciliation,
-                charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r));
+                List.of("", "", "", "", "", ""), parts.findings(), parts.reconciliation(),
+                parts.charges().lines(), parts.charges().unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
+                parts.events(), r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r),
+                openCounts.atOrAbove(parts.level()), parts.level().name());
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */

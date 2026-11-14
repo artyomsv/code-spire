@@ -10,7 +10,9 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-/** A manual registration cannot know a pull request's provenance, so its event says "unknown" (harness reviews, step 8). */
+/**
+ * A manual registration cannot know a pull request's provenance, so its event says "unknown" (harness reviews, step 8).
+ */
 class ManualRegistrationEventTest {
 
     @Test

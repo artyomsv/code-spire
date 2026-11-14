@@ -12,7 +12,7 @@ class RepositoryDeliveryTest {
     private final IntegrationEvent event = new IntegrationEvent.PullRequestEventReceived(
             new RepoRef("TEST-team", "TEST-repo"), 1, IntegrationEvent.PrAction.OPENED,
             "TEST", "", "TEST-feature", "main", "abc1234", Author.of("TEST-id", "TEST-user", ""),
-            "https://forge.example.test/TEST-team/TEST-repo/pull/1", "github");
+            "https://forge.example.test/TEST-team/TEST-repo/pull/1", "github", false);
 
     @Test void requiresARepositoryOrRegistration() {
         assertNotNull(delivery(repository, null, 0, "TEST-id"));

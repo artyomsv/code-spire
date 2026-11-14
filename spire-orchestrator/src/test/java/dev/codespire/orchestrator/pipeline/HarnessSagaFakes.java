@@ -133,6 +133,11 @@ final class HarnessSagaFakes {
             public Optional<Boolean> reviewerMayApprove(UUID id) {
                 return Optional.of(true);
             }
+
+            @Override
+            public Optional<dev.codespire.orchestrator.repository.BlockApprovalAt> blockApprovalAt(UUID id) {
+                return Optional.of(dev.codespire.orchestrator.repository.BlockApprovalAt.BLOCKER);
+            }
         };
         saga.repositoryAccounts = new RepositoryAccounts() {
             @Override

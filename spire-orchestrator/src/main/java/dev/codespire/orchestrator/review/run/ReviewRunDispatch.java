@@ -91,7 +91,9 @@ public class ReviewRunDispatch {
         }
     }
 
-    /** What one dispatch sends: a trusted review's command or an untrusted one's, which the lane and the row read alike. */
+    /**
+     * What one dispatch sends: a trusted review's command or an untrusted one's, which the lane and the row read alike.
+     */
     private record Built(RunCommand command, RunCommand.ExecuteRun execution) {
     }
 
@@ -161,7 +163,7 @@ public class ReviewRunDispatch {
         RunFunding.Choice choice = request.choice();
         ReviewRunBinding binding = request.binding();
         ScmProvider reviewer = target.reviewer();
-        // The fork author names the branch, so an untrusted run is cloned onto a fixed local one and never the author's.
+        // The fork author names the branch, so an untrusted run is cloned onto a fixed local one, never the author's.
         String branch = target.untrusted() ? PullRefs.localBranch(binding.prId()) : target.sourceBranch();
         RunCommand.ExecuteRun execution = new RunCommand.ExecuteRun(runId, target.repo(),
                 FactoryCloneUrls.cloneUrl(target.type(), reviewer.baseUrl(), target.repo()), branch,

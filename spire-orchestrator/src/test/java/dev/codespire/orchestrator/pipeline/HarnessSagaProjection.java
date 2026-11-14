@@ -126,8 +126,9 @@ class HarnessSagaProjection extends TestRepositoryProjection {
     public void recordPosted(String reviewId, String commit, String summaryCommentId) {
     }
 
+    /** The count at whatever level the saga asks; the real one opens a database. */
     @Override
-    public int openBlockers(String reviewId) {
+    public int openBlocking(String reviewId, dev.codespire.orchestrator.repository.BlockApprovalAt level) {
         return openBlockers;
     }
 

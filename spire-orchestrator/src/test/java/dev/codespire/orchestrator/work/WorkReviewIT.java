@@ -48,6 +48,15 @@ class WorkReviewIT extends WorkPreparedFixture {
         delivery.advance(attempt);assertEquals("review",store.load(id).phase());assertEquals("active",store.load(id).workflowStatus());return id;
     }
     void reviewResult(String id,String head,boolean degraded,boolean blocker) {
+        var findings=blocker?List.of(new Finding("TEST-file",null,Severity.BLOCKER,"TEST unresolved blocker",null)):List.<Finding>of();
+        recordReview(id,head,new ReviewResult(findings,"TEST measured review",ModelUsage.of("TEST-review-model",1,1),false,degraded));
+    }
+    /** A completed, non-degraded review at the delivered head whose one open finding has this severity. */
+    void reviewedWith(String id,Severity severity) {
+        var findings=List.of(new Finding("TEST-file",null,severity,"TEST unresolved "+severity,null));
+        recordReview(id,"b".repeat(40),new ReviewResult(findings,"TEST measured review",ModelUsage.of("TEST-review-model",1,1),false,false));
+    }
+    void recordReview(String id,String head,ReviewResult result) {
         var execution=store.load(id).progress().execution();var repo=sources.get(source).orElseThrow().repository();
         review=ReviewIds.reviewId(repo,execution.pullRequest().number());
         var run=runs.find(execution.runId()).orElseThrow();
@@ -55,8 +64,6 @@ class WorkReviewIT extends WorkPreparedFixture {
         reviews.registerHeader(review,repo,901,"TEST proposed work","TEST author","900123",run.branch(),run.baseBranch(),head,
                 execution.pullRequest().url(),"github","reviewing",1);
         reviews.setPrState(review,"OPEN");
-        var findings=blocker?List.of(new Finding("TEST-file",null,Severity.BLOCKER,"TEST unresolved blocker",null)):List.<Finding>of();
-        var result=new ReviewResult(findings,"TEST measured review",ModelUsage.of("TEST-review-model",1,1),false,degraded);
         reviews.recordOutcome(review,result,ReviewProjection.STAGE_DONE);reviews.recordOpenFindings(review,result,List.of(),List.of());
         reviews.recordPosted(review,head,"TEST-summary");
         domain.on(EventEnvelope.domain(review,0,"TEST-review-completed",null,new DomainEvent.ReviewCompleted(head,"TEST-summary")));
@@ -136,6 +143,19 @@ class WorkReviewIT extends WorkPreparedFixture {
     }
     @Test void aDegradedReviewDoesNotBecomeAPassingPhase() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),true,false);waiting(id,"review_result_pending");}
     @Test void openBlockersKeepLandWaiting() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,true);waiting(id,"review_blockers_open");}
+    // --- "Block approval at" (V115): the land gate counts at the repository's level ---
+    void blockApprovalAt(String level) {
+        var row=repositories.get(repository).orElseThrow();var repo=sources.get(source).orElseThrow().repository();
+        repositories.update(repository,row.revision(),new RepositoryInput("github",forge.baseUrl(),repo.workspace(),repo.slug(),true,reviewer,account,null,null,null,level));
+    }
+    void reachesLand(String id) {
+        observer.advance(id);assertEquals("land",store.load(id).phase());assertEquals(review,store.load(id).progress().execution().reviewId());
+    }
+    @Test void aMajorOnlyReviewHoldsLandAtMajor() throws Exception {blockApprovalAt("MAJOR");String id=delivered();reviewedWith(id,Severity.MAJOR);waiting(id,"review_blockers_open");}
+    @Test void aMajorOnlyReviewReachesLandAtBlocker() throws Exception {String id=delivered();reviewedWith(id,Severity.MAJOR);reachesLand(id);}
+    @Test void aMinorOnlyReviewHoldsLandAtMinor() throws Exception {blockApprovalAt("MINOR");String id=delivered();reviewedWith(id,Severity.MINOR);waiting(id,"review_blockers_open");}
+    @Test void aMinorOnlyReviewReachesLandAtMajor() throws Exception {blockApprovalAt("MAJOR");String id=delivered();reviewedWith(id,Severity.MINOR);reachesLand(id);}
+    @Test void aNitNeverHoldsLandAtMinor() throws Exception {blockApprovalAt("MINOR");String id=delivered();reviewedWith(id,Severity.NIT);reachesLand(id);}
     @Test void aClosedPullRequestCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);reviews.setPrState(review,"DECLINED");waiting(id,"review_pr_not_open");}
     @Test void unreadableEvidenceCannotMasqueradeAsZeroFindings() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);execute("UPDATE review_status SET findings_json='TEST-unreadable-ciphertext' WHERE review_id=?",review);waiting(id,"review_evidence_unreadable");}
     @Test void anArchivedPullRequestCannotAuthorizeLand() throws Exception {String id=delivered();reviewResult(id,"b".repeat(40),false,false);execute("UPDATE review_status SET archived_at=now() WHERE review_id=?",review);waiting(id,"review_pr_not_open");}

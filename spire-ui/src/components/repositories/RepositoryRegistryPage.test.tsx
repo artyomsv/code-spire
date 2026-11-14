@@ -17,7 +17,7 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, reviewLlmProviderId: null, reviewHarness: null,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', reviewLlmProviderId: null, reviewHarness: null,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
@@ -115,6 +115,23 @@ describe('Repository registry', () => {
     fireEvent.click(setting);
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerMayApprove: false }), repo));
+  });
+
+  /** V115: three levels, the stored one selected, and the choice saved; info and nits are not levels. */
+  it('saves the block-approval-at level, starting from the stored one', async () => {
+    vi.mocked(api.fetchRepositories).mockResolvedValue([{ ...repo, blockApprovalAt: 'MAJOR' }]);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const level = screen.getByRole('combobox', { name: 'Block approval at' });
+    expect(level).toHaveValue('MAJOR');
+    expect(within(level).getAllByRole('option').map(option => option.textContent))
+      .toEqual(['Blocker', 'Major and above', 'Minor and above']);
+    expect(screen.getByText(/Info and nits never block./)).toBeInTheDocument();
+    fireEvent.change(level, { target: { value: 'MINOR' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
+      expect.objectContaining({ blockApprovalAt: 'MINOR' }), { ...repo, blockApprovalAt: 'MAJOR' }));
   });
 
   /** Harness reviews, decision 1: the global default, or one enabled provider; a switched-off one is never offered. */
@@ -281,7 +298,7 @@ describe('Repository registry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save repository' }));
     // reviewerMayApprove: a NEW repository gets the default (mutation check t10-b: the edit-form test
     // starts from a saved value, so only this registration path sees the default).
-    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true }), null));
+    await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(expect.objectContaining({ reviewerAccountId: null, factoryAccountId: null, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER' }), null));
   });
 
   it('names the pending registration and links only a matching repository', async () => {

@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** An untrusted (fork) pull request's review run: its own command, the forge's pull ref and a fixed local branch. */
 class ReviewRunDispatchForkTest extends ReviewRunDispatchFixture {
 
-    /** Step 8: an untrusted pull request is sent on its own command, with the forge's pull ref and a fixed local branch. */
+    /**
+     * Step 8: an untrusted pull request is sent on its own command, with the forge's pull ref and a fixed local branch.
+     */
     @Test
     void aForkIsSentUntrustedWithItsRefAndFixedBranch() {
         fromFork = true;

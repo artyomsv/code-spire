@@ -19,7 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code WorkspaceClone.FETCH_REF_PATTERN} (spire-workspace). The worker may not depend on spire-workspace
  * ({@code RunWorkerRunsNoGitTest}) and spire-workspace takes nothing from spire-contract, so no test in either module
  * sees both. A ref the worker accepts and init refuses fails a fork review after the model proxy is up; the other way
- * round, init would fetch a ref the command's own validation never allowed. Read as text, like every guard in this module.
+ * round, init would fetch a ref the command's own validation never allowed. Read as text, like every guard in this
+ * module.
  */
 class ForkRefPatternsAgreeTest {
 

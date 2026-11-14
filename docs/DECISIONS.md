@@ -534,6 +534,16 @@ design is [the GitHub reviews specification](superpowers/specs/2026-10-15-github
 - A reviewer account with read access can post reviews but cannot dismiss its own hold; the WARN names it.
 - Branch protection rules decide whether the bot's Approve counts; this design does not read them.
 
+**Amended 2026-11-14 — Block approval at (PR #420, V115;
+[the approval threshold design](superpowers/specs/2026-11-14-approval-threshold-design.md)).** Live on `spire-test`
+#106 the bot approved beside an open MAJOR finding, which the operator read as a contradiction. Each repository now
+has a "Block approval at" level: `BLOCKER` (the default, and every repository that existed before), `MAJOR` (Major and
+above) or `MINOR` (Minor and above); `INFO` and `NIT` never block. Request changes now means at least one open
+finding at or above the repository's level; none means Approve, and a degraded review stays a Comment. "Reviewer may
+approve" off still wins. The land gate counts at the same level, and the review page calls those findings blocking.
+An unknown repository counts at `BLOCKER`. The `ReviewVerdictDecided` timeline line keeps `open_blockers=N` at
+`BLOCKER` and names any other level (`open_at_or_above_major=N`, `no_open_at_or_above_minor`).
+
 ---
 
 ## ADR-046 — Verify runs the operator's checks on a clean copy of the checkpoint

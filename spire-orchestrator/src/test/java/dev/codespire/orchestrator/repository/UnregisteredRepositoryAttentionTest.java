@@ -22,7 +22,7 @@ class UnregisteredRepositoryAttentionTest extends RepositoryFixture {
         RepoRef repo = dev.codespire.contract.event.ReviewIds.parse("review::" + workspace + "/TEST-repo#1").repo();
         IntegrationEvent event = new IntegrationEvent.PullRequestEventReceived(repo, 1, IntegrationEvent.PrAction.OPENED,
                 "TEST-title", "TEST-description", "TEST-branch", "main", "TEST-sha", Author.of("TEST-author", "TEST-author", ""),
-                origin + "/" + repo.full() + "/-/merge_requests/1", "gitlab");
+                origin + "/" + repo.full() + "/-/merge_requests/1", "gitlab", false);
         ingress.accept(new RepositoryDelivery(null, registration, 1, "gitlab", origin, RepositoryEventKind.REVIEWER,
                 "TEST-delivery", event));
         var row = attention.collect().stream().filter(a -> a.code().equals("REPOSITORY_NOT_REGISTERED")

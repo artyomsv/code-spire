@@ -28,6 +28,8 @@ public class WorkReview {
     @Inject dev.codespire.orchestrator.provider.ProviderClients clients;
     /** The REVIEWER registration, for the login the factory asks the forge to request (ADR-047 D9). */
     @Inject dev.codespire.orchestrator.repository.RepositoryAccounts repositoryAccounts;
+    /** The repository's "Block approval at" (V115): the level the land gate counts open findings at. */
+    @Inject dev.codespire.orchestrator.repository.RepositoryRegistry repositories;
     private static final org.jboss.logging.Logger LOG=org.jboss.logging.Logger.getLogger(WorkReview.class);
     /** The receipt channel of the reviewer request; the delivery is {@code reviewer-request:<attemptId>:<pr>}. */
     static final String REQUEST_CHANNEL="factory";
@@ -61,7 +63,7 @@ public class WorkReview {
         var detail=reviews.loadDetail(observed.workspace(),observed.slug(),execution.pullRequest().number()).orElse(null);
         if(detail==null || !detail.id().equals(observed.review()) || !detail.sha().equals(execution.head())
                 || !"completed".equals(detail.status()) || detail.degraded()) {waiting(item,"review_result_pending");return;}
-        if(detail.openBlockers()>0) {
+        if(openBlocking(item,detail.id())>0) {
             // A land fix the reviewer holds goes to the operator with the review; no agent fixes findings in this loop (§6).
             if(WorkItemLifecycle.landFixInProgress(WorkItemTransitions.facts(store.history(id))))landTransitions.landFixReviewBlocked(id,item.progress().attemptId());
             else waiting(item,"review_blockers_open");
@@ -69,6 +71,15 @@ public class WorkReview {
         }
         // Review spend already belongs to the existing reviewer ledger. Merely observing it is not another call.
         transitions.complete(id,new WorkItemTransitions.PhaseResult(item.progress().attemptId(),true,0,0,0,true,execution.reviewed(observed.review())));
+    }
+    /**
+     * The open findings at or above the item's repository's "Block approval at", the count the verdict was decided on
+     * (V115); an unknown repository counts at BLOCKER, the rule before the setting.
+     */
+    private int openBlocking(WorkItemEvent item,String reviewId) {
+        dev.codespire.orchestrator.repository.BlockApprovalAt level=repositories.blockApprovalAt(item.repositoryId())
+                .orElse(dev.codespire.orchestrator.repository.BlockApprovalAt.DEFAULT);
+        return reviews.openBlocking(reviewId,level);
     }
     /**
      * Delivery is the end of the factory's work on a pull request, so a draft is marked ready for review

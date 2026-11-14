@@ -52,15 +52,19 @@ public class HarnessReviewResults implements ReviewRunResults {
     static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
 
     /**
-     * True when the run worker refused to start the run because a fork review would have run unproxied. The detail is
-     * the exception's text, so it is the constant alone or {@code <ExceptionType>: <constant>}: matched at the end, never
-     * anywhere in the text, so a message that merely quotes the constant is still a failure.
+     * True when the run worker refused to start the run because a fork review would have run unproxied. The run worker
+     * throws {@code IllegalStateException(FORK_PROXY_REQUIRED)} and {@code RunLauncher} reports it as
+     * {@code <simple class name>: <message>}, so the detail is exactly one of the two forms below; anything longer, such
+     * as another prefix before the constant, is still a failure.
      */
     static boolean isUnproxiedFork(RunResult.RunFailed failed) {
         String detail = failed.detail();
-        return BAD_COMMAND.equals(failed.cause()) && detail != null
-                && (detail.equals(FORK_PROXY_REQUIRED) || detail.endsWith(": " + FORK_PROXY_REQUIRED));
+        return BAD_COMMAND.equals(failed.cause())
+                && (FORK_PROXY_REQUIRED.equals(detail) || LAUNCHER_FORK_PROXY_REQUIRED.equals(detail));
     }
+
+    /** The detail the run worker's launcher gives the refusal: the exception's simple name, then its message. */
+    private static final String LAUNCHER_FORK_PROXY_REQUIRED = "IllegalStateException: " + FORK_PROXY_REQUIRED;
 
     /** The phase a failure to send the answer to the worker is recorded under, as the worker's own finish failure. */
     static final String FINISH_PHASE = "harness-finish";
@@ -72,7 +76,7 @@ public class HarnessReviewResults implements ReviewRunResults {
     private static final String UNRECORDED_MODEL = "UNRECORDED";
 
     /** The harness named in a refusal when the run's row cannot be read. */
-    private static final String UNRECORDED_HARNESS = "UNRECORDED";
+    static final String UNRECORDED_HARNESS = "UNRECORDED";
 
     @Inject
     ResultSaga saga;

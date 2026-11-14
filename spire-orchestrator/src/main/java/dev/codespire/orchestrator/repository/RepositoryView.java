@@ -9,11 +9,21 @@ import java.util.UUID;
  *                            global default
  * @param reviewHarness       the harness this repository's reviews run on (harness reviews, step 5); null means
  *                            the API
+ * @param blockApprovalAt     the lowest severity whose open finding blocks approval and a factory land (V115)
  */
 public record RepositoryView(UUID id, String scmType, String forgeOrigin, String workspace,
                              String slug, boolean enabled, long revision, Account reviewer, Account factory,
-                             boolean reviewerMayApprove, UUID reviewLlmProviderId, ReviewHarness reviewHarness) {
+                             boolean reviewerMayApprove, UUID reviewLlmProviderId, ReviewHarness reviewHarness,
+                             BlockApprovalAt blockApprovalAt) {
     public record Account(UUID id, String name, String role, String handle, String state) { }
+
+    /** Call sites from before "Block approval at" existed; they block at {@code BLOCKER}. */
+    public RepositoryView(UUID id, String scmType, String forgeOrigin, String workspace, String slug,
+                          boolean enabled, long revision, Account reviewer, Account factory,
+                          boolean reviewerMayApprove, UUID reviewLlmProviderId, ReviewHarness reviewHarness) {
+        this(id, scmType, forgeOrigin, workspace, slug, enabled, revision, reviewer, factory,
+                reviewerMayApprove, reviewLlmProviderId, reviewHarness, BlockApprovalAt.DEFAULT);
+    }
 
     /** Call sites from before the review harness existed; null means the API. */
     public RepositoryView(UUID id, String scmType, String forgeOrigin, String workspace, String slug,

@@ -26,6 +26,7 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.caps.CapRefusal;
+import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -33,7 +34,7 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
-import dev.codespire.orchestrator.factory.FixTargets;
+import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -508,17 +509,21 @@ public class ResultSaga {
     }
 
     /**
-     * ADR-047 D4: decided here because the projection's open-blocker count is what the land gate reads,
-     * and it is already right at this point (recordOpenFindings ran above).
+     * ADR-047 D4: decided here because the projection's open count at the repository's "Block approval at"
+     * (V115) is what the land gate reads, and it is already right at this point (recordOpenFindings ran above).
+     * An unknown repository counts at BLOCKER.
      */
     private ReviewVerdictDecision.Decision decideVerdict(String reviewId, ReviewResult visible) {
         java.util.Optional<java.util.UUID> repositoryId = projection.repositoryIdOf(reviewId);
         // Lambdas, not method references: a method reference dereferences its receiver when it is
         // built, so an empty repository id would still touch the registries (and a test fake that
         // never set them would throw before the decision ran).
-        java.util.Optional<Boolean> setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id));
+        Boolean setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id)).orElse(null);
+        BlockApprovalAt level = repositoryId.flatMap(id -> repositories.blockApprovalAt(id))
+                .orElse(BlockApprovalAt.DEFAULT);
         boolean identityKnown = repositoryId.map(id -> repositoryAccounts.reviewerIdentityKnown(id)).orElse(false);
-        return ReviewVerdictDecision.decide(visible.degraded(), projection.openBlockers(reviewId), setting, identityKnown);
+        return ReviewVerdictDecision.decide(new ReviewVerdictDecision.VerdictFacts(visible.degraded(),
+                projection.openBlocking(reviewId, level), level, setting, identityKnown));
     }
 
     /**

@@ -111,6 +111,8 @@ describe('a degraded review on the detail page', () => {
       reconciliation: [],
       openFindings: 0,
       openBlockers: 0,
+      openBlocking: 0,
+      blockApprovalAt: 'BLOCKER',
       errorDetail: null,
       ...over,
     }) as ReviewDetail;

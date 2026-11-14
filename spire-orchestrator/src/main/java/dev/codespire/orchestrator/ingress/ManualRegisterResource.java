@@ -207,9 +207,9 @@ public class ManualRegisterResource {
     }
 
     /**
-     * The event a manual registration sends. Its fork status is UNKNOWN (null), never false: the forge was asked for the
-     * pull request's text, not its provenance, so asserting false would overwrite a webhook's true and make a fork
-     * trusted (harness reviews, step 8). Unknown is untrusted and never replaces a recorded value.
+     * The event a manual registration sends. Its fork status is UNKNOWN (null), never false: the forge was asked for
+     * the pull request's text, not its provenance, so asserting false would overwrite a webhook's true and make a
+     * fork trusted (harness reviews, step 8). Unknown is untrusted and never replaces a recorded value.
      */
     static PullRequestEventReceived registrationEvent(PullRequest pr, String providerType) {
         return new PullRequestEventReceived(pr.repo(), pr.prId(), PrAction.OPENED, pr.title(), pr.description(),

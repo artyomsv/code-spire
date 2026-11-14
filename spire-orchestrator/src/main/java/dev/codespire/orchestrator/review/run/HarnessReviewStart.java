@@ -19,9 +19,9 @@ import java.util.Optional;
 /**
  * Whether a review runs on a harness, and if so sends it to the review worker to prepare (harness reviews, step 6).
  *
- * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request (a fork) with no pull ref, or one whose
- * provenance is unknown and has no pull ref, is {@link Refused}; a review whose round cannot be read is {@link Refused}; a review with no
- * packed reviewer credential is {@link Refused}; otherwise a {@code PrepareHarnessReview} is sent and the decision is
+ * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request (a
+ * fork) with no pull ref, or one whose provenance is unknown and has no pull ref, is {@link Refused}; a review whose
+ * round cannot be read is {@link Refused}; a review with no packed reviewer credential is {@link Refused}; otherwise a {@code PrepareHarnessReview} is sent and the decision is
  * {@link Preparing}. A re-review whose prior run has open findings is prepared as a {@code RECONCILE}, any other review
  * as a {@code REVIEW}. The run is dispatched once the worker answers, by {@link HarnessReviewLaunch}. A refusal never
  * falls back to the API (operator decision 6).

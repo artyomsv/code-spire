@@ -220,7 +220,7 @@ class OrchestratorChoreographyTest {
                 REPO, 79, action, "TEST: code references", "TEST description",
                 "feature/TEST-code-refs", "main", "ddd444ddd444",
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/pr/79", null);
+                "https://example.invalid/pr/79", null, false);
     }
 
     private IntegrationEvent prEvent78(PrAction action) {
@@ -228,7 +228,7 @@ class OrchestratorChoreographyTest {
                 REPO, 78, action, "TEST: cancel flow", "TEST description",
                 "feature/TEST-cancel", "main", "ccc333ccc333",
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/pr/78", null);
+                "https://example.invalid/pr/78", null, false);
     }
 
     private void produce78(IntegrationEvent event) throws Exception {
@@ -243,7 +243,7 @@ class OrchestratorChoreographyTest {
                 REPO, 77, action, "TEST: choreography", "TEST description",
                 "feature/TEST-x", "main", commit,
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
-                "https://example.invalid/pr/77", null);
+                "https://example.invalid/pr/77", null, false);
     }
 
     private void produce(String topic, IntegrationEvent event) throws Exception {

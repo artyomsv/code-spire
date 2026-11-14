@@ -36,7 +36,10 @@ class IntegrationSagaForkProvenanceTest extends IntegrationSagaFixture {
         assertTrue(fromForkCalls.isEmpty(), "unknown never overwrites the recorded answer: " + fromForkCalls);
     }
 
-    /** Nothing is written for a new pull request either, so its column stays NULL, which every reader treats as untrusted. */
+    /**
+     * Nothing is written for a new pull request either, so its column stays NULL, which every reader treats as
+     * untrusted.
+     */
     @Test
     void aManualRegistrationOfANewPullRequestIsUntrusted() {
         register(saga(), null);

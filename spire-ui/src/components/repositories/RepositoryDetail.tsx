@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createWebhookRepo, fetchWebhookRepos, updateWebhookRepo, rotateWebhookSecret, verifyRepo,
+import { BLOCK_APPROVAL_AT_LABEL, createWebhookRepo, fetchWebhookRepos, updateWebhookRepo, rotateWebhookSecret, verifyRepo,
   type WebhookRepoView, type WebhookRepoSecret, type WebhookEventKind } from '../../api';
 import type { Repository } from './repositoriesApi';
 import ActorPicker from '../ActorPicker';
@@ -93,6 +93,7 @@ export default function RepositoryDetail({ repository, hooks, onHooksChanged }: 
     <section aria-label="Selected accounts" className="prov-note"><h4>Selected accounts</h4>
       <RepositoryAccountsCell repository={repository} />
       <p className="prov-sub">Reviewer may approve: {repository.reviewerMayApprove ? 'on' : 'off'}</p>
+      <p className="prov-sub">Block approval at: {BLOCK_APPROVAL_AT_LABEL[repository.blockApprovalAt ?? 'BLOCKER']}</p>
       {repository.reviewer && <div className="prov-actions"><button className="btn-ghost" disabled={busy} onClick={() => void verify()}>Verify reviewer access</button></div>}
       {verification && <p role="status">{verification}</p>}
     </section>

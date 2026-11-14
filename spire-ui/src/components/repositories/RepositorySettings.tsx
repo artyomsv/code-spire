@@ -29,7 +29,8 @@ function inputOf(repository: Repository): RepositoryInput {
   return {
     scmType: repository.scmType, forgeOrigin: repository.forgeOrigin, workspace: repository.workspace, slug: repository.slug,
     enabled: repository.enabled, reviewerAccountId: repository.reviewer?.id ?? null, factoryAccountId: repository.factory?.id ?? null,
-    reviewerMayApprove: repository.reviewerMayApprove, reviewLlmProviderId: repository.reviewLlmProviderId ?? null,
+    reviewerMayApprove: repository.reviewerMayApprove, blockApprovalAt: repository.blockApprovalAt ?? 'BLOCKER',
+    reviewLlmProviderId: repository.reviewLlmProviderId ?? null,
     reviewHarness: repository.reviewHarness ?? null,
   };
 }

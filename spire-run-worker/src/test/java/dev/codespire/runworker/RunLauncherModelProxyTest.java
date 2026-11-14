@@ -103,7 +103,7 @@ class RunLauncherModelProxyTest {
                 return unit;
             }
         };
-        // The mode that proxies reviews, so a fork reaches the built-unit check (an arm with no route) these tests fake.
+        // The mode that proxies reviews, so a fork reaches the built-unit check (an arm with no route) these fake.
         builder.credentialProxyMode = CredentialProxyMode.REVIEWS;
         builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.ENFORCE;
         launcher.builder = builder;

@@ -101,7 +101,9 @@ class RunUnitBuilderUntrustedTest extends ModelProxyUnitFixture {
         }
     }
 
-    /** Egress in report mode still routes the model proxy through the egress proxy, so a fork review is allowed there. */
+    /**
+     * Egress in report mode still routes the model proxy through the egress proxy, so a fork review is allowed there.
+     */
     @Test
     void anUntrustedReviewIsProxiedWithEgressInReportMode() {
         RunUnitSpec unit = proxying(CredentialProxyMode.REVIEWS, EgressPolicy.Mode.REPORT)
@@ -131,8 +133,8 @@ class RunUnitBuilderUntrustedTest extends ModelProxyUnitFixture {
     }
 
     /**
-     * Claude Code would refuse an unproxied run itself, as credential_proxy_required; a fork is refused as a fork first,
-     * in every mode that does not proxy reviews and with egress off.
+     * Claude Code would refuse an unproxied run itself, as credential_proxy_required; a fork is refused as a fork
+     * first, in every mode that does not proxy reviews and with egress off.
      */
     @Test
     void anUnproxiedClaudeCodeForkIsRefusedAsAFork() {

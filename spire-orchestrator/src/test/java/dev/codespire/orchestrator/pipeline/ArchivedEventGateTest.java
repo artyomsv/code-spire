@@ -260,7 +260,7 @@ class ArchivedEventGateTest {
     private static IntegrationEvent pushed(long pr) {
         return new PullRequestEventReceived(REPO_REF, pr, PrAction.UPDATED, "TEST-TITLE", "TEST-DESC",
                 "TEST-SOURCE", "TEST-TARGET", "TESTSHA" + pr + "B", HUMAN,
-                "http://example.invalid/pr/" + pr, "github");
+                "http://example.invalid/pr/" + pr, "github", false);
     }
 
     private static IntegrationEvent closed(long pr) {

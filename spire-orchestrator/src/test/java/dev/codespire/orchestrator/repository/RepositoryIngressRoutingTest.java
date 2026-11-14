@@ -74,7 +74,7 @@ class RepositoryIngressRoutingTest {
     private IntegrationEvent opened() {
         return new IntegrationEvent.PullRequestEventReceived(repo, 7, IntegrationEvent.PrAction.OPENED,
                 "TEST", "", "TEST-feature", "main", "abc1234", Author.of("TEST-id", "TEST-human", ""),
-                selected.forgeOrigin() + "/" + repo.full() + "/-/merge_requests/7", "gitlab");
+                selected.forgeOrigin() + "/" + repo.full() + "/-/merge_requests/7", "gitlab", false);
     }
     private IntegrationEvent reply(String reviewId) {
         return new IntegrationEvent.AuthorReplied(repo, 7, reviewId, new ThreadRef("TEST-thread"), "TEST-comment",

@@ -174,6 +174,21 @@ class HarnessReviewResultsTest {
     }
 
     @Test
+    void aDetailWithAnotherPrefixBeforeTheProxyTextStaysAFailure() {
+        fixture.results().accept(failed("BAD_COMMAND", "X: Y: fork_requires_credential_proxy"), ROUND_ONE);
+
+        assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertTrue(fixture.refusals.isEmpty(), fixture.refusals.toString());
+    }
+
+    @Test
+    void theBareProxyDetailIsStillTheRefusal() {
+        fixture.results().accept(failed("BAD_COMMAND", "fork_requires_credential_proxy"), ROUND_ONE);
+
+        assertEquals(List.of(REVIEW_ID + "@" + HEAD + ": TEST-harness: fork_requires_credential_proxy"), fixture.refusals);
+    }
+
+    @Test
     void theProxyDetailOnAnotherCauseStaysAFailure() {
         fixture.results().accept(failed("AGENT_FAILED", "IllegalStateException: fork_requires_credential_proxy"), ROUND_ONE);
 

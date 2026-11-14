@@ -31,6 +31,8 @@ const review: ReviewDetailData = {
   unpricedCalls: 0,
   openFindings: 0,
   openBlockers: 0,
+  openBlocking: 0,
+  blockApprovalAt: 'BLOCKER',
   attempt: 1,
   stages: ['done', 'done', 'done', 'active', 'pending', 'pending'],
   timings: ['0.1s', '0.2s', '0.1s', '', '', ''],

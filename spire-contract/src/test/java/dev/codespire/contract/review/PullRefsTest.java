@@ -53,6 +53,16 @@ class PullRefsTest {
     }
 
     @Test
+    void aForkReviewNamesItsOwnPullRequestsRef() {
+        PullRefs.requireForkReview("refs/pull/9/head", "spire/review-9", 9);
+        PullRefs.requireForkReview("refs/merge-requests/9/head", "spire/review-9", 9);
+        assertThrows(IllegalArgumentException.class,
+                () -> PullRefs.requireForkReview("refs/pull/10/head", "spire/review-9", 9));
+        assertThrows(IllegalArgumentException.class,
+                () -> PullRefs.requireForkReview("refs/merge-requests/19/head", "spire/review-9", 9));
+    }
+
+    @Test
     void theLocalBranchNamesThePull() {
         assertEquals("spire/review-9", PullRefs.localBranch(9));
     }
