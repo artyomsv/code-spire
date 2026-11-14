@@ -497,10 +497,10 @@ class ResultSagaRetryTest {
             public void recordCharges(ChargeCall call) {
             }
 
-            // The verdict decision (ADR-047) counts open blockers on every ReviewGenerated; the real
-            // one opens a connection, so this fake answers for it.
+            // The verdict decision (ADR-047) counts open blocking findings on every ReviewGenerated; the
+            // real one opens a connection, so this fake answers for it.
             @Override
-            public int openBlockers(String reviewId) {
+            public int openBlocking(String reviewId, dev.codespire.orchestrator.repository.BlockApprovalAt level) {
                 return 0;
             }
         };
@@ -509,6 +509,11 @@ class ResultSagaRetryTest {
             @Override
             public Optional<Boolean> reviewerMayApprove(java.util.UUID id) {
                 return Optional.of(true);
+            }
+
+            @Override
+            public Optional<dev.codespire.orchestrator.repository.BlockApprovalAt> blockApprovalAt(java.util.UUID id) {
+                return Optional.of(dev.codespire.orchestrator.repository.BlockApprovalAt.BLOCKER);
             }
         };
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {

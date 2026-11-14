@@ -552,7 +552,7 @@ class ResultSagaPricingTest {
         }
 
         @Override
-        public int openBlockers(String reviewId) {
+        public int openBlocking(String reviewId, dev.codespire.orchestrator.repository.BlockApprovalAt level) {
             return 0;
         }
 

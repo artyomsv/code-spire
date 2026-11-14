@@ -19,6 +19,7 @@ import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.LlmModelRegistry;
 import dev.codespire.orchestrator.provider.WorkerCredentials;
 import dev.codespire.orchestrator.readmodel.ReviewThreadView;
+import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +50,9 @@ class ResultSagaVerdictTest {
     private final List<String> timelineLines = new ArrayList<>();
     private final List<String> recordedVerdicts = new ArrayList<>();
     private int openBlockers;
+    /** A review whose only open finding is a MAJOR: blocking at MAJOR and MINOR, not at BLOCKER. */
+    private boolean majorOnly;
+    private Optional<BlockApprovalAt> level = Optional.of(BlockApprovalAt.BLOCKER);
     private Optional<Boolean> setting = Optional.of(true);
     private boolean identityKnown = true;
 
@@ -74,6 +78,35 @@ class ResultSagaVerdictTest {
         assertEquals(Boolean.TRUE, post.reviewerMayApprove());
         assertTrue(timelineLines.contains("ReviewVerdictDecided verdict:REQUEST_CHANGES · assessment:REQUEST_CHANGES · open_blockers=1"),
                 timelineLines.toString());
+    }
+
+    @Test
+    void aMajorOnlyReviewApprovesAtBlocker() {
+        majorOnly = true;
+        saga().on(generated());
+        assertEquals(ReviewVerdict.APPROVE, assertInstanceOf(ActionCommand.PostComments.class, emitted.getLast()).verdict());
+        assertTrue(timelineLines.contains("ReviewVerdictDecided verdict:APPROVE · assessment:APPROVE · no_open_blockers"),
+                timelineLines.toString());
+    }
+
+    @Test
+    void aMajorOnlyReviewRequestsChangesAtMajorAndTheTimelineNamesTheLevel() {
+        majorOnly = true;
+        level = Optional.of(BlockApprovalAt.MAJOR);
+        saga().on(generated());
+        assertEquals(ReviewVerdict.REQUEST_CHANGES,
+                assertInstanceOf(ActionCommand.PostComments.class, emitted.getLast()).verdict());
+        assertTrue(timelineLines.contains(
+                "ReviewVerdictDecided verdict:REQUEST_CHANGES · assessment:REQUEST_CHANGES · open_at_or_above_major=1"),
+                timelineLines.toString());
+    }
+
+    @Test
+    void aRepositoryWithNoLevelCountsAtBlocker() {
+        majorOnly = true;
+        level = Optional.empty();
+        saga().on(generated());
+        assertEquals(ReviewVerdict.APPROVE, assertInstanceOf(ActionCommand.PostComments.class, emitted.getLast()).verdict());
     }
 
     @Test
@@ -201,7 +234,10 @@ class ResultSagaVerdictTest {
 
             // The three the decision and the posted-verdict write reach; the real ones open a database.
             @Override
-            public int openBlockers(String reviewId) {
+            public int openBlocking(String reviewId, BlockApprovalAt at) {
+                if (majorOnly) {
+                    return at == BlockApprovalAt.BLOCKER ? 0 : 1;
+                }
                 return openBlockers;
             }
 
@@ -214,6 +250,11 @@ class ResultSagaVerdictTest {
             @Override
             public Optional<Boolean> reviewerMayApprove(UUID id) {
                 return setting;
+            }
+
+            @Override
+            public Optional<BlockApprovalAt> blockApprovalAt(UUID id) {
+                return level;
             }
         };
         saga.repositoryAccounts = new dev.codespire.orchestrator.repository.RepositoryAccounts() {
