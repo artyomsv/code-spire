@@ -2445,7 +2445,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   drops the reviewer bot and everyone while its identity is unknown, and writes `ContextLinksTrusted` or
   `ContextLinksSkipped` with who counted and who did not. Same-repository pull requests are unchanged and read no
   comments. Accepted limit: the first review usually runs before anyone comments, so a trusted comment helps the next
-  re-review or a Re-run. Not yet live-tested (docs/UNVERIFIED.md, the step 8 entry).
+  re-review or a Re-run. Live on `spire-test` #106 (a fork by `code-spire-beaver`, Codex `gpt-6-astra` on a seat, 2026-11-14): a Re-run kept the
+  description's link to issue #96 (`counted: @code-spire-beaver`), and after the owner commented a link to issue #83
+  the next Re-run loaded both issues (`3 link(s); counted: @code-spire-beaver, @artyomsv; not counted:
+  @code-spire-mole (REVIEWER_BOT)`). An untrusted commenter, the 10-author cap and GitLab are proven against fakes
+  only (docs/UNVERIFIED.md, the step 8 entry).
 
   Upgrading: no migration. Roll the review worker before the orchestrator so a marked `FetchDiff` is read by a worker
   that sends link sources. In either order nothing widens: an old worker ignores the mark and sends no sources, and an

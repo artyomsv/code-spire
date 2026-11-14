@@ -67,12 +67,14 @@ container; a push carrying a canary asking the agent to print its environment, w
   linked-context skip.
 - **Old components.** An old publisher ignores `SPIRE_FETCH_REF` and every fork fails `CLONE_FAILED`; an old run
   worker drops the command. Neither is exercised; the upgrade order is in docs/HISTORY.md.
-- **Links from trusted people (PR 8b, 2026-11-14) are not yet live-tested.** The worker's comment read (GitHub
-  conversation and inline comments, GitLab notes) is tested against a mocked client and WireMock; the trust decision
-  (`ContextLinks`, `LinkAuthorTrust`) against fakes whose permission answer goes through the real
-  `FixAuthorization.decide`. Not run: `FixPermissionService` against a live forge for a commenter, the side-by-side
-  reads under a slow forge, the 10-author cap, a GitLab fork, and the bot-handle match. The live proof needs a fork
-  on `spire-test` with a maintainer's comment linking an issue, then a Re-run. Mutation checks were reasoned, not run.
+- **Links from trusted people (PR 8b, 2026-11-14) are live-proven for trusted authors only.** Live on `spire-test`
+  #106 (a fork by `code-spire-beaver`, Codex `gpt-6-astra` on a seat, 2026-11-14): the author's description link and
+  the owner's comment link were kept after a live permission read, and the reviewer bot's comments were not counted.
+  No commenter without push access has been seen live. The worker's comment read (GitHub conversation and inline
+  comments, GitLab notes) is tested against a mocked client and WireMock; the trust decision (`ContextLinks`,
+  `LinkAuthorTrust`) against fakes whose permission answer goes through the real `FixAuthorization.decide`. Not run:
+  an untrusted or unassociated commenter, the side-by-side reads under a slow forge, the 10-author cap and a GitLab
+  fork. Mutation checks were reasoned, not run.
   GitLab notes carry no author association, so there the limit stays at the first 10 distinct authors in comment
   order; on GitHub the association (`author_association`) orders the reads, and the tests use fabricated JSON, not a live row.
 - **A reply skipped by the "smart 1:1" rule is silent** (found live, pre-existing from step 7). It logs at DEBUG only,
