@@ -259,6 +259,6 @@ abstract class IntegrationSagaFixture {
                 "Refactor checkout", "desc", "feature", "main",
                 "cafe123",
                 Author.of(accountId, username, "Display Name"),
-                "https://example/pr/412", providerType);
+                "https://example/pr/412", providerType, false);
     }
 }

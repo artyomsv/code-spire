@@ -47,6 +47,26 @@ class IntegrationEventWireTest {
     }
 
     /**
+     * A pull request recorded before the fork component existed has no fromFork member. It decodes to null, unknown
+     * provenance, which downstream treats as untrusted; it must not read as a same-repository pull request.
+     */
+    @Test
+    void aPullRequestWithoutForkProvenanceDecodesToUnknown() throws Exception {
+        String legacy = """
+                {"type":"PullRequestEventReceived","repo":{"workspace":"acme","slug":"widgets"},
+                 "prId":7,"action":"OPENED","title":"TEST","description":"","sourceBranch":"feature",
+                 "targetBranch":"main","headCommit":"abc1234",
+                 "author":{"providerUserId":"u-1","username":"octocat"},
+                 "htmlUrl":"https://forge.example.test/acme/widgets/pull/7","providerType":"github"}""";
+
+        IntegrationEvent.PullRequestEventReceived back =
+                (IntegrationEvent.PullRequestEventReceived) mapper.readValue(legacy, IntegrationEvent.class);
+
+        assertNull(back.fromFork());
+        assertEquals(7, back.prId());
+    }
+
+    /**
      * A FollowUpPosted recorded before the turn receipts existed has no countsTurn (review of PR #371, M-1): it reads
      * as one that does not count, so a dead letter or a redelivery of it never consumes a turn after the deploy.
      */

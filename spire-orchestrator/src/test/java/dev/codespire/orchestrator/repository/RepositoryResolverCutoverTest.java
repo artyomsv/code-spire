@@ -175,7 +175,7 @@ class RepositoryResolverCutoverTest extends RepositoryFixture {
     private IntegrationEvent.PullRequestEventReceived opened() {
         return new IntegrationEvent.PullRequestEventReceived(repo, 7, IntegrationEvent.PrAction.OPENED,
                 "TEST review", "", "TEST-feature", "main", "abc1234", Author.of("TEST-human", "TEST-author", "TEST Author"),
-                origin + "/" + repo.full() + "/-/merge_requests/7", "gitlab");
+                origin + "/" + repo.full() + "/-/merge_requests/7", "gitlab", false);
     }
     private RepositoryDelivery delivery() {
         return new RepositoryDelivery(selected.id(), null, 0, "gitlab", origin, RepositoryEventKind.REVIEWER,
