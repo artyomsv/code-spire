@@ -337,7 +337,31 @@ in [HARNESS-REVIEWS-8-ACCEPTANCE.md](factory/HARNESS-REVIEWS-8-ACCEPTANCE.md)).
 - **An untrusted pull request gathers no linked context**, on the API and the harness path alike. A fork author
   writes the title and description the links are read from, so would choose which private issues and documents are
   loaded. The review's event log says `context links skipped: untrusted pull request`. Operator ruling 2026-11-13.
-  Links named by an owner or a person with write access, in a comment, are planned as PR 8b.
+  Amended by 8b below: links from trusted people are gathered again.
+- **8b (amended 2026-11-14): links from trusted people.** Operator decisions 2026-11-13 and 2026-11-14
+  ([design](superpowers/specs/2026-11-14-fork-trusted-links-design.md)). On an untrusted pull request a link is
+  gathered only from text written by a person with push access: a comment on the pull request by such a person, and
+  the title, branch and description when the pull request's author has it. "Push access" is the `/fix` rule
+  (`FixAuthorization.decide`: the person's ALLOW/DENY override on the repository, then the forge's effective
+  permission through `FixPermissionService`); UNKNOWN, a failed read and a missing id do not count. The reviewer bot's
+  comments never count, matched on its stable id (its handle can only exclude), and while the reviewer's identity is
+  unknown nobody counts. Same-repository pull requests are unchanged. Shape:
+  - The orchestrator marks `FetchDiff.untrustedPullRequest` (from the event's provenance on a webhook, from the review
+    row on a re-run or a due retry), so only an untrusted pull request's worker calls the new port method
+    `DiffSource.fetchPullRequestComments` (GitHub: conversation and inline comments; GitLab: non-system notes; page
+    caps; the default reads nothing, so Bitbucket, refused upstream, reads nothing). A same-repository pull request
+    costs no extra call. Rejected: a fork flag on the provider-neutral `PullRequest` (a second fork rule beside the
+    ingress one), and reading comments on every pull request.
+  - The worker sends `DiffFetched.linkSources`: per source, the author's stable id, handle and the links found (at
+    most 50 links per source, 100 sources). Comment text is never sent or stored. A failed comment read keeps the
+    pull request's own source and the review.
+  - `ContextLinks` (now a bean) decides in the orchestrator, so the API and harness paths share it: one permission read
+    per distinct author per review, side by side, at most 10 authors (the rest `AUTHOR_LIMIT`), because each read is
+    bounded at 20 s and the results consumer is ordered. It gathers the union of the trusted sources' links and writes
+    `ContextLinksTrusted` (link count, the authors who counted) or `ContextLinksSkipped` (the authors who did not, each
+    with its reason). A message without link sources, from a worker before 8b, gathers none, as step 8 did.
+  - Accepted limit: the first review usually starts before anyone comments, so a trusted comment helps the next
+    re-review or a Re-run. Bitbucket forks stay refused. Not yet live-tested.
 - **Rejected:** cloning the fork's branch (it needs the fork's URL, a credential for it, and its name in the unit);
   running a fork with the real credential in the agent behind the egress proxy only; Data Center's `from` ref in this step.
 

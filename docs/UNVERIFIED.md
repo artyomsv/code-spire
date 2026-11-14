@@ -39,7 +39,7 @@ evidence would settle it**.
 reviews, re-reviews and replies, only in a unit whose model credential is held by the model proxy. An untrusted pull
 request (a fork, or fork status unknown) is sent as `ExecuteUntrustedReviewRun` with the forge's pull ref, init fetches
 that ref onto `spire/review-<prId>`, the run worker refuses an unproxied unit with `fork_requires_credential_proxy`,
-and no linked context is gathered. A Bitbucket Cloud or Data Center untrusted pull request is refused
+and linked context is gathered only from text written by people with push access (PR 8b). A Bitbucket Cloud or Data Center untrusted pull request is refused
 `fork_pull_request_has_no_pull_ref`.
 
 **What is proven live** (2026-11-13 and 2026-11-14, [HARNESS-REVIEWS-8-ACCEPTANCE.md](factory/HARNESS-REVIEWS-8-ACCEPTANCE.md)).
@@ -67,7 +67,12 @@ container; a push carrying a canary asking the agent to print its environment, w
   linked-context skip.
 - **Old components.** An old publisher ignores `SPIRE_FETCH_REF` and every fork fails `CLONE_FAILED`; an old run
   worker drops the command. Neither is exercised; the upgrade order is in docs/HISTORY.md.
-- **Links from trusted comments** (an owner or a person with write access) are not read; planned as PR 8b.
+- **Links from trusted people (PR 8b, 2026-11-14) are not yet live-tested.** The worker's comment read (GitHub
+  conversation and inline comments, GitLab notes) is tested against a mocked client and WireMock; the trust decision
+  (`ContextLinks`, `LinkAuthorTrust`) against fakes whose permission answer goes through the real
+  `FixAuthorization.decide`. Not run: `FixPermissionService` against a live forge for a commenter, the side-by-side
+  reads under a slow forge, the 10-author cap, a GitLab fork, and the bot-handle match. The live proof needs a fork
+  on `spire-test` with a maintainer's comment linking an issue, then a Re-run. Mutation checks were reasoned, not run.
 - **A reply skipped by the "smart 1:1" rule is silent** (found live, pre-existing from step 7). It logs at DEBUG only,
   and the dashboard stays on "responding…".
 - **The approval verdict counts only BLOCKER findings** (found live). A review with a MAJOR finding was posted with

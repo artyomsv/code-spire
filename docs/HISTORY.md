@@ -2433,3 +2433,20 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   the dashboard, a re-run posted Request changes (`open_at_or_above_major=1`) and the review page showed "1 blocking
   (Major and above)"; set back to Blocker, the next re-run posted Approve (`no_open_blockers`). An update that omits
   the level keeps the stored one. The land gate at a level other than Blocker is proven by tests only.
+
+- **PR 8b: context links from trusted people on a fork (2026-11-14, Part of #391).** Step 8 cut every linked issue
+  and document from an untrusted pull request. Now a link counts when the text it was found in was written by a
+  person with push access by the `/fix` rule: a comment on the pull request, or the title, branch and description
+  when the pull request's author has it (ADR-050 "Step 8", amendment 8b;
+  docs/superpowers/specs/2026-11-14-fork-trusted-links-design.md). The orchestrator marks
+  `FetchDiff.untrustedPullRequest`; only then does the worker read the comments (`DiffSource.fetchPullRequestComments`,
+  GitHub and GitLab) and send `DiffFetched.linkSources`, each author's stable id, handle and links, never the text.
+  `ContextLinks` keeps the trusted sources' links, one permission read per distinct author side by side (at most 10),
+  drops the reviewer bot and everyone while its identity is unknown, and writes `ContextLinksTrusted` or
+  `ContextLinksSkipped` with who counted and who did not. Same-repository pull requests are unchanged and read no
+  comments. Accepted limit: the first review usually runs before anyone comments, so a trusted comment helps the next
+  re-review or a Re-run. Not yet live-tested (docs/UNVERIFIED.md, the step 8 entry).
+
+  Upgrading: no migration. Roll the review worker before the orchestrator so a marked `FetchDiff` is read by a worker
+  that sends link sources. In either order nothing widens: an old worker ignores the mark and sends no sources, and an
+  untrusted review without sources gathers no links, as in step 8.
