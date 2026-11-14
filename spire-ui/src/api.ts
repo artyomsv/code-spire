@@ -197,6 +197,19 @@ export type PrState = 'OPEN' | 'MERGED' | 'CLOSED';
 /** How a review was posted on the forge (ADR-047). */
 export type PostedVerdict = 'approved' | 'changes_requested' | 'commented';
 
+/**
+ * A repository's "Block approval at" (V115): open findings at this severity or higher make the review Request changes
+ * and hold a factory land. Info and nits never block, so they are not levels.
+ */
+export type BlockApprovalAt = 'BLOCKER' | 'MAJOR' | 'MINOR';
+
+/** How the dashboard names each level; BLOCKER needs no qualifier, it is the open blocker count. */
+export const BLOCK_APPROVAL_AT_LABEL: Record<BlockApprovalAt, string> = {
+  BLOCKER: 'Blocker',
+  MAJOR: 'Major and above',
+  MINOR: 'Minor and above',
+};
+
 export interface ReviewSummary {
   id: string; // full reviewId, e.g. "review::acme/web#412" (display/metadata only)
   workspace: string; // e.g. "acme"
@@ -363,6 +376,11 @@ export interface ReviewDetail
   // deduped) — the same figures the list row shows, driving the detail HEADER badge instead.
   openFindings: number;
   openBlockers: number;
+  // Detail only, so declared here and not on ReviewSummary: the open findings at or above the repository's
+  // "Block approval at" (V115) — what makes the review Request changes and holds a factory land. Equals
+  // openBlockers at BLOCKER, which is also the level of a review with no known repository.
+  openBlocking: number;
+  blockApprovalAt: BlockApprovalAt;
   attempt: number; // pipeline run count (1 = first run; bumped by each bounded auto-retry)
   stages: StageState[]; // length 6, aligns to the 6 pipeline steps
   timings: string[]; // length 6, e.g. "0.8s" or ""

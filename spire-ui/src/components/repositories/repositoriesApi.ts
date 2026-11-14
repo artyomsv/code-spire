@@ -1,4 +1,5 @@
 import { apiFetch } from '../../auth';
+import type { BlockApprovalAt } from '../../api';
 import type { PayWith } from './factory/buildDefaultsApi';
 
 /** Every registered repository. Other keys start with `build-defaults`, so invalidate this one `exact`. */
@@ -23,6 +24,8 @@ export interface Repository {
   factory: RepositoryAccount | null;
   // The reviewer may post Approve / Request changes here (ADR-047); off means every review is a comment.
   reviewerMayApprove: boolean;
+  // Open findings at this level or higher make the review Request changes and hold a factory land (V115).
+  blockApprovalAt: BlockApprovalAt;
   // The LLM provider this repository's reviews and replies use; null means the global default.
   reviewLlmProviderId: string | null;
   // The harness this repository's reviews run on (harness reviews, step 5); null means the API.
@@ -45,6 +48,7 @@ export interface RepositoryInput {
   reviewerAccountId: string | null;
   factoryAccountId: string | null;
   reviewerMayApprove: boolean;
+  blockApprovalAt: BlockApprovalAt;
   reviewLlmProviderId: string | null;
   reviewHarness: ReviewHarness | null;
 }
