@@ -221,13 +221,12 @@ jobs:
   # store and the catalogue read would find no image. The runner's default builder loads it. The price
   # is no gha layer cache: every run installs the CLI again, which is minutes, not tens of minutes.
   #
-  # **spire-agent-claude-code is private, and its first push needs a person.** The CLI inside it is
-  # "All rights reserved", under Anthropic's Commercial Terms, which do not address redistribution
-  # (LICENSING.md, ADR-032 amended 2026-11-14). The image therefore carries no
-  # org.opencontainers.image.source label, so it is not linked to this public repository and inherits
-  # nothing from it. A new GHCR package is private unless someone changes it; after the first push the
-  # operator checks in the package settings that it still is (deploy/README.md, "Operator steps after
-  # merge"). Its Trivy findings go to the Security tab like every other image's.
+  # **spire-agent-claude-code is public, by operator decision (2026-11-15), and is removed if Anthropic asks.**
+  # The CLI inside it is "All rights reserved", under Anthropic's Commercial Terms, which say nothing about
+  # redistribution (LICENSING.md, ADR-032 amended 2026-11-15). Its source label links it to this public
+  # repository, which is also what lets the workflow's token create the package: a package linked to a public
+  # repository is created public, with no manual visibility step. If Anthropic asks for its removal, delete the
+  # package and drop it from the matrix. Its Trivy findings go to the Security tab like every other image's.
   #
   # `dockerfile` is not read by the steps (the scripts name their own); it is here so
   # ApkUpgradeIsNotCachedTest can map every published image to the Dockerfile it comes from.
@@ -281,22 +280,3 @@ jobs:
                      "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:edge"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
-
-      # The Claude Code CLI may not be redistributed, so this package must stay private. It is private
-      # only because it has no source label and a new GHCR package starts private; a later label or a
-      # visibility change would publish it with no signal. An anonymous pull that succeeds fails the
-      # job, so the next master build turns that change into a red check. It cannot undo a push.
-      - name: Check the package is still private
-        if: github.event_name == 'push' && matrix.name == 'spire-agent-claude-code'
-        run: |
-          short="${GITHUB_SHA::7}"
-          docker logout ghcr.io
-          for tag in edge "sha-${short}"; do
-            image="ghcr.io/artyomsv/${{ matrix.name }}:${tag}"
-            if docker pull "${image}" >/dev/null 2>&1; then
-              docker rmi "${image}" || true
-              echo "::error::${image} was pulled without credentials, so the package is public. The Claude Code CLI must not be redistributed: make the package private in its GHCR package settings."
-              exit 1
-            fi
-            echo "${image}: the package refused an anonymous pull, as expected"
-          done

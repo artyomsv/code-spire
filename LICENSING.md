@@ -32,7 +32,7 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-worksource-gitlab` | Apache-2.0 | Reference GitLab ticket work source with separate write facade. |
 | `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-030). |
 | `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
-| `spire-harness-claude-code` | Apache-2.0 | Harness arm for Claude Code: review runs only, behind the model proxy, paid with an API key. The CLI itself is not redistributed: its image goes only to a private package (see "Published images"). |
+| `spire-harness-claude-code` | Apache-2.0 | Harness arm for Claude Code: review runs only, behind the model proxy, paid with an API key. Its image is published publicly, though the CLI is Anthropic's (see "Published images"). |
 | `spire-secrets` | Apache-2.0 | One credential scrubber, for every process that writes a failure message a human reads. JDK-only ON PURPOSE: the run worker must not inherit a git library to obtain it. |
 | `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
 | `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |
@@ -61,12 +61,12 @@ inside it: the services, the dashboard, `spire-publisher` and `spire-model-proxy
 are FSL-1.1-ALv2; `spire-egress-proxy` and `spire-agent-codex` are Apache-2.0.
 
 The two agent images also hold a third-party harness CLI, and the two are
-treated differently (ADR-032, amended 2026-11-14):
+treated differently (ADR-032, amended 2026-11-14 and 2026-11-15):
 
 | Image | Harness licence | Published |
 |---|---|---|
 | `spire-agent-codex` | `@openai/codex`, Apache-2.0 | **Public**, with the CLI's notice in `/usr/share/licenses/` (`deploy/agent/codex/NOTICE`). |
-| `spire-agent-claude-code` | `@anthropic-ai/claude-code`, "All rights reserved", Anthropic's Commercial Terms | **Private** package only, for the operator's own cluster, and with no source label linking it to this repository. Those terms do not address redistribution, so a public image needs Anthropic's written permission. Anyone else builds it from the recipe with `deploy/agent/build-claude-code.sh`. |
+| `spire-agent-claude-code` | `@anthropic-ai/claude-code`, "All rights reserved", Anthropic's Commercial Terms | **Public**, by operator decision (2026-11-15), with the source label linking it to this repository. Those terms do not address redistribution and Anthropic has not given written permission; if Anthropic asks for its removal, the package is removed. Anyone can also build it from the recipe with `deploy/agent/build-claude-code.sh`. |
 
 ## What FSL-1.1-ALv2 lets you do
 

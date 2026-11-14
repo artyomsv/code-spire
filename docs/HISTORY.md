@@ -2454,3 +2454,11 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Upgrading: no migration. Roll the review worker before the orchestrator so a marked `FetchDiff` is read by a worker
   that sends link sources. In either order nothing widens: an old worker ignores the mark and sends no sources, and an
   untrusted review without sources gathers no links, as in step 8.
+
+- **GHCR: the Claude Code agent image is published publicly (2026-11-15, Part of #391).** PR #422 kept
+  `spire-agent-claude-code` private and unlinked, and its first master push was denied (docker.yml run 43649996289):
+  the workflow's token creates only packages linked to this repository by the `org.opencontainers.image.source` label,
+  and a linked package is created public. Operator decision: "Publish the Claude Code agent image on GHCR publicly; if
+  Anthropic asks to remove it, we comply." The image now carries the label, the anonymous-pull privacy check is gone,
+  and no manual visibility step remains (ADR-032 amended 2026-11-15, LICENSING.md, deploy/README.md). Anthropic has not
+  given permission; the removal path is to delete the package and drop it from the `agents` matrix.

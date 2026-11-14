@@ -141,9 +141,9 @@ services:
       # GHCR when its daemon lacks it. Pulled ONCE — see SPIRE_VERSION in deploy/.env.example.
       SPIRE_FACTORY_AGENT_IMAGE_CODEX: ${SPIRE_FACTORY_AGENT_IMAGE_CODEX:-ghcr.io/artyomsv/spire-agent-codex:${SPIRE_VERSION:-edge}}
       # Claude Code is opt-in: unset passes `none`, which the orchestrator reads as "not configured" (an empty
-      # value would fail its startup). Its image is a PRIVATE package (LICENSING.md, "Published images"), so
-      # there is no public default to name: set this to your own build or private package, and set the
-      # run worker's SPIRE_RUN_REGISTRY_* below so the pull is authenticated.
+      # value would fail its startup). The image is published (ghcr.io/artyomsv/spire-agent-claude-code,
+      # LICENSING.md "Published images"), but Claude Code stays opt-in, so the default is `none`: set this to
+      # the published image at SPIRE_VERSION, or to your own build.
       SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE: ${SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE:-none}
       SPIRE_FACTORY_FIX_HARNESS: ${SPIRE_FACTORY_FIX_HARNESS:-}
       SPIRE_FACTORY_FIX_MODEL: ${SPIRE_FACTORY_FIX_MODEL:-}
@@ -211,8 +211,8 @@ services:
       SPIRE_RUN_CREDENTIAL_PROXY_MODE: ${SPIRE_RUN_CREDENTIAL_PROXY_MODE:-REVIEWS}
       SPIRE_RUN_CREDENTIAL_PROXY_IMAGE: ${SPIRE_RUN_CREDENTIAL_PROXY_IMAGE:-ghcr.io/artyomsv/spire-model-proxy:${SPIRE_VERSION:-edge}}
       SPIRE_RUN_EGRESS_IMAGE: ${SPIRE_RUN_EGRESS_IMAGE:-ghcr.io/artyomsv/spire-egress-proxy:${SPIRE_VERSION:-edge}}
-      # A private registry for unit images: all three or none (the worker refuses a partial set). Needed for
-      # a private Claude Code package; the public images pull anonymously. Empty is "unset" here: the worker
+      # A private registry for unit images: all three or none (the worker refuses a partial set). Needed only
+      # for a private image of your own; the published images pull anonymously. Empty is "unset" here: the worker
       # reads these as optional.
       SPIRE_RUN_REGISTRY_HOST: ${SPIRE_RUN_REGISTRY_HOST:-}
       SPIRE_RUN_REGISTRY_USERNAME: ${SPIRE_RUN_REGISTRY_USERNAME:-}

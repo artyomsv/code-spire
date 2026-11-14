@@ -220,10 +220,11 @@ file (LICENSING.md, "Published images").
 | `ghcr.io/artyomsv/spire-model-proxy` | Run unit: holds the model credential | FSL-1.1-ALv2 | public |
 | `ghcr.io/artyomsv/spire-egress-proxy` | Run unit: the agent's only way out | Apache-2.0 | public |
 | `ghcr.io/artyomsv/spire-agent-codex` | Reference Codex agent, model catalogue baked in | Apache-2.0 (Codex CLI: Apache-2.0) | public |
-| `ghcr.io/artyomsv/spire-agent-claude-code` | Reference Claude Code agent, reviews only | Apache-2.0 recipe; the CLI is Anthropic's | **private** |
+| `ghcr.io/artyomsv/spire-agent-claude-code` | Reference Claude Code agent, reviews only | Apache-2.0 recipe; the CLI is Anthropic's | public |
 
-The Claude Code image is not public and cannot be: the CLI is "All rights reserved", under
-Anthropic's Commercial Terms. Build your own with `./deploy/agent/build-claude-code.sh` and push it
+The Claude Code CLI is "All rights reserved", under Anthropic's Commercial Terms, which say nothing
+about redistribution. The image is published publicly by operator decision (2026-11-15) and removed on
+Anthropic's request. You can also build your own with `./deploy/agent/build-claude-code.sh` and push it
 to a registry only you can read; set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` to it and the three
 `SPIRE_RUN_REGISTRY_*` values so the run worker can pull it (`deploy/.env.example`).
 
@@ -245,10 +246,11 @@ done
 ### Operator steps after merge
 
 docker.yml pushes the factory images for the first time on the first master build after the PR that
-added them. A new GHCR package is private until someone changes it, so once that build is green:
+added them. No manual visibility step remains: each of the six images (`spire-run-worker`,
+`spire-publisher`, `spire-model-proxy`, `spire-egress-proxy`, `spire-agent-codex`,
+`spire-agent-claude-code`) carries the `org.opencontainers.image.source` label, so GHCR links it to this
+public repository, the workflow's token may create it, and it is created **public**. Once the build is green,
+pull each anonymously to check.
 
-1. In each package's settings on GitHub (Packages → package → Package settings → Change visibility),
-   make these five **public**: `spire-run-worker`, `spire-publisher`, `spire-model-proxy`,
-   `spire-egress-proxy`, `spire-agent-codex`.
-2. Open `spire-agent-claude-code` and confirm it is **private** and not linked to the repository. It
-   carries no source label, so nothing should have linked it; check rather than assume.
+`spire-agent-claude-code` is public by operator decision (2026-11-15). If Anthropic asks for its removal,
+delete the package in GHCR and drop it from the `agents` matrix in `docker.yml`.
