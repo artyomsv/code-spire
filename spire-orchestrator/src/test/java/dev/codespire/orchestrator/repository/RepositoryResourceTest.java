@@ -67,9 +67,18 @@ class RepositoryResourceTest extends RepositoryFixture {
                 .put("/api/repositories/" + id + "?revision=1").then().statusCode(200).body("blockApprovalAt", equalTo("MAJOR"));
         given().get("/api/repositories/" + id).then().statusCode(200).body("blockApprovalAt", equalTo("MAJOR"));
         assertEquals(java.util.Optional.of(BlockApprovalAt.MAJOR), repositories.blockApprovalAt(UUID.fromString(id)));
-        given().contentType("application/json").body(blockingAt(null))
+        given().contentType("application/json").body(blockingAt("blocker"))
                 .put("/api/repositories/" + id + "?revision=2").then().statusCode(200).body("blockApprovalAt", equalTo("BLOCKER"));
         assertTrue(repositories.blockApprovalAt(UUID.randomUUID()).isEmpty(), "a missing row is empty, never a default");
+    }
+
+    /** An update that omits the level (an older client) keeps the stored one; only a create defaults it to BLOCKER. */
+    @Test void anUpdateThatOmitsBlockApprovalAtKeepsTheStoredLevel() {
+        String id = given().contentType("application/json").body(blockingAt("MAJOR")).post("/api/repositories")
+                .then().statusCode(201).body("blockApprovalAt", equalTo("MAJOR")).extract().path("id");
+        given().contentType("application/json").body(blockingAt(null))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200).body("blockApprovalAt", equalTo("MAJOR"));
+        assertEquals(java.util.Optional.of(BlockApprovalAt.MAJOR), repositories.blockApprovalAt(UUID.fromString(id)));
     }
 
     @Test void blockApprovalAtMinorIsStoredOnCreate() {

@@ -98,7 +98,7 @@ public class RepositoryRegistry {
         requireReviewHarness(input);
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_harness=?,
-                       review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?, block_approval_at=?,
+                       review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?, block_approval_at=COALESCE(?, block_approval_at),
                        revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
@@ -106,7 +106,7 @@ public class RepositoryRegistry {
             statement.setBoolean(2, input.reviewerMayApprove());
             statement.setObject(3, input.reviewLlmProviderId(), Types.OTHER);
             setReviewHarness(statement, 4, input.reviewHarness());
-            statement.setString(8, input.blockApprovalAt());
+            statement.setString(8, raw.blockApprovalAt() == null ? null : input.blockApprovalAt()); // null: keep the stored level
             statement.setObject(9, id);
             statement.setLong(10, expectedRevision);
             statement.setString(11, input.scmType());
