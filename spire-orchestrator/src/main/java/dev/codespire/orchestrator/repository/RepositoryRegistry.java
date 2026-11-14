@@ -98,19 +98,21 @@ public class RepositoryRegistry {
         requireReviewHarness(input);
         try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement("""
                 UPDATE repository SET enabled=?, reviewer_may_approve=?, review_llm_provider_id=?, review_harness=?,
-                       review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?, revision=revision+1
+                       review_harness_model=?, review_harness_effort=?, review_harness_pay_with=?, block_approval_at=?,
+                       revision=revision+1
                 WHERE id=? AND revision=? AND scm_type=? AND forge_origin=? AND workspace=? AND slug=?
                 """)) {
             statement.setBoolean(1, input.enabled());
             statement.setBoolean(2, input.reviewerMayApprove());
             statement.setObject(3, input.reviewLlmProviderId(), Types.OTHER);
             setReviewHarness(statement, 4, input.reviewHarness());
-            statement.setObject(8, id);
-            statement.setLong(9, expectedRevision);
-            statement.setString(10, input.scmType());
-            statement.setString(11, input.forgeOrigin());
-            statement.setString(12, input.workspace());
-            statement.setString(13, input.slug());
+            statement.setString(8, input.blockApprovalAt());
+            statement.setObject(9, id);
+            statement.setLong(10, expectedRevision);
+            statement.setString(11, input.scmType());
+            statement.setString(12, input.forgeOrigin());
+            statement.setString(13, input.workspace());
+            statement.setString(14, input.slug());
             if (statement.executeUpdate() != 1) throw new AccountConflict("Repository changed or its coordinates differ; reload before saving");
             bindings.replace(connection, id, input);
         } catch (SQLException failure) { throw referenceGone(failure); }
@@ -120,8 +122,8 @@ public class RepositoryRegistry {
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve,review_llm_provider_id,"
-                        + "review_harness,review_harness_model,review_harness_effort,review_harness_pay_with)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")) {
+                        + "review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,block_approval_at)"
+                        + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());
             statement.setString(3, input.forgeOrigin());
@@ -131,6 +133,7 @@ public class RepositoryRegistry {
             statement.setBoolean(7, input.reviewerMayApprove());
             statement.setObject(8, input.reviewLlmProviderId(), Types.OTHER);
             setReviewHarness(statement, 9, input.reviewHarness());
+            statement.setString(13, input.blockApprovalAt());
             statement.executeUpdate();
         }
     }
@@ -151,7 +154,7 @@ public class RepositoryRegistry {
         return new RepositoryInput(input.scmType(), ForgeOrigin.of(input.forgeOrigin()), workspace, slug,
                 input.enabled() == null || input.enabled(), input.reviewerAccountId(), input.factoryAccountId(),
                 input.reviewerMayApprove() == null || input.reviewerMayApprove(), input.reviewLlmProviderId(),
-                normalizeHarness(input.reviewHarness()));
+                normalizeHarness(input.reviewHarness()), BlockApprovalAt.parse(input.blockApprovalAt()).name());
     }
 
     /** Stripped, the level and the payment in their stored forms; an unknown payment or a malformed level is refused. */
@@ -239,6 +242,17 @@ public class RepositoryRegistry {
         } catch (SQLException failure) { throw database(failure); }
     }
 
+    /** The level for the verdict rule and the land gate (V115); empty when the row is missing, never a default. */
+    public Optional<BlockApprovalAt> blockApprovalAt(UUID repositoryId) {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "SELECT block_approval_at FROM repository WHERE id=?")) {
+            statement.setObject(1, repositoryId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(BlockApprovalAt.valueOf(rows.getString(1))) : Optional.empty();
+            }
+        } catch (SQLException failure) { throw database(failure); }
+    }
+
     private String path(String value) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException("Workspace and repository slug are required");
         String result = value.trim();
@@ -253,7 +267,8 @@ public class RepositoryRegistry {
         return new RepositoryView(rows.getObject("id", UUID.class), rows.getString("scm_type"), rows.getString("forge_origin"),
                 rows.getString("workspace"), rows.getString("slug"), rows.getBoolean("enabled"), rows.getLong("revision"),
                 account(rows, "reviewer"), account(rows, "factory"), rows.getBoolean("reviewer_may_approve"),
-                rows.getObject("review_llm_provider_id", UUID.class), harnessOf(rows));
+                rows.getObject("review_llm_provider_id", UUID.class), harnessOf(rows),
+                BlockApprovalAt.valueOf(rows.getString("block_approval_at")));
     }
 
     private RepositoryView.Account account(ResultSet rows, String role) throws SQLException {

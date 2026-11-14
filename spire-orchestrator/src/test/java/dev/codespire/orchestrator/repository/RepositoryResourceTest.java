@@ -59,6 +59,46 @@ class RepositoryResourceTest extends RepositoryFixture {
         assertTrue(repositories.reviewerMayApprove(UUID.randomUUID()).isEmpty(), "a missing row is empty, never a default");
     }
 
+    /** V115: BLOCKER by default, stored through create and update, read back by the saga; a missing row is empty. */
+    @Test void blockApprovalAtDefaultsToBlockerAndRoundTripsThroughCreateAndUpdate() {
+        String id = given().contentType("application/json").body(repository(null, null)).post("/api/repositories")
+                .then().statusCode(201).body("blockApprovalAt", equalTo("BLOCKER")).extract().path("id");
+        given().contentType("application/json").body(blockingAt("major"))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200).body("blockApprovalAt", equalTo("MAJOR"));
+        given().get("/api/repositories/" + id).then().statusCode(200).body("blockApprovalAt", equalTo("MAJOR"));
+        assertEquals(java.util.Optional.of(BlockApprovalAt.MAJOR), repositories.blockApprovalAt(UUID.fromString(id)));
+        given().contentType("application/json").body(blockingAt(null))
+                .put("/api/repositories/" + id + "?revision=2").then().statusCode(200).body("blockApprovalAt", equalTo("BLOCKER"));
+        assertTrue(repositories.blockApprovalAt(UUID.randomUUID()).isEmpty(), "a missing row is empty, never a default");
+    }
+
+    @Test void blockApprovalAtMinorIsStoredOnCreate() {
+        given().contentType("application/json").body(blockingAt("MINOR")).post("/api/repositories")
+                .then().statusCode(201).body("blockApprovalAt", equalTo("MINOR"));
+    }
+
+    /** INFO and NIT never block, so they are not levels: refused with the reason, before V115's CHECK. */
+    @Test void anUnknownBlockApprovalAtIsRefusedWithItsReason() {
+        given().contentType("application/json").body(blockingAt("NIT")).post("/api/repositories")
+                .then().statusCode(400).body(containsString("Block approval at"));
+        var repo = repositories.create(repository(null, null));
+        given().contentType("application/json").body(blockingAt("TEST-LEVEL"))
+                .put("/api/repositories/" + repo.id() + "?revision=1").then().statusCode(400)
+                .body(containsString("Block approval at"));
+        assertEquals(BlockApprovalAt.BLOCKER, repositories.get(repo.id()).orElseThrow().blockApprovalAt(),
+                "a refused save changes nothing");
+    }
+
+    /** normalize rebuilds the input component by component; the level must survive it, in its stored form. */
+    @Test void normalizeKeepsTheBlockApprovalAt() {
+        assertEquals("MINOR", repositories.normalize(blockingAt(" minor ")).blockApprovalAt());
+        assertEquals("BLOCKER", repositories.normalize(blockingAt(null)).blockApprovalAt());
+    }
+
+    RepositoryInput blockingAt(String level) {
+        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, null, null, level);
+    }
+
     /** Harness reviews, decision 1: the provider a repository reviews with is stored and read back; null is the default. */
     @Test void reviewLlmProviderRoundTripsThroughCreateAndUpdate() {
         UUID first = llmProvider("first"), second = llmProvider("second");
