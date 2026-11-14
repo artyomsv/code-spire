@@ -111,8 +111,9 @@ public class RunLauncher {
     }
 
     /**
-     * A harness review run of a fork pull request (step 8): the same unit and result path as {@link #launchReview}, built
-     * by {@link RunUnitBuilder#buildUntrustedReview}, which refuses it unless the model proxy holds the credential.
+     * A harness review run of a fork pull request (step 8): the same unit and result path as {@link #launchReview},
+     * built by {@link RunUnitBuilder#buildUntrustedReview}, which refuses it unless the model proxy holds the
+     * credential.
      */
     public RunResult launchUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, RunObserver observer) {
         return launch(review.execution(), review, observer, unit -> {});

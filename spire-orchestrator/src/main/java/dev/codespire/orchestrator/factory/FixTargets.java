@@ -92,12 +92,16 @@ public class FixTargets {
     @Inject
     DataSource dataSource;
 
-    /** {@link PushTarget#isUntrusted()} for a review that may have no row: no row is unknown provenance, so untrusted. */
+    /**
+     * {@link PushTarget#isUntrusted()} for a review that may have no row: no row is unknown provenance, so untrusted.
+     */
     public boolean isUntrustedReview(String reviewId) {
         return forReview(reviewId).map(PushTarget::isUntrusted).orElse(true);
     }
 
-    /** {@link PushTarget#isUntrustedWithoutPullRef()} for a review that may have no row: no row has neither, so true. */
+    /**
+     * {@link PushTarget#isUntrustedWithoutPullRef()} for a review that may have no row: no row has neither, so true.
+     */
     public boolean isUntrustedReviewWithoutPullRef(String reviewId) {
         return forReview(reviewId).map(PushTarget::isUntrustedWithoutPullRef).orElse(true);
     }
@@ -208,7 +212,9 @@ public class FixTargets {
             return ScmType.fromProviderType(providerType).flatMap(type -> PullRefs.forType(type, prId));
         }
 
-        /** Untrusted and with no pull ref to fetch it from (Bitbucket): a review would have to clone the fork's branch. */
+        /**
+         * Untrusted and with no pull ref to fetch it from (Bitbucket): a review would have to clone the fork's branch.
+         */
         public boolean isUntrustedWithoutPullRef() {
             return isUntrusted() && pullRef().isEmpty();
         }

@@ -183,7 +183,10 @@ public class RunUnitBuilder {
     /** The variable init reads a fork's pull ref from, to fetch the head onto the review branch (CloneMain). */
     static final String FETCH_REF = "SPIRE_FETCH_REF";
 
-    /** The detail of a fork review refused because no model proxy would hold its credential. Carries no credential text. */
+    /**
+     * The detail of a fork review refused because no model proxy would hold its credential. Carries no credential
+     * text.
+     */
     static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
 
     /** The same container with one more environment variable. */

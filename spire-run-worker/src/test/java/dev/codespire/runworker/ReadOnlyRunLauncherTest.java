@@ -94,7 +94,8 @@ class ReadOnlyRunLauncherTest {
 
             @Override
             public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter harness) {
-                return null; // a fork's proxy requirement is RunLauncherModelProxyTest's; the result path is under test here
+                // a fork's proxy requirement is RunLauncherModelProxyTest's; the result path is under test here
+                return null;
             }
         };
     }
