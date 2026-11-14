@@ -93,29 +93,47 @@ public class LinkAuthorTrust {
     private record Candidate(String id, int rank) {
     }
 
+    private record Sorted(Map<String, Verdict> decided, List<Candidate> candidates) {
+    }
+
     private Map<String, Verdict> measured(Reading reading, Map<String, LinkSource> authors) {
-        Map<String, Verdict> verdicts = new LinkedHashMap<>();
+        Sorted sorted = sort(reading, authors);
+        Map<String, Verdict> verdicts = new LinkedHashMap<>(sorted.decided());
+        verdicts.putAll(readInOrder(reading, sorted.candidates()));
+        return ordered(authors, verdicts);
+    }
+
+    /** Settles the authors that need no read (no id, the bot, not associated) and ranks the rest. */
+    private Sorted sort(Reading reading, Map<String, LinkSource> authors) {
+        Map<String, Verdict> decided = new LinkedHashMap<>();
         List<Candidate> candidates = new ArrayList<>();
         for (Map.Entry<String, LinkSource> author : authors.entrySet()) {
             String id = author.getKey();
             LinkSource source = author.getValue();
             if (id.isEmpty()) {
-                verdicts.put(id, new Verdict(false, FixAuthorization.Reason.UNKNOWN_ACTOR.name()));
+                decided.put(id, new Verdict(false, FixAuthorization.Reason.UNKNOWN_ACTOR.name()));
             } else if (isBot(source, reading.reviewer())) {
-                verdicts.put(id, new Verdict(false, REVIEWER_BOT));
+                decided.put(id, new Verdict(false, REVIEWER_BOT));
             } else {
                 int rank = rank(reading, id, source);
                 if (rank < 0) {
-                    verdicts.put(id, new Verdict(false, NOT_ASSOCIATED));
+                    decided.put(id, new Verdict(false, NOT_ASSOCIATED));
                 } else {
                     candidates.add(new Candidate(id, rank));
                 }
             }
         }
-        candidates.sort(Comparator.comparingInt(Candidate::rank));
+        return new Sorted(decided, candidates);
+    }
+
+    /** Reads permissions side by side for the candidates in rank order; those past {@link #MAX_AUTHORS} are not read. */
+    private Map<String, Verdict> readInOrder(Reading reading, List<Candidate> candidates) {
+        List<Candidate> ranked = new ArrayList<>(candidates);
+        ranked.sort(Comparator.comparingInt(Candidate::rank));
+        Map<String, Verdict> verdicts = new LinkedHashMap<>();
         Map<String, Future<FixAuthorization.Decision>> reads = new LinkedHashMap<>();
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (Candidate candidate : candidates) {
+            for (Candidate candidate : ranked) {
                 String id = candidate.id();
                 if (reads.size() == MAX_AUTHORS) {
                     verdicts.put(id, new Verdict(false, AUTHOR_LIMIT));
@@ -125,7 +143,7 @@ public class LinkAuthorTrust {
             }
         }
         reads.forEach((id, read) -> verdicts.put(id, verdictOf(read)));
-        return ordered(authors, verdicts);
+        return verdicts;
     }
 
     /** Lower reads first; negative means the forge says the author has no standing and no ALLOW override saves them. */
