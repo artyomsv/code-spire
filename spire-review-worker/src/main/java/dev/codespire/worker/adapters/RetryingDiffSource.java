@@ -4,10 +4,12 @@ import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.port.ScmType;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.PullRequest;
+import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ScmApiException;
 import org.jboss.logging.Logger;
 
+import java.util.List;
 import java.util.Random;
 import java.util.function.Supplier;
 
@@ -95,6 +97,11 @@ public class RetryingDiffSource implements DiffSource {
     @Override
     public String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
         return withRetry("fetchTextFileOnBranch", () -> delegate.fetchTextFileOnBranch(repo, branch, path));
+    }
+
+    @Override
+    public List<PullRequestComment> fetchPullRequestComments(RepoRef repo, long prId) {
+        return withRetry("fetchPullRequestComments", () -> delegate.fetchPullRequestComments(repo, prId));
     }
 
     @Override
