@@ -2413,7 +2413,7 @@ public class ReviewProjection {
                                List<ReviewDetail.ReconciliationView> reconciliation, BlockApprovalAt level) {
     }
 
-    /** The review's repository's "Block approval at" (V115); {@code BLOCKER} when the review has no known repository. */
+    /** The review's repository's "Block approval at" (V115); {@code BLOCKER} when its repository is unknown. */
     private static BlockApprovalAt blockApprovalAtOf(Connection c, String reviewId) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT r.block_approval_at FROM review_status s JOIN repository r ON r.id = s.repository_id

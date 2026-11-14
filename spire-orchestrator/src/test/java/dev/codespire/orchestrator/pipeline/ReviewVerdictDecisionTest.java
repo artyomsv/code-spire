@@ -18,7 +18,8 @@ class ReviewVerdictDecisionTest {
 
     @Test
     void degradedGivesComment() {
-        ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new VerdictFacts(true, 3, BlockApprovalAt.BLOCKER, true, true));
+        ReviewVerdictDecision.Decision decision =
+                ReviewVerdictDecision.decide(new VerdictFacts(true, 3, BlockApprovalAt.BLOCKER, true, true));
         assertEquals(ReviewVerdict.COMMENT, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertTrue(decision.mayApprove(), "the setting is on; the hold stays (D5)");
@@ -61,7 +62,8 @@ class ReviewVerdictDecisionTest {
 
     @Test
     void theSettingOffGivesCommentWithAssessmentApprove() {
-        ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new VerdictFacts(false, 0, BlockApprovalAt.BLOCKER, false, true));
+        ReviewVerdictDecision.Decision decision =
+                ReviewVerdictDecision.decide(new VerdictFacts(false, 0, BlockApprovalAt.BLOCKER, false, true));
         assertEquals(ReviewVerdict.APPROVE, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertFalse(decision.mayApprove());
@@ -71,7 +73,8 @@ class ReviewVerdictDecisionTest {
 
     @Test
     void theSettingOffStillWinsAtMajor() {
-        ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new VerdictFacts(false, 1, BlockApprovalAt.MAJOR, false, true));
+        ReviewVerdictDecision.Decision decision =
+                ReviewVerdictDecision.decide(new VerdictFacts(false, 1, BlockApprovalAt.MAJOR, false, true));
         assertEquals(ReviewVerdict.REQUEST_CHANGES, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict(), "the bot never changes merge state with the setting off");
         assertEquals("open_at_or_above_major=1 · setting_off", decision.reason());
@@ -79,7 +82,8 @@ class ReviewVerdictDecisionTest {
 
     @Test
     void anUnknownRepositoryGivesComment() {
-        ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new VerdictFacts(false, 2, BlockApprovalAt.BLOCKER, null, true));
+        ReviewVerdictDecision.Decision decision =
+                ReviewVerdictDecision.decide(new VerdictFacts(false, 2, BlockApprovalAt.BLOCKER, null, true));
         assertEquals(ReviewVerdict.REQUEST_CHANGES, decision.assessment());
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertEquals("open_blockers=2 · repository_unknown", decision.reason(), "the blocker count is not lost (M-8)");
@@ -87,7 +91,8 @@ class ReviewVerdictDecisionTest {
 
     @Test
     void aReviewerWithoutIdentityGivesComment() {
-        ReviewVerdictDecision.Decision decision = ReviewVerdictDecision.decide(new VerdictFacts(false, 0, BlockApprovalAt.BLOCKER, true, false));
+        ReviewVerdictDecision.Decision decision =
+                ReviewVerdictDecision.decide(new VerdictFacts(false, 0, BlockApprovalAt.BLOCKER, true, false));
         assertEquals(ReviewVerdict.COMMENT, decision.verdict());
         assertFalse(decision.mayApprove());
         assertEquals("no_open_blockers · reviewer_identity_unknown", decision.reason());

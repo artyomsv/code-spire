@@ -122,7 +122,8 @@ public class RepositoryRegistry {
     private void insert(Connection connection, UUID id, RepositoryInput input) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO repository (id,scm_type,forge_origin,workspace,slug,enabled,reviewer_may_approve,review_llm_provider_id,"
-                        + "review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,block_approval_at)"
+                        + "review_harness,review_harness_model,review_harness_effort,review_harness_pay_with,"
+                        + "block_approval_at)"
                         + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")) {
             statement.setObject(1, id);
             statement.setString(2, input.scmType());

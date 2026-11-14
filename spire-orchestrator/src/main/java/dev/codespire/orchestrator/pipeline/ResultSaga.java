@@ -519,7 +519,8 @@ public class ResultSaga {
         // built, so an empty repository id would still touch the registries (and a test fake that
         // never set them would throw before the decision ran).
         Boolean setting = repositoryId.flatMap(id -> repositories.reviewerMayApprove(id)).orElse(null);
-        BlockApprovalAt level = repositoryId.flatMap(id -> repositories.blockApprovalAt(id)).orElse(BlockApprovalAt.DEFAULT);
+        BlockApprovalAt level = repositoryId.flatMap(id -> repositories.blockApprovalAt(id))
+                .orElse(BlockApprovalAt.DEFAULT);
         boolean identityKnown = repositoryId.map(id -> repositoryAccounts.reviewerIdentityKnown(id)).orElse(false);
         return ReviewVerdictDecision.decide(new ReviewVerdictDecision.VerdictFacts(visible.degraded(),
                 projection.openBlocking(reviewId, level), level, setting, identityKnown));
