@@ -35,11 +35,33 @@ class ReviewRerunRoundLockTest {
 
     private boolean starts = true;
 
+    /** What the review row says about provenance; the re-run forwards it to the worker (step 8b). */
+    private boolean untrusted;
+
+    private final List<ActionCommand.FetchDiff> fetches = new ArrayList<>();
+
     @Test
     void theRoundAndItsRunTokenMoveUnderTheRoundLock() {
         assertTrue(service().rerun("TEST-WS", "TEST-REPO", 7L));
 
         assertEquals(List.of("lock " + REVIEW_ID, "request", "run token", "unlock", "fetch"), steps);
+    }
+
+    /** Step 8b: a re-run of a fork review tells the worker to read the comments for link authors. */
+    @Test
+    void aRerunOfAnUntrustedReviewIsMarked() {
+        untrusted = true;
+
+        assertTrue(service().rerun("TEST-WS", "TEST-REPO", 7L));
+
+        assertTrue(fetches.getFirst().untrustedPullRequest());
+    }
+
+    @Test
+    void aRerunOfASameRepositoryReviewIsNotMarked() {
+        assertTrue(service().rerun("TEST-WS", "TEST-REPO", 7L));
+
+        assertFalse(fetches.getFirst().untrustedPullRequest());
     }
 
     /** The control: a declined request writes no run token and sends nothing, and still releases the lock. */
@@ -61,12 +83,19 @@ class ReviewRerunRoundLockTest {
             @Override
             public void emit(ActionCommand command) {
                 steps.add("fetch");
+                fetches.add((ActionCommand.FetchDiff) command);
             }
         };
         service.workerCredentials = new WorkerCredentials() {
             @Override
             public Optional<String> packForReview(String reviewId) {
                 return Optional.of("TEST-packed-scm");
+            }
+        };
+        service.targets = new dev.codespire.orchestrator.factory.FixTargets() {
+            @Override
+            public boolean isUntrustedReview(String reviewId) {
+                return untrusted;
             }
         };
         return service;

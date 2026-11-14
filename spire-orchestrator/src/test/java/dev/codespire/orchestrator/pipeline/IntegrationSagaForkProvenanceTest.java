@@ -1,10 +1,14 @@
 package dev.codespire.orchestrator.pipeline;
 
+import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.orchestrator.TestRepositoryProjection;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -53,5 +57,35 @@ class IntegrationSagaForkProvenanceTest extends IntegrationSagaFixture {
         register(saga(), false);
 
         assertTrue(fromForkCalls.contains("review::acme/web#412:false"), fromForkCalls.toString());
+    }
+
+    /** Step 8b: a fork's FetchDiff tells the worker to read the comments and report who wrote each link. */
+    @Test
+    void aForkFetchDiffIsMarkedUntrusted() {
+        register(saga(), true);
+
+        assertTrue(fetchDiff().untrustedPullRequest());
+    }
+
+    /** Unknown provenance is untrusted, as every reader of the column treats it. */
+    @Test
+    void anUnknownProvenanceFetchDiffIsMarkedUntrusted() {
+        register(saga(), null);
+
+        assertTrue(fetchDiff().untrustedPullRequest());
+    }
+
+    /** A branch pull request reads no comments: no extra forge call. */
+    @Test
+    void aBranchPullRequestFetchDiffIsNotMarked() {
+        register(saga(), false);
+
+        assertFalse(fetchDiff().untrustedPullRequest());
+    }
+
+    private ActionCommand.FetchDiff fetchDiff() {
+        List<ActionCommand> fetches = emitted.stream().filter(ActionCommand.FetchDiff.class::isInstance).toList();
+        assertEquals(1, fetches.size(), emitted.toString());
+        return assertInstanceOf(ActionCommand.FetchDiff.class, fetches.getFirst());
     }
 }

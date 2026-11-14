@@ -38,6 +38,10 @@ public class ReviewRetryScheduler {
     @Inject
     CommandsEmitter commands;
 
+    /** Step 8b: an untrusted pull request's worker also reads its comments for link authors. */
+    @Inject
+    dev.codespire.orchestrator.factory.FixTargets targets;
+
     /**
      * Every 5s: fine-grained enough for a 5s minimum backoff, and the query is a partial-index lookup on
      * "anything due?", which is empty almost always. {@code concurrentExecution = SKIP} keeps a slow
@@ -71,7 +75,8 @@ public class ReviewRetryScheduler {
             }
             LOG.infof("Dispatching due retry for %s at commit %s", reviewId, commit.get());
             commands.emit(new ActionCommand.FetchDiff(
-                    reviewId, parsed.repo(), parsed.prId(), commit.get(), credential.get()));
+                    reviewId, parsed.repo(), parsed.prId(), commit.get(), credential.get())
+                    .withUntrustedPullRequest(targets.isUntrustedReview(reviewId)));
         } catch (RuntimeException e) {
             LOG.warnf(e, "Could not dispatch the due retry for %s — re-scheduling for the next sweep", reviewId);
             projection.rescheduleRetry(reviewId, Instant.now().plusSeconds(5));

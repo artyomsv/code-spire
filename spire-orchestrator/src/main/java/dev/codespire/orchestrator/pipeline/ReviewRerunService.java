@@ -49,6 +49,10 @@ public class ReviewRerunService {
     @Inject
     dev.codespire.orchestrator.review.run.ReviewRoundLock rounds;
 
+    /** Step 8b: an untrusted pull request's worker also reads its comments for link authors. */
+    @Inject
+    dev.codespire.orchestrator.factory.FixTargets targets;
+
     /**
      * @return true if the run was (re)started; false if the aggregate declined it (should not happen
      *         with force=true).
@@ -79,7 +83,8 @@ public class ReviewRerunService {
         if (!started) {
             return false;
         }
-        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential));
+        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential)
+                .withUntrustedPullRequest(targets.isUntrustedReview(reviewId)));
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;
     }
