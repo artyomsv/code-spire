@@ -1689,10 +1689,10 @@ public class ReviewProjection {
                     attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row, reconciliation);
             Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
-            return Optional.of(toDetail(row,
+            return Optional.of(toDetail(row, new DetailParts(
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
                     new ChargeDetail(chargeLines(reviewId), costOf(reviewId).unpricedCalls()),
-                    attached.findings(), reconciliation, OpenFindingCounts.levelOf(c, reviewId)));
+                    attached.findings(), reconciliation, OpenFindingCounts.levelOf(c, reviewId))));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -2381,9 +2381,13 @@ public class ReviewProjection {
     private record ChargeDetail(List<ReviewDetail.ChargeLineView> lines, int unpricedCalls) {
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events, ChargeDetail charges,
-                                  List<ReviewDetail.FindingView> findings,
-                                  List<ReviewDetail.ReconciliationView> reconciliation, BlockApprovalAt level) {
+    /** What the detail page is built from besides the row, so toDetail keeps two parameters. */
+    private record DetailParts(List<ReviewDetail.EventView> events, ChargeDetail charges,
+                               List<ReviewDetail.FindingView> findings,
+                               List<ReviewDetail.ReconciliationView> reconciliation, BlockApprovalAt level) {
+    }
+
+    private ReviewDetail toDetail(ReviewRow r, DetailParts parts) {
         // Same reconciled-open figures the list row shows (openCounts) — the header badge must
         // agree with the list instead of quoting this run's raw (possibly stale) outcome.
         OpenFindingCounts openCounts = openCounts(r);
@@ -2391,10 +2395,10 @@ public class ReviewProjection {
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
-                List.of("", "", "", "", "", ""), findings, reconciliation,
-                charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r),
-                openCounts.atOrAbove(level), level.name());
+                List.of("", "", "", "", "", ""), parts.findings(), parts.reconciliation(),
+                parts.charges().lines(), parts.charges().unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
+                parts.events(), r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r),
+                openCounts.atOrAbove(parts.level()), parts.level().name());
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
