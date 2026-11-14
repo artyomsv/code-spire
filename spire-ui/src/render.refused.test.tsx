@@ -180,6 +180,8 @@ const refusedDetail = (over: Partial<ReviewDetailData> = {}): ReviewDetailData =
   unpricedCalls: 0,
   openFindings: 0,
   openBlockers: 0,
+  openBlocking: 0,
+  blockApprovalAt: 'BLOCKER',
   attempt: 1,
   // A cap refuses after the diff is fetched and the context assembled, so the run genuinely got
   // this far — the page must not present that as a completed review.

@@ -60,6 +60,8 @@ const detail = {
   unpricedCalls: 0,
   openFindings: 0,
   openBlockers: 0,
+  openBlocking: 0,
+  blockApprovalAt: 'BLOCKER',
   attempt: 1,
   stages: ['done', 'done', 'done', 'done', 'done', 'done'],
   timings: ['', '', '', '', '', ''],

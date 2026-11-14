@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import { invalidateLive } from '../liveCache';
-import { fetchReviewDetail, reviewDetailKey, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
+import { BLOCK_APPROVAL_AT_LABEL, fetchReviewDetail, reviewDetailKey, type PostedVerdict, type ReviewDetail as ReviewDetailData, type ReviewSummary } from '../api';
 import { archivedBadge, CONTEXT_STAGE, findingsCard, generalDiscussionCard, metaCard, prStateBadge, stageLabel, STATUS_LABEL, statusCell, stepper } from '../render';
 import EventStream from './EventStream';
 import ContextCard from './ContextCard';
@@ -24,6 +24,20 @@ function postedAs(r: ReviewDetailData) {
   if (!r.postedVerdict) return null;
   return <p className="posted-as">Posted as <strong>{POSTED_LABEL[r.postedVerdict]}</strong>
     {r.reviewUrl && isWebAddress(r.reviewUrl) && <> · <a href={r.reviewUrl} target="_blank" rel="noreferrer">open the review</a></>}</p>;
+}
+
+/**
+ * How many open findings block approval at the repository's "Block approval at" (V115), and at which level when it is
+ * not BLOCKER: "3 blocking (Major and above)" says why a review with no blocker still asks for changes.
+ */
+function blockingCount(r: ReviewDetailData) {
+  if (r.status !== 'completed' || r.degraded || !r.openBlocking) return null;
+  const level = r.blockApprovalAt ?? 'BLOCKER';
+  const qualifier = level === 'BLOCKER' ? '' : ` (${BLOCK_APPROVAL_AT_LABEL[level]})`;
+  return <>
+    <span className="sep">·</span>
+    <span className="blocking-count">{r.openBlocking} blocking{qualifier}</span>
+  </>;
 }
 
 export default function ReviewDetail({ reviews }: Props) {
@@ -107,10 +121,12 @@ export default function ReviewDetail({ reviews }: Props) {
             {statusCell({
               status: r.status,
               findings: r.openFindings,
-              blockerCount: r.openBlockers,
+              // The count the verdict was decided on; an older server without it still has the blocker count.
+              blockerCount: r.openBlocking ?? r.openBlockers,
               answering: r.answering,
               degraded: r.degraded,
             })}
+            {blockingCount(r)}
             {prStateBadge(r.prState)}
             {archivedBadge(r.archivedAt)}
             <span className="sep">·</span>
