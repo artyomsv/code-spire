@@ -541,9 +541,11 @@ before step 8 drops it), carrying the forge's own ref for the head: `refs/pull/<
 
 Bitbucket Cloud and Data Center have no pull ref this step uses, so an untrusted pull request there is refused
 `fork_pull_request_has_no_pull_ref` before any dispatch. A re-review of a fork judges against the current code: the
-prior head is on no fetched ref, so a prior head the clone cannot reach reads as it does on a trusted pull request
+prior head is reachable only when the new head still contains it, so a prior head the clone cannot reach reads as it does on a trusted pull request
 whose head was force-pushed away. The pull ref is not retained in the workspace beyond the local branch and
-`refs/spire-head/pull`. None of it has a live proof yet (docs/UNVERIFIED.md, the step 8 entry).
+`refs/spire-head/pull`. The fork path is live-proven on `spire-test` #106 (docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md);
+GitLab, the Bitbucket refusal and lagging, force-pushed or deleted heads are proven against fakes only
+(docs/UNVERIFIED.md, the step 8 entry).
 
 ## 7. What leaves the pod, and how
 

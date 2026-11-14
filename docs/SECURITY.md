@@ -431,8 +431,10 @@ Residual risks. Init holds the reviewer account's clone token (it can post) whil
 objects are checked, but a flaw in JGit's pack or checkout handling would run in that container. A filter driver set
 in the init image's own system or global gitconfig is not covered by the fresh repository config. The agent can still
 spend the credential through the model proxy, as for any review, and prompt injection in the fork's code can steer the
-review's findings; the output is only findings, but a steered review can approve or miss a defect. No live run
-exists yet (docs/UNVERIFIED.md, the step 8 entry).
+review's findings; the output is only findings, but a steered review can approve or miss a defect. Live-proven on
+`spire-test` #106 on Claude Code and Codex, key and seat, a canary that asked for the environment included
+(docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md); hostile init content, GitLab and lagging, force-pushed or deleted
+heads are proven against fakes only (docs/UNVERIFIED.md, the step 8 entry).
 
 ### What is NOT mitigated, stated rather than implied
 
