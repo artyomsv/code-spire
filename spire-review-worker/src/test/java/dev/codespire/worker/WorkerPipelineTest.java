@@ -84,7 +84,7 @@ class WorkerPipelineTest {
     @Test
     @Order(1)
     void fetchDiffEmitsMetadataOnly() throws Exception {
-        sendCommand(new ActionCommand.FetchDiff(REVIEW_ID, REPO, 42, COMMIT, cred()));
+        sendCommand(new ActionCommand.FetchDiff(REVIEW_ID, REPO, 42, COMMIT, cred(), false));
         List<String> results = consumeResults(1);
         assertTrue(results.getFirst().contains("\"type\":\"DiffFetched\""));
         assertTrue(results.getFirst().contains("\"changedFiles\":1"));

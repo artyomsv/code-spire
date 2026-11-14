@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.PullRequest;
+import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
 
@@ -89,6 +90,12 @@ public class GitLabDiffSource implements DiffSource, IdentitySource {
         List<FilePatch> files = UnifiedDiffParser.parse(synthesizeUnifiedDiff(changes.path("changes")));
         return new Diff(headSha(changes.path("diff_refs")), files,
                 changes.path("overflow").asBoolean(false));
+    }
+
+    /** Step 8b: the merge request's notes, with authors, for an untrusted merge request only. */
+    @Override
+    public List<PullRequestComment> fetchPullRequestComments(RepoRef repo, long prId) {
+        return new GitLabMergeRequestComments(client).read(repo, prId);
     }
 
     /**

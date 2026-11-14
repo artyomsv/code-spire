@@ -84,8 +84,14 @@ public sealed interface ActionCommand {
         return null;
     }
 
+    /**
+     * {@code untrustedPullRequest} is the orchestrator's provenance answer (step 8b): true for a fork or unknown
+     * provenance, and the worker then also reads the pull request's comments and reports who wrote each link. False
+     * for a same-repository pull request and for every command sent before the field existed, so those read no
+     * comments.
+     */
     record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
-                     String scmCredential) implements ActionCommand {
+                     String scmCredential, boolean untrustedPullRequest) implements ActionCommand {
     }
 
     /**

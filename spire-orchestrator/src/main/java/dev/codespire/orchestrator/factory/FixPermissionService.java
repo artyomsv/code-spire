@@ -38,6 +38,17 @@ public class FixPermissionService {
         return authorize(repositoryId,actorId,false);
     }
 
+    /** The explicit ALLOW/DENY override for one person, or null when there is none or it cannot be read. No forge call. */
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
+    public FixAuthorization.Override overrideOf(UUID repositoryId, String actorId) {
+        try {
+            Registration registration = QuarkusTransaction.requiringNew().call(() -> registration(repositoryId, actorId));
+            return registration == null ? null : registration.override();
+        } catch (RuntimeException failure) {
+            return null;
+        }
+    }
+
     /** A PR gate requires measured write access; an ALLOW override cannot substitute for it. */
     @Transactional(Transactional.TxType.NOT_SUPPORTED)
     public FixAuthorization.Decision authorizeApproval(UUID repositoryId,String actorId) {

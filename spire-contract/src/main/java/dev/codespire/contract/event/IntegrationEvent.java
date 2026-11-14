@@ -7,6 +7,7 @@ import dev.codespire.contract.review.ContextContribution;
 import dev.codespire.contract.review.ContextRequest;
 import dev.codespire.contract.review.FindingVerdict;
 import dev.codespire.contract.review.HarnessReviewInputs;
+import dev.codespire.contract.review.LinkSource;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.review.ReviewRunBinding;
@@ -228,16 +229,36 @@ public sealed interface IntegrationEvent {
      * <p>{@code codeReferences} is the changed paths and identifiers the diff itself yields (see
      * {@link CodeReferences}), kept apart from {@code references} for the reasons documented there.
      * {@link CodeReferences#empty()} for events serialized before this field existed.
+     *
+     * <p>{@code linkSources} says who wrote each link (step 8b), sent only for an untrusted pull request: the
+     * orchestrator keeps the links of authors with push access. Empty for a same-repository pull request and for
+     * every event serialized before this field existed, which an untrusted review reads as "no trusted link".
      */
     record DiffFetched(String reviewId, long prId, String commit, int changedFiles,
                        List<String> languages, long sizeBytes, boolean truncated,
                        Set<String> references, String repoRules,
-                       CodeReferences codeReferences) implements IntegrationEvent {
+                       CodeReferences codeReferences, List<LinkSource> linkSources) implements IntegrationEvent {
 
         public DiffFetched {
             languages = languages == null ? null : List.copyOf(languages);
             references = references == null ? null : Set.copyOf(references);
             codeReferences = codeReferences == null ? CodeReferences.empty() : codeReferences;
+            linkSources = linkSources == null ? List.of()
+                    : List.copyOf(linkSources.subList(0, Math.min(linkSources.size(), LinkSource.MAX_SOURCES)));
+        }
+
+        // Without link sources — a same-repository pull request, and any replayed record.
+        public DiffFetched(String reviewId, long prId, String commit, int changedFiles,
+                           List<String> languages, long sizeBytes, boolean truncated,
+                           Set<String> references, String repoRules, CodeReferences codeReferences) {
+            this(reviewId, prId, commit, changedFiles, languages, sizeBytes, truncated,
+                    references, repoRules, codeReferences, List.of());
+        }
+
+        /** This event with the given link sources; every other component is carried over. */
+        public DiffFetched withLinkSources(List<LinkSource> sources) {
+            return new DiffFetched(reviewId, prId, commit, changedFiles, languages, sizeBytes, truncated,
+                    references, repoRules, codeReferences, sources);
         }
 
         // Without code references — every existing construction site and any replayed record.

@@ -202,6 +202,14 @@ class RetryingDiffSourceTest {
         assertEquals(1, slept.size());
     }
 
+    @Test
+    void commentDelegationPreservesTheResultAndRetry() {
+        FailingDiffSource delegate = new FailingDiffSource(1, 503);
+        assertEquals(1, source(delegate).fetchPullRequestComments(REPO, 7L).size());
+        assertEquals(2, delegate.calls);
+        assertEquals(1, slept.size());
+    }
+
     /** A fresh breaker per test, so one test's failures cannot open a circuit for the next. */
     private RetryingDiffSource source(DiffSource delegate) {
         // fixed seed: jitter is not the subject
@@ -251,6 +259,11 @@ class RetryingDiffSourceTest {
             assertEquals(REPO, repo);
             assertEquals("TEST-resume", branch);
             return guard(() -> "a".repeat(40));
+        }
+
+        @Override
+        public List<dev.codespire.contract.scm.PullRequestComment> fetchPullRequestComments(RepoRef repo, long prId) {
+            return guard(() -> List.of(new dev.codespire.contract.scm.PullRequestComment(null, "TEST-1")));
         }
 
         private <T> T guard(java.util.function.Supplier<T> success) {

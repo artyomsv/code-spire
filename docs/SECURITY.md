@@ -417,9 +417,15 @@ request is reviewed only under these rules, each enforced in code:
 - **The real credential is never in the agent.** The run worker refuses the unit (`fork_requires_credential_proxy`)
   unless a model proxy holds the credential, for every harness, before a container starts. Proxy mode `OFF`, egress
   off and a harness with no route all refuse; none falls back to a direct credential.
-- **No linked context.** The links a review loads context from are read from text the fork's author wrote, so an
-  untrusted pull request gathers none, on the API and the harness path. The event log records
-  `context links skipped: untrusted pull request`.
+- **Linked context only from trusted people (8b).** The links a review loads context from are read from text the
+  fork's author wrote, so an untrusted pull request gathers a link only when the text was written by a person with
+  push access by the `/fix` rule (ALLOW/DENY override, then the forge's measured permission): a comment by such a
+  person, or the title, branch and description when the pull request's author is one. UNKNOWN or a failed read does
+  not count, the reviewer bot's own comments never count (a finding the model wrote could quote a link the fork
+  planted), and nobody counts while the bot's identity is unknown. The event log records `ContextLinksTrusted` with
+  the authors who counted, or `ContextLinksSkipped` with those who did not and why; no comment text is stored or
+  sent. Residual: a person with push access who quotes a fork author's link in a comment vouches for it; and the
+  permission read is current, so someone who loses push access later still counted for a review already gathered.
 - **Init never runs the fork's code.** Init is JGit in the publisher image, not a git binary: it makes a fresh
   clone with a config of its own, no submodules, and fetches a pull ref
   Code Spire chose against an allowlist. The agent diffs the head against the target branch's copy and reads the rules

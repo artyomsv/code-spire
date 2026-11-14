@@ -8,6 +8,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.FilePatch;
 import dev.codespire.contract.scm.PullRequest;
+import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.diff.UnifiedDiffParser;
 
@@ -84,6 +85,12 @@ public class GitHubDiffSource implements DiffSource, IdentitySource {
         String diffText = client.getDiff(prPath(repo, prId));
         List<FilePatch> files = UnifiedDiffParser.parse(diffText);
         return new Diff(commit, files, false);
+    }
+
+    /** Step 8b: conversation and inline comments, with authors, for an untrusted pull request only. */
+    @Override
+    public List<PullRequestComment> fetchPullRequestComments(RepoRef repo, long prId) {
+        return new GitHubPullRequestComments(client).read(repo, prId);
     }
 
     /** The reconciliation lens (prior head -> new head), same diff media type as the PR diff. */

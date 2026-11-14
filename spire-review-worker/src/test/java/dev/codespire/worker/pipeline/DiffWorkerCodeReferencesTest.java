@@ -33,7 +33,7 @@ class DiffWorkerCodeReferencesTest {
 
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
     private static final FetchDiff COMMAND =
-            new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "cafe1234", null);
+            new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "cafe1234", null, false);
 
     private final WorkerCodeReferences refs = new WorkerCodeReferences();
 

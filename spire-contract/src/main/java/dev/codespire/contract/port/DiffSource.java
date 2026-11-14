@@ -2,7 +2,10 @@ package dev.codespire.contract.port;
 
 import dev.codespire.contract.scm.Diff;
 import dev.codespire.contract.scm.PullRequest;
+import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
+
+import java.util.List;
 
 /** SCM read adapter. Diffs are fetched on demand and never persisted (ADR-011). */
 public interface DiffSource {
@@ -63,6 +66,16 @@ public interface DiffSource {
      */
     default String fetchTextFileOnBranch(RepoRef repo, String branch, String path) {
         return null;
+    }
+
+    /**
+     * Every human-readable comment on the pull request with its author's stable id (step 8b), read only for an
+     * untrusted pull request so links can be kept from people with push access. Empty by default: a provider that
+     * cannot list comments contributes no comment links, which is the safe answer (Bitbucket forks are refused
+     * before this is reached). Implementations bound the pages they walk.
+     */
+    default List<PullRequestComment> fetchPullRequestComments(RepoRef repo, long prId) {
+        return List.of();
     }
 
     /**

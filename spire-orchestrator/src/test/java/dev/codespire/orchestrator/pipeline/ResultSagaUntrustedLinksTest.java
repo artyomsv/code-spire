@@ -5,6 +5,7 @@ import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.event.ReviewIds;
 import dev.codespire.contract.lifecycle.ReviewState;
 import dev.codespire.contract.review.CodeReferences;
+import dev.codespire.contract.review.LinkSource;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.caps.CapPolicy;
 import dev.codespire.orchestrator.context.WorkerContextCredentials;
@@ -30,8 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Harness reviews, step 8 (operator ruling 2026-11-13): a fork author writes the title, branch and description the
- * links are read from, so an untrusted pull request gathers no linked issues or documents, on the API path and the
- * harness path alike. The PR text, the target branch's rules and the code references are kept.
+ * links are read from, so an untrusted pull request gathers none of those links, on the API path and the harness path
+ * alike, unless a worker reports a trusted author for them (step 8b, ContextLinksTrustTest). The PR text, the target
+ * branch's rules and the code references are kept.
  *
  * <p>Wired as {@code DiffSizeGateTest} is: hand-built fakes, no container. Every fake overrides each method the
  * DiffFetched path reaches (CLAUDE.md, saga test fakes).
@@ -50,6 +52,9 @@ class ResultSagaUntrustedLinksTest {
 
     /** The row the fake target read answers with; null is a review whose row cannot be read. */
     private FixTargets.PushTarget fixedTarget;
+
+    /** What the fake trust answers per author id (step 8b). */
+    private Map<String, LinkAuthorTrust.Verdict> verdicts = Map.of();
 
     @Test
     void aForkGathersNoLinks() {
@@ -102,6 +107,25 @@ class ResultSagaUntrustedLinksTest {
         assertTrue(events.stream().noneMatch(line -> line.contains("links skipped")), events.toString());
     }
 
+    /**
+     * Step 8b, end to end through the saga: a fork keeps the links of a comment by someone with push access and drops
+     * the fork author's own, and the GatherContext carries only the kept ones.
+     */
+    @Test
+    void aForkGathersOnlyATrustedCommentsLinks() {
+        verdicts = Map.of("TEST-101", new LinkAuthorTrust.Verdict(true, "CAN_PUSH"),
+                "TEST-7", new LinkAuthorTrust.Verdict(false, "CANNOT_PUSH"));
+        DiffFetched event = diffFetched(LINKS).withLinkSources(List.of(
+                new LinkSource(LinkSource.Kind.PULL_REQUEST, "TEST-7", "TEST-forker", LINKS),
+                new LinkSource(LinkSource.Kind.COMMENT, "TEST-101", "TEST-maintainer", Set.of("TEST-9"))));
+
+        sagaForTarget(target(true)).on(event);
+
+        assertEquals(Set.of("TEST-9"), gather().references());
+        assertTrue(events.stream().anyMatch(line -> line.startsWith("context links kept from trusted authors")
+                && line.contains("@TEST-maintainer") && line.contains("@TEST-forker (CANNOT_PUSH)")), events.toString());
+    }
+
     private ActionCommand.GatherContext gather() {
         assertEquals(1, emitted.size(), "one GatherContext is emitted: " + emitted);
         return assertInstanceOf(ActionCommand.GatherContext.class, emitted.getFirst());
@@ -135,7 +159,7 @@ class ResultSagaUntrustedLinksTest {
         saga.workerContextCredentials = credentials();
         saga.providers = providers();
         saga.capPolicy = capPolicy();
-        saga.targets = targets();
+        saga.contextLinks = contextLinks();
         return saga;
     }
 
@@ -209,6 +233,19 @@ class ResultSagaUntrustedLinksTest {
                 return OptionalLong.empty();
             }
         };
+    }
+
+    private ContextLinks contextLinks() {
+        ContextLinks links = new ContextLinks();
+        links.targets = targets();
+        links.projection = projection();
+        links.trust = new LinkAuthorTrust() {
+            @Override
+            public Map<String, Verdict> decide(String reviewId, List<LinkSource> sources) {
+                return verdicts;
+            }
+        };
+        return links;
     }
 
     private FixTargets targets() {

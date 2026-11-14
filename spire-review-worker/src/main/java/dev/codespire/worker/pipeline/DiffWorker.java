@@ -52,7 +52,7 @@ public class DiffWorker {
             // context providers; the diff itself stays metadata-only (ADR-011).
             PullRequest pr = diffSource.fetchPullRequest(command.repo(), command.prId());
             Diff diff = diffSource.fetchDiff(command.repo(), command.prId(), command.commit());
-            results.emit(new DiffFetched(
+            results.emit(new PullRequestLinkSources(references, diffSource).attach(command, pr, new DiffFetched(
                     command.reviewId(), command.prId(), command.commit(),
                     diff.files().size(),
                     diff.files().stream().map(FilePatch::language).distinct().toList(),
@@ -67,7 +67,7 @@ public class DiffWorker {
                     repoRules(diffSource, command, pr),
                     // Metadata only, same as everything else on this event — changed paths and the
                     // identifiers a changed line mentions, never hunk text (ADR-011).
-                    codeReferences(diff, command)));
+                    codeReferences(diff, command))));
         } catch (RuntimeException e) {
             // ScmApiException is the provider-neutral shape both adapters implement.
             if (e instanceof ScmApiException api && api.isNotFound()) {

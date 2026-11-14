@@ -244,7 +244,10 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   is refused `fork_pull_request_has_no_pull_ref`. Upgrade: rebuild `spire-publisher:latest` and roll the run worker
   before the orchestrator (docs/HISTORY.md). Live on `spire-test` #106: Claude Code on a key, Codex on a key and on a seat reviewed a fork, mode `OFF` refused it
   with no container, a canary push and a reply were handled. Bitbucket, a lagging ref, a force-pushed or deleted fork
-  and GitLab are proven against fakes only; links from trusted comments are PR 8b (docs/UNVERIFIED.md, the step 8 entry).
+  and GitLab are proven against fakes only; PR 8b (#421) takes links again from the description of an author with
+  push access and from comments by people with push access (the `/fix` rule; the bot never counts): live on #106 for
+  the description and an owner's comment, an untrusted commenter against fakes only (docs/UNVERIFIED.md, the step 8
+  entry).
 
 - **Block approval at** (PR #420, V115, ADR-047 amended 2026-11-14). Each repository picks the lowest open finding
   severity that makes the review Request changes and holds a factory land: Blocker (default), Major and above, or

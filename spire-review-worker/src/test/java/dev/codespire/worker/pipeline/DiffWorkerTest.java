@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DiffWorkerTest {
 
     private static final RepoRef REPO = new RepoRef("sandbox", "demo-repo");
-    private static final FetchDiff COMMAND = new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "abc123", null);
+    private static final FetchDiff COMMAND = new FetchDiff("review::sandbox/demo-repo#7", REPO, 7, "abc123", null, false);
 
     private DiffWorker worker;
     private List<IntegrationEvent> emitted;

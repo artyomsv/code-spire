@@ -772,7 +772,7 @@ public class IntegrationSaga {
         }
 
         commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
-                workerCredentials.pack(provider.get(), e.repo().workspace())));
+                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())));
     }
 
     /**
