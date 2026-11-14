@@ -13,7 +13,8 @@ import java.util.List;
  * reconciled currently-open counts (this run's new findings + still-open/unchanged
  * reconciliation, deduped) — the same figures the reviews list shows via
  * {@code ReviewProjection.openCounts}, so the header badge agrees with the list row instead of
- * quoting a stale per-run outcome.
+ * quoting a stale per-run outcome. {@code openBlocking} is that open set counted at the repository's
+ * "Block approval at" level ({@code blockApprovalAt}), the figure the verdict and the land gate use.
  *
  * <p>{@code unpricedCalls} travels with {@code chargeLines} for the same reason it travels with the
  * list row's total: the page sums the lines itself, and an unpriced line contributes nothing to that
@@ -71,7 +72,14 @@ public record ReviewDetail(
          *  records over one wire, and a field added to one arrives undefined from the other. */
         String postedVerdict,
         /** The forge's link to that review, or null. */
-        String reviewUrl) {
+        String reviewUrl,
+        /** The open findings at or above {@code blockApprovalAt}: what makes this review Request changes and
+         *  holds a factory land (V115). Equal to {@code openBlockers} at {@code BLOCKER}. Detail only: the list
+         *  row keeps {@code openBlockers}, and the dashboard's {@code ReviewDetail} type declares this itself. */
+        int openBlocking,
+        /** The review's repository's "Block approval at": {@code BLOCKER}, {@code MAJOR} or {@code MINOR};
+         *  {@code BLOCKER} when the review has no known repository. */
+        String blockApprovalAt) {
 
     /**
      * A finding as the UI renders it: severity slug, "path:line" location, message, and the SCM

@@ -17,6 +17,7 @@ import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeSubject;
 import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -550,13 +551,22 @@ public class ReviewProjection {
         });
     }
 
-    /** The open BLOCKER count the land gate waits on, for the verdict decision (ADR-047 D1, D4). */
+    /** The open BLOCKER count: {@link #openBlocking} at {@code BLOCKER}, the rule before V115 (ADR-047 D1, D4). */
     public int openBlockers(String reviewId) {
+        return openBlocking(reviewId, BlockApprovalAt.BLOCKER);
+    }
+
+    /**
+     * The open findings at or above a repository's "Block approval at" (V115), for the verdict decision and the
+     * land gate. Counted over the same open set the list row and the detail page show ({@link #openCounts}), so at
+     * {@code BLOCKER} it is exactly the open blocker count those show.
+     */
+    public int openBlocking(String reviewId, BlockApprovalAt level) {
         try (Connection c = dataSource.getConnection()) {
             ReviewRow row = loadRow(c, reviewId);
-            return row == null ? 0 : openCounts(row).openBlockers();
+            return row == null ? 0 : openCounts(row).atOrAbove(level);
         } catch (SQLException e) {
-            throw new IllegalStateException("Cannot count open blockers", e);
+            throw new IllegalStateException("Cannot count open blocking findings", e);
         }
     }
 
@@ -1683,10 +1693,10 @@ public class ReviewProjection {
                     attachThreadRefs(parseFindings(row.findingsJson, row.id), threadIndex), row, reconciliation);
             Function<String, String> classifier = threadClassifier(attached.findingRefs(), threadIndex.summaryRefs());
 
-            return Optional.of(toDetail(row,
+            return Optional.of(toDetail(row, new DetailParts(
                     loadEvents(c, reviewId, row.createdAt, classifier, threadIndex.locByThread()),
                     new ChargeDetail(chargeLines(reviewId), costOf(reviewId).unpricedCalls()),
-                    attached.findings(), reconciliation));
+                    attached.findings(), reconciliation, blockApprovalAtOf(c, reviewId))));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load review " + reviewId, e);
         }
@@ -2187,7 +2197,12 @@ public class ReviewProjection {
      *                    regression the author caused, when it can equally be one new finding beside
      *                    one that was already open and simply never fixed.
      */
-    private record OpenCounts(int open, int openBlockers, int carriedOver) {
+    private record OpenCounts(int open, int openBlockers, int carriedOver, List<Severity> openSeverities) {
+
+        /** The open findings a repository blocking at {@code level} counts (V115); BLOCKER is {@code openBlockers}. */
+        int atOrAbove(BlockApprovalAt level) {
+            return (int) openSeverities.stream().filter(level::blocks).count();
+        }
     }
 
     /**
@@ -2235,7 +2250,11 @@ public class ReviewProjection {
             openSevByKey.putIfAbsent(keyOf(null, f.loc()), f.sev());
         }
         int blockers = (int) openSevByKey.values().stream().filter("critical"::equals).count();
-        return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised);
+        // The stored slug back to a severity with the one reverse map; "critical" is BLOCKER and nothing else is,
+        // so the count at BLOCKER is exactly `blockers`. A missing slug is INFO, which never blocks.
+        List<Severity> severities = openSevByKey.values().stream()
+                .map(slug -> slug == null ? Severity.INFO : severityFromSlug(slug)).toList();
+        return new OpenCounts(openSevByKey.size(), blockers, openSevByKey.size() - newlyRaised, severities);
     }
 
     private static String keyOf(String threadRef, String loc) {
@@ -2385,10 +2404,29 @@ public class ReviewProjection {
     private record ChargeDetail(List<ReviewDetail.ChargeLineView> lines, int unpricedCalls) {
     }
 
-    private ReviewDetail toDetail(ReviewRow r, List<ReviewDetail.EventView> events,
-                                  ChargeDetail charges,
-                                  List<ReviewDetail.FindingView> findings,
-                                  List<ReviewDetail.ReconciliationView> reconciliation) {
+    /**
+     * What the detail page adds to a review row: its events, charges, findings, reconciliation, and the level its
+     * repository blocks approval at ({@code BLOCKER} when the repository is unknown).
+     */
+    private record DetailParts(List<ReviewDetail.EventView> events, ChargeDetail charges,
+                               List<ReviewDetail.FindingView> findings,
+                               List<ReviewDetail.ReconciliationView> reconciliation, BlockApprovalAt level) {
+    }
+
+    /** The review's repository's "Block approval at" (V115); {@code BLOCKER} when the review has no known repository. */
+    private static BlockApprovalAt blockApprovalAtOf(Connection c, String reviewId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("""
+                SELECT r.block_approval_at FROM review_status s JOIN repository r ON r.id = s.repository_id
+                 WHERE s.review_id = ?
+                """)) {
+            ps.setString(1, reviewId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? BlockApprovalAt.valueOf(rs.getString(1)) : BlockApprovalAt.DEFAULT;
+            }
+        }
+    }
+
+    private ReviewDetail toDetail(ReviewRow r, DetailParts parts) {
         // Same reconciled-open figures the list row shows (openCounts) — the header badge must
         // agree with the list instead of quoting this run's raw (possibly stale) outcome.
         OpenCounts openCounts = openCounts(r);
@@ -2396,9 +2434,10 @@ public class ReviewProjection {
                 r.branch, r.base, r.sha, r.htmlUrl, r.providerType, r.status, r.answering, r.stage, r.findings,
                 blockerCount(r), openCounts.open(), openCounts.openBlockers(), r.updatedAt, r.attempt,
                 computeStages(r.status, r.stage),
-                List.of("", "", "", "", "", ""), findings, reconciliation,
-                charges.lines(), charges.unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
-                events, r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r));
+                List.of("", "", "", "", "", ""), parts.findings(), parts.reconciliation(),
+                parts.charges().lines(), parts.charges().unpricedCalls(), r.note, decryptError(r.errorDetail, r.id),
+                parts.events(), r.prState, r.archivedAt, r.degraded, verdictSlug(r.postedVerdict), reviewUrl(r),
+                openCounts.atOrAbove(parts.level()), parts.level().name());
     }
 
     /** Decrypt the stored error detail (AAD = reviewId); tolerate a legacy plaintext value. */
