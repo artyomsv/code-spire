@@ -1,5 +1,6 @@
 package dev.codespire.contract.event;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.ActionCommand;
 import dev.codespire.contract.command.ActionCommand.FetchDiff;
@@ -28,7 +29,10 @@ class LinkSourceWireTest {
     private static final LinkSource COMMENT =
             new LinkSource(LinkSource.Kind.COMMENT, "TEST-101", "TEST-maintainer", Set.of("TEST-1"));
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    // As the services read the bus: Quarkus leaves FAIL_ON_UNKNOWN_PROPERTIES off, and CodeReferences writes a
+    // derived "empty" property that no constructor takes.
+    private final ObjectMapper mapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @Test
     void anOldDiffFetchedDecodesWithNoLinkSources() throws Exception {
