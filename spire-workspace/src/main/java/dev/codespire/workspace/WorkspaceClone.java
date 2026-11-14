@@ -57,6 +57,13 @@ public final class WorkspaceClone {
 
     private static final long FETCH_RETRY_MILLIS = 2000;
 
+    /**
+     * The pull ref fetch's transport timeout, in seconds. JGit's default is none, so a forge that accepts the connection
+     * and then stalls would hold the init container until the run's own deadline; with this the attempt fails, and the
+     * retry loop above gets its turn.
+     */
+    private static final int FETCH_TIMEOUT_SECONDS = 120;
+
     private WorkspaceClone() {
     }
 
@@ -97,6 +104,7 @@ public final class WorkspaceClone {
                 git.fetch().setRemote("origin")
                         .setRefSpecs(new RefSpec("+" + request.fetchRef() + ":" + PULL_HEAD_REF))
                         .setCheckFetchedObjects(true)
+                        .setTimeout(FETCH_TIMEOUT_SECONDS)
                         .setCredentialsProvider(new UsernamePasswordCredentialsProvider(
                                 credential.username(), credential.secret()))
                         .call();
