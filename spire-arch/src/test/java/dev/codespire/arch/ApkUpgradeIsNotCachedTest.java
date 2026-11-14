@@ -67,8 +67,10 @@ class ApkUpgradeIsNotCachedTest {
             Pattern.compile("\\bapk\\b[^\\r\\n]*\\bupgrade\\b|\\bapt-get\\b[^\\r\\n]*\\bupgrade\\b");
 
     /**
-     * The build matrix's {@code include:} list — every following line indented past the four spaces
-     * a sibling key like {@code steps:} sits at.
+     * One build matrix's {@code include:} list — every following line indented past the four spaces
+     * a sibling key like {@code steps:} sits at. docker.yml has a matrix in each of two jobs
+     * ({@code images} and {@code agents}) and every one is read: an image published from a second
+     * job must not escape the check because the parser stopped at the first.
      *
      * <p>Scoping to this block is not tidiness. A workflow step is also spelled {@code - name: …},
      * so a pattern that only looked for that read {@code - name: Build} as a matrix entry and the
@@ -122,6 +124,31 @@ class ApkUpgradeIsNotCachedTest {
                         + "changes no cache key.");
     }
 
+    /**
+     * Every Dockerfile that upgrades its OS packages is one docker.yml builds. The other two checks
+     * read only images the workflow names, so a published image the workflow leaves out — built by
+     * hand, as the publisher, model proxy and egress proxy were until 2026-11-14 — passed them all
+     * while nothing ever sent it a per-build value. Test fixtures under {@code src/test} are not
+     * published and are exempt.
+     */
+    @Test
+    void everyImageThatUpgradesOsPackagesIsBuiltByTheWorkflow() throws IOException {
+        Set<Path> built = new LinkedHashSet<>(builtImages().values());
+        List<String> unbuilt = new ArrayList<>();
+        for (Path file : dockerfilesThatUpgradeOsPackages().keySet()) {
+            String relative = RootBuild.repoRoot().relativize(file).toString().replace('\\', '/');
+            if (!relative.contains("/src/test/") && !built.contains(file)) {
+                unbuilt.add(relative);
+            }
+        }
+
+        assertEquals(List.of(), unbuilt,
+                "these Dockerfiles upgrade their base OS packages but no matrix entry in docker.yml "
+                        + "builds them, so nothing sends them a per-build " + BUST + " and the upgrade "
+                        + "layer caches forever wherever they are built. Add a matrix entry with "
+                        + "`apkUpgrade: true`.");
+    }
+
     @Test
     void theWorkflowSendsAValueThatDiffersPerBuild() throws IOException {
         String workflow = RootBuild.read(".github/workflows/docker.yml");
@@ -172,10 +199,12 @@ class ApkUpgradeIsNotCachedTest {
      *         empty body contains no {@code apkUpgrade: true} and would read as a deliberate absence
      */
     private static String entryBody(String workflow, String imageName) {
-        Matcher entry = MATRIX_ENTRY.matcher(matrixInclude(workflow));
-        while (entry.find()) {
-            if (entry.group("name").equals(imageName)) {
-                return entry.group("body");
+        for (String include : matrixIncludes(workflow)) {
+            Matcher entry = MATRIX_ENTRY.matcher(include);
+            while (entry.find()) {
+                if (entry.group("name").equals(imageName)) {
+                    return entry.group("body");
+                }
             }
         }
         throw new AssertionError("no matrix entry named " + imageName + " — the parser and the "
@@ -183,28 +212,33 @@ class ApkUpgradeIsNotCachedTest {
     }
 
     /**
-     * The matrix's {@code include:} list.
+     * Every matrix's {@code include:} list, in file order.
      *
-     * @throws AssertionError if the block is not found, rather than returning an empty string — no
-     *         entries parsed means every per-image assertion passes over nothing
+     * @throws AssertionError if no block is found, rather than returning an empty list — no entries
+     *         parsed means every per-image assertion passes over nothing
      */
-    private static String matrixInclude(String workflow) {
+    private static List<String> matrixIncludes(String workflow) {
         Matcher matrix = MATRIX_INCLUDE.matcher(workflow);
-        assertTrue(matrix.find(), "no `include:` block found in docker.yml's build matrix — the "
-                + "parser and the workflow disagree about its shape");
-        return matrix.group("entries");
+        List<String> includes = new ArrayList<>();
+        while (matrix.find()) {
+            includes.add(matrix.group("entries"));
+        }
+        assertFalse(includes.isEmpty(), "no `include:` block found in docker.yml's build matrix — "
+                + "the parser and the workflow disagree about its shape");
+        return includes;
     }
 
     /** Image name to the absolute path of the Dockerfile docker.yml builds it from. */
     private static Map<String, Path> builtImages() throws IOException {
         Map<String, Path> images = new LinkedHashMap<>();
-        Matcher entry = MATRIX_ENTRY.matcher(
-                matrixInclude(RootBuild.read(".github/workflows/docker.yml")));
-        while (entry.find()) {
-            Matcher file = DECLARED_DOCKERFILE.matcher(entry.group("body"));
-            assertTrue(file.find(), "matrix entry " + entry.group("name") + " names no dockerfile");
-            String declared = file.group(1).trim().replaceFirst("^\\./", "");
-            images.put(entry.group("name"), RootBuild.repoRoot().resolve(declared).normalize());
+        for (String include : matrixIncludes(RootBuild.read(".github/workflows/docker.yml"))) {
+            Matcher entry = MATRIX_ENTRY.matcher(include);
+            while (entry.find()) {
+                Matcher file = DECLARED_DOCKERFILE.matcher(entry.group("body"));
+                assertTrue(file.find(), "matrix entry " + entry.group("name") + " names no dockerfile");
+                String declared = file.group(1).trim().replaceFirst("^\\./", "");
+                images.put(entry.group("name"), RootBuild.repoRoot().resolve(declared).normalize());
+            }
         }
         return images;
     }
