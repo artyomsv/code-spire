@@ -8,6 +8,7 @@ import dev.codespire.contract.event.RunReviewArtifact;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.contract.scm.ThreadRef;
+import dev.codespire.orchestrator.factory.FactoryRunProjection;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.pipeline.CommandsEmitter;
 import dev.codespire.orchestrator.provider.ConversationLevels;
@@ -99,9 +100,17 @@ class HarnessReplyResultsTest {
         results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "IllegalStateException: fork_requires_credential_proxy",
                 false, null, List.of()), REPLY);
 
-        assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: fork_requires_credential_proxy"), events);
+        assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: TEST-harness: fork_requires_credential_proxy"), events);
         assertEquals(List.of(false), answering, "the responding pill clears");
         assertTrue(emitted.isEmpty(), emitted.toString());
+    }
+
+    @Test
+    void aDetailWithAnotherPrefixBeforeTheProxyTextFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND",
+                "X: IllegalStateException: fork_requires_credential_proxy", false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: BAD_COMMAND");
     }
 
     @Test
@@ -170,6 +179,10 @@ class HarnessReplyResultsTest {
             }
         };
         results.projection = projection();
+        results.runRows = new FactoryRunProjection() {
+            @Override public Optional<String> harnessOf(String runId) { return Optional.of("TEST-harness"); }
+            @Override protected void push(String runId) { /* nothing: no live feed from a unit test */ }
+        };
         return results;
     }
 
