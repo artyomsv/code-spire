@@ -281,3 +281,22 @@ jobs:
                      "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:edge"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
+
+      # The Claude Code CLI may not be redistributed, so this package must stay private. It is private
+      # only because it has no source label and a new GHCR package starts private; a later label or a
+      # visibility change would publish it with no signal. An anonymous pull that succeeds fails the
+      # job, so the next master build turns that change into a red check. It cannot undo a push.
+      - name: Check the package is still private
+        if: github.event_name == 'push' && matrix.name == 'spire-agent-claude-code'
+        run: |
+          short="${GITHUB_SHA::7}"
+          docker logout ghcr.io
+          for tag in edge "sha-${short}"; do
+            image="ghcr.io/artyomsv/${{ matrix.name }}:${tag}"
+            if docker pull "${image}" >/dev/null 2>&1; then
+              docker rmi "${image}" || true
+              echo "::error::${image} was pulled without credentials, so the package is public. The Claude Code CLI must not be redistributed: make the package private in its GHCR package settings."
+              exit 1
+            fi
+            echo "${image}: the package refused an anonymous pull, as expected"
+          done

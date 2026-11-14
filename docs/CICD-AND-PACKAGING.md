@@ -300,7 +300,7 @@ entrypoint or a launcher builds its image before merge. Every apk-based image ge
 
 `compose.ghcr.yml` defaults the unit images to the published ones at `SPIRE_VERSION`. The run worker pulls a
 unit image only when its daemon lacks it (`DockerRunRuntime.ensureImage`), so a moving tag never updates on
-its own: pin `sha-<short>` or a release, or pull by hand on upgrade (`deploy/README.md`).
+its own: pin `sha-<short>` (a version tag works for these images only once `release.yml` publishes them, a follow-up PR), or pull by hand on upgrade (`deploy/README.md`).
 
 **Still open:** these images are amd64 only, unsigned and have no SBOM; that is `release.yml`'s work, with
 the Kubernetes deployment of the factory, in their own PRs.

@@ -203,7 +203,7 @@ services:
       # sandbox); this file names the published one, compose.yml the locally built one.
       #
       # The worker pulls a unit image only when its daemon does not hold it, so a moving tag is pulled
-      # once and never again. Pin SPIRE_VERSION to a sha-<short> or release tag; on `edge`, pull these
+      # once and never again. Pin SPIRE_VERSION to a sha-<short> tag (a version tag works only once release.yml publishes these images); on `edge`, pull these
       # three and the agent image by hand on every upgrade (deploy/README.md).
       SPIRE_PUBLISHER_IMAGE: ${SPIRE_PUBLISHER_IMAGE:-ghcr.io/artyomsv/spire-publisher:${SPIRE_VERSION:-edge}}
       # Which run units hold their model credential in a model proxy (OFF, REVIEWS, ALL), and its image: the

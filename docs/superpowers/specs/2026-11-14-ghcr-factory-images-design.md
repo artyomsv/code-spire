@@ -30,7 +30,7 @@ come from a registry. Next PR after this one: the Kubernetes deployment.
    match the run worker's tag. `SPIRE_RUN_EGRESS_IMAGE`, `SPIRE_RUN_REGISTRY_*` (private pull for Claude Code) and
    `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` are settable in both compose files and `deploy/.env.example`.
 4. The run worker pulls an image only when the daemon lacks it, so a moving tag never updates. The docs say: set
-   `SPIRE_VERSION` to a `sha-…` or version tag; with `edge`, pull the unit images on upgrade.
+   `SPIRE_VERSION` to a `sha-<short>` (a version tag works for these images only once `release.yml` publishes them, a follow-up PR); with `edge`, pull the unit images on upgrade.
 5. Docs: ADR-032 amendment, `LICENSING.md` (map `deploy/agent`, `deploy/egress`), `docs/CICD-AND-PACKAGING.md`,
    CLAUDE.md "Build & run", `deploy/README.md`.
 
