@@ -274,8 +274,10 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
-- **The five factory images (the Codex and Claude Code agents, publisher, egress proxy, model proxy) are still not
-  on GHCR.**
+- **The factory images are published on merge to master but not yet live-pulled.** docker.yml builds the run
+  worker, publisher, model proxy, egress proxy and Codex agent as public GHCR packages and the Claude Code agent as a
+  private one (ADR-032 amended 2026-11-14); no deployment has run a unit from them yet, the packages' visibility is
+  set by hand after the first push (deploy/README.md), and they are amd64 only, unsigned and without an SBOM.
 - **Claude Code ran on one model and one CLI version** (`claude-sonnet-5-5`, 2.1.319): its charge is not reconciled
   with the vendor, only the measured canaries are proven absent, and a re-review, a reply and a rate limit on it have
   no live run (docs/UNVERIFIED.md, the 3b entry).
@@ -299,7 +301,11 @@ docker compose up -d                      # Postgres :34432 + Redpanda :34092
 cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
-**The factory's five images** are not on GHCR yet and are built locally (SMOKE-TEST Mode Q, Mode R §7):
+**The factory's images** are on GHCR (`ghcr.io/artyomsv/spire-{run-worker,publisher,model-proxy,egress-proxy,agent-codex}`,
+`:edge` and `:sha-<short>` from docker.yml; `compose.ghcr.yml` defaults to them). The Claude Code agent is a **private**
+package only (its CLI may not be redistributed; LICENSING.md). The run worker pulls a unit image only when its daemon
+lacks it, so pin `SPIRE_VERSION` or pull `edge` by hand on upgrade. For the dev stack and `compose.yml` they are still
+built locally (SMOKE-TEST Mode Q, Mode R §7):
 
 ```bash
 ./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue

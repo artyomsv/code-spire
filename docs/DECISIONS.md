@@ -1452,6 +1452,20 @@ run time — the pattern major CI runners use — is the better end state and ne
 the Node-based harnesses. The contract makes deferring it safe: a customer who needs it today builds
 an image that passes the suite.
 
+**Amended 2026-11-14 — the Codex image is published; Claude Code's stays private
+([the GHCR design](superpowers/specs/2026-11-14-ghcr-factory-images-design.md)).** The operator hosts Code Spire
+on a Kubernetes cluster with the run worker on a Docker host beside it, so every image must come from a registry.
+"Never redistributed" is narrowed to what the licences require. `spire-agent-codex` is published publicly on GHCR:
+`@openai/codex` is Apache-2.0, and the image carries its notice (`deploy/agent/codex/NOTICE`) beside the recipe's
+own Apache-2.0 LICENSE. `spire-agent-claude-code` is pushed to a **private** GHCR package for the operator's own
+cluster, with no `org.opencontainers.image.source` label so the package is not linked to the public repository: the
+CLI is "All rights reserved", under Anthropic's Commercial Terms, which do not address redistribution, and a private
+package is the operator's own build in their own registry. Publishing it publicly needs Anthropic's written
+permission. The options recorded for wider use later are to keep shipping the recipe (today), to build the image on
+first use, or to ask Anthropic. A third harness follows whichever rule its own licence allows; the install-the-same-way
+rule above still holds for how an image is built. The publisher, model proxy and egress proxy images are published
+beside the services (docker.yml, `:edge` and `:sha-<short>` on master).
+
 ---
 
 ## ADR-031 — Model credentials belong to the operator; API key is the default and only sanctioned mode, subscription auth is operator-owned

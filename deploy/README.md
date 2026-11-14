@@ -139,10 +139,14 @@ The run worker — the service that executes agent runs — is behind a compose 
 `docker compose up` does not start it:
 
 ```bash
-# Build it locally first; the two factory images are not on GHCR yet (see CLAUDE.md, Mode Q).
+# From GHCR: the run worker and every image its units run are published (see Images below).
+docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env --profile factory up -d
+
+# Or built here: compose.yml builds the run worker, but the unit images are built by hand first.
 ./deploy/agent/build-codex.sh          # builds, then bakes in the model catalogue
 ./gradlew :spire-publisher:installDist && docker build -t spire-publisher:latest spire-publisher
-
+./gradlew :spire-model-proxy:installDist && docker build -t spire-model-proxy:latest spire-model-proxy
+./deploy/egress/build.sh
 docker compose -f deploy/compose.yml --env-file deploy/.env --profile factory up -d
 ```
 
@@ -204,6 +208,46 @@ service being refused by another, and the gateway's live database privileges.
 
 ## Images
 
-`ghcr.io/artyomsv/spire-{gateway,orchestrator,review-worker,ui}`. `:edge` tracks `master`; pin a
-release tag for anything you intend to keep. Each image carries its FSL-1.1-ALv2 licence as an OCI
-label and as a file.
+`:edge` tracks `master`, and every master build also publishes `:sha-<short>`; pin a release or a
+`sha-` tag for anything you intend to keep. Each image carries its licence as an OCI label and as a
+file (LICENSING.md, "Published images").
+
+| Image | What it is | Licence | Visibility |
+|---|---|---|---|
+| `ghcr.io/artyomsv/spire-{gateway,orchestrator,review-worker,run-worker,ui}` | The services and the dashboard | FSL-1.1-ALv2 | public |
+| `ghcr.io/artyomsv/spire-publisher` | Run unit: clones, gates and pushes | FSL-1.1-ALv2 | public |
+| `ghcr.io/artyomsv/spire-model-proxy` | Run unit: holds the model credential | FSL-1.1-ALv2 | public |
+| `ghcr.io/artyomsv/spire-egress-proxy` | Run unit: the agent's only way out | Apache-2.0 | public |
+| `ghcr.io/artyomsv/spire-agent-codex` | Reference Codex agent, model catalogue baked in | Apache-2.0 (Codex CLI: Apache-2.0) | public |
+| `ghcr.io/artyomsv/spire-agent-claude-code` | Reference Claude Code agent, reviews only | Apache-2.0 recipe; the CLI is Anthropic's | **private** |
+
+The Claude Code image is not public and cannot be: the CLI is "All rights reserved", under
+Anthropic's Commercial Terms. Build your own with `./deploy/agent/build-claude-code.sh` and push it
+to a registry only you can read; set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` to it and the three
+`SPIRE_RUN_REGISTRY_*` values so the run worker can pull it (`deploy/.env.example`).
+
+### Upgrading the run unit's images
+
+`compose.ghcr.yml` names the unit images at `SPIRE_VERSION`, the run worker's own tag. **The run
+worker pulls a unit image only when its Docker daemon does not hold it**, so a moving tag is pulled
+once and never refreshed: after an upgrade on `edge`, units keep running the first `edge` that daemon
+ever pulled, beside a newer run worker. Either pin `SPIRE_VERSION` to a `sha-<short>` or release tag
+(a new tag is a new image, so it is pulled), or, on `edge`, pull the unit images on the run worker's
+daemon at every upgrade:
+
+```bash
+for image in spire-publisher spire-model-proxy spire-egress-proxy spire-agent-codex; do
+  docker pull "ghcr.io/artyomsv/$image:edge"
+done
+```
+
+### Operator steps after merge
+
+docker.yml pushes the factory images for the first time on the first master build after the PR that
+added them. A new GHCR package is private until someone changes it, so once that build is green:
+
+1. In each package's settings on GitHub (Packages → package → Package settings → Change visibility),
+   make these five **public**: `spire-run-worker`, `spire-publisher`, `spire-model-proxy`,
+   `spire-egress-proxy`, `spire-agent-codex`.
+2. Open `spire-agent-claude-code` and confirm it is **private** and not linked to the repository. It
+   carries no source label, so nothing should have linked it; check rather than assume.

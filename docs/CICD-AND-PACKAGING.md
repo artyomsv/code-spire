@@ -277,6 +277,36 @@ Both were caught by measuring rather than trusting, and both are the same shape 
 
 ---
 
+## 10. The factory images join docker.yml (2026-11-14)
+
+The four images above were the reviewer. The software factory added six more that an operator built by
+hand (CLAUDE.md, "Build & run"), and a cluster deployment cannot: every image must come from a registry
+([the design](superpowers/specs/2026-11-14-ghcr-factory-images-design.md)). `docker.yml` now builds and, on
+master, scans and pushes `:edge` and `:sha-<short>` for all of them:
+
+| Image | Job | How it builds | Visibility |
+|---|---|---|---|
+| `spire-run-worker` | `images` | The root Dockerfile, `SERVICE=run-worker`, like the other services | public |
+| `spire-publisher`, `spire-model-proxy` | `images` | `:<module>:installDist` on JDK 25, then the module's Dockerfile | public |
+| `spire-egress-proxy` | `images` | `deploy/egress/Dockerfile` | public |
+| `spire-agent-codex` | `agents` | `deploy/agent/build-codex.sh`: two builds around `codex debug models` | public |
+| `spire-agent-claude-code` | `agents` | `deploy/agent/build-claude-code.sh` | **private**, no source label |
+
+The agent images build through their scripts rather than `build-push-action`, so CI publishes the recipe an
+operator runs and a vendor change to the catalogue command fails the build. They get no gha layer cache.
+The PR path filter covers the agent and egress directories and the two Gradle modules, so a change to an
+entrypoint or a launcher builds its image before merge. Every apk-based image gets `APK_UPGRADE_BUST`, and
+`ApkUpgradeIsNotCachedTest` now fails when an upgrading Dockerfile is in no matrix.
+
+`compose.ghcr.yml` defaults the unit images to the published ones at `SPIRE_VERSION`. The run worker pulls a
+unit image only when its daemon lacks it (`DockerRunRuntime.ensureImage`), so a moving tag never updates on
+its own: pin `sha-<short>` or a release, or pull by hand on upgrade (`deploy/README.md`).
+
+**Still open:** these images are amd64 only, unsigned and have no SBOM; that is `release.yml`'s work, with
+the Kubernetes deployment of the factory, in their own PRs.
+
+---
+
 ## References
 
 - Prior art: `github.com/artyomsv/marauder` — `.github/workflows/`, `deploy/`
