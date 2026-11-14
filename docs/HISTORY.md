@@ -2415,3 +2415,18 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   ignores `SPIRE_FETCH_REF`, so every fork review fails `CLONE_FAILED`; an old run worker drops the unknown command
   type, so the fork review waits and no run starts. Same-repository reviews are unchanged. With
   `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF` or egress off, a fork review is refused `fork_requires_credential_proxy`.
+
+- **Block approval at, and the step 8 minors (2026-11-14, PR #420).** On `spire-test` #106 the bot approved beside
+  an open MAJOR finding. Each repository now has "Block approval at" (Settings → Repositories → Settings, beside
+  "Reviewer may approve"): Blocker (the default), Major and above, or Minor and above; info and nits never block
+  (V115, ADR-047 as amended; docs/superpowers/specs/2026-11-14-approval-threshold-design.md). The verdict rule, the
+  factory land gate and the review page count the open findings at or above the level
+  (`ReviewProjection.openBlocking`); at Blocker that is exactly the old open blocker count, so every existing
+  repository behaves as before. `ReviewVerdictDecision.decide` takes one `VerdictFacts` record, and the
+  `ReviewVerdictDecided` line names a level other than Blocker (`open_at_or_above_major=N`). The review page shows
+  "N blocking (Major and above)" when the level is not Blocker. Also from PR #419's deferred list: a fork review's
+  pull ref must name its own pull request, the pull ref fetch times out after 120 s, the
+  `fork_requires_credential_proxy` match is exact, a refused reply names its harness, the 11-argument
+  `PullRequestEventReceived` constructor is gone, and stale comments were fixed. Skipped on purpose: the leftover
+  `refs/spire-head/pull`, the system gitconfig tripwire, a retry on an auth failure, and the mutation check. Not yet
+  live-tested.
