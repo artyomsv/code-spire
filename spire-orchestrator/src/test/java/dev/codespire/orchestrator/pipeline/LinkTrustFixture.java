@@ -128,3 +128,4 @@ abstract class LinkTrustFixture {
                 botId, true, List.of(), null, BOT_HANDLE, null, null, null, null, "REVIEWER", null, null, List.of(),
                 List.of());
     }
+}
