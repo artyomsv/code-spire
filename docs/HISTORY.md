@@ -2390,3 +2390,28 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   stops funding Codex runs, which then find an empty pool. The Claude Code image is opt-in: build it with
   `./deploy/agent/build-claude-code.sh` and set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE=spire-agent-claude-code:latest`;
   unset (`none`) leaves Claude Code unconfigured and in no list.
+
+- **Harness reviews step 8: fork pull requests (2026-11-13, PR #419; live-proven 2026-11-14).** A repository that
+  reviews with a harness now reviews fork pull requests on GitHub and GitLab, first reviews, re-reviews and replies
+  (ADR-050, "Step 8"). An untrusted pull request (a fork, or fork status unknown) is sent as a new command,
+  `ExecuteUntrustedReviewRun`, with its own wire discriminator and the forge's pull ref; init fetches the ref after
+  the clone (3 attempts, 2 s apart, any transport error counts, object checking on) onto `spire/review-<prId>`, so the
+  fork's branch name never reaches the unit. The run worker refuses an untrusted unit before asking the harness when
+  the mode or egress would not proxy, and again after the build when the arm has no route, as
+  `fork_requires_credential_proxy`, for Codex and Claude Code; the orchestrator turns that into a `Refused` review
+  (`REVIEW_HARNESS_REFUSED` row) or a `FollowUpRefused` reply. Bitbucket Cloud and Data Center are refused
+  `fork_pull_request_has_no_pull_ref`; the step 5 reason `fork_pull_request_not_reviewed_on_harness` is gone. A
+  manual dashboard registration no longer writes `from_fork=false` over a fork's `true`. An untrusted pull request
+  gathers no linked context on the API and the harness path (operator ruling 2026-11-13; links from owner or
+  write-access comments are planned as PR 8b). Review rounds: the clone's inputs moved into
+  `WorkspaceClone.CloneRequest`, the manual-registration fix, a real-saga refusal test and the fork artifact assertion.
+  Live proof: on `spire-test` #106 a fork was reviewed on Claude Code (key), Codex (key) and Codex (seat), each
+  through the model proxy; mode `OFF` refused it with no container, a canary push printed nothing and a reply was
+  answered (docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md). Left open: the Bitbucket refusal, a lagging ref, a force-pushed fork, a fork re-review's
+  unreachable prior head and a deleted fork are proven against fakes only, and the init container holds the reviewer's
+  clone token (docs/UNVERIFIED.md, the step 8 entry; docs/SECURITY.md).
+
+  Upgrading: rebuild `spire-publisher:latest` and roll the run worker before the orchestrator. An old publisher
+  ignores `SPIRE_FETCH_REF`, so every fork review fails `CLONE_FAILED`; an old run worker drops the unknown command
+  type, so the fork review waits and no run starts. Same-repository reviews are unchanged. With
+  `SPIRE_RUN_CREDENTIAL_PROXY_MODE=OFF` or egress off, a fork review is refused `fork_requires_credential_proxy`.

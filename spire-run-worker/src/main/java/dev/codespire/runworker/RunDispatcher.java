@@ -171,9 +171,9 @@ public class RunDispatcher {
         if (command instanceof RunCommand.ExecuteRun plain) {
             return new RunExecution(lane()).execute(message, plain, keeper -> launcher.launch(plain, keeper));
         }
-        if (command instanceof RunCommand.ExecuteReviewRun review) {
+        if (command instanceof RunCommand.ExecuteReviewRun || command instanceof RunCommand.ExecuteUntrustedReviewRun) {
             LOG.warnf("run %s: a review run arrived on cs.run-commands, where it is NOT run; it rides"
-                    + " cs.review-runs", review.runId());
+                    + " cs.review-runs", command.runId());
         }
         RunExecution.ack(message);
         return RunExecution.DONE;

@@ -64,10 +64,11 @@ public final class CloneMain {
             Path workspace = Path.of(env.getOrDefault("SPIRE_WORKSPACE_DIR", DEFAULT_WORKSPACE_DIR));
             outcome = new OutcomeWriter(stdout, username, secret);
 
-            // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge.
-            String fetchBranch = env.get("SPIRE_FETCH_BRANCH");
-            populate(remote, base, branch, workspace, new GitCredential(username, secret), username, checkpointOf(env),
-                    fetchBranch == null || fetchBranch.isBlank() ? null : fetchBranch);
+            // A land fix (M4 slice 7a) names its pull request's base, kept under refs/spire-base for a merge; a
+            // fork's head is on no branch (harness reviews step 8), so init fetches the pull request's own ref.
+            populate(new WorkspaceClone.CloneRequest(remote, base, branch, workspace,
+                    new GitCredential(username, secret), username, username + "@" + IDENTITY_DOMAIN,
+                    optional(env, "SPIRE_FETCH_BRANCH"), optional(env, "SPIRE_FETCH_REF")), checkpointOf(env));
             return 0;
         } catch (CheckpointMissingException missing) {
             outcome.failed("CHECKPOINT_MISSING", missing.getMessage());
@@ -93,6 +94,12 @@ public final class CloneMain {
      */
     record Checkpoint(String head, Path bundles, long maxBytes) {}
 
+    /** An environment variable, or null when it is unset or blank. */
+    private static String optional(Map<String, String> env, String name) {
+        String value = env.get(name);
+        return value == null || value.isBlank() ? null : value;
+    }
+
     private static Checkpoint checkpointOf(Map<String, String> env) {
         String head = env.get("SPIRE_CHECKPOINT_HEAD");
         if (head == null || head.isBlank()) return null;
@@ -109,8 +116,13 @@ public final class CloneMain {
 
     static void populate(String remote, String base, String branch, Path workspace, GitCredential credential,
                          String username, Checkpoint checkpoint, String fetchBranch) throws IOException, GitAPIException {
-        WorkspaceClone.populate(remote, base, branch, workspace, credential, username, username + "@" + IDENTITY_DOMAIN,
-                fetchBranch);
-        if (checkpoint != null) CheckpointBundles.importInto(workspace, checkpoint.bundles(), checkpoint.head(), checkpoint.maxBytes());
+        populate(new WorkspaceClone.CloneRequest(remote, base, branch, workspace, credential, username,
+                username + "@" + IDENTITY_DOMAIN, fetchBranch, null), checkpoint);
+    }
+
+    static void populate(WorkspaceClone.CloneRequest request, Checkpoint checkpoint)
+            throws IOException, GitAPIException {
+        WorkspaceClone.populate(request);
+        if (checkpoint != null) CheckpointBundles.importInto(request.workspace(), checkpoint.bundles(), checkpoint.head(), checkpoint.maxBytes());
     }
 }

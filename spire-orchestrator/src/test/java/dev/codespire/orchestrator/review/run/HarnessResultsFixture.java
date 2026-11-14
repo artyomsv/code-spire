@@ -57,6 +57,9 @@ final class HarnessResultsFixture {
 
     final List<IntegrationEvent> outcomes = new ArrayList<>();
 
+    /** Refusals the saga was handed, as {@code reviewId@commit: attention reason}. */
+    final List<String> refusals = new ArrayList<>();
+
     final List<ActionCommand> finishes = new ArrayList<>();
 
     /** What reached the reply results (harness reviews, step 7). */
@@ -70,6 +73,10 @@ final class HarnessResultsFixture {
         return new RunResult.RunFailed(RUN_ID, cause, "TEST-detail", false, null, List.of());
     }
 
+    static RunResult.RunFailed failed(String cause, String detail) {
+        return new RunResult.RunFailed(RUN_ID, cause, detail, false, null, List.of());
+    }
+
     HarnessReviewResults results() {
         HarnessReviewResults results = new HarnessReviewResults();
         results.saga = saga();
@@ -77,6 +84,7 @@ final class HarnessResultsFixture {
         results.rounds = roundLock();
         results.runRows = new FactoryRunProjection() {
             @Override public Optional<String> modelOf(String runId) { return Optional.of("TEST-model"); }
+            @Override public Optional<String> harnessOf(String runId) { return Optional.of("TEST-harness"); }
             @Override public Optional<String> paidByOf(String runId) { return Optional.of("API_KEY"); }
             @Override protected void push(String runId) { /* nothing: no live feed from a unit test */ }
         };
@@ -99,6 +107,12 @@ final class HarnessResultsFixture {
             public void acceptHarnessOutcome(IntegrationEvent outcome) {
                 steps.add("outcome");
                 outcomes.add(outcome);
+            }
+
+            @Override
+            public void acceptHarnessRefusal(String reviewId, String commit, HarnessReviewStart.Refused refused) {
+                steps.add("refusal");
+                refusals.add(reviewId + "@" + commit + ": " + refused.attentionReason());
             }
         };
     }

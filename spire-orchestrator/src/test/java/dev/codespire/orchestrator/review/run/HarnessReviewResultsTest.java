@@ -147,6 +147,40 @@ class HarnessReviewResultsTest {
         assertTrue(fixture.outcomes.isEmpty(), fixture.outcomes.toString());
     }
 
+    /** Step 8: the run worker refused to start an unproxied fork: a refusal with attention, not a retried failure. */
+    @Test
+    void anUnproxiedForkIsARefusalWithAttention() {
+        fixture.results().accept(failed("BAD_COMMAND", "IllegalStateException: fork_requires_credential_proxy"), ROUND_ONE);
+
+        assertEquals(List.of(REVIEW_ID + "@" + HEAD + ": TEST-harness: fork_requires_credential_proxy"), fixture.refusals);
+        assertTrue(fixture.outcomes.isEmpty(), "never a ReviewFailed: " + fixture.outcomes);
+    }
+
+    @Test
+    void anotherBadCommandStaysAFailure() {
+        fixture.results().accept(failed("BAD_COMMAND", "IllegalStateException: something_else"), ROUND_ONE);
+
+        assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertTrue(fixture.refusals.isEmpty(), fixture.refusals.toString());
+    }
+
+    @Test
+    void aDetailThatOnlyQuotesTheProxyTextStaysAFailure() {
+        fixture.results().accept(failed("BAD_COMMAND", "IllegalStateException: not fork_requires_credential_proxy at all"),
+                ROUND_ONE);
+
+        assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertTrue(fixture.refusals.isEmpty(), fixture.refusals.toString());
+    }
+
+    @Test
+    void theProxyDetailOnAnotherCauseStaysAFailure() {
+        fixture.results().accept(failed("AGENT_FAILED", "IllegalStateException: fork_requires_credential_proxy"), ROUND_ONE);
+
+        assertInstanceOf(ReviewFailed.class, fixture.outcomes.getFirst());
+        assertTrue(fixture.refusals.isEmpty(), fixture.refusals.toString());
+    }
+
     /** No reviewer account means no finish can be sent; the paid answer fails the review terminally, never silently. */
     @Test
     void aMissingReviewerCredentialFailsTheReview() {

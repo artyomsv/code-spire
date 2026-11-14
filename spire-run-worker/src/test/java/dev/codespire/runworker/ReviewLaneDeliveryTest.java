@@ -80,7 +80,38 @@ class ReviewLaneDeliveryTest {
                 launches.incrementAndGet();
                 return new RunReviewArtifact(review.runId(), review.review(), "TEST-findings", false, null, 1, List.of());
             }
+            @Override
+            public RunResult launchUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, RunObserver observer) {
+                forkLaunches.incrementAndGet();
+                return new RunReviewArtifact(review.runId(), review.review(), "TEST-findings", false, null, 1, List.of());
+            }
         }, RunLauncher.class);
+    }
+
+    private final AtomicInteger forkLaunches = new AtomicInteger();
+
+    /** A fork's command (harness reviews step 8) is run by the same lane, through its own launch, and only once. */
+    @Test
+    void theLaneDeliversTheUntrustedCommand() throws Exception {
+        RunCommand.ExecuteUntrustedReviewRun fork = untrusted();
+
+        send(fork);
+        assertTrue(eventually(() -> forkLaunches.get() == 1), "the lane never ran the fork command");
+        Sent again = send(fork);
+        awaitProcessed(again.metadata());
+
+        assertEquals(1, forkLaunches.get(), "the execute claim drops the second delivery");
+        assertEquals(0, launches.get(), "a fork's review is never launched as a trusted one");
+    }
+
+    private static RunCommand.ExecuteUntrustedReviewRun untrusted() {
+        String runId = "run::github:TEST-work/app:TEST-fork-" + UUID.randomUUID() + ":1";
+        return new RunCommand.ExecuteUntrustedReviewRun(runId, new RunCommand.ExecuteRun(runId,
+                new RepoRef("TEST-work", "app"), "https://forge.example.test/TEST-work/app.git", "TEST-source",
+                "a".repeat(40), dev.codespire.contract.review.PullRefs.localBranch(7), "TEST-review the pull request",
+                "codex", "TEST-model", "TEST-image", List.of(), 60, "enc-scm", "enc-harness"),
+                new ReviewRunBinding("TEST-review", ReviewRunBinding.Kind.REVIEW, 7, "a".repeat(40), "TEST-slot", 1),
+                HarnessReviewInputs.NONE, "refs/pull/7/head");
     }
 
     @Test

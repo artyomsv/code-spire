@@ -64,7 +64,7 @@ public class DevSimulatorResource {
                 (commit),
                 Author.of("TEST-account-id", "test-author", "TEST Author"),
                 "https://example.invalid/sandbox/demo-repo/pull-requests/" + prId,
-                repository.scmType());
+                repository.scmType(), null);
         integration.send(new dev.codespire.contract.event.RepositoryDelivery(repositoryId, null, 0,
                 repository.scmType(), repository.forgeOrigin(), dev.codespire.contract.event.RepositoryEventKind.REVIEWER,
                 "TEST-simulator-" + prId, event));

@@ -29,7 +29,7 @@ class RunLauncherModelProxyTest {
      * {@link ModelProxyReport#NONE}, so a fake that left it alone would make every test below pass with the launcher
      * never reading the report (the CLAUDE.md saga-fake gotcha).
      */
-    private static class ProxiedRuntime extends RunLauncherTest.FakeRuntime {
+    static class ProxiedRuntime extends RunLauncherTest.FakeRuntime {
         ModelProxyReport report = ModelProxyReport.NONE;
         int reads;
         /** Images this runtime holds; describing any other throws, as a failed pull does. */
@@ -57,16 +57,16 @@ class RunLauncherModelProxyTest {
         }
     }
 
-    private static final String PROXY_IMAGE = "TEST-model-proxy:missing";
+    static final String PROXY_IMAGE = "TEST-model-proxy:missing";
 
     /** A unit as the builder makes it with a model proxy; the launcher only reads its model proxy's image. */
-    private static dev.codespire.runtime.RunUnitSpec proxiedUnit() {
+    static dev.codespire.runtime.RunUnitSpec proxiedUnit() {
         return directUnit().withModelProxy(new dev.codespire.runtime.ContainerSpec(PROXY_IMAGE, List.of(),
                 Map.of("SPIRE_MODEL_SECRET", "TEST-model-key"), List.of()));
     }
 
     /** A unit as the builder makes it without a model proxy: every factory build under REVIEWS. */
-    private static dev.codespire.runtime.RunUnitSpec directUnit() {
+    static dev.codespire.runtime.RunUnitSpec directUnit() {
         dev.codespire.runtime.ContainerSpec init = new dev.codespire.runtime.ContainerSpec("TEST-publisher",
                 List.of("spire-clone"), Map.of(), List.of(dev.codespire.runtime.Mount.writable("workspace", "/workspace")));
         dev.codespire.runtime.ContainerSpec agent = new dev.codespire.runtime.ContainerSpec("TEST-agent", List.of("fake"),
@@ -89,8 +89,8 @@ class RunLauncherModelProxyTest {
     }
 
     /** The launcher's builder answering every kind of unit with the given one. */
-    private static void building(RunLauncher launcher, dev.codespire.runtime.RunUnitSpec unit) {
-        launcher.builder = new RunUnitBuilder() {
+    static void building(RunLauncher launcher, dev.codespire.runtime.RunUnitSpec unit) {
+        RunUnitBuilder builder = new RunUnitBuilder() {
             @Override
             public dev.codespire.runtime.RunUnitSpec build(RunCommand.ExecuteRun command,
                                                            dev.codespire.harness.HarnessAdapter adapter) {
@@ -103,6 +103,10 @@ class RunLauncherModelProxyTest {
                 return unit;
             }
         };
+        // The mode that proxies reviews, so a fork reaches the built-unit check (an arm with no route) these tests fake.
+        builder.credentialProxyMode = CredentialProxyMode.REVIEWS;
+        builder.egressMode = dev.codespire.runtime.EgressPolicy.Mode.ENFORCE;
+        launcher.builder = builder;
     }
 
     /**
@@ -155,11 +159,11 @@ class RunLauncherModelProxyTest {
 
     private final RunLauncher launcher = launcher(runtime);
 
-    private static RunLauncher launcher(ProxiedRuntime runtime) {
+    static RunLauncher launcher(ProxiedRuntime runtime) {
         return RunLauncherTest.launcher(runtime, new RunLauncherTest.FakeAdapter());
     }
 
-    private static RunCommand.ExecuteRun command() {
+    static RunCommand.ExecuteRun command() {
         return RunLauncherTest.commandWithNoCredentials();
     }
 

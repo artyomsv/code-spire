@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.review.run;
 
 import dev.codespire.contract.command.RunCommand;
 import dev.codespire.contract.port.ScmType;
+import dev.codespire.contract.review.PullRefs;
 import dev.codespire.contract.review.ReviewRunBinding;
 import dev.codespire.contract.scm.RepoRef;
 import dev.codespire.orchestrator.factory.FactoryCloneUrls;
@@ -81,7 +82,17 @@ public class ReviewRunDispatch {
      * @param targetBranch the pull request's destination branch, which the run's init keeps under refs/spire-base for
      *                     the agent to diff against (step 5)
      */
-    private record Target(RepoRef repo, ScmType type, String sourceBranch, String targetBranch, ScmProvider reviewer) {
+    private record Target(RepoRef repo, ScmType type, String sourceBranch, String targetBranch, ScmProvider reviewer,
+                          String pullRef) {
+
+        /** An untrusted pull request carries the forge's pull ref; its own branch name is never used. */
+        boolean untrusted() {
+            return pullRef != null;
+        }
+    }
+
+    /** What one dispatch sends: a trusted review's command or an untrusted one's, which the lane and the row read alike. */
+    private record Built(RunCommand command, RunCommand.ExecuteRun execution) {
     }
 
     public Outcome dispatch(ReviewRunRequest request) {
@@ -97,17 +108,23 @@ public class ReviewRunDispatch {
             return new Refused(refusal.getMessage());
         }
         String runId = ReviewRunIds.of(target.repo(), target.type(), request.binding());
-        RunCommand.ExecuteReviewRun command = command(runId, request, target, funded);
+        Built built = command(runId, request, target, funded);
         // Admitted under the lock a close or supersede takes, so a cancellation during funding refuses this row.
-        return switch (admission.admit(row(command, request, target, funded), request.repositoryId())) {
+        return switch (admission.admit(row(built, request, target, funded), request.repositoryId())) {
             case CANCELLED -> new Refused(CANCELLED_REASON);
             case ALREADY_QUEUED -> new AlreadyQueued(runId);
-            case ADMITTED -> launched(runId, command);
+            case ADMITTED -> launched(runId, built.command());
         };
     }
 
-    private Outcome launched(String runId, RunCommand.ExecuteReviewRun command) {
-        return switch (launch.launch(command)) {
+    private Outcome launched(String runId, RunCommand command) {
+        RunLaunch.Outcome sent = switch (command) {
+            case RunCommand.ExecuteUntrustedReviewRun untrusted -> launch.launch(untrusted);
+            case RunCommand.ExecuteReviewRun trusted -> launch.launch(trusted);
+            default -> throw new IllegalStateException("A review run is sent as a review command, not "
+                    + command.getClass().getSimpleName());
+        };
+        return switch (sent) {
             case RunLaunch.Dispatched ignored -> new Dispatched(runId);
             // Both are recorded on the row by the launch; a definite miss is re-armable by the identical retry.
             case RunLaunch.DefiniteMiss ignored -> new Refused("dispatch_failed");
@@ -126,31 +143,44 @@ public class ReviewRunDispatch {
                 .flatMap(found -> accounts
                         .resolve(request.repositoryId(), ProviderRole.REVIEWER)
                         .filter(account -> login(account) != null)
-                        .flatMap(reviewer -> ScmType.fromProviderType(found.providerType()).map(type -> new Target(
-                                new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(),
-                                found.destBranch(), reviewer))));
+                        .flatMap(reviewer -> ScmType.fromProviderType(found.providerType())
+                                .flatMap(type -> target(found, type, reviewer))));
     }
 
-    private RunCommand.ExecuteReviewRun command(String runId, ReviewRunRequest request, Target target,
-                                                RunFunding.Funded funded) {
+    /** Empty for an untrusted pull request the forge has no pull ref for: its branch is never cloned instead. */
+    private static Optional<Target> target(FixTargets.PushTarget found, ScmType type, ScmProvider reviewer) {
+        String pullRef = found.isUntrusted() ? found.pullRef().orElse(null) : null;
+        if (found.isUntrusted() && pullRef == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new Target(new RepoRef(found.workspace(), found.slug()), type, found.sourceBranch(),
+                found.destBranch(), reviewer, pullRef));
+    }
+
+    private Built command(String runId, ReviewRunRequest request, Target target, RunFunding.Funded funded) {
         RunFunding.Choice choice = request.choice();
         ReviewRunBinding binding = request.binding();
         ScmProvider reviewer = target.reviewer();
+        // The fork author names the branch, so an untrusted run is cloned onto a fixed local one and never the author's.
+        String branch = target.untrusted() ? PullRefs.localBranch(binding.prId()) : target.sourceBranch();
         RunCommand.ExecuteRun execution = new RunCommand.ExecuteRun(runId, target.repo(),
-                FactoryCloneUrls.cloneUrl(target.type(), reviewer.baseUrl(), target.repo()), target.sourceBranch(),
-                binding.commit(), target.sourceBranch(), request.prompt(), choice.harness(), choice.model(),
+                FactoryCloneUrls.cloneUrl(target.type(), reviewer.baseUrl(), target.repo()), branch,
+                binding.commit(), branch, request.prompt(), choice.harness(), choice.model(),
                 funded.image(), List.of(), config.reviewWallClockSeconds(),
                 credentials.packScm(runId, login(reviewer), reviewer.secret()),
                 credentials.packHarness(runId, funded.handedOver()), false, target.targetBranch())
                 .atEffort(choice.effort());
-        return new RunCommand.ExecuteReviewRun(runId, choice.subscription() ? execution.paidBySignIn() : execution, binding,
-                request.inputs());
+        RunCommand.ExecuteRun paid = choice.subscription() ? execution.paidBySignIn() : execution;
+        RunCommand command = target.untrusted()
+                ? new RunCommand.ExecuteUntrustedReviewRun(runId, paid, binding, request.inputs(), target.pullRef())
+                : new RunCommand.ExecuteReviewRun(runId, paid, binding, request.inputs());
+        return new Built(command, paid);
     }
 
-    private static FactoryRunProjection.QueuedRun row(RunCommand.ExecuteReviewRun command, ReviewRunRequest request,
+    private static FactoryRunProjection.QueuedRun row(Built built, ReviewRunRequest request,
                                                       Target target, RunFunding.Funded funded) {
-        RunCommand.ExecuteRun execution = command.execution();
-        FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(command.runId(), execution.harness(),
+        RunCommand.ExecuteRun execution = built.execution();
+        FactoryRunProjection.QueuedRun row = new FactoryRunProjection.QueuedRun(built.command().runId(), execution.harness(),
                 execution.model(), execution.baseBranch(), execution.baseCommit(), execution.branch(),
                 login(target.reviewer()), funded.member().id()).asReviewFor(request.binding());
         return request.choice().subscription() ? row.paidBySubscription() : row;

@@ -43,6 +43,25 @@ public class HarnessReviewResults implements ReviewRunResults {
 
     static final String CANCELLED_ERROR = "Harness review run cancelled";
 
+    /**
+     * The run worker's own refusal to start an untrusted run with no credential proxy (harness reviews, step 8): its
+     * cause and the text its detail carries. Duplicated from the run worker, which the orchestrator does not depend on.
+     */
+    static final String BAD_COMMAND = "BAD_COMMAND";
+
+    static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
+
+    /**
+     * True when the run worker refused to start the run because a fork review would have run unproxied. The detail is
+     * the exception's text, so it is the constant alone or {@code <ExceptionType>: <constant>}: matched at the end, never
+     * anywhere in the text, so a message that merely quotes the constant is still a failure.
+     */
+    static boolean isUnproxiedFork(RunResult.RunFailed failed) {
+        String detail = failed.detail();
+        return BAD_COMMAND.equals(failed.cause()) && detail != null
+                && (detail.equals(FORK_PROXY_REQUIRED) || detail.endsWith(": " + FORK_PROXY_REQUIRED));
+    }
+
     /** The phase a failure to send the answer to the worker is recorded under, as the worker's own finish failure. */
     static final String FINISH_PHASE = "harness-finish";
 
@@ -51,6 +70,9 @@ public class HarnessReviewResults implements ReviewRunResults {
 
     /** The model named when the run's row cannot be read, as {@code ReviewRunCharges} names it. */
     private static final String UNRECORDED_MODEL = "UNRECORDED";
+
+    /** The harness named in a refusal when the run's row cannot be read. */
+    private static final String UNRECORDED_HARNESS = "UNRECORDED";
 
     @Inject
     ResultSaga saga;
@@ -155,6 +177,9 @@ public class HarnessReviewResults implements ReviewRunResults {
     private void act(RunResult result, ReviewRunBinding binding) {
         switch (result) {
             case RunReviewArtifact answer -> finish(answer, binding);
+            case RunResult.RunFailed failed when isUnproxiedFork(failed) -> saga.acceptHarnessRefusal(binding.reviewId(),
+                    binding.commit(), new HarnessReviewStart.Refused(
+                            runRows.harnessOf(failed.runId()).orElse(UNRECORDED_HARNESS), FORK_PROXY_REQUIRED));
             case RunResult.RunFailed failed -> saga.acceptHarnessOutcome(failure(failed, binding));
             default -> throw new IllegalStateException("A review run's outcome is an answer or a failure, not "
                     + result.getClass().getSimpleName());

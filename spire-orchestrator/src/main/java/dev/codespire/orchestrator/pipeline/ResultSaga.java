@@ -33,6 +33,7 @@ import dev.codespire.orchestrator.llm.ChargeKind;
 import dev.codespire.orchestrator.llm.ChargeLine;
 import dev.codespire.orchestrator.llm.DefaultLlm;
 import dev.codespire.orchestrator.readmodel.ReviewProjection;
+import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.review.run.HarnessReviewStart;
 import dev.codespire.orchestrator.view.TimelineBroadcaster;
 import io.smallrye.reactive.messaging.annotations.Blocking;
@@ -131,6 +132,10 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
 
+    /** Whether the pull request is untrusted, which decides whether its links are loaded (harness reviews, step 8). */
+    @Inject
+    FixTargets targets;
+
     /** Whether a review runs on the repository's harness (harness reviews, steps 5 and 6). */
     @Inject
     HarnessReviewStart harnessStart;
@@ -188,6 +193,19 @@ public class ResultSaga {
         }
     }
 
+    /**
+     * A harness review run the run worker refused to start (an unproxied fork): the review is refused with the
+     * attention row, as a start's refusal is, never retried as a failure. Same guards as {@link #acceptHarnessOutcome}.
+     */
+    public void acceptHarnessRefusal(String reviewId, String commit, HarnessReviewStart.Refused refused) {
+        MDC.put("reviewId", reviewId);
+        try {
+            ifCurrentRun(reviewId, commit, HARNESS_OUTCOME, () -> refuseHarness(reviewId, commit, refused));
+        } finally {
+            MDC.remove("reviewId");
+        }
+    }
+
     @Incoming("results-in")
     @Blocking // ordered (default): per-partition = per-review sequencing (CONTRACT §9, finding H3)
     public void on(IntegrationEvent event) {
@@ -233,7 +251,7 @@ public class ResultSaga {
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        e.references() == null ? Set.of() : e.references(), contextCred, scmType,
+                        ContextLinks.toGather(e, targets, projection), contextCred, scmType,
                         // Already read at diff-fetch, from the PR's target branch — the aggregator
                         // holds no SCM credential and so cannot fetch it itself.
                         e.repoRules(), e.codeReferences()));

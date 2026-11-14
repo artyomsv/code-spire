@@ -60,6 +60,8 @@ public class HarnessReplyResults {
         ReplyCall call = ReplyCall.ofSlot(binding.callSlot());
         switch (result) {
             case RunReviewArtifact answer -> post(answer, binding, call);
+            case RunResult.RunFailed failed when HarnessReviewResults.isUnproxiedFork(failed) -> refuse(binding, call,
+                    HarnessReviewResults.FORK_PROXY_REQUIRED);
             case RunResult.RunFailed failed -> fail(binding, call, HarnessReviewResults.CANCELLED.equals(failed.cause())
                     ? CANCELLED : "Harness reply run failed: " + failed.cause());
             default -> LOG.debugf("reply run %s for %s: %s", result.runId(), binding.reviewId(),
@@ -82,6 +84,15 @@ public class HarnessReplyResults {
                 binding.prId(), new ThreadRef(call.threadRef()), call.triggeringCommentId(), answer.text(),
                 credential.orElseThrow(),
                 new ReplyRetry(levels.maxAttempts(), levels.backoffBaseMs(), levels.backoffFactor())));
+    }
+
+    /** The run worker refused an unproxied fork: said as a refusal under the thread, as the start's refusals are. */
+    private void refuse(ReviewRunBinding binding, ReplyCall call, String reason) {
+        String why = "harness reply refused: " + reason;
+        timeline.record("result", "refused:HarnessReply", binding.reviewId(), reason);
+        projection.appendEvent(binding.reviewId(), "result", "FollowUpRefused", why, call.threadRef());
+        projection.setAnswering(binding.reviewId(), false);
+        LOG.warnf("Harness reply on %s thread %s refused: %s", binding.reviewId(), call.threadRef(), reason);
     }
 
     private void fail(ReviewRunBinding binding, ReplyCall call, String why) {

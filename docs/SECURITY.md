@@ -409,6 +409,33 @@ credential, as it printed the agent's before. A harness that declares no credent
 Codex), and every factory build under `REVIEWS`, still hands the agent the real credential. None of it has a live
 proof yet (`docs/UNVERIFIED.md`, the step 3 entry).
 
+### Fork pull requests on a harness (harness reviews step 8)
+
+A fork's author controls every byte of the code the agent reads and can run, so a fork or unknown-provenance pull
+request is reviewed only under these rules, each enforced in code:
+
+- **The real credential is never in the agent.** The run worker refuses the unit (`fork_requires_credential_proxy`)
+  unless a model proxy holds the credential, for every harness, before a container starts. Proxy mode `OFF`, egress
+  off and a harness with no route all refuse; none falls back to a direct credential.
+- **No linked context.** The links a review loads context from are read from text the fork's author wrote, so an
+  untrusted pull request gathers none, on the API and the harness path. The event log records
+  `context links skipped: untrusted pull request`.
+- **Init never runs the fork's code.** Init is JGit in the publisher image, not a git binary: it makes a fresh
+  clone with a config of its own, no submodules, and fetches a pull ref
+  Code Spire chose against an allowlist. The agent diffs the head against the target branch's copy and reads the rules
+  from it, never from the fork. The fork's branch name never reaches the unit.
+- **The wire is separate.** An old run worker refuses the command rather than running it as trusted.
+- **Reviews stay read-only.** No write credential reaches the publisher or the agent; `/fix` on a fork stays refused.
+
+Residual risks. Init holds the reviewer account's clone token (it can post) while it fetches the fork's objects; the
+objects are checked, but a flaw in JGit's pack or checkout handling would run in that container. A filter driver set
+in the init image's own system or global gitconfig is not covered by the fresh repository config. The agent can still
+spend the credential through the model proxy, as for any review, and prompt injection in the fork's code can steer the
+review's findings; the output is only findings, but a steered review can approve or miss a defect. Live-proven on
+`spire-test` #106 on Claude Code and Codex, key and seat, a canary that asked for the environment included
+(docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md); hostile init content, GitLab and lagging, force-pushed or deleted
+heads are proven against fakes only (docs/UNVERIFIED.md, the step 8 entry).
+
 ### What is NOT mitigated, stated rather than implied
 
 - **Docker socket access is root-equivalent on the host.** The run worker drives the daemon

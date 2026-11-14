@@ -208,6 +208,43 @@ class FixTargetsTest {
         assertTrue(target.isPushable());
     }
 
+    /** Step 8 dispatches forks, yet a fork is still never pushed to: the two rules are separate. */
+    @Test
+    void aForkIsStillNotPushable() {
+        FixTargets.PushTarget fork = target("github", true);
+
+        assertEquals(Optional.of(FixTargets.Unpushable.FORK), fork.whyNotPushable());
+        assertTrue(fork.isUntrusted());
+        assertEquals(Optional.of("refs/pull/7/head"), fork.pullRef());
+    }
+
+    /** Unknown provenance is untrusted too, and a same-repository pull request is the only trusted one. */
+    @Test
+    void onlyAKnownSameRepositoryPullRequestIsTrusted() {
+        assertFalse(target("github", false).isUntrusted());
+        assertTrue(target("github", null).isUntrusted());
+        assertTrue(target("github", true).isUntrusted());
+        assertTrue(targets.isUntrustedReview("review::TEST-WS/TEST-NONE#8999"), "no row is unknown");
+        assertTrue(targets.isUntrustedReviewWithoutPullRef("review::TEST-WS/TEST-NONE#8999"));
+        assertFalse(target("github", true).isUntrustedWithoutPullRef());
+        assertTrue(target("bitbucket-cloud", true).isUntrustedWithoutPullRef());
+        assertTrue(target("bitbucket-cloud", null).isUntrustedWithoutPullRef());
+        assertFalse(target("bitbucket-cloud", false).isUntrustedWithoutPullRef(), "a trusted pull request needs no ref");
+    }
+
+    @Test
+    void thePullRefIsTheForgesOwnAndBitbucketHasNone() {
+        assertEquals(Optional.of("refs/merge-requests/7/head"), target("gitlab", true).pullRef());
+        assertEquals(Optional.empty(), target("bitbucket-cloud", true).pullRef());
+        assertEquals(Optional.empty(), target("bitbucket-dc", true).pullRef());
+        assertEquals(Optional.empty(), target("TEST-unknown", true).pullRef());
+    }
+
+    private static FixTargets.PushTarget target(String providerType, Boolean fromFork) {
+        return new FixTargets.PushTarget(providerType, "TEST-WS", "TEST-REPO", 7, "feature/login", "develop",
+                "TESTSHA1", "OPEN", fromFork);
+    }
+
     // --- fixtures ---------------------------------------------------------------------------
 
     private void insertFork(String prState, String sourceBranch, String destBranch, String commit) {

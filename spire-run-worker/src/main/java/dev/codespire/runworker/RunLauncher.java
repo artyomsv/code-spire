@@ -111,6 +111,14 @@ public class RunLauncher {
     }
 
     /**
+     * A harness review run of a fork pull request (step 8): the same unit and result path as {@link #launchReview}, built
+     * by {@link RunUnitBuilder#buildUntrustedReview}, which refuses it unless the model proxy holds the credential.
+     */
+    public RunResult launchUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, RunObserver observer) {
+        return launch(review.execution(), review, observer, unit -> {});
+    }
+
+    /**
      * {@code wrapper} says which unit this is: null for an ordinary run, the held build, the read-only draft, or the
      * read-only review run.
      * One parameter rather than one per kind, because at most one of them is ever present.
@@ -179,6 +187,7 @@ public class RunLauncher {
         if (wrapper instanceof RunCommand.ExecuteWorkRun held) return builder.buildHeld(held, adapter);
         if (wrapper instanceof RunCommand.ExecuteWorkDraftRun draft) return builder.buildReadOnly(draft, adapter);
         if (wrapper instanceof RunCommand.ExecuteReviewRun review) return builder.buildReview(review, adapter);
+        if (wrapper instanceof RunCommand.ExecuteUntrustedReviewRun fork) return builder.buildUntrustedReview(fork, adapter);
         return builder.build(command, adapter);
     }
 
@@ -271,7 +280,7 @@ public class RunLauncher {
     private Readers read(Live live) {
         RunEventFold seen = new RunEventFold();
         // A review's answer may be as large as the review cap its unit hands the publisher; every other unit keeps 32 KiB.
-        PublisherOutcome outcome = live.launch().wrapper() instanceof RunCommand.ExecuteReviewRun
+        PublisherOutcome outcome = ReviewWrappers.reviewOf(live.launch().wrapper()) != null
                 ? PublisherOutcome.withArtifactCap(dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)
                 : new PublisherOutcome();
         // One stop per run, however many lines the publisher emits after refusing.
@@ -346,7 +355,7 @@ public class RunLauncher {
             // through the same unobserved ranking as any run, and preserves the unit for inspection.
             result = new ReadOnlyResults(failures, draft).of(result, observed.outcome(),
                     wallSecondsSince(live.activeStarted()));
-        } else if (live.launch().wrapper() instanceof RunCommand.ExecuteReviewRun review) {
+        } else if (ReviewWrappers.reviewOf(live.launch().wrapper()) instanceof RunCommand.ExecuteReviewRun review) {
             // The same branch for a review's answer (harness reviews, step 4): its unit is destroyed below like a draft's.
             result = new ReadOnlyResults(failures, review).of(result, observed.outcome(),
                     wallSecondsSince(live.activeStarted()));

@@ -177,8 +177,8 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   cancels its round's runs and a closed pull request all of them, a dispatch in flight included (V108). A repository's
   "Review with" names an API provider or a harness, never both (V109); on a harness every review of a same-repository
   pull request runs on it, with no API fallback: a re-review with open prior findings is one `RECONCILE` run, any
-  other a `REVIEW` run. A fork, an unknown fork status, a missing reviewer credential or a refused dispatch is
-  `refused` with a `REVIEW_HARNESS_REFUSED` attention row. Step 6 splits each review in three: the review worker
+  other a `REVIEW` run. A missing reviewer credential or a refused dispatch is `refused` with a
+  `REVIEW_HARNESS_REFUSED` attention row (forks: step 8, below). Step 6 splits each review in three: the review worker
   prepares (`PrepareHarnessReview` → `HarnessReviewPrepared`: the context, and on a re-review the prior findings
   numbered once and stored under `harness:prepare#<round>`), the orchestrator launches the run, and the worker
   finishes (`FinishHarnessReview` → `HarnessReviewGenerated`) with the API path's parsers and `ReconcileSteps`
@@ -195,7 +195,7 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   linked issue #96; a re-review was one `RECONCILE` run that resolved the fixed thread with a reply, kept two open and
   reported one new bug, charged once under `…#run2|RECONCILE` at cost 0; a rename kept the three open findings at the
   new path with no duplicate; `chatgpt.com` only. Open: an unreachable prior head, a replayed finish fault, a stale
-  round's late message, an API key or a refused seat on a re-review, an over-cap answer and forks are proven
+  round's late message, an API key or a refused seat on a re-review, an over-cap answer are proven
   against fakes only; dead-lettered harness messages keep the context in `dlq_entry.payload` in plain text, a
   redelivery funds twice, and a stuck `reviewing` review has no dashboard Re-run (docs/UNVERIFIED.md, the step 5 and
   step 6 entries). Step 7 answers a reply on a harness repository with one `FOLLOWUP` run per turn, after every
@@ -235,6 +235,16 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   kind is its vendor's). Live on `spire-test` (`claude-sonnet-5-5`): #102 reviewed, #103's steering and redirect
   canaries ignored, #104 (40 files) reviewed, a refused key failed #105 `CREDENTIAL_REJECTED` and was marked, an API
   subscription request refused. 27 of 28 guards mutation-checked; the 28th is unreachable defence in depth.
+
+- **Harness reviews 8: fork pull requests** (PR #419, ADR-050 "Step 8"; live-proven 2026-11-13 to 2026-11-14 in
+  docs/factory/HARNESS-REVIEWS-8-ACCEPTANCE.md). A fork or unknown-provenance pull request on GitHub or GitLab is reviewed on a harness as
+  `ExecuteUntrustedReviewRun`: init fetches the forge's pull ref onto `spire/review-<prId>` (3 tries, 2 s apart), the
+  run worker refuses the unit `fork_requires_credential_proxy` unless a model proxy holds the credential (Codex and
+  Claude Code), the refusal is a named `Refused` or `FollowUpRefused`, and no linked context is gathered. Bitbucket
+  is refused `fork_pull_request_has_no_pull_ref`. Upgrade: rebuild `spire-publisher:latest` and roll the run worker
+  before the orchestrator (docs/HISTORY.md). Live on `spire-test` #106: Claude Code on a key, Codex on a key and on a seat reviewed a fork, mode `OFF` refused it
+  with no container, a canary push and a reply were handled. Bitbucket, a lagging ref, a force-pushed or deleted fork
+  and GitLab are proven against fakes only; links from trusted comments are PR 8b (docs/UNVERIFIED.md, the step 8 entry).
 
 **Limits that remain:**
 

@@ -24,7 +24,7 @@ import java.util.Optional;
  * so the {@code PrepareHarnessReply} for the review worker. {@code ConversationSaga} has already applied every policy
  * check (allowlist, ownership or mention, level, turn cap); this decides only where the answer comes from.
  *
- * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; a fork, or an unknown fork status,
+ * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request with no pull ref (Bitbucket),
  * is {@link Refused}; a round that cannot be read is refused; no packed reviewer credential is refused; otherwise
  * {@link Preparing}. A refusal never falls back to the API (operator decision 6). The command is returned, not sent:
  * {@code IntegrationSaga} sends it as it sends {@code AnswerFollowUp}.
@@ -83,9 +83,8 @@ public class HarnessReplyStart {
         if (harness.isEmpty()) {
             return new NotHarness();
         }
-        // Null is unknown, and unknown is refused like a fork, as a review is: forks wait for step 8.
-        Optional<FixTargets.PushTarget> target = targets.forReview(reviewId);
-        if (!Boolean.FALSE.equals(target.map(FixTargets.PushTarget::fromFork).orElse(null))) {
+        // An untrusted pull request with no pull ref is refused, as a review is (step 8).
+        if (targets.isUntrustedReviewWithoutPullRef(reviewId)) {
             return new Refused(harness.orElseThrow(), HarnessReviewStart.FORK_REFUSED);
         }
         int round = runs.roundOrUnknown(reviewId);

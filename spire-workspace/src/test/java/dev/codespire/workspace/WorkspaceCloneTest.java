@@ -4,10 +4,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,41 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class WorkspaceCloneTest {
-
-    private static final GitCredential CREDENTIAL = new GitCredential("spire-bot", "TEST-secret");
-
-    @TempDir
-    Path tmp;
-
-    private String origin;
-
-    private String base;
-
-    private String head;
-
-    /** JGit's pack windows outlive Git.close(); on Windows that blocks @TempDir's cleanup. */
-    @AfterEach
-    void releasePackWindows() {
-        PublishRepo.releaseAllPackWindows();
-    }
-
-    @BeforeEach
-    void seedOrigin() throws Exception {
-        Path bare = tmp.resolve("origin.git");
-        Git.init().setBare(true).setDirectory(bare.toFile()).setInitialBranch("main").call().close();
-        Path seed = tmp.resolve("seed");
-        try (Git git = Git.init().setDirectory(seed.toFile()).setInitialBranch("main").call()) {
-            Files.writeString(seed.resolve("README.md"), "seed\n");
-            git.add().addFilepattern(".").call();
-            base = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("base").call().name();
-            Files.writeString(seed.resolve("LATER.md"), "later\n");
-            git.add().addFilepattern(".").call();
-            head = git.commit().setAuthor("seed", "seed@factory.invalid").setMessage("head").call().name();
-            git.push().setRemote(bare.toUri().toString()).add("refs/heads/main").call();
-        }
-        origin = bare.toUri().toString();
-    }
+class WorkspaceCloneTest extends SeededOriginTest {
 
     @Test
     void theWorkspaceStartsAtTheBaseCommitOnTheNewBranchNotAtTheRemotesHead() throws Exception {

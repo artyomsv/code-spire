@@ -103,6 +103,11 @@ public class RunLaunch {
         return dispatch(command, emitter::dispatchReview);
     }
 
+    /** An untrusted (fork) review run: the same lane, outcomes and row updates (harness reviews, step 8). */
+    public Outcome launch(RunCommand.ExecuteUntrustedReviewRun command) {
+        return dispatch(command, emitter::dispatchReview);
+    }
+
     private Outcome dispatch(RunCommand command, java.util.function.Consumer<RunCommand> lane) {
         String runId = command.runId();
         try {

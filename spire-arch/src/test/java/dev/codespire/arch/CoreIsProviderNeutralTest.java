@@ -161,7 +161,16 @@ class CoreIsProviderNeutralTest {
                 + "which key vendor pays them, whether a subscription is allowed, whether they may build. The orchestrator decides "
                 + "payment and has no dependency on the harness tier, so this cannot live on an adapter. An unlisted name is not "
                 + "constrained here and has no adapter, so the worker refuses it before it runs.");
+        addPullRefs(allowed);
         return Collections.unmodifiableMap(allowed);
+    }
+
+    /** Harness reviews, step 8: the one file that maps a provider type to its pull ref. */
+    private static void addPullRefs(Map<String, String> allowed) {
+        allowed.put("spire-contract/src/main/java/dev/codespire/contract/review/PullRefs.java",
+                "Maps a provider type to the ref its pull request head is read from. Those two refs are forge "
+                        + "facts (the base repository's own pull ref), not a decision core code makes: the command "
+                        + "that carries one validates it against the two fixed shapes and never branches on a provider.");
     }
 
     @Test

@@ -19,8 +19,8 @@ import java.util.Optional;
 /**
  * Whether a review runs on a harness, and if so sends it to the review worker to prepare (harness reviews, step 6).
  *
- * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; a fork pull request, or one whose
- * fork status is unknown, is {@link Refused}; a review whose round cannot be read is {@link Refused}; a review with no
+ * <p>Decides in this order: no repository or no review harness is {@link NotHarness}; an untrusted pull request (a fork) with no pull ref, or one whose
+ * provenance is unknown and has no pull ref, is {@link Refused}; a review whose round cannot be read is {@link Refused}; a review with no
  * packed reviewer credential is {@link Refused}; otherwise a {@code PrepareHarnessReview} is sent and the decision is
  * {@link Preparing}. A re-review whose prior run has open findings is prepared as a {@code RECONCILE}, any other review
  * as a {@code REVIEW}. The run is dispatched once the worker answers, by {@link HarnessReviewLaunch}. A refusal never
@@ -31,8 +31,11 @@ import java.util.Optional;
 @ApplicationScoped
 public class HarnessReviewStart {
 
-    /** Forks wait for step 8: the agent would run the fork's code with the reviewer's clone credential. */
-    static final String FORK_REFUSED = "fork_pull_request_not_reviewed_on_harness";
+    /**
+     * An untrusted pull request (a fork, or unknown provenance) is reviewed from the forge's own pull ref, and this
+     * forge has none (Bitbucket): the fork's branch lives in another repository and is never cloned.
+     */
+    static final String FORK_REFUSED = "fork_pull_request_has_no_pull_ref";
 
     /** The review's round could not be read, so no run is bound to one; a re-run asks again. */
     static final String ROUND_UNKNOWN = "review_round_unknown";
@@ -117,9 +120,7 @@ public class HarnessReviewStart {
         if (harness.isEmpty()) {
             return new NotHarness();
         }
-        Optional<FixTargets.PushTarget> target = targets.forReview(event.reviewId());
-        // Null is unknown, and unknown is refused like a fork: only a known same-repository pull request runs.
-        if (!Boolean.FALSE.equals(target.map(FixTargets.PushTarget::fromFork).orElse(null))) {
+        if (targets.isUntrustedReviewWithoutPullRef(event.reviewId())) {
             return new Refused(harness.orElseThrow(), FORK_REFUSED);
         }
         // Fail-closed: the ledger's read answers run 1 on a failed read, and a run bound to a guessed round is either

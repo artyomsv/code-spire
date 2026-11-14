@@ -93,6 +93,41 @@ class HarnessReplyResultsTest {
         assertFailed("Harness reply run failed: AGENT_FAILED");
     }
 
+    /** Step 8: an unproxied fork says why, as a refusal under the thread; the pill clears. */
+    @Test
+    void anUnproxiedForkReplyIsFollowUpRefused() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "IllegalStateException: fork_requires_credential_proxy",
+                false, null, List.of()), REPLY);
+
+        assertEquals(List.of("FollowUpRefused@" + THREAD + ": harness reply refused: fork_requires_credential_proxy"), events);
+        assertEquals(List.of(false), answering, "the responding pill clears");
+        assertTrue(emitted.isEmpty(), emitted.toString());
+    }
+
+    @Test
+    void theProxyDetailOnAnotherCauseFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "AGENT_FAILED", "IllegalStateException: fork_requires_credential_proxy",
+                false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: AGENT_FAILED");
+    }
+
+    @Test
+    void aDetailThatOnlyQuotesTheProxyTextFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "x fork_requires_credential_proxy y",
+                false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: BAD_COMMAND");
+    }
+
+    @Test
+    void anotherBadCommandFailsTheReply() {
+        results().accept(new RunResult.RunFailed(RUN_ID, "BAD_COMMAND", "IllegalStateException: something_else",
+                false, null, List.of()), REPLY);
+
+        assertFailed("Harness reply run failed: BAD_COMMAND");
+    }
+
     @Test
     void aFailureNeverLogsTheAnswer() {
         reviewerCredential = Optional.empty();

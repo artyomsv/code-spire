@@ -62,8 +62,7 @@ review behind an hour-long build would wait an hour.
 - The agent of a review run held the model credential, as a factory agent does, behind the step 2 egress network.
   The operator deferred the credential-injecting proxy (step 3) to just before fork pull requests: a same-repository
   pull request is opened by someone with write access already. Step 3 (below) now gives a review run's agent a
-  placeholder; a fork pull request on a repository that reviews with a harness is still not reviewed on the harness
-  until step 8.
+  placeholder; step 8 (below) reviews fork pull requests on the harness, only behind that proxy.
 - The reviewer account's token, which can post, enters the unit's init container: this crosses ADR-038's
   two-authority split, recorded in docs/UNVERIFIED.md until a read-scoped clone token exists.
 - A supersede missed while the orchestrator was down leaves a run that finishes and is charged: a cost, never a
@@ -87,9 +86,9 @@ review behind an hour-long build would wait an hour.
 - **First reviews only.** On `ContextAssembled`, `ResultSaga` asks `HarnessReviewStart`. A repository with no
   harness, or a re-review (a prior round was posted, `ReviewProjection.priorRunFor`), takes the API path as before:
   re-reviews stay on the API until step 6, which brings the prior findings a harness re-review needs.
-- **Forks are refused.** A fork pull request, and one whose fork status is unknown (`PushTarget.fromFork()` not
-  `false`), is refused with `fork_pull_request_not_reviewed_on_harness` until step 8: the agent would run the fork's
-  code beside the model credential. A refused dispatch is refused with the dispatch's own reason
+- **Forks were refused until step 8.** A fork pull request, and one whose fork status is unknown
+  (`PushTarget.fromFork()` not `false`), was refused with `fork_pull_request_not_reviewed_on_harness`: the agent
+  would have run the fork's code beside the model credential. Step 8 removed that reason; see "Step 8" below. A refused dispatch is refused with the dispatch's own reason
   (`review_run_target_unavailable`, `subscription_unavailable`, `model_pricing_incomplete:…`, and the others
   `ReviewRunDispatch` and `RunFunding` give). A refusal sets the review `refused`, records `RecordFailure` under phase
   `harness-review`, writes `review_status.harness_refusal` (`<harness>: <reason>`) and raises a
@@ -197,8 +196,8 @@ review behind an hour-long build would wait an hour.
 - **Every reply a harness repository answers runs on it.** `ConversationSaga` keeps every policy check (allowlist,
   ownership or mention, level, turn cap, "smart 1:1" in the worker). After them `HarnessReplyStart` decides where the
   answer comes from, before the API credential and the spend gate: a harness repository may have no API provider, and
-  the run's funding applies the spend gate itself. A fork, an unknown fork status, an unreadable round or a missing
-  reviewer credential refuses the reply; nothing falls back to the API.
+  the run's funding applies the spend gate itself. An unreadable round or a missing reviewer credential refuses the
+  reply, and so does a fork the unit cannot proxy (step 8); nothing falls back to the API.
 - **The worker prepares and posts; the run worker answers.** `PrepareHarnessReply` makes the worker fetch the thread,
   apply "smart 1:1", claim the API path's own `followup:<commentId>` key, read the pull request's head and answer
   `HarnessReplyPrepared` with `thread.md` (the anchor, the review's other findings and the conversation, fenced, cut
@@ -305,6 +304,42 @@ PR #404; live proof 2026-11-12 in docs/factory/HARNESS-REVIEWS-3B-ACCEPTANCE.md)
 - **Rejected:** a Claude OAuth injection kind on the model proxy, `CLAUDE_CODE_OAUTH_TOKEN` or a `claude setup-token`
   step (the terms above); Claude Code builds in this PR (deferred: only the read-only review shape was measured); letting the agent
   load project memory (a review's working directory is the change under review).
+
+**Step 8: fork pull requests** ([step 8 plan](superpowers/plans/2026-11-13-harness-reviews-8-forks.md), PR #419; live-proven
+in [HARNESS-REVIEWS-8-ACCEPTANCE.md](factory/HARNESS-REVIEWS-8-ACCEPTANCE.md)).
+- **Untrusted, not "fork".** A pull request is untrusted when `from_fork` is true, NULL or has no row
+  (`PushTarget.isUntrusted()`, derived in one place). Unknown is untrusted. A deleted fork reads as `false` at ingress
+  and stays a trusted command; its head is on no branch and init fails it as before.
+- **A command of its own.** An untrusted review is sent as `ExecuteUntrustedReviewRun`, with its own wire
+  discriminator, carrying the pull request's ref (`refs/pull/<n>/head` on GitHub, `refs/merge-requests/<iid>/head` on
+  GitLab, `PullRefs`). A run worker from before this step cannot deserialize it and drops it, so it never runs an
+  untrusted review as a trusted one. The ref comes from Code Spire, never from the reviewed repository, and the fork's
+  branch name never reaches the unit: init clones onto the fixed local branch `spire/review-<prId>`.
+- **Init fetches the pull ref.** The run worker hands it to init as `SPIRE_FETCH_REF` and init
+  (`CloneMain` → `WorkspaceClone`, inputs grouped in `CloneRequest`) fetches it after the clone with object checking
+  on. The forge may lag behind the webhook, so a missing head is refetched: 3 attempts, 2 s apart, and any transport
+  error counts as an attempt (a missing ref cannot be told from an unreachable host by type). Then it fails
+  `CLONE_FAILED` naming the commit and the ref. An old `spire-publisher` ignores the variable, so every fork then
+  fails `CLONE_FAILED` (docs/HISTORY.md, Upgrading).
+- **Proxied only.** Before it asks the harness, the run worker refuses an untrusted unit when the mode or the egress
+  would not proxy reviews, and again after the build when the unit has no model proxy (an arm with no route). The
+  refusal is `BAD_COMMAND` with the detail `fork_requires_credential_proxy`, before any container starts, for Codex and
+  Claude Code alike. Without it Codex would have run the fork's code beside the real credential, as it does for a
+  trusted unit with no route.
+- **The refusal is named.** The orchestrator maps that detail to `Refused` with the reason, so a review gets
+  `REVIEW_HARNESS_REFUSED` and its attention row, and a reply gets `FollowUpRefused`. Bitbucket Cloud and Data Center
+  have no ref this step uses (Data Center's `refs/pull-requests/<n>/from` is deliberately not), so an untrusted pull
+  request there is refused `fork_pull_request_has_no_pull_ref`. The old `fork_pull_request_not_reviewed_on_harness`
+  is gone. `/fix` on a fork stays refused (`FixTargets.whyNotPushable`).
+- **A manual registration no longer asserts provenance.** The dashboard's register dialog wrote `from_fork=false`,
+  overwriting a fork's recorded `true`; it now writes nothing, so a new row stays NULL (untrusted) and a webhook's
+  value is never replaced.
+- **An untrusted pull request gathers no linked context**, on the API and the harness path alike. A fork author
+  writes the title and description the links are read from, so would choose which private issues and documents are
+  loaded. The review's event log says `context links skipped: untrusted pull request`. Operator ruling 2026-11-13.
+  Links named by an owner or a person with write access, in a comment, are planned as PR 8b.
+- **Rejected:** cloning the fork's branch (it needs the fork's URL, a credential for it, and its name in the unit);
+  running a fork with the real credential in the agent behind the egress proxy only; Data Center's `from` ref in this step.
 
 ---
 

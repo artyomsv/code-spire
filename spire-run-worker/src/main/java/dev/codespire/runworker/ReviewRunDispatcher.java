@@ -85,13 +85,21 @@ public class ReviewRunDispatcher {
      * a redelivery.
      */
     private CompletionStage<Void> handle(Message<RunCommand> message, RunCommand command) {
+        if (command instanceof RunCommand.ExecuteUntrustedReviewRun fork) {
+            // A fork's review (step 8) takes the same claim, lease and result path; only its unit is built differently.
+            return new RunExecution(lane()).execute(message, fork.execution(),
+                    keeper -> launcher.launchUntrustedReview(fork, keeper));
+        }
         if (!(command instanceof RunCommand.ExecuteReviewRun review)) {
             LOG.warnf("run %s: a %s arrived on cs.review-runs, where only review runs are run; it was NOT run",
                     command.runId(), command.getClass().getSimpleName());
             RunExecution.ack(message);
             return RunExecution.DONE;
         }
-        RunLane lane = new RunLane(claims, runtime, leases, registry, failures, results, transcript, resultAckSeconds);
-        return new RunExecution(lane).execute(message, review.execution(), keeper -> launcher.launchReview(review, keeper));
+        return new RunExecution(lane()).execute(message, review.execution(), keeper -> launcher.launchReview(review, keeper));
+    }
+
+    private RunLane lane() {
+        return new RunLane(claims, runtime, leases, registry, failures, results, transcript, resultAckSeconds);
     }
 }

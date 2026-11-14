@@ -755,7 +755,8 @@ public class IntegrationSaga {
         // never flips in practice — but a row that predates V55 defaults to false, and refreshing it
         // from the event is what replaces that default with the answer rather than leaving a guess
         // behind for the branch-mode gate to trust.
-        projection.setFromFork(reviewId, e.fromFork());
+        // Unknown (a manual registration) writes nothing: NULL stays untrusted, and a false would trust a fork.
+        if (e.fromFork() != null) projection.setFromFork(reviewId, e.fromFork());
 
         if (observe) {
             timeline.record("domain", "ReviewObserved", reviewId,

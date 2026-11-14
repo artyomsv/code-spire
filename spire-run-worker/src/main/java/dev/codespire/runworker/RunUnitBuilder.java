@@ -164,11 +164,30 @@ public class RunUnitBuilder {
                         dev.codespire.contract.event.RunReviewArtifact.MAX_TEXT_BYTES)), review.inputs());
     }
 
+    /**
+     * A fork pull request's review unit (harness reviews, step 8), refused unless its model proxy holds the credential
+     * ({@link UntrustedReviewUnits}). Init is given the pull ref to fetch the head from.
+     */
+    public RunUnitSpec buildUntrustedReview(RunCommand.ExecuteUntrustedReviewRun review, HarnessAdapter adapter) {
+        // Decided before the adapter is asked: Claude Code refuses an unproxied run with its own detail, and a fork's
+        // refusal must say what it is whatever the harness.
+        if (!proxies(Topology.REVIEW)) {
+            throw new IllegalStateException(FORK_PROXY_REQUIRED);
+        }
+        return UntrustedReviewUnits.sealed(buildReview(review.asReview(), adapter), review.pullRef());
+    }
+
     /** The variable a trusted init reads the branch to keep under refs/spire-base from (spire-publisher's CloneMain). */
     static final String FETCH_BRANCH = "SPIRE_FETCH_BRANCH";
 
+    /** The variable init reads a fork's pull ref from, to fetch the head onto the review branch (CloneMain). */
+    static final String FETCH_REF = "SPIRE_FETCH_REF";
+
+    /** The detail of a fork review refused because no model proxy would hold its credential. Carries no credential text. */
+    static final String FORK_PROXY_REQUIRED = "fork_requires_credential_proxy";
+
     /** The same container with one more environment variable. */
-    private static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
+    static ContainerSpec withVariable(ContainerSpec container, String name, String value) {
         Map<String, String> env = new LinkedHashMap<>(container.environment());
         env.put(name, value);
         return new ContainerSpec(container.image(), container.argv(), env, container.mounts(), container.entrypoint());

@@ -120,6 +120,11 @@ public class FactoryRunProjection {
             PUSH_GATE_REFUSED, DISPATCH_UNCERTAIN, CANCELLED, DELIVERED_NOTHING,
             DELIVERED_UNFINISHED, AWAITING_DELIVERY);
 
+    /** The harness this run was dispatched on, or empty when the row cannot be read. */
+    public Optional<String> harnessOf(String runId) {
+        return RunHarnessRead.of(dataSource, runId);
+    }
+
     /**
      * The model this run was dispatched with, or empty when the row cannot be read.
      *
