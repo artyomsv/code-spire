@@ -1473,7 +1473,9 @@ created: on the first master build (docker.yml run 43649996289) its push was den
 label, and a package linked to a public repository is created public. `spire-agent-claude-code` therefore now carries
 the label like every other image and is public; the anonymous-pull check that guarded its privacy is removed. The CLI
 stays "All rights reserved", under Anthropic's Commercial Terms, which say nothing about redistribution; Docker Inc.
-publishes `docker/sandbox-templates:claude-code` publicly. Anthropic has not given permission. If it asks for the image's
+publishes `docker/sandbox-templates:claude-code` publicly (Docker Hub,
+https://hub.docker.com/layers/docker/sandbox-templates/claude-code/images/sha256-f25e81d33f0129a6a6551d82feaf1bc96a287e63df691ab4162ae360a91e0504,
+pointed out by the operator on 2026-11-15). Anthropic has not given permission. If it asks for the image's
 removal, the package is deleted and dropped from the `agents` matrix, and the recipe (`deploy/agent/build-claude-code.sh`)
 remains. The 2026-11-14 paragraph's private-package reasoning is superseded; the rest of it stands.
 
