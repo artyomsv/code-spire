@@ -84,8 +84,24 @@ public sealed interface ActionCommand {
         return null;
     }
 
+    /**
+     * {@code untrustedPullRequest} is the orchestrator's provenance answer (step 8b): true for a fork or unknown
+     * provenance, and the worker then also reads the pull request's comments and reports who wrote each link. False
+     * for a same-repository pull request and for every command sent before the field existed, so those read no
+     * comments.
+     */
     record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
-                     String scmCredential) implements ActionCommand {
+                     String scmCredential, boolean untrustedPullRequest) implements ActionCommand {
+
+        // Same-repository shape — and every command serialized before provenance travelled with it.
+        public FetchDiff(String reviewId, RepoRef repo, long prId, String commit, String scmCredential) {
+            this(reviewId, repo, prId, commit, scmCredential, false);
+        }
+
+        /** This command with the given provenance; every other component is carried over. */
+        public FetchDiff withUntrustedPullRequest(boolean untrusted) {
+            return new FetchDiff(reviewId, repo, prId, commit, scmCredential, untrusted);
+        }
     }
 
     /**
