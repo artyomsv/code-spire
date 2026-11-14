@@ -246,6 +246,11 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   with no container, a canary push and a reply were handled. Bitbucket, a lagging ref, a force-pushed or deleted fork
   and GitLab are proven against fakes only; links from trusted comments are PR 8b (docs/UNVERIFIED.md, the step 8 entry).
 
+- **Block approval at** (PR #420, V115, ADR-047 amended 2026-11-14). Each repository picks the lowest open finding
+  severity that makes the review Request changes and holds a factory land: Blocker (default), Major and above, or
+  Minor and above; info and nits never block. Live on `spire-test` #106: Major and above posted Request changes,
+  Blocker posted Approve, on the same MAJOR finding. The land gate at another level is proven by tests only.
+
 **Limits that remain:**
 
 - **Specification, plan and steps ran on one model and one harness** (Codex `gpt-6-astra` on a seat). The

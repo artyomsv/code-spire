@@ -2428,5 +2428,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   pull ref must name its own pull request, the pull ref fetch times out after 120 s, the
   `fork_requires_credential_proxy` match is exact, a refused reply names its harness, the 11-argument
   `PullRequestEventReceived` constructor is gone, and stale comments were fixed. Skipped on purpose: the leftover
-  `refs/spire-head/pull`, the system gitconfig tripwire, a retry on an auth failure, and the mutation check. Not yet
-  live-tested.
+  `refs/spire-head/pull`, the system gitconfig tripwire, a retry on an auth failure, and the mutation check. Live on
+  `spire-test` #106 (Codex `gpt-6-astra` on a seat, one open MAJOR finding, 2026-11-14): set to Major and above in
+  the dashboard, a re-run posted Request changes (`open_at_or_above_major=1`) and the review page showed "1 blocking
+  (Major and above)"; set back to Blocker, the next re-run posted Approve (`no_open_blockers`). An update that omits
+  the level keeps the stored one. The land gate at a level other than Blocker is proven by tests only.
