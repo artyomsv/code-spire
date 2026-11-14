@@ -16,15 +16,22 @@ FROM eclipse-temurin:25-jre-alpine
 #
 # APK_UPGRADE_BUST for the reason the root Dockerfile records at length: with no changing input this
 # layer caches on the base image alone, so the upgrade runs once and then refreshes only when the
-# base retags — the wait it exists to skip. This image is not in docker.yml yet, so nothing passes a
-# per-build value and the default applies; it is wired now so joining that matrix is a one-line
-# change rather than a rediscovery of the same defect.
+# base retags — the wait it exists to skip. docker.yml builds this image and passes github.run_id;
+# a local build takes the default.
 ARG APK_UPGRADE_BUST=local
 RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
     && apk --no-cache upgrade \
     && adduser -D -u 1001 -h /home/spire spire \
     && mkdir -p /workspace /handoff \
     && chown 1001:1001 /workspace /handoff
+
+# Published as ghcr.io/artyomsv/spire-publisher. The module's own licence, as the service images carry
+# theirs (ADR-021): FSL-1.1-ALv2, the text the label declares.
+LABEL org.opencontainers.image.title="spire-publisher" \
+      org.opencontainers.image.description="Code Spire run-unit publisher: clones, gates and pushes a run's work" \
+      org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
+      org.opencontainers.image.licenses="FSL-1.1-ALv2"
+COPY LICENSE /opt/spire-publisher/LICENSE
 
 COPY build/install/spire-publisher/lib /opt/spire-publisher/lib
 COPY --chmod=755 docker/spire-clone.sh /usr/local/bin/spire-clone

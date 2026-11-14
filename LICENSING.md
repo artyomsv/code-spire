@@ -32,13 +32,15 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 | `spire-worksource-gitlab` | Apache-2.0 | Reference GitLab ticket work source with separate write facade. |
 | `spire-harness` | Apache-2.0 | The agent-execution SPI. Every harness arm compiles against it (ADR-030). |
 | `spire-harness-codex` | Apache-2.0 | Reference harness arm — the worked example a second arm copies. |
-| `spire-harness-claude-code` | Apache-2.0 | Harness arm for Claude Code: review runs only, behind the model proxy, paid with an API key. The CLI itself is not redistributed. |
+| `spire-harness-claude-code` | Apache-2.0 | Harness arm for Claude Code: review runs only, behind the model proxy, paid with an API key. The CLI itself is not redistributed: its image goes only to a private package (see "Published images"). |
 | `spire-secrets` | Apache-2.0 | One credential scrubber, for every process that writes a failure message a human reads. JDK-only ON PURPOSE: the run worker must not inherit a git library to obtain it. |
 | `spire-workspace` | Apache-2.0 | The publisher's git library: bare clone, bundle fetch, diff, gated push. |
 | `spire-runtime` | Apache-2.0 | The run-placement SPI. Every runtime arm implements it (ADR-039). |
 | `spire-runtime-docker` | Apache-2.0 | Reference runtime arm — the three-container unit on a Docker daemon. |
 | `spire-agent-image` | Apache-2.0 | Conformance checker for the published agent-image contract. The contract is published for ANY image to satisfy, and a contract whose checker a third party may not run is not much of a contract. |
 | `spire-arch` | Apache-2.0 | Build-time architecture check (ADR-020). Tooling, not product. |
+| `deploy/agent` | Apache-2.0 | The reference agent image recipes and their shared entrypoint. They are reference implementations of the published agent-image contract, which any image may satisfy, so they take the reference adapters' licence. The harness CLIs they install keep their vendors' terms — see "Published images" below. |
+| `deploy/egress` | Apache-2.0 | The run unit's egress proxy recipe: tinyproxy (GPL-2.0, from the Alpine index, unmodified) and one configuration line. No product logic, so nothing the FSL protects. |
 | **`spire-gateway`** | **FSL-1.1-ALv2** | Deployable service. |
 | **`spire-orchestrator`** | **FSL-1.1-ALv2** | Deployable service — the deciders, sagas, event store and dashboard. This is the product. |
 | **`spire-review-worker`** | **FSL-1.1-ALv2** | Deployable service. |
@@ -50,6 +52,21 @@ libraries you build *against* are Apache-2.0, the services you *run* are FSL.
 
 Full texts: [`LICENSE`](LICENSE) (FSL-1.1-ALv2) and
 [`licenses/Apache-2.0.txt`](licenses/Apache-2.0.txt).
+
+## Published images
+
+docker.yml publishes every image to `ghcr.io/artyomsv/`. Each carries the
+`org.opencontainers.image.licenses` label and the LICENSE of the Code Spire code
+inside it: the services, the dashboard, `spire-publisher` and `spire-model-proxy`
+are FSL-1.1-ALv2; `spire-egress-proxy` and `spire-agent-codex` are Apache-2.0.
+
+The two agent images also hold a third-party harness CLI, and the two are
+treated differently (ADR-032, amended 2026-11-14):
+
+| Image | Harness licence | Published |
+|---|---|---|
+| `spire-agent-codex` | `@openai/codex`, Apache-2.0 | **Public**, with the CLI's notice in `/usr/share/licenses/` (`deploy/agent/codex/NOTICE`). |
+| `spire-agent-claude-code` | `@anthropic-ai/claude-code`, "All rights reserved", Anthropic's Commercial Terms | **Private** package only, for the operator's own cluster, and with no source label linking it to this repository. Those terms do not address redistribution, so a public image needs Anthropic's written permission. Anyone else builds it from the recipe with `deploy/agent/build-claude-code.sh`. |
 
 ## What FSL-1.1-ALv2 lets you do
 

@@ -19,6 +19,14 @@ RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
     && apk add --no-cache tinyproxy \
     && adduser -D -H -u 1002 egress
 
+# Published as ghcr.io/artyomsv/spire-egress-proxy. The recipe is Apache-2.0 (LICENSE, LICENSING.md);
+# tinyproxy keeps its own licence from the Alpine package.
+COPY LICENSE /usr/share/licenses/code-spire/LICENSE
+LABEL org.opencontainers.image.title="spire-egress-proxy" \
+      org.opencontainers.image.description="Code Spire run-unit egress proxy (tinyproxy, configured per run)" \
+      org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 USER 1002:1002
 EXPOSE 8888
 
