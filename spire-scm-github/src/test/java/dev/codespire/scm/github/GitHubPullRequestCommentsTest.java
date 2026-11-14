@@ -3,6 +3,7 @@ package dev.codespire.scm.github;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import dev.codespire.contract.review.LinkSource;
 import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +49,23 @@ class GitHubPullRequestCommentsTest {
         assertEquals("TEST-maintainer", comments.get(0).author().username());
         assertEquals("see TEST-1", comments.get(0).body());
         assertEquals("103", comments.get(1).author().providerUserId());
+    }
+
+    @Test
+    void theForgesAssociationBecomesAVouch() throws Exception {
+        when(client.getJson(ISSUE + 1)).thenReturn(mapper.readTree("""
+                [ { "id": 1, "body": "a", "author_association": "COLLABORATOR", "user": { "id": 1, "login": "TEST-a" } },
+                  { "id": 2, "body": "b", "author_association": "OWNER", "user": { "id": 2, "login": "TEST-b" } },
+                  { "id": 3, "body": "c", "author_association": "MEMBER", "user": { "id": 3, "login": "TEST-c" } },
+                  { "id": 4, "body": "d", "author_association": "NONE", "user": { "id": 4, "login": "TEST-d" } },
+                  { "id": 5, "body": "e", "author_association": "CONTRIBUTOR", "user": { "id": 5, "login": "TEST-e" } },
+                  { "id": 6, "body": "f", "user": { "id": 6, "login": "TEST-f" } } ]"""));
+
+        List<PullRequestComment> comments = new GitHubDiffSource(client).fetchPullRequestComments(REPO, 5);
+
+        assertEquals(List.of(LinkSource.Vouch.VOUCHED, LinkSource.Vouch.VOUCHED, LinkSource.Vouch.VOUCHED,
+                LinkSource.Vouch.NOT_VOUCHED, LinkSource.Vouch.NOT_VOUCHED, LinkSource.Vouch.UNKNOWN),
+                comments.stream().map(PullRequestComment::vouch).toList());
     }
 
     @Test

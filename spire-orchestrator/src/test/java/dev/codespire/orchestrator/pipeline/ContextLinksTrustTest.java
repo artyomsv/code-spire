@@ -207,6 +207,81 @@ class ContextLinksTrustTest {
                 events.toString());
     }
 
+    /** Ten commenters the forge says are nobody, ahead of a collaborator, no longer take the collaborator's reads. */
+    @Test
+    void unassociatedCommentersDoNotCrowdOutACollaborator() {
+        List<LinkSource> sources = new ArrayList<>();
+        for (int i = 0; i < LinkAuthorTrust.MAX_AUTHORS; i++) {
+            forge.put("TEST-n" + i, RepositoryPermission.State.CAN_PUSH);
+            sources.add(commentBy("TEST-n" + i, LinkSource.Vouch.NOT_VOUCHED));
+        }
+        forge.put(MAINTAINER, RepositoryPermission.State.CAN_PUSH);
+        sources.add(commentBy(MAINTAINER, LinkSource.Vouch.VOUCHED));
+
+        Set<String> links = gather(sources.toArray(LinkSource[]::new));
+
+        assertEquals(Set.of("TEST-" + MAINTAINER), links);
+        assertEquals(List.of(MAINTAINER), reads);
+        assertTrue(events.getFirst().contains("(NOT_ASSOCIATED)"), events.toString());
+        assertTrue(!events.getFirst().contains("AUTHOR_LIMIT"), events.toString());
+    }
+
+    @Test
+    void anUnassociatedAuthorWithAnAllowOverrideStillCounts() {
+        overrides.put("TEST-allowed", FixAuthorization.Override.ALLOW);
+
+        assertEquals(Set.of("TEST-TEST-allowed"), gather(commentBy("TEST-allowed", LinkSource.Vouch.NOT_VOUCHED)));
+        assertEquals(List.of("TEST-allowed"), reads);
+    }
+
+    /** The allowed author reads before the forge-vouched ones, so a full cap of vouched authors cannot displace it. */
+    @Test
+    void anAllowedAuthorReadsBeforeTheVouchedOnes() {
+        List<LinkSource> sources = new ArrayList<>();
+        for (int i = 0; i < LinkAuthorTrust.MAX_AUTHORS; i++) {
+            forge.put("TEST-v" + i, RepositoryPermission.State.CAN_PUSH);
+            sources.add(commentBy("TEST-v" + i, LinkSource.Vouch.VOUCHED));
+        }
+        overrides.put("TEST-allowed", FixAuthorization.Override.ALLOW);
+        sources.add(commentBy("TEST-allowed", LinkSource.Vouch.NOT_VOUCHED));
+
+        Set<String> links = gather(sources.toArray(LinkSource[]::new));
+
+        assertTrue(links.contains("TEST-TEST-allowed"), links.toString());
+        assertTrue(reads.contains("TEST-allowed"), reads.toString());
+        assertEquals(LinkAuthorTrust.MAX_AUTHORS, reads.size());
+    }
+
+    @Test
+    void thePullRequestsAuthorReadsBeforeVouchedCommenters() {
+        List<LinkSource> sources = new ArrayList<>();
+        for (int i = 0; i < LinkAuthorTrust.MAX_AUTHORS; i++) {
+            forge.put("TEST-v" + i, RepositoryPermission.State.CAN_PUSH);
+            sources.add(commentBy("TEST-v" + i, LinkSource.Vouch.VOUCHED));
+        }
+        forge.put(AUTHOR, RepositoryPermission.State.CAN_PUSH);
+        sources.add(description(AUTHOR, "TEST-1"));
+
+        gather(sources.toArray(LinkSource[]::new));
+
+        assertTrue(reads.contains(AUTHOR), reads.toString());
+    }
+
+    @Test
+    void aForgeThatSaysNothingKeepsTheFirstTenAuthors() {
+        List<LinkSource> sources = new ArrayList<>();
+        for (int i = 0; i <= LinkAuthorTrust.MAX_AUTHORS; i++) {
+            forge.put("TEST-g" + i, RepositoryPermission.State.CAN_PUSH);
+            sources.add(commentBy("TEST-g" + i, LinkSource.Vouch.UNKNOWN));
+        }
+
+        gather(sources.toArray(LinkSource[]::new));
+
+        assertEquals(LinkAuthorTrust.MAX_AUTHORS, reads.size());
+        assertTrue(!reads.contains("TEST-g" + LinkAuthorTrust.MAX_AUTHORS), reads.toString());
+        assertTrue(events.getFirst().contains("(AUTHOR_LIMIT)"), events.toString());
+    }
+
     @Test
     void aSameRepositoryReviewKeepsItsLinksAndReadsNoPermission() {
         untrusted = false;
@@ -228,6 +303,10 @@ class ContextLinksTrustTest {
 
     private static LinkSource comment(String id, String handle, String link) {
         return new LinkSource(LinkSource.Kind.COMMENT, id, handle, Set.of(link));
+    }
+
+    private static LinkSource commentBy(String id, LinkSource.Vouch vouch) {
+        return new LinkSource(LinkSource.Kind.COMMENT, id, id, Set.of("TEST-" + id), vouch);
     }
 
     private static LinkSource description(String id, String link) {
@@ -274,6 +353,11 @@ class ContextLinksTrustTest {
             }
         };
         trust.permissions = new FixPermissionService() {
+            @Override
+            public FixAuthorization.Override overrideOf(UUID repositoryId, String actorId) {
+                return overrides.get(actorId);
+            }
+
             @Override
             public FixAuthorization.Decision authorize(UUID repositoryId, String actorId) {
                 reads.add(actorId);

@@ -13,8 +13,12 @@ import java.util.Set;
  *
  * <p><b>Bounded.</b> A fork author decides how many comments and links exist, and this rides the Kafka wire, so a
  * source keeps at most {@link #MAX_LINKS} links in insertion order and a message at most {@link #MAX_SOURCES} sources.
+ *
+ * <p>{@code vouch} is what the forge itself says about the author. It only chooses whose permission is measured
+ * first and never trusts anyone: {@link Vouch#UNKNOWN} for a forge that says nothing, and for every message sent
+ * before the field existed.
  */
-public record LinkSource(Kind kind, String authorId, String authorHandle, Set<String> links) {
+public record LinkSource(Kind kind, String authorId, String authorHandle, Set<String> links, Vouch vouch) {
 
     /** Links kept per source. */
     public static final int MAX_LINKS = 50;
@@ -25,8 +29,17 @@ public record LinkSource(Kind kind, String authorId, String authorHandle, Set<St
     /** Where the text came from. */
     public enum Kind { PULL_REQUEST, COMMENT }
 
+    /** The forge's own word on an author: a member, collaborator or owner of the repository, or not one. */
+    public enum Vouch { UNKNOWN, VOUCHED, NOT_VOUCHED }
+
     public LinkSource {
         links = bounded(links);
+        vouch = vouch == null ? Vouch.UNKNOWN : vouch;
+    }
+
+    /** A source whose forge says nothing about its author. */
+    public LinkSource(Kind kind, String authorId, String authorHandle, Set<String> links) {
+        this(kind, authorId, authorHandle, links, Vouch.UNKNOWN);
     }
 
     private static Set<String> bounded(Set<String> values) {

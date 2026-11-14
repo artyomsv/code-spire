@@ -122,7 +122,7 @@ class CommandDispatcherTest {
 
     @Test
     void fetchDiffRoutesToTheDiffWorker() {
-        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null));
+        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null, false));
         assertEquals(List.of("fetchDiff"), calls);
     }
 
@@ -180,14 +180,14 @@ class CommandDispatcherTest {
 
     @Test
     void mdcCarriesTheReviewIdDuringDispatch() {
-        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null));
+        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null, false));
         assertEquals(List.of((Object) REVIEW_ID), mdcSeenByWorker,
                 "the worker must observe the command's reviewId in the MDC");
     }
 
     @Test
     void mdcIsClearedAfterDispatch() {
-        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null));
+        dispatcher.on(new FetchDiff(REVIEW_ID, REPO, 7, "abc123", null, false));
         assertNull(MDC.get("reviewId"), "MDC must not bleed into the next record on this thread");
     }
 

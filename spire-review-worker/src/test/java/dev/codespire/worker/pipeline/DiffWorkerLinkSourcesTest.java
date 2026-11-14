@@ -33,8 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DiffWorkerLinkSourcesTest {
 
     private static final RepoRef REPO = new RepoRef("TEST-WS", "TEST-REPO");
-    private static final FetchDiff SAME_REPOSITORY = new FetchDiff("TEST-review", REPO, 7, "abc123", null);
-    private static final FetchDiff UNTRUSTED = SAME_REPOSITORY.withUntrustedPullRequest(true);
+    private static final FetchDiff SAME_REPOSITORY = new FetchDiff("TEST-review", REPO, 7, "abc123", null, false);
+    private static final FetchDiff UNTRUSTED = new FetchDiff("TEST-review", REPO, 7, "abc123", null, true);
     private static final String PR_LINK = "https://example.invalid/TEST-pr-link";
     private static final String COMMENT_LINK = "https://example.invalid/TEST-comment-link";
 
@@ -66,7 +66,8 @@ class DiffWorkerLinkSourcesTest {
 
     @Test
     void anUntrustedPullRequestReportsEachSourceWithItsAuthor() {
-        comments.add(new PullRequestComment(Author.of("TEST-101", "TEST-maintainer", "TEST"), "see " + COMMENT_LINK));
+        comments.add(new PullRequestComment(Author.of("TEST-101", "TEST-maintainer", "TEST"), "see " + COMMENT_LINK,
+                LinkSource.Vouch.VOUCHED));
         comments.add(new PullRequestComment(Author.of("TEST-102", "TEST-chatter", "TEST"), "looks good"));
 
         worker.fetchDiff(UNTRUSTED);
@@ -75,8 +76,8 @@ class DiffWorkerLinkSourcesTest {
         assertEquals(2, sources.size(), "a comment with no link is left out: " + sources);
         assertEquals(new LinkSource(LinkSource.Kind.PULL_REQUEST, "TEST-7", "TEST-author", Set.of(PR_LINK)),
                 sources.get(0));
-        assertEquals(new LinkSource(LinkSource.Kind.COMMENT, "TEST-101", "TEST-maintainer", Set.of(COMMENT_LINK)),
-                sources.get(1));
+        assertEquals(new LinkSource(LinkSource.Kind.COMMENT, "TEST-101", "TEST-maintainer", Set.of(COMMENT_LINK),
+                LinkSource.Vouch.VOUCHED), sources.get(1));
         assertEquals(Set.of(PR_LINK), fetched().references());
     }
 

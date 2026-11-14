@@ -1,6 +1,7 @@
 package dev.codespire.scm.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.codespire.contract.review.LinkSource;
 import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.PullRequestComment;
 import dev.codespire.contract.scm.RepoRef;
@@ -40,7 +41,7 @@ final class GitHubPullRequestComments {
             for (JsonNode row : rows) {
                 String body = row.path("body").asText("");
                 if (!body.isBlank()) {
-                    comments.add(new PullRequestComment(author(row.path("user")), body));
+                    comments.add(new PullRequestComment(author(row.path("user")), body, vouch(row)));
                 }
             }
             if (rows.size() < PAGE_SIZE) {
@@ -48,6 +49,18 @@ final class GitHubPullRequestComments {
             }
         }
         return comments;
+    }
+
+    /** {@code author_association}: owner, member or collaborator is the forge vouching; absent says nothing. */
+    private static LinkSource.Vouch vouch(JsonNode row) {
+        String association = row.path("author_association").asText("");
+        if (association.isBlank()) {
+            return LinkSource.Vouch.UNKNOWN;
+        }
+        return switch (association) {
+            case "OWNER", "MEMBER", "COLLABORATOR" -> LinkSource.Vouch.VOUCHED;
+            default -> LinkSource.Vouch.NOT_VOUCHED;
+        };
     }
 
     private static Author author(JsonNode user) {

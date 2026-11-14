@@ -83,8 +83,8 @@ public class ReviewRerunService {
         if (!started) {
             return false;
         }
-        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential)
-                .withUntrustedPullRequest(targets.isUntrustedReview(reviewId)));
+        commands.emit(new ActionCommand.FetchDiff(reviewId, repo, pr, commit, scmCredential,
+                targets.isUntrustedReview(reviewId)));
         LOG.infof("Re-run requested for %s on commit %s", reviewId, commit);
         return true;
     }

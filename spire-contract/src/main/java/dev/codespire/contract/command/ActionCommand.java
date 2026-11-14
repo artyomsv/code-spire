@@ -92,16 +92,6 @@ public sealed interface ActionCommand {
      */
     record FetchDiff(String reviewId, RepoRef repo, long prId, String commit,
                      String scmCredential, boolean untrustedPullRequest) implements ActionCommand {
-
-        // Same-repository shape — and every command serialized before provenance travelled with it.
-        public FetchDiff(String reviewId, RepoRef repo, long prId, String commit, String scmCredential) {
-            this(reviewId, repo, prId, commit, scmCredential, false);
-        }
-
-        /** This command with the given provenance; every other component is carried over. */
-        public FetchDiff withUntrustedPullRequest(boolean untrusted) {
-            return new FetchDiff(reviewId, repo, prId, commit, scmCredential, untrusted);
-        }
     }
 
     /**

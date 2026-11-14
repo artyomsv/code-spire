@@ -73,6 +73,8 @@ container; a push carrying a canary asking the agent to print its environment, w
   `FixAuthorization.decide`. Not run: `FixPermissionService` against a live forge for a commenter, the side-by-side
   reads under a slow forge, the 10-author cap, a GitLab fork, and the bot-handle match. The live proof needs a fork
   on `spire-test` with a maintainer's comment linking an issue, then a Re-run. Mutation checks were reasoned, not run.
+  GitLab notes carry no author association, so there the limit stays at the first 10 distinct authors in comment
+  order; on GitHub the association (`author_association`) orders the reads, and the tests use fabricated JSON, not a live row.
 - **A reply skipped by the "smart 1:1" rule is silent** (found live, pre-existing from step 7). It logs at DEBUG only,
   and the dashboard stays on "responding…".
 - **The approval verdict counts only BLOCKER findings** (found live). A review with a MAJOR finding was posted with

@@ -77,14 +77,33 @@ class LinkSourceWireTest {
     }
 
     @Test
-    void provenanceRoundTripsAndTheWitherKeepsTheRest() throws Exception {
-        FetchDiff original = new FetchDiff("TEST-review", REPO, 7L, "abc123", "TEST-cred");
+    void provenanceRoundTrips() throws Exception {
+        FetchDiff marked = new FetchDiff("TEST-review", REPO, 7L, "abc123", "TEST-cred", true);
 
-        FetchDiff marked = original.withUntrustedPullRequest(true);
         FetchDiff back = (FetchDiff) mapper.readValue(mapper.writeValueAsString(marked), ActionCommand.class);
 
+        assertEquals(marked, back);
         assertTrue(back.untrustedPullRequest());
-        assertEquals(original, back.withUntrustedPullRequest(false));
+    }
+
+    @Test
+    void aSourceFromBeforeTheForgesWordDecodesAsUnknown() throws Exception {
+        String legacy = """
+                {"kind":"COMMENT","authorId":"TEST-101","authorHandle":"TEST-a","links":["TEST-1"]}""";
+
+        LinkSource back = mapper.readValue(legacy, LinkSource.class);
+
+        assertEquals(LinkSource.Vouch.UNKNOWN, back.vouch());
+    }
+
+    @Test
+    void theForgesWordRoundTrips() throws Exception {
+        LinkSource vouched = new LinkSource(LinkSource.Kind.COMMENT, "TEST-101", "TEST-a", Set.of("TEST-1"),
+                LinkSource.Vouch.VOUCHED);
+
+        LinkSource back = mapper.readValue(mapper.writeValueAsString(vouched), LinkSource.class);
+
+        assertEquals(LinkSource.Vouch.VOUCHED, back.vouch());
     }
 
     @Test

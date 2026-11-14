@@ -771,10 +771,8 @@ public class IntegrationSaga {
             return;
         }
 
-        // Step 8b: a fork or unknown provenance is untrusted, and only then does the worker read comments.
         commands.emit(new ActionCommand.FetchDiff(reviewId, e.repo(), e.prId(), commit,
-                workerCredentials.pack(provider.get(), e.repo().workspace()))
-                .withUntrustedPullRequest(!Boolean.FALSE.equals(e.fromFork())));
+                workerCredentials.pack(provider.get(), e.repo().workspace()), !Boolean.FALSE.equals(e.fromFork())));
     }
 
     /**

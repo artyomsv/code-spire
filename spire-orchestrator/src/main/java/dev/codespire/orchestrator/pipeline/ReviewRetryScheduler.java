@@ -75,8 +75,8 @@ public class ReviewRetryScheduler {
             }
             LOG.infof("Dispatching due retry for %s at commit %s", reviewId, commit.get());
             commands.emit(new ActionCommand.FetchDiff(
-                    reviewId, parsed.repo(), parsed.prId(), commit.get(), credential.get())
-                    .withUntrustedPullRequest(targets.isUntrustedReview(reviewId)));
+                    reviewId, parsed.repo(), parsed.prId(), commit.get(), credential.get(),
+                    targets.isUntrustedReview(reviewId)));
         } catch (RuntimeException e) {
             LOG.warnf(e, "Could not dispatch the due retry for %s — re-scheduling for the next sweep", reviewId);
             projection.rescheduleRetry(reviewId, Instant.now().plusSeconds(5));

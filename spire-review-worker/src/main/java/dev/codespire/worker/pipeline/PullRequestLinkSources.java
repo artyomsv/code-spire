@@ -1,5 +1,7 @@
 package dev.codespire.worker.pipeline;
 
+import dev.codespire.contract.command.ActionCommand.FetchDiff;
+import dev.codespire.contract.event.IntegrationEvent.DiffFetched;
 import dev.codespire.contract.port.DiffSource;
 import dev.codespire.contract.review.LinkSource;
 import dev.codespire.contract.scm.Author;
@@ -25,17 +27,28 @@ final class PullRequestLinkSources {
     private static final Logger LOG = Logger.getLogger(PullRequestLinkSources.class);
 
     private final WorkerContextReferences references;
+    private final DiffSource source;
 
-    PullRequestLinkSources(WorkerContextReferences references) {
+    PullRequestLinkSources(WorkerContextReferences references, DiffSource source) {
         this.references = references;
+        this.source = source;
     }
 
-    List<LinkSource> of(DiffSource source, PullRequest pr) {
+    /**
+     * The event with its link sources, for an untrusted pull request only: a same-repository one reads no comments
+     * and costs no call.
+     */
+    DiffFetched attach(FetchDiff command, PullRequest pr, DiffFetched fetched) {
+        return command.untrustedPullRequest() ? fetched.withLinkSources(of(pr)) : fetched;
+    }
+
+    List<LinkSource> of(PullRequest pr) {
         List<LinkSource> sources = new ArrayList<>();
-        add(sources, LinkSource.Kind.PULL_REQUEST, pr.author(),
+        add(sources, new Written(LinkSource.Kind.PULL_REQUEST, pr.author(), LinkSource.Vouch.UNKNOWN),
                 references.referencesIn(pr.title(), pr.sourceBranch(), pr.description()));
-        for (PullRequestComment comment : comments(source, pr)) {
-            add(sources, LinkSource.Kind.COMMENT, comment.author(), references.referencesIn(comment.body()));
+        for (PullRequestComment comment : comments(pr)) {
+            add(sources, new Written(LinkSource.Kind.COMMENT, comment.author(), comment.vouch()),
+                    references.referencesIn(comment.body()));
         }
         return sources;
     }
@@ -44,7 +57,7 @@ final class PullRequestLinkSources {
      * Fails soft: comments are enrichment, and a review whose comments could not be read still gets the pull
      * request's own source and an ordinary review. Only the failure's message is logged, never a comment.
      */
-    private static List<PullRequestComment> comments(DiffSource source, PullRequest pr) {
+    private List<PullRequestComment> comments(PullRequest pr) {
         try {
             return source.fetchPullRequestComments(pr.repo(), pr.prId());
         } catch (RuntimeException e) {
@@ -54,12 +67,16 @@ final class PullRequestLinkSources {
         }
     }
 
-    private static void add(List<LinkSource> sources, LinkSource.Kind kind, Author author, Set<String> links) {
+    private record Written(LinkSource.Kind kind, Author author, LinkSource.Vouch vouch) {
+    }
+
+    private static void add(List<LinkSource> sources, Written written, Set<String> links) {
         if (links.isEmpty()) {
             return;
         }
+        Author author = written.author();
         String id = author == null ? null : author.providerUserId();
         String handle = author == null ? null : author.username();
-        sources.add(new LinkSource(kind, id, handle, links));
+        sources.add(new LinkSource(written.kind(), id, handle, links, written.vouch()));
     }
 }
