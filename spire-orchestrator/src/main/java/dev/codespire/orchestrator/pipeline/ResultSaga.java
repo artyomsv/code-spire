@@ -26,7 +26,6 @@ import dev.codespire.contract.review.PriorRun;
 import dev.codespire.contract.review.ReviewResult;
 import dev.codespire.contract.scm.ThreadRef;
 import dev.codespire.orchestrator.caps.CapRefusal;
-import dev.codespire.orchestrator.factory.FixTargets;
 import dev.codespire.orchestrator.lifecycle.ReviewLifecycleService;
 import dev.codespire.orchestrator.llm.CallRefs;
 import dev.codespire.orchestrator.llm.ChargeCall;
@@ -133,9 +132,9 @@ public class ResultSaga {
     @Inject
     dev.codespire.orchestrator.caps.SpendGate spendGate;
 
-    /** Whether the pull request is untrusted, which decides whether its links are loaded (harness reviews, step 8). */
+    /** Which links a review loads: all on a same-repository pull request, trusted authors' on a fork (steps 8, 8b). */
     @Inject
-    FixTargets targets;
+    ContextLinks contextLinks;
 
     /** Whether a review runs on the repository's harness (harness reviews, steps 5 and 6). */
     @Inject
@@ -252,7 +251,7 @@ public class ResultSaga {
                         .orElse(null);
                 commands.emit(new ActionCommand.GatherContext(
                         e.reviewId(), ReviewIds.parse(e.reviewId()).repo(), e.prId(), e.commit(),
-                        ContextLinks.toGather(e, targets, projection), contextCred, scmType,
+                        contextLinks.toGather(e), contextCred, scmType,
                         // Already read at diff-fetch, from the PR's target branch — the aggregator
                         // holds no SCM credential and so cannot fetch it itself.
                         e.repoRules(), e.codeReferences()));

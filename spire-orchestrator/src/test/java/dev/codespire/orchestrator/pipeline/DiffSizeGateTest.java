@@ -237,6 +237,8 @@ class DiffSizeGateTest {
             }
         };
         saga.capPolicy = policy;
+        // No link on these events, so the links step returns before reading anything.
+        saga.contextLinks = new ContextLinks();
         return saga;
     }
 }
