@@ -5,7 +5,8 @@
 #   ./deploy/egress/build.sh [tag]        # default tag: spire-egress-proxy:latest
 #
 # The run worker names the image in spire.run.egress.image (SPIRE_RUN_EGRESS_IMAGE), default
-# spire-egress-proxy:latest. Like the publisher image, it is not on GHCR yet and is built here.
+# spire-egress-proxy:latest. docker.yml publishes the same image as ghcr.io/artyomsv/spire-egress-proxy;
+# this script builds it locally for the dev stack and compose.yml.
 set -euo pipefail
 
 TAG="${1:-spire-egress-proxy:latest}"

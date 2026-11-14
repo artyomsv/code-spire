@@ -14,12 +14,20 @@ FROM eclipse-temurin:25-jre-alpine
 # the agent, and a different uid keeps it that way.
 #
 # APK_UPGRADE_BUST for the reason the root Dockerfile records: with no changing input this layer
-# caches on the base image alone, so the upgrade would run once. Not in docker.yml yet; wired now so
-# joining that matrix is a one-line change.
+# caches on the base image alone, so the upgrade would run once. docker.yml builds this image and
+# passes github.run_id; a local build takes the default.
 ARG APK_UPGRADE_BUST=local
 RUN echo "apk upgrade for build ${APK_UPGRADE_BUST}" \
     && apk --no-cache upgrade \
     && adduser -D -u 1002 -h /home/spire spire
+
+# Published as ghcr.io/artyomsv/spire-model-proxy. The module's own licence, as the service images carry
+# theirs (ADR-021): FSL-1.1-ALv2, the text the label declares.
+LABEL org.opencontainers.image.title="spire-model-proxy" \
+      org.opencontainers.image.description="Code Spire run-unit model proxy: holds the run's model credential" \
+      org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
+      org.opencontainers.image.licenses="FSL-1.1-ALv2"
+COPY LICENSE /opt/spire-model-proxy/LICENSE
 
 COPY build/install/spire-model-proxy/lib /opt/spire-model-proxy/lib
 

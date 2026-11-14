@@ -1,6 +1,7 @@
-# Only the installed distribution and the launchers enter the build context. Everything else in
-# this module — sources, tests, Gradle caches — stays out of every layer.
+# Only the installed distribution, the launchers and the module LICENSE enter the build context.
+# Everything else in this module — sources, tests, Gradle caches — stays out of every layer.
 *
 !Dockerfile
+!LICENSE
 !docker/
 !build/install/spire-publisher/lib/

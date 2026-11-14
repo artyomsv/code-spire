@@ -23,6 +23,23 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
 # run (UNVERIFIED section B).
 RUN npm i -g @openai/codex@0.156.1 && npm cache clean --force
 
+# The image is published (ghcr.io/artyomsv/spire-agent-codex), so it carries the licence of everything
+# Code Spire wrote into it (LICENSE: Apache-2.0) and the Codex CLI's notice (codex/NOTICE: Apache-2.0,
+# ADR-032 as amended 2026-11-14). Whatever licence files the npm package itself ships are copied beside
+# them; the loop copies what exists rather than naming files, because which of LICENSE and NOTICE the
+# package carries is the vendor's packaging choice, and a missing one must not break the build when
+# codex/NOTICE already says where the full Apache text is.
+COPY LICENSE codex/NOTICE /usr/share/licenses/code-spire/
+RUN mkdir -p /usr/share/licenses/openai-codex \
+    && for f in "$(npm root -g)"/@openai/codex/LICENSE* "$(npm root -g)"/@openai/codex/NOTICE*; do \
+         if [ -f "$f" ]; then cp "$f" /usr/share/licenses/openai-codex/; fi; \
+       done
+
+LABEL org.opencontainers.image.title="spire-agent-codex" \
+      org.opencontainers.image.description="Code Spire reference agent image: the Codex CLI and the factory entrypoint" \
+      org.opencontainers.image.source="https://github.com/artyomsv/code-spire" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 # The mount points exist, owned by the agent user, so a fresh named volume mounted there inherits
 # that ownership; without this the volume is root's and the agent cannot write its own workspace.
 RUN useradd -m -u 1001 -s /bin/bash agent \

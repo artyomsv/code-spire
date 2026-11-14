@@ -1,4 +1,8 @@
-# Builds all four images, scans them, and publishes :edge.
+# Builds every image, scans them, and publishes :edge.
+#
+# Two jobs. `images` holds every image one `docker build` produces: the four services, the dashboard,
+# and the run unit's three companions (publisher, model proxy, egress proxy). `agents` holds the two
+# reference agent images, which are not one `docker build` each — see that job.
 #
 # It publishes on purpose. The prior analysis copied a build-but-do-not-push precedent, but e2e.yml
 # consumes GHCR images: with releases as the only publisher, the topology check could not run until
@@ -25,9 +29,18 @@ on:
   push:
     branches: [master]
   pull_request:
+    # The run unit's images read more than their Dockerfile: the agent images take the shared
+    # entrypoint, the model catalogue and the build scripts; the publisher and model proxy take a
+    # Gradle distribution and their launchers; the egress image takes its build script. A PR that
+    # changes only one of those still changes what the image is.
     paths:
       - '**/Dockerfile*'
+      - '**/.dockerignore'
       - 'spire-ui/nginx/**'
+      - 'deploy/agent/**'
+      - 'deploy/egress/**'
+      - 'spire-publisher/**'
+      - 'spire-model-proxy/**'
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
@@ -47,29 +60,82 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # gradleDist names the module whose `installDist` must run first. The publisher and the model
+        # proxy copy a Gradle distribution from their own build/ directory, and their .dockerignore
+        # admits nothing else, so their Dockerfiles cannot build the code themselves the way the root
+        # Dockerfile does. Empty for every image that builds from source inside its Dockerfile.
+        #
+        # The run worker builds from the root Dockerfile like the other services. It runs on a Docker
+        # host next to the cluster, not in it (deploy/README.md), so it is the one service whose image
+        # was named by compose.ghcr.yml and published by nothing until this entry.
+        #
+        # Keep no blank line and no comment between entries: ApkUpgradeIsNotCachedTest parses this
+        # list as source text.
         include:
           - name: spire-gateway
             context: .
             dockerfile: Dockerfile
             service: gateway
             apkUpgrade: true
+            gradleDist: ''
           - name: spire-orchestrator
             context: .
             dockerfile: Dockerfile
             service: orchestrator
             apkUpgrade: true
+            gradleDist: ''
           - name: spire-review-worker
             context: .
             dockerfile: Dockerfile
             service: review-worker
             apkUpgrade: true
+            gradleDist: ''
+          - name: spire-run-worker
+            context: .
+            dockerfile: Dockerfile
+            service: run-worker
+            apkUpgrade: true
+            gradleDist: ''
           - name: spire-ui
             context: ./spire-ui
             dockerfile: ./spire-ui/Dockerfile
             service: ''
             apkUpgrade: true
+            gradleDist: ''
+          - name: spire-publisher
+            context: ./spire-publisher
+            dockerfile: ./spire-publisher/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: spire-publisher
+          - name: spire-model-proxy
+            context: ./spire-model-proxy
+            dockerfile: ./spire-model-proxy/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: spire-model-proxy
+          - name: spire-egress-proxy
+            context: ./deploy/egress
+            dockerfile: ./deploy/egress/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same JDK and Gradle setup as ci.yml, for the two images that copy a distribution. Tests are not
+      # run here: ci.yml runs them on the same commit, and installDist compiles without them.
+      - if: matrix.gradleDist != ''
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - if: matrix.gradleDist != ''
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Distribution
+        if: matrix.gradleDist != ''
+        run: ./gradlew --no-daemon --console=plain ":${{ matrix.gradleDist }}:installDist"
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - if: github.event_name == 'push'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -140,3 +206,97 @@ jobs:
                      "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:edge"
           docker push "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
+
+  # The two reference agent images (deploy/agent). Built by their own scripts, not by build-push-action,
+  # because the Codex image is two builds: the first installs the CLI, `codex debug models` reads the
+  # model catalogue from that binary, and the second bakes the answer into a label (a Dockerfile cannot
+  # set a LABEL from a RUN's output — build-codex.sh says why at length). Calling the script rather than
+  # restating it here keeps one recipe: the one an operator runs is the one CI publishes, and a vendor
+  # change to `codex debug models` fails here, at build time, exactly as it would on an operator's host.
+  # The Claude Code image is one build from deploy/agent/claude-code/models.json; its script is called
+  # for the same reason.
+  #
+  # No setup-buildx here, on purpose. The scripts call plain `docker build` and then `docker run` the
+  # result; under a buildx docker-container builder that build would not be loaded into the local
+  # store and the catalogue read would find no image. The runner's default builder loads it. The price
+  # is no gha layer cache: every run installs the CLI again, which is minutes, not tens of minutes.
+  #
+  # **spire-agent-claude-code is private, and its first push needs a person.** The CLI inside it is
+  # "All rights reserved", under Anthropic's Commercial Terms, which do not address redistribution
+  # (LICENSING.md, ADR-032 amended 2026-11-14). The image therefore carries no
+  # org.opencontainers.image.source label, so it is not linked to this public repository and inherits
+  # nothing from it. A new GHCR package is private unless someone changes it; after the first push the
+  # operator checks in the package settings that it still is (deploy/README.md, "Operator steps after
+  # merge"). Its Trivy findings go to the Security tab like every other image's.
+  #
+  # `dockerfile` is not read by the steps (the scripts name their own); it is here so
+  # ApkUpgradeIsNotCachedTest can map every published image to the Dockerfile it comes from.
+  agents:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: spire-agent-codex
+            dockerfile: deploy/agent/codex/Dockerfile
+            script: deploy/agent/build-codex.sh
+          - name: spire-agent-claude-code
+            dockerfile: deploy/agent/claude-code/Dockerfile
+            script: deploy/agent/build-claude-code.sh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: github.event_name == 'push'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `bash` rather than `./`: build-codex.sh is not committed executable.
+      - name: Build
+        run: bash "${{ matrix.script }}" "ghcr.io/artyomsv/${{ matrix.name }}:edge"
+
+      - name: Scan
+        if: github.event_name == 'push'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/artyomsv/${{ matrix.name }}:edge
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+      - name: Report
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+
+      - name: Push
+        if: github.event_name == 'push'
+        run: |
+          short="${GITHUB_SHA::7}"
+          docker tag "ghcr.io/artyomsv/${{ matrix.name }}:edge" \
+                     "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
+          docker push "ghcr.io/artyomsv/${{ matrix.name }}:edge"
+          docker push "ghcr.io/artyomsv/${{ matrix.name }}:sha-${short}"
+
+      # The Claude Code CLI may not be redistributed, so this package must stay private. It is private
+      # only because it has no source label and a new GHCR package starts private; a later label or a
+      # visibility change would publish it with no signal. An anonymous pull that succeeds fails the
+      # job, so the next master build turns that change into a red check. It cannot undo a push.
+      - name: Check the package is still private
+        if: github.event_name == 'push' && matrix.name == 'spire-agent-claude-code'
+        run: |
+          short="${GITHUB_SHA::7}"
+          docker logout ghcr.io
+          for tag in edge "sha-${short}"; do
+            image="ghcr.io/artyomsv/${{ matrix.name }}:${tag}"
+            if docker pull "${image}" >/dev/null 2>&1; then
+              docker rmi "${image}" || true
+              echo "::error::${image} was pulled without credentials, so the package is public. The Claude Code CLI must not be redistributed: make the package private in its GHCR package settings."
+              exit 1
+            fi
+            echo "${image}: the package refused an anonymous pull, as expected"
+          done

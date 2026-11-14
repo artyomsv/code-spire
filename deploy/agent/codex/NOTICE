@@ -1,0 +1,18 @@
+spire-agent-codex — third-party software notice
+
+This image contains the OpenAI Codex CLI, installed unmodified from npm:
+
+    package:  @openai/codex
+    version:  0.156.1 (pinned in deploy/agent/codex/Dockerfile)
+    licence:  Apache License, Version 2.0
+    source:   https://github.com/openai/codex
+    copyright: OpenAI
+
+The package's own LICENSE and NOTICE files, when the npm package carries them,
+are copied beside this file under /usr/share/licenses/openai-codex/. The full
+text of the Apache License 2.0 is at /usr/share/common-licenses/Apache-2.0 in
+this image (Debian base-files) and at http://www.apache.org/licenses/LICENSE-2.0.
+
+The Code Spire parts of this image (the entrypoint and the image recipe) are
+Apache-2.0 too; see LICENSE beside this file. The Node.js runtime and the
+Debian packages from the base image keep their own licences.
