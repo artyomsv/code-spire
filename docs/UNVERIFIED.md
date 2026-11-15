@@ -33,6 +33,34 @@ evidence would settle it**.
 
 ---
 
+## Kubernetes on any cluster (reviewer only, 2026-11-15)
+
+**The claim.** The Helm chart installs the reviewer (gateway, orchestrator, review worker, dashboard) on any
+cluster with external Postgres and an external identity provider, with no hand patch: CloudNativePG through
+`deploy/examples/cloudnative-pg/`, each database password read once from its Secret, the dashboard reached
+through an in-cluster terminator or `ui.service`, and a realm made from
+`deploy/keycloak/realm-spire-production.json` (deploy/README.md, "Install on any cluster";
+docs/superpowers/specs/2026-11-15-k8s-any-cluster-design.md).
+
+**Why nothing catches it today.** CI renders the chart and asserts its shape (`render.sh`, its `--self-test`,
+the drift check), validates `cluster.yaml` against the CloudNativePG schemas, and checks the realm template's
+file shape (`ProductionRealmTemplateIsSafeTest`). The only install CI runs is the `simple` preset on kind, with
+bundled Postgres and Keycloak. Three things are unproven:
+
+- **The chart has never been installed on a real cluster with external Postgres and an external identity
+  provider.** No pod has read a password from a CloudNativePG Secret, signed in through a production realm, or
+  served a review behind an in-cluster terminator.
+- **The CloudNativePG example has not run.** That a `Database` object adopts the database initdb made, and that
+  its `gateway` schema reconcile waits for the managed role, are from the CloudNativePG documentation, not seen.
+- **Keycloak making a confidential client's secret on import when the file has none.** The README tells the
+  operator to press Regenerate on each client, so the install does not depend on it.
+
+**What would settle it.** The operator's home install (k3s, CloudNativePG, an external Keycloak, a release
+chart) with a live review on `spire-test` closes the first two. A realm import that shows a secret on each
+client's Credentials tab before Regenerate closes the third.
+
+---
+
 ## Fork pull requests on a harness (harness reviews step 8, PR #419, 2026-11-13)
 
 **The claim.** A repository that reviews with a harness reviews fork pull requests on GitHub and GitLab, first

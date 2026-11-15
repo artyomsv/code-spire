@@ -126,12 +126,102 @@ Point `SPIRE_OIDC_AUTH_SERVER_URL` at it and drop the `keycloak` service. The re
 - **Two realm roles**, `spire-viewer` and `spire-admin`, readable from the **access** token. Reading
   them from the ID token yields an operator with no roles, and every endpoint then denies.
 
-`deploy/keycloak/realm-spire.json` is a working example of all of that.
+`deploy/keycloak/realm-spire.json` is a working example of all of that, for development only: it has
+users, client secrets, the password grant and `localhost` URIs. For a real identity provider, start
+from `deploy/keycloak/realm-spire-production.json` (see "Install on any cluster", step 4).
 
 **The issuer must be reachable under one name from both the browser and the containers.** An
 unpinned Keycloak derives its issuer from the `Host` it was called on, so the two would disagree and
 every token would fail validation. The bundled instance pins `KC_HOSTNAME` and sets
 `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` so front- and backchannel can differ while the issuer stays fixed.
+
+## Install on any cluster
+
+The Helm chart with the `production` preset, Postgres you run (or CloudNativePG), the chart's bundled
+Redpanda, and an identity provider you already run. This installs the **reviewer only**: gateway,
+orchestrator, review worker and dashboard. Agent work (harness reviews, `/fix`, the factory) needs the
+run worker, which comes to Kubernetes with M5 (below).
+
+**Not yet run on a real cluster.** The chart renders and its invariants are checked in CI, but no
+install with external Postgres and an external identity provider has been done yet
+(`docs/UNVERIFIED.md`). Do the steps in this order.
+
+1. **Namespace.** `kubectl create namespace spire`. Everything below goes in it: a pod reads a Secret
+   only from its own namespace.
+
+2. **Postgres.** Version 15 or later (the migrations use `NULLS NOT DISTINCT`). Pick one:
+   - **Bundled**: the `simple` preset's single Postgres. For evaluation only (no backup).
+   - **External**: set `postgres.host`, make the gateway role and schema with the two statements in
+     "The gateway's database role" above, and set `postgres.provisionGatewayRole: false` if the chart
+     must not make them.
+   - **CloudNativePG** (operator 1.26 or later): first make the gateway role's basic-auth Secret, then
+     apply the example:
+
+     ```bash
+     kubectl -n spire create secret generic spire-db-gateway --type=kubernetes.io/basic-auth \
+       --from-literal=username=gateway --from-literal=password="$(openssl rand -hex 24)"
+     kubectl -n spire apply -f deploy/examples/cloudnative-pg/cluster.yaml
+     ```
+
+     CloudNativePG makes the owner `spire` and its Secret `spire-db-app`; a `Database` object makes the
+     `gateway` schema, owned by `gateway`. The chart reads both passwords from those two Secrets
+     (`postgres.passwordSecret`, `postgres.gatewayPasswordSecret`), so each password is stored once.
+     Connect to the `-rw` Service, never through a Pooler in transaction mode: the orchestrator holds
+     a `LISTEN` session.
+
+3. **The two Secrets.** The chart takes Secret names only ("The four secrets" above says why).
+
+   | Secret | Keys |
+   |---|---|
+   | `secrets.existingSecret` | `SPIRE_ENCRYPTION_KEYSET`, `SPIRE_OIDC_ORCHESTRATOR_SECRET`, `SPIRE_OIDC_GATEWAY_SECRET`, `SPIRE_OIDC_WORKER_SECRET`, and `POSTGRES_PASSWORD` unless `postgres.passwordSecret` is set |
+   | `secrets.gatewayExistingSecret` | `SPIRE_ENCRYPTION_WEBHOOK_KEYSET`, and `GATEWAY_POSTGRES_PASSWORD` unless `postgres.gatewayPasswordSecret` is set |
+
+   They must be two different Secrets. The three OIDC secrets come from step 4, so make the main Secret
+   after it, or update it then.
+
+4. **The realm.** Copy `deploy/keycloak/realm-spire-production.json` and replace the two
+   placeholders: `SPIRE_REALM` with the realm name, `SPIRE_HOST` with the host the browser uses (no
+   scheme, no path). Create a **new** realm from the file (a partial import into an existing realm is
+   a different path). Then, for each of the three clients, open its Credentials tab, press
+   **Regenerate**, and copy the secret into the main Secret's matching key. Whether Keycloak makes a
+   secret on import when the file has none is not proven, so do not skip Regenerate. Give your
+   operators the realm roles `spire-viewer` and `spire-admin`.
+
+5. **Install.** Copy `deploy/examples/cloudnative-pg/values.yaml`, replace each placeholder
+   (`example.invalid`, the pod CIDR in `trustedProxies`, the database host), then:
+
+   ```bash
+   helm install spire deploy/helm/spire -n spire \
+     -f deploy/helm/spire/values-production.yaml -f my-values.yaml
+   ```
+
+   With an empty `image.tag` the chart pulls its own `appVersion`: a chart from a release pulls that
+   release's images; this repository's chart pulls `edge`. For settings the chart does not model,
+   each service takes `extraEnv` and `extraEnvFrom`. The render refuses a name the chart already sets,
+   and on the gateway the master keyset or any reference to the main Secret. It cannot see a
+   different Secret that also holds the master keyset: keep that key out of anything the gateway
+   loads.
+
+6. **Point the TLS terminator at the dashboard.** The `spire-ui` Service is `ClusterIP`. A terminator
+   in the cluster forwards to `spire-ui.spire.svc.cluster.local:8080`; for one outside it,
+   `ui.service.type` makes the Service a `NodePort` or `LoadBalancer` (`docs/TLS.md`, "Reaching the
+   dashboard from outside the cluster").
+
+7. **Check it worked.** `deploy/e2e.sh` cannot check this install: it signs in with the password grant
+   and the dev realm's users, assumes the realm name `spire`, and runs `docker compose exec`. Check
+   these by hand:
+   - every pod is Ready: `kubectl -n spire get pods -l app.kubernetes.io/name=spire`;
+   - each service answers `/q/health/ready` with `200`, for example
+     `kubectl -n spire port-forward svc/spire-orchestrator 8080:8080` then
+     `curl -fsS http://localhost:8080/q/health/ready` (the same for `spire-gateway` and `spire-worker`);
+   - `https://<host>` signs you in through the identity provider and the dashboard shows your roles;
+   - the gateway answers a forge's webhook ping (`https://<host>/webhooks/...`);
+   - one review on a test pull request.
+
+**No NetworkPolicy is shipped.** The services believe forwarded headers from `trustedProxies`, the pod
+network, so on a shared cluster any pod can reach a service port and forge its apparent client
+address. Add a NetworkPolicy that lets only the `spire-ui` pod reach the three services if other
+workloads share the cluster (`techdebt/global/3-2-no-networkpolicy-isolates-the-services.md`).
 
 ## The factory, and why it is not on by default
 
