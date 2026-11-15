@@ -7,6 +7,10 @@
 # arm64 goes through QEMU and costs tens of minutes on a JVM image, which is exactly why this is
 # tag-triggered rather than on any per-merge path.
 #
+# It publishes every image docker.yml publishes as :edge, the run worker and the run unit's images
+# included, so SPIRE_VERSION=<version> pins every image compose.ghcr.yml names. Until 2026-11-15 it
+# published the four reviewer images only, and a version tag left the factory on whatever it last pulled.
+#
 # It can also be run by hand, and a manual run is ALWAYS a dry run. That exists because this workflow
 # is otherwise untestable: it triggers only on a tag, so nothing that changes it — a bumped action, an
 # edited step — is exercised until a real release is already under way, which is the worst possible
@@ -78,12 +82,23 @@ jobs:
             echo "SPIRE_OIDC_ORCHESTRATOR_SECRET=dev-only-orchestrator-secret"
             echo "SPIRE_OIDC_GATEWAY_SECRET=dev-only-gateway-secret"
             echo "SPIRE_OIDC_WORKER_SECRET=dev-only-worker-secret"
+            # compose interpolates every service before it filters by profile, so the run worker's
+            # required secret must exist although the gate never starts the factory profile. Without
+            # it `up` refuses the whole file; e2e.yml carries the same line for the same reason.
+            echo "SPIRE_OIDC_RUN_WORKER_SECRET=dev-only-run-worker-secret"
             echo "KEYCLOAK_ADMIN_USER=dev-admin"
             echo "KEYCLOAK_ADMIN_PASSWORD=TEST-keycloak-admin"
             echo "SPIRE_TRUSTED_PROXIES=172.16.0.0/12"
             echo "SPIRE_VERSION=edge"
           } > deploy/.env
           grep -qE '^SPIRE_ENCRYPTION_KEYSET=.+' deploy/.env || { echo "keyset generation produced nothing"; exit 1; }
+
+      # The gate starts the reviewer stack only: the factory profile mounts the host's Docker socket and
+      # its run units need a forge and a model to do anything. This step still renders the file WITH that
+      # profile, so a variable the run worker requires, or a unit image reference that no longer
+      # interpolates at SPIRE_VERSION, fails the gate rather than the first operator who enables it.
+      - name: The factory profile interpolates
+        run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env --profile factory config -q
 
       - name: Up
         run: docker compose -f deploy/compose.ghcr.yml --env-file deploy/.env up -d
@@ -119,25 +134,129 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Every image docker.yml publishes as :edge, published here at the version: the four services,
+        # the run worker, the dashboard, the run unit's three companions and the two reference agents.
+        # DockerWorkflowBuildsEveryImageTest fails when the two lists differ, because an image left out
+        # here is one an operator cannot pin to SPIRE_VERSION=<version> while compose.ghcr.yml names it.
+        #
+        # The fields mean what they mean in docker.yml. apkUpgrade sends APK_UPGRADE_BUST (docker.yml
+        # says at length why it is a security control); gradleDist names the module whose installDist
+        # must run first. catalogueScript names the agent image's build script, which reads the model
+        # catalogue: see the Model catalogue step.
+        #
+        # Keep no blank line and no comment between entries: ApkUpgradeIsNotCachedTest parses this
+        # list as source text.
         include:
           - name: spire-gateway
             context: .
             dockerfile: Dockerfile
             service: gateway
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
           - name: spire-orchestrator
             context: .
             dockerfile: Dockerfile
             service: orchestrator
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
           - name: spire-review-worker
             context: .
             dockerfile: Dockerfile
             service: review-worker
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
+          - name: spire-run-worker
+            context: .
+            dockerfile: Dockerfile
+            service: run-worker
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
           - name: spire-ui
             context: ./spire-ui
             dockerfile: ./spire-ui/Dockerfile
             service: ''
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
+          - name: spire-publisher
+            context: ./spire-publisher
+            dockerfile: ./spire-publisher/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: spire-publisher
+            catalogueScript: ''
+          - name: spire-model-proxy
+            context: ./spire-model-proxy
+            dockerfile: ./spire-model-proxy/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: spire-model-proxy
+            catalogueScript: ''
+          - name: spire-egress-proxy
+            context: ./deploy/egress
+            dockerfile: ./deploy/egress/Dockerfile
+            service: ''
+            apkUpgrade: true
+            gradleDist: ''
+            catalogueScript: ''
+          - name: spire-agent-codex
+            context: ./deploy/agent
+            dockerfile: ./deploy/agent/codex/Dockerfile
+            service: ''
+            apkUpgrade: false
+            gradleDist: ''
+            catalogueScript: deploy/agent/build-codex.sh
+          - name: spire-agent-claude-code
+            context: ./deploy/agent
+            dockerfile: ./deploy/agent/claude-code/Dockerfile
+            service: ''
+            apkUpgrade: false
+            gradleDist: ''
+            catalogueScript: deploy/agent/build-claude-code.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The agent images carry their model catalogue as a label, and a label cannot come from a RUN's
+      # output (build-codex.sh says why). In docker.yml the script builds, reads and rebuilds; a
+      # multi-arch push cannot run what it builds, so here the script builds the amd64 image on the
+      # runner, the label is read back from it, and the value goes to the multi-arch build below as
+      # AGENT_MODELS. Calling the script keeps one recipe: the trim of `codex debug models` is not
+      # restated here, and a vendor change to that command fails the release as it fails docker.yml.
+      # The arm64 image installs the same pinned CLI release, so one catalogue describes both.
+      #
+      # Before setup-buildx, on purpose: that action makes its docker-container builder the default,
+      # which would not load the script's image into the local store, and the read would find none.
+      # The Claude Code script reads a file rather than the binary; it goes the same way so both
+      # agents' catalogues come from the scripts an operator runs.
+      - name: Model catalogue
+        id: catalogue
+        if: matrix.catalogueScript != ''
+        run: |
+          bash "${{ matrix.catalogueScript }}" "release-catalogue/${{ matrix.name }}:amd64"
+          models="$(docker inspect --format '{{ index .Config.Labels "dev.codespire.agent.models" }}' \
+                    "release-catalogue/${{ matrix.name }}:amd64")"
+          if [ -z "$models" ] || [ "$models" = "<no value>" ]; then
+            echo "the build script produced an image with no model catalogue"; exit 1
+          fi
+          echo "models=$models" >> "$GITHUB_OUTPUT"
+
+      # Same JDK and Gradle setup as docker.yml, for the two images that copy a distribution. The
+      # distribution is JVM bytecode, so one installDist serves both architectures.
+      - if: matrix.gradleDist != ''
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - if: matrix.gradleDist != ''
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Distribution
+        if: matrix.gradleDist != ''
+        run: ./gradlew --no-daemon --console=plain ":${{ matrix.gradleDist }}:installDist"
+
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -168,7 +287,14 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+          # One line per argument, each empty for the entries it does not apply to; the action skips
+          # empty items. APK_UPGRADE_BUST is docker.yml's security control: without a per-build value
+          # the upgrade layer is restored from the gha cache docker.yml fills, and a release would ship
+          # the OS packages of whichever build first wrote that layer.
+          build-args: |
+            ${{ matrix.service && format('SERVICE={0}', matrix.service) || '' }}
+            ${{ matrix.apkUpgrade && format('APK_UPGRADE_BUST={0}', github.run_id) || '' }}
+            ${{ steps.catalogue.outputs.models && format('AGENT_MODELS={0}', steps.catalogue.outputs.models) || '' }}
           # Both architectures even on a dry run: arm64 is what exercises QEMU, so dropping it would
           # make the dry run silent about the one action it is most needed to check.
           platforms: linux/amd64,linux/arm64

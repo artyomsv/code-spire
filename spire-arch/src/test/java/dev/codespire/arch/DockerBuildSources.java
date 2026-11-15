@@ -17,8 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Source-text readers shared by the checks on docker.yml's build matrix and the Dockerfiles it
- * builds: the matrix parser and the scan for Dockerfiles that upgrade their base OS packages.
+ * Source-text readers shared by the checks on docker.yml's and release.yml's build matrices and the
+ * Dockerfiles they build: the matrix parser and the scan for Dockerfiles that upgrade their base OS
+ * packages.
  */
 final class DockerBuildSources {
 
@@ -93,15 +94,28 @@ final class DockerBuildSources {
         while (matrix.find()) {
             includes.add(matrix.group("entries"));
         }
-        assertFalse(includes.isEmpty(), "no `include:` block found in docker.yml's build matrix — "
+        assertFalse(includes.isEmpty(), "no `include:` block found in the workflow's build matrix — "
                 + "the parser and the workflow disagree about its shape");
         return includes;
     }
 
-    /** Image name to the absolute path of the Dockerfile docker.yml builds it from. */
-    static Map<String, Path> builtImages() throws IOException {
+    /** The workflow that builds every image per merge and publishes {@code :edge}. */
+    static final String DOCKER_WORKFLOW = ".github/workflows/docker.yml";
+
+    /** The workflow that publishes every image at a version on a {@code v*} tag. */
+    static final String RELEASE_WORKFLOW = ".github/workflows/release.yml";
+
+    /**
+     * Both workflows that build published images. Each image's build args are spelled once per
+     * workflow, so a check on one alone let the other drift: release.yml sent no
+     * {@code APK_UPGRADE_BUST} at all until 2026-11-15 while docker.yml's matrix passed every check.
+     */
+    static final List<String> PUBLISHING_WORKFLOWS = List.of(DOCKER_WORKFLOW, RELEASE_WORKFLOW);
+
+    /** Image name to the absolute path of the Dockerfile the given workflow builds it from. */
+    static Map<String, Path> builtImages(String workflowPath) throws IOException {
         Map<String, Path> images = new LinkedHashMap<>();
-        for (String include : matrixIncludes(RootBuild.read(".github/workflows/docker.yml"))) {
+        for (String include : matrixIncludes(RootBuild.read(workflowPath))) {
             Matcher entry = MATRIX_ENTRY.matcher(include);
             while (entry.find()) {
                 Matcher file = DECLARED_DOCKERFILE.matcher(entry.group("body"));

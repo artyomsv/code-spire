@@ -84,45 +84,63 @@ class ApkUpgradeIsNotCachedTest {
     }
 
     @Test
-    void theWorkflowSendsAValueThatDiffersPerBuild() throws IOException {
-        String workflow = RootBuild.read(".github/workflows/docker.yml");
+    void everyPublishingWorkflowSendsAValueThatDiffersPerBuild() throws IOException {
+        List<String> constant = new ArrayList<>();
+        for (String workflowPath : DockerBuildSources.PUBLISHING_WORKFLOWS) {
+            if (!RootBuild.read(workflowPath).contains(BUST + "={0}', github.run_id")) {
+                constant.add(workflowPath);
+            }
+        }
 
-        assertTrue(workflow.contains(BUST + "={0}', github.run_id"),
-                "docker.yml no longer passes " + BUST + " from github.run_id. A constant value keys "
-                        + "the upgrade layer the same way on every build, which is the original defect "
-                        + "with an argument added. github.run_id is unique per run and already in "
-                        + "scope.");
+        assertEquals(List.of(), constant,
+                "these workflows no longer pass " + BUST + " from github.run_id. A constant value, or "
+                        + "none, keys the upgrade layer the same way on every build, which is the "
+                        + "original defect. github.run_id is unique per run and already in scope.");
     }
 
+    /**
+     * Both workflows, because each spells its build args separately: docker.yml publishes :edge and
+     * release.yml the versioned images, from the same gha layer cache. release.yml sent no
+     * {@code APK_UPGRADE_BUST} until 2026-11-15, so a release restored the upgrade layer docker.yml
+     * had cached and shipped whatever packages that build saw, while this check read docker.yml only.
+     */
     @Test
     void everyBuiltImageIsSentTheArgumentExactlyWhenItConsumesIt() throws IOException {
         Set<Path> upgrading = DockerBuildSources.dockerfilesThatUpgradeOsPackages().keySet();
-        Map<String, Path> built = DockerBuildSources.builtImages();
+        List<String> wrong = new ArrayList<>();
+        for (String workflowPath : DockerBuildSources.PUBLISHING_WORKFLOWS) {
+            wrong.addAll(misdeclaredImages(workflowPath, upgrading));
+        }
 
+        assertEquals(List.of(), wrong,
+                "a workflow's matrix disagrees with the Dockerfiles it builds");
+    }
+
+    private static List<String> misdeclaredImages(String workflowPath, Set<Path> upgrading) throws IOException {
+        Map<String, Path> built = DockerBuildSources.builtImages(workflowPath);
         assertFalse(built.isEmpty(),
-                "no `- name:` entry was parsed out of docker.yml's build matrix. An empty matrix "
-                        + "satisfies every assertion below, so failing to parse is an error here "
+                "no `- name:` entry was parsed out of " + workflowPath + "'s build matrix. An empty "
+                        + "matrix satisfies every assertion, so failing to parse is an error here "
                         + "rather than an empty answer.");
 
-        String workflow = RootBuild.read(".github/workflows/docker.yml");
+        String workflow = RootBuild.read(workflowPath);
         List<String> wrong = new ArrayList<>();
         for (Map.Entry<String, Path> image : built.entrySet()) {
             boolean consumes = upgrading.contains(image.getValue());
             boolean sent = DockerBuildSources.entryBody(workflow, image.getKey()).contains("apkUpgrade: true");
             if (consumes && !sent) {
-                wrong.add(image.getKey() + " builds "
+                wrong.add(workflowPath + ": " + image.getKey() + " builds "
                         + RootBuild.repoRoot().relativize(image.getValue())
                         + ", which consumes " + BUST + ", but its matrix entry sets no "
                         + "`apkUpgrade: true` — the build-args line then renders empty and the "
                         + "upgrade layer caches forever");
             } else if (!consumes && sent) {
-                wrong.add(image.getKey() + " is sent " + BUST + " but its Dockerfile never consumes "
-                        + "it — Docker warns about an unconsumed build arg on every build, and a "
-                        + "warning nobody can act on trains people past the ones they can");
+                wrong.add(workflowPath + ": " + image.getKey() + " is sent " + BUST + " but its "
+                        + "Dockerfile never consumes it — Docker warns about an unconsumed build arg on "
+                        + "every build, and a warning nobody can act on trains people past the ones "
+                        + "they can");
             }
         }
-
-        assertEquals(List.of(), wrong,
-                "docker.yml's matrix disagrees with the Dockerfiles it builds");
+        return wrong;
     }
 }
