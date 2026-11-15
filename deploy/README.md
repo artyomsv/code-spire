@@ -208,10 +208,19 @@ service being refused by another, and the gateway's live database privileges.
 
 ## Images
 
-`:edge` tracks `master`, and every master build also publishes `:sha-<short>`; pin a `sha-<short>`
-tag for anything you intend to keep (a version tag works for the run worker and the unit images only once
-`release.yml` publishes them, in a follow-up PR). Each image carries its licence as an OCI label and as a
-file (LICENSING.md, "Published images").
+`:edge` tracks `master`, and every master build also publishes `:sha-<short>` (both amd64 only). A `v*`
+tag publishes every image below as `:<version>` (the tag without its `v`) and `:latest`, for amd64 and arm64,
+cosign-signed by digest with an SBOM and provenance (`release.yml`). For anything you intend to keep, pin
+`SPIRE_VERSION` to a release version, or to a `sha-<short>` between releases. Each image carries its
+licence as an OCI label and as a file (LICENSING.md, "Published images").
+
+To check a release image's signature (keyless, bound to the release workflow's identity):
+
+```bash
+cosign verify ghcr.io/artyomsv/spire-run-worker:<version> \
+  --certificate-identity-regexp '^https://github.com/artyomsv/code-spire/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 | Image | What it is | Licence | Visibility |
 |---|---|---|---|
@@ -233,8 +242,8 @@ to a registry only you can read; set `SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE` to 
 `compose.ghcr.yml` names the unit images at `SPIRE_VERSION`, the run worker's own tag. **The run
 worker pulls a unit image only when its Docker daemon does not hold it**, so a moving tag is pulled
 once and never refreshed: after an upgrade on `edge`, units keep running the first `edge` that daemon
-ever pulled, beside a newer run worker. Either pin `SPIRE_VERSION` to a `sha-<short>` tag
-(a version tag works only once `release.yml` publishes these images; a new tag is a new image, so it is pulled), or, on `edge`, pull the unit images on the run worker's
+ever pulled, beside a newer run worker. Either pin `SPIRE_VERSION` to a release version or a `sha-<short>`
+tag (a new tag is a new image, so it is pulled), or, on `edge`, pull the unit images on the run worker's
 daemon at every upgrade:
 
 ```bash

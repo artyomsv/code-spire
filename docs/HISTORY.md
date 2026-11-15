@@ -2462,3 +2462,22 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   Anthropic asks to remove it, we comply." The image now carries the label, the anonymous-pull privacy check is gone,
   and no manual visibility step remains (ADR-032 amended 2026-11-15, LICENSING.md, deploy/README.md). Anthropic has not
   given permission; the removal path is to delete the package and drop it from the `agents` matrix.
+
+- **release.yml publishes the factory images at a version (2026-11-15, Part of #391).** A `v*` tag now publishes all
+  ten images docker.yml publishes, the run worker and the five run-unit images included, as `:<version>` and
+  `:latest` for amd64 and arm64, with provenance and an SBOM, cosign-signed by digest, after the same gate
+  (docs/superpowers/specs/2026-11-15-release-factory-images-design.md, docs/CICD-AND-PACKAGING.md §11), so
+  `SPIRE_VERSION=<version>` now pins every image compose.ghcr.yml names. The agent images read their model
+  catalogue by running their own build script on amd64 and passing the label on as `AGENT_MODELS`. Fixed on the
+  way: the release sent no `APK_UPGRADE_BUST`, and the gate's `.env` lacked `SPIRE_OIDC_RUN_WORKER_SECRET`,
+  which compose.ghcr.yml requires even for the profiled run worker (the last dry run, 2026-08-05, predates it); the
+  gate also renders the factory profile now. `ApkUpgradeIsNotCachedTest` reads both workflows, and
+  `DockerWorkflowBuildsEveryImageTest` fails when they publish different images. arm64 was checked statically
+  only (base images, and a `linux-arm64` npm package for both CLIs). Not run yet: a dry run or a tag with these
+  changes.
+
+  Live proof of the GHCR images (2026-11-14/15, on the dev stack): spire-test #106 was reviewed (`RECONCILE` on a
+  Codex seat, approved, run `review-106-734b7396736b-3270b22e:1`) with `spire-agent-codex`, `spire-publisher`,
+  `spire-model-proxy` and `spire-egress-proxy` all pulled from GHCR at `sha-66dd409`. The `spire-run-worker` and
+  `spire-agent-claude-code` images and the packaged run worker's Docker socket on Linux (uid 1001) are not yet
+  live-proven (docs/UNVERIFIED.md).
