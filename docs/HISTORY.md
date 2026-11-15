@@ -2519,7 +2519,8 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
 - **Operator names on the first install (2026-11-15, Part of #391).** Two People-tab defects from the first
   production install. Nothing called `OperatorDirectory.seen`, so `operator_seen` stayed empty: Settings → Operators
   said "Nobody has signed in yet" and a linked operator rendered as the raw OIDC subject twice. `/api/me` now records
-  the signed-in operator (one UPSERT per dashboard load, not throttled; a failure is logged and the probe still
+  the signed-in operator; the live socket's close handler asks it before every reconnect, so an identical sighting
+  within 60 s is skipped in memory and a changed name is written at once (a failure is logged and the probe still
   answers). Email is never stored: on that realm `preferred_username` is the email address, so `OperatorNames` drops
   any value with an `@` and the username is stored empty, the display name is the `name` claim, and a subject that is
   itself an email is not recorded. Second, a linked SCM account showed its numeric id twice, because the only handle

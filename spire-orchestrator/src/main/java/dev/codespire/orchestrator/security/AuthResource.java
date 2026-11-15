@@ -36,6 +36,9 @@ public class AuthResource {
     @Inject
     OperatorDirectory directory;
 
+    @Inject
+    RecentOperatorSightings sightings;
+
     @ConfigProperty(name = "spire.security.auth-enabled", defaultValue = "true")
     boolean authEnabled;
 
@@ -76,11 +79,13 @@ public class AuthResource {
     /**
      * Records the caller in the operator directory, so an admin can pick them by name.
      *
-     * <p>On the session probe because every dashboard load asks it once, which is exactly "who has
-     * been here". One UPSERT per load is cheap, so it is not throttled. Names go through
-     * {@link OperatorNames}, which drops every email address: on a realm whose login is the email,
-     * the username is stored empty and the {@code name} claim is shown. A subject that is itself an
-     * email (no JWT, a principal named by email) is not recorded at all.
+     * <p>On the session probe because every dashboard load asks it, which is exactly "who has been
+     * here". The live socket's close handler ({@code useLiveSocket}) asks it too, before every
+     * reconnect, so {@link RecentOperatorSightings} skips an identical sighting within 60 s: a
+     * flapping socket must not become a write stream, while a changed name is written at once. Names
+     * go through {@link OperatorNames}, which drops every email address: on a realm whose login is
+     * the email, the username is stored empty and the {@code name} claim is shown. A subject that is
+     * itself an email (no JWT, a principal named by email) is not recorded at all.
      *
      * <p>{@link OperatorDirectory#seen} never throws by design; the catch keeps that promise here too,
      * because a dashboard that cannot load its session over a display table is the worse outcome.
@@ -90,8 +95,14 @@ public class AuthResource {
         if (OperatorNames.withoutEmail(subject).isEmpty()) {
             return;
         }
+        String username = OperatorNames.username(identity);
+        String displayName = OperatorNames.displayName(identity);
+        if (!sightings.isNew(subject, username, displayName)) {
+            return;
+        }
         try {
-            directory.seen(subject, OperatorNames.username(identity), OperatorNames.displayName(identity));
+            directory.seen(subject, username, displayName);
+            sightings.remember(subject, username, displayName);
         } catch (RuntimeException e) {
             LOG.warn("could not record the signed-in operator", e);
         }

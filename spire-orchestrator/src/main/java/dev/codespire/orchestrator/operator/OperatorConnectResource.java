@@ -192,20 +192,20 @@ public class OperatorConnectResource {
             return back("noaccount");
         }
 
-        identities.link(new OperatorIdentities.Link(attempt.oidcSubject(), type, author.providerUserId(),
-                observedHandle(author)));
+        identities.link(linkOf(attempt, type, author));
         return back("connected");
     }
 
     /**
-     * The login the forge just reported, kept beside the id so the dashboard can show {@code artyomsv}
-     * rather than {@code 3218389}. Display data only, never a key. Only {@code username}: the author's
-     * email is never stored, and a login that looks like an email is dropped too (null, as for a link
-     * made by hand).
+     * The proved link, with the login the forge just reported kept beside the id so the dashboard can
+     * show {@code artyomsv} rather than {@code 3218389}. The login is display data only, never a key.
+     * Only {@code username}: the author's email is never stored, and a login that looks like an email
+     * is dropped too (null, as for a link made by hand).
      */
-    static String observedHandle(Author author) {
+    static OperatorIdentities.Link linkOf(ConnectStates.Pending attempt, String type, Author author) {
         String handle = OperatorNames.withoutEmail(author.username());
-        return handle.isEmpty() ? null : handle;
+        return new OperatorIdentities.Link(attempt.oidcSubject(), type, author.providerUserId(),
+                handle.isEmpty() ? null : handle);
     }
 
     /**

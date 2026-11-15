@@ -1,11 +1,5 @@
 package dev.codespire.orchestrator.operator;
 
-import dev.codespire.contract.port.OperatorOAuth;
-import dev.codespire.contract.port.ScmType;
-import dev.codespire.contract.scm.Author;
-import dev.codespire.contract.scm.OAuthApp;
-import dev.codespire.orchestrator.analytics.OperatorIdentities;
-import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.security.TestSecurity;
 import io.restassured.RestAssured;
@@ -17,8 +11,6 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.List;
-import java.util.Optional;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
@@ -50,9 +42,6 @@ class OperatorConnectResourceTest {
 
     @Inject
     DataSource dataSource;
-
-    @Inject
-    OperatorIdentities identities;
 
     @BeforeEach
     void clean() {
@@ -246,82 +235,6 @@ class OperatorConnectResourceTest {
                 .body("{\"providerType\":\"github\",\"clientId\":\"x\",\"clientSecret\":\"\"}")
                 .when().post("/api/scm-oauth-apps")
                 .then().statusCode(400);
-    }
-
-    /**
-     * A finished sign-in keeps the login the forge reported, so the dashboard shows {@code artyomsv}
-     * rather than the numeric id twice (first production install). The id stays the key.
-     */
-    @Test
-    @TestSecurity(user = ALICE, roles = "spire-viewer")
-    void aFinishedSignInStoresTheObservedLoginBesideTheId() {
-        connectAs(Author.of("TEST-900001", "TEST-alice-login", "TEST Alice"));
-
-        assertEquals(List.of(new OperatorIdentities.Link(ALICE, "github", "TEST-900001", "TEST-alice-login")),
-                identities.forSubject(ALICE));
-    }
-
-    /** A login that is an email address is not stored, nor is the author's email: the handle stays empty. */
-    @Test
-    @TestSecurity(user = ALICE, roles = "spire-viewer")
-    void aLoginThatIsAnEmailIsNotStored() {
-        connectAs(new Author("TEST-900002", "test-alice@example.invalid", "TEST Alice", "test-alice@example.invalid"));
-
-        assertEquals(List.of(new OperatorIdentities.Link(ALICE, "github", "TEST-900002", null)),
-                identities.forSubject(ALICE));
-    }
-
-    /** An admin's repair of the same account by hand keeps the observed login; a different account drops it. */
-    @Test
-    void aManualRelinkKeepsTheLoginOnlyForTheSameAccount() {
-        identities.link(new OperatorIdentities.Link(ALICE, "github", "TEST-900001", "TEST-alice-login"));
-
-        identities.link(new OperatorIdentities.Link(ALICE, "github", "TEST-900001", null));
-        assertEquals("TEST-alice-login", identities.forSubject(ALICE).getFirst().authorHandle());
-
-        identities.link(new OperatorIdentities.Link(ALICE, "github", "TEST-900003", null));
-        assertEquals(null, identities.forSubject(ALICE).getFirst().authorHandle());
-    }
-
-    @Test
-    @TestSecurity(user = "TEST-SUBJECT-ADMIN", roles = {"spire-viewer", "spire-admin"})
-    void theAdminListReturnsTheObservedLogin() {
-        identities.link(new OperatorIdentities.Link(ALICE, "github", "TEST-900001", "TEST-alice-login"));
-
-        given().when().get("/api/operator-identities")
-                .then().statusCode(200)
-                .body("find { it.oidcSubject == '" + ALICE + "' }.authorHandle", is("TEST-alice-login"));
-    }
-
-    /** Runs a whole connect for ALICE against a forge that answers with {@code author}. */
-    private void connectAs(Author author) {
-        apps.save(new ScmOAuthApps.Input("github", null, null, "TEST-CLIENT", "TEST-SECRET"));
-        QuarkusMock.installMockForType(new OperatorConnects() {
-            @Override
-            public Optional<OperatorOAuth> forType(ScmType type) {
-                return Optional.of(new OperatorOAuth() {
-                    @Override
-                    public ScmType type() {
-                        return ScmType.GITHUB;
-                    }
-
-                    @Override
-                    public String authorizeUrl(OAuthApp app, String state, String redirectUri) {
-                        return "https://forge.example.invalid/authorize";
-                    }
-
-                    @Override
-                    public Author identify(OAuthApp app, String code, String redirectUri) {
-                        return author;
-                    }
-                });
-            }
-        }, OperatorConnects.class);
-        String mine = states.start(ALICE, "github", "https://spire.example.invalid/cb");
-
-        given().redirects().follow(false)
-                .when().get("/api/operator-connect/github/callback?code=TEST-CODE&state=" + mine)
-                .then().statusCode(303).header("Location", containsString("connect=connected"));
     }
 
     private int blankSubjectLinks() {

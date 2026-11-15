@@ -7,6 +7,7 @@ import org.eclipse.microprofile.jwt.Claims;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -99,9 +100,50 @@ class AuthResourceRecordsOperatorTest {
         assertEquals(SUBJECT, me.subject());
     }
 
+    /** The live socket's close handler asks {@code /api/me} before every reconnect; the same sighting is written once. */
+    @Test
+    void anIdenticalProbeWithinTheWindowWritesNothing() {
+        RecordingDirectory directory = new RecordingDirectory();
+        RecentOperatorSightings sightings = new RecentOperatorSightings();
+        Instant[] now = {Instant.parse("1970-01-01T00:00:00Z")};
+        sightings.clock = () -> now[0];
+        SecurityIdentity identity = identityOf(jwt(Map.of(Claims.sub.name(), SUBJECT, "name", "TEST Operator"), "test-operator"));
+
+        resource(directory, identity, sightings).me();
+        now[0] = now[0].plusSeconds(59);
+        resource(directory, identity, sightings).me();
+        assertEquals(1, directory.seen.size());
+
+        now[0] = now[0].plusSeconds(2);
+        resource(directory, identity, sightings).me();
+        assertEquals(2, directory.seen.size(), "past the window the sighting is written again");
+    }
+
+    @Test
+    void aChangedDisplayNameIsWrittenAtOnce() {
+        RecordingDirectory directory = new RecordingDirectory();
+        RecentOperatorSightings sightings = new RecentOperatorSightings();
+        sightings.clock = () -> Instant.parse("1970-01-01T00:00:00Z");
+
+        resource(directory, identityOf(jwt(Map.of(Claims.sub.name(), SUBJECT, "name", "TEST Operator"), "test-operator")),
+                sightings).me();
+        resource(directory, identityOf(jwt(Map.of(Claims.sub.name(), SUBJECT, "name", "TEST Operator Renamed"), "test-operator")),
+                sightings).me();
+
+        assertEquals(List.of(
+                List.of(SUBJECT, "test-operator", "TEST Operator"),
+                List.of(SUBJECT, "test-operator", "TEST Operator Renamed")), directory.seen);
+    }
+
     private static AuthResource resource(OperatorDirectory directory, SecurityIdentity identity) {
+        return resource(directory, identity, new RecentOperatorSightings());
+    }
+
+    private static AuthResource resource(OperatorDirectory directory, SecurityIdentity identity,
+                                         RecentOperatorSightings sightings) {
         AuthResource resource = new AuthResource();
         resource.directory = directory;
+        resource.sightings = sightings;
         resource.identity = identity;
         resource.authEnabled = true;
         return resource;
