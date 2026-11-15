@@ -1,0 +1,76 @@
+const cols = [
+  'spire-contract', 'spire-worksource', 'spire-diff', 'spire-http', 'spire-encryption', 'spire-secrets', 'spire-workspace', 'spire-llm',
+  'spire-scm-* (3)', 'spire-context-* (4)', 'spire-context-code', 'spire-worksource-github, -gitlab', 'spire-worksource-jira',
+  'spire-harness', 'spire-harness-codex, -claude-code', 'spire-runtime', 'spire-runtime-docker',
+];
+const row = (label, on) => ({ label, marks: Object.fromEntries(on.map((i) => [i, 'd'])) });
+
+export default {
+  slug: 'libraries',
+  title: 'The libraries',
+  kicker: 'Which module is built from which. A dot means a direct dependency in the Gradle build.',
+  summary: 'There are 33 Gradle modules. Six become container images. The others are libraries: ports (the plug shapes), adapters (one for each outside system), and small shared tools. Read a row from left to right to see what a module needs.',
+  size: [1440, 0],
+  matrix: {
+    rot: true, labelW: 310, cw: 50, cols,
+    rows: [
+      { band: 'Deployable modules' },
+      row('spire-gateway', [0, 4, 8, 11]),
+      row('spire-orchestrator', [0, 2, 4, 6, 7, 8, 9, 11, 12]),
+      row('spire-review-worker', [0, 2, 4, 7, 8, 9, 10]),
+      row('spire-run-worker', [0, 4, 5, 13, 14, 15, 16]),
+      row('spire-publisher', [5, 6]),
+      row('spire-model-proxy', []),
+      { band: 'Libraries that need other libraries' },
+      row('spire-scm-bitbucket, -github, -gitlab', [0, 2, 3]),
+      row('spire-context-jira, -confluence, -github, -gitlab', [0, 3]),
+      row('spire-context-code', [0, 3]),
+      row('spire-worksource-github, -gitlab', [0, 1, 3, 8, 9]),
+      row('spire-worksource-jira', [0, 1, 3, 9]),
+      row('spire-llm', [0, 2]),
+      row('spire-diff', [0]),
+      row('spire-contract', [1]),
+      row('spire-harness-codex, -claude-code', [13]),
+      row('spire-runtime-docker', [15]),
+    ],
+  },
+  sections: [
+    { h: 'Ports: the plug shapes', wide: true, head: ['Module', 'What it defines', 'Who implements it'], rows: [
+      ['`spire-contract`', 'Every event and command on the bus, the `ReviewLifecycle` decider, and the ports `DiffSource`, `CommentSink`, `ScmIngress`, `PullRequestSink`, `ContextProvider`, `LlmProvider`, `EventStore`, `BlobStore`. It may import only the JDK and Jackson annotations.', 'The `spire-scm-*`, `spire-context-*` and `spire-llm` modules, and the services.'],
+      ['`spire-worksource`', '`WorkSource` (read tickets, labels, write comments) and `WorkSourceIngress` (ticket webhooks).', '`spire-worksource-github`, `-gitlab`, `-jira`. Jira has no webhook ingress.'],
+      ['`spire-harness`', '`HarnessAdapter`: the command line, the environment, the allowed hosts, the model route and the transcript parser of one agent CLI.', '`spire-harness-codex`, `spire-harness-claude-code`.'],
+      ['`spire-runtime`', '`RunRuntime`: place a run unit, attach to it, salvage it, destroy it.', '`spire-runtime-docker`. A Kubernetes runtime is planned.'],
+    ] },
+    { h: 'Adapters: one for each outside system', wide: true, head: ['Module', 'Talks to', 'Used by'], rows: [
+      ['`spire-scm-bitbucket`, `-github`, `-gitlab`', 'A forge: webhooks in, diff and threads, comments and reviews out, pull requests, permissions, OAuth.', 'gateway (webhooks only), orchestrator, review worker'],
+      ['`spire-context-jira`, `-confluence`, `-github`, `-gitlab`', 'Tickets and pages that a pull request links to.', 'orchestrator (previews), review worker'],
+      ['`spire-context-code`', 'The repository itself: the code that the diff touches, through the import graph.', 'review worker only'],
+      ['`spire-worksource-github`, `-gitlab`, `-jira`', 'A tracker, as a source of work items for the factory.', 'gateway (ticket webhooks), orchestrator'],
+      ['`spire-llm`', 'LLM vendors through LangChain4j. It also holds the prompt builders and the answer parsers.', 'review worker, orchestrator (prompt preview)'],
+      ['`spire-harness-codex`, `-claude-code`', 'One agent CLI each.', 'run worker'],
+      ['`spire-runtime-docker`', 'The Docker daemon: containers, networks, volumes, the two proxies.', 'run worker'],
+    ] },
+    { h: 'Small shared tools', head: ['Module', 'What it does'], rows: [
+      ['`spire-diff`', 'Parses a diff, finds line anchors, counts tokens. Pure code.'],
+      ['`spire-http`', 'A JSON-over-HTTP client that pins the host and follows redirects by hand. This is the guard against requests to a wrong host.'],
+      ['`spire-encryption`', 'Tink AES-256-GCM for data at rest. One keyset, each ciphertext bound to its row.'],
+      ['`spire-secrets`', '`SecretScrub`: the one place that removes credentials from text.'],
+      ['`spire-workspace`', 'JGit code for the publisher: clone, bundles, the push gate, `ProtectedPaths`.'],
+    ] },
+    { h: 'Modules that stand alone', head: ['Module', 'What it is'], rows: [
+      ['`spire-arch`', 'Architecture tests. About 20 rules that scan the repository, for example: the core never names a provider, the run worker runs no git, every image is built in CI.'],
+      ['`spire-agent-image`', 'A command-line tool: `spire-agent-image verify <image>` checks an agent image against the contract.'],
+      ['`spire-e2e`', 'The end-to-end test suite against a real GitLab.'],
+      ['`spire-ui`', 'The dashboard. It is an npm project, not a Gradle module.'],
+    ] },
+    { h: 'What the picture shows', wide: true, items: [
+      '`spire-contract` is the centre. Every service and every adapter needs it. A change inside it reaches everything.',
+      '`spire-contract` itself needs `spire-worksource`. So the work-source value types are part of the contract for every module.',
+      'The run worker shares almost nothing with the reviewer side: only `spire-contract` and `spire-encryption`. It can be deployed apart.',
+      'The orchestrator and the review worker need nearly the same adapters. The orchestrator uses them for settings checks, previews and factory work. The review worker uses them for the review itself.',
+      'The work-source adapters sit on top of the context and SCM adapters of the same vendor. They share the vendor client.',
+      '`spire-model-proxy` has no project dependency at all. It is kept small on purpose, because it holds a credential.',
+      'The gateway does not need `spire-http` for itself. It arrives through the SCM adapters.',
+    ] },
+  ],
+};
