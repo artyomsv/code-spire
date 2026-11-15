@@ -226,7 +226,8 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
   `spire-publisher`, `spire-model-proxy` and `spire-egress-proxy` pulled from GHCR at `sha-66dd409`. Not
   live-proven: the published `spire-run-worker` image, the packaged run worker's
   access to the Docker socket on Linux as uid 1001, the published `spire-agent-claude-code`, any arm64 image, and a
-  versioned release (release.yml publishes these images since 2026-11-15; no tag has run it). Only the Docker arm
+  versioned release (release.yml publishes these images since 2026-11-15; no tag has run it; the dry run 43657172281 built every image
+  for both architectures and passed the gate). Only the Docker arm
   builds the topology (there is no Kubernetes arm).
 - **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
   half as many concurrent proxied units as unproxied ones; no test runs near the bound.

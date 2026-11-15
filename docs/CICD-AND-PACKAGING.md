@@ -337,7 +337,12 @@ names; before, a version pinned the four reviewer images and left the factory on
 builds all ten images for both architectures without pushing, installs cosign, and creates and deletes a draft
 release. It proves the gate's `.env` and the factory profile interpolate, every image builds on arm64 under
 QEMU, and both catalogue reads produce a value. It does not prove signing or a push: a dry run signs and pushes
-nothing.
+nothing. Actions run 43657172281 on 2026-11-15 (a dry run on the PR branch, 45 minutes) succeeded.
+
+**A failed image on a real tag.** The matrix runs with `fail-fast: false`, and each job pushes `:<version>` and
+`:latest` as soon as its image is built. If one of the ten fails, the other nine are already published and their
+`:latest` has moved, while `github-release` does not run. Recover by re-running the failed jobs of the same tag run:
+the pushes are idempotent and the version is the tag. A version is usable only once its GitHub release exists.
 
 ---
 

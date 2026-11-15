@@ -2473,8 +2473,9 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   which compose.ghcr.yml requires even for the profiled run worker (the last dry run, 2026-08-05, predates it); the
   gate also renders the factory profile now. `ApkUpgradeIsNotCachedTest` reads both workflows, and
   `DockerWorkflowBuildsEveryImageTest` fails when they publish different images. arm64 was checked statically
-  only (base images, and a `linux-arm64` npm package for both CLIs). Not run yet: a dry run or a tag with these
-  changes.
+  only (base images, and a `linux-arm64` npm package for both CLIs). Actions run 43657172281 on 2026-11-15 (a dry run on the PR branch, 45 minutes) succeeded: the gate, all ten
+  images built for amd64 and arm64 under QEMU with both catalogue reads, and the draft release. Not run yet: a
+  real tag, so pushing, signing and the SBOM in GHCR are unproven.
 
   Live proof of the GHCR images (2026-11-14/15, on the dev stack): spire-test #106 was reviewed (`RECONCILE` on a
   Codex seat, approved, run `review-106-734b7396736b-3270b22e:1`) with `spire-agent-codex`, `spire-publisher`,

@@ -214,7 +214,8 @@ cosign-signed by digest with an SBOM and provenance (`release.yml`). For anythin
 `SPIRE_VERSION` to a release version, or to a `sha-<short>` between releases. Each image carries its
 licence as an OCI label and as a file (LICENSING.md, "Published images").
 
-To check a release image's signature (keyless, bound to the release workflow's identity):
+To check a release image's signature (keyless, bound to the release workflow's identity). No real tag has published
+the factory images yet (a dry run built them, 2026-11-15), so the first one is the first proof:
 
 ```bash
 cosign verify ghcr.io/artyomsv/spire-run-worker:<version> \
