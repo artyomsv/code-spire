@@ -1,0 +1,122 @@
+import { n, e, g } from '../dsl.mjs';
+
+const X = [408, 622, 836], Y = [130, 250, 370, 490], PW = 196, PH = 84;
+const tin = (i, id, title, line) => n(id, 'topic', 48, 120 + i * 54, 226, 44, title, [line]);
+const tout = (i, id, title, line) => n(id, 'topic', 1166, 120 + i * 54, 226, 44, title, [line]);
+const lib = (i, title, line) => n(`l${i}`, 'lib', 52 + (i % 4) * 172, 748 + Math.floor(i / 4) * 68, 160, 54, title, [line]);
+
+export default {
+  slug: 'orchestrator',
+  title: 'spire-orchestrator',
+  kicker: 'The core. It decides what happens next, and it is the only writer of domain events.',
+  summary: 'The orchestrator runs the review lifecycle, the sagas that turn results into the next command, the factory work-item pipeline, and the backend of the dashboard. It does not call an LLM for a review and it does not run a container. It asks the workers to do that.',
+  size: [1440, 1070],
+  groups: [
+    g('orch', 390, 96, 660, 504, 'spire-orchestrator', { subject: true }),
+    g('inbus', 36, 96, 250, 516, 'Kafka: topics it reads'),
+    g('outbus', 1154, 96, 250, 408, 'Kafka: topics it writes'),
+    g('libs', 36, 724, 712, 160, 'Libraries it is built from'),
+  ],
+  nodes: [
+    tin(0, 'i1', 'cs.repository-integration', 'from the gateway'),
+    tin(1, 'i2', 'cs.work-integration', 'from the gateway'),
+    tin(2, 'i3', 'cs.registry-integration', 'from the gateway'),
+    tin(3, 'i4', 'cs.results', 'from the review worker'),
+    tin(4, 'i5', 'cs.run-results', 'from the run worker'),
+    tin(5, 'i6', 'cs.run-verifications', 'from the run worker'),
+    tin(6, 'i7', 'cs.run-events', 'run transcript lines'),
+    tin(7, 'i8', 'cs.harness-*-results', 'image facts, seat sign-in'),
+    tin(8, 'i9', 'cs.dlq', 'failed records, all services'),
+
+    tout(0, 'o1', 'cs.events', 'domain events; it reads them too'),
+    tout(1, 'o2', 'cs.commands', 'to the review worker'),
+    tout(2, 'o3', 'cs.run-commands', 'builds, drafts, verify'),
+    tout(3, 'o4', 'cs.review-runs', 'harness reviews, own lane'),
+    tout(4, 'o5', 'cs.run-control', 'cancel, steer, hold, publish'),
+    tout(5, 'o6', 'cs.harness-*-commands', 'image facts, seat sign-in'),
+    tout(6, 'o7', 'cs.work-events', 'no reader today'),
+
+    n('intake', 'part', X[0], Y[0], PW, PH, 'Repository intake', ['RepositoryIngressConsumer', 'matches a registered repository']),
+    n('sagas', 'part', X[1], Y[0], PW, PH, 'Review sagas', ['IntegrationSaga, ResultSaga,', 'ConversationSaga']),
+    n('life', 'part', X[2], Y[0], PW, PH, 'Review lifecycle', ['the decider, then the', 'append-only event store']),
+    n('work', 'part', X[0], Y[1], PW, PH, 'Work items', ['intake, prepare, gates,', 'verify, deliver, land']),
+    n('runs', 'part', X[1], Y[1], PW, PH, 'Run dispatch', ['RunCommandEmitter,', 'RunResultSaga, seat renewal']),
+    n('read', 'part', X[2], Y[1], PW, PH, 'Read models', ['ReviewProjection,', 'FindingProjection, analytics']),
+    n('set', 'part', X[0], Y[2], PW, PH, 'Settings and accounts', ['providers, repositories,', 'prompts, people'], { key: true }),
+    n('cost', 'part', X[1], Y[2], PW, PH, 'Cost ledger and caps', ['SpendGate, LlmModelPricer,', 'money in millicents']),
+    n('attn', 'part', X[2], Y[2], PW, PH, 'Attention, dead letters', ['AttentionBroadcaster,', 'DlqConsumer, replay']),
+    n('api', 'part', X[0], Y[3], PW, PH, 'Dashboard API', ['REST under /api,', 'six WebSocket feeds']),
+    n('auth', 'part', X[1], Y[3], PW, PH, 'Sign-in', ['/api/auth, /api/me,', 'its own OIDC client']),
+    n('sched', 'part', X[2], Y[3], PW, PH, 'Timers', ['about 25 jobs,', 'from every 2 s to every 24 h']),
+
+    n('ui', 'service', 48, 632, 226, 56, 'spire-ui', ['the dashboard']),
+    n('pg', 'store', X[1] + 190, 690, 200, 96, 'Postgres', ['schema orchestrator:', '115 migrations']),
+    n('forge', 'ext', 1166, 540, 226, 84, 'Forges and trackers', ['pull requests, merge, labels,', 'comments, permissions']),
+    n('other', 'ext', 1166, 660, 226, 84, 'Vendors and identity', ['key checks, seat renewal,', 'OIDC']),
+
+    lib(0, 'spire-contract', 'decider, events, ports'),
+    lib(1, 'spire-scm-*', 'forge clients, OAuth'),
+    lib(2, 'spire-worksource-*', 'tracker reads and writes'),
+    lib(3, 'spire-context-*', 'context previews'),
+    lib(4, 'spire-encryption', 'Tink, at rest'),
+    lib(5, 'spire-workspace', 'ProtectedPaths'),
+    lib(6, 'spire-llm, spire-diff', 'prompt preview only'),
+  ],
+  edges: [
+    e('inbus', 'orch', 'async', 'reads', { ao: -27, bo: -21 }),
+    e('orch', 'outbus', 'async', 'writes', { ao: -48, bo: 0 }),
+    e('intake', 'sagas', 'sync'),
+    e('sagas', 'life', 'sync'),
+    e('life', 'read', 'async', 'cs.events'),
+    e('sagas', 'runs', 'sync', 'harness review'),
+    e('work', 'runs', 'sync'),
+    e('ui', 'api', 'sync', '/api', { as: 'r', bs: 'l', mid: 350, seg: 0, at: 0.4 }),
+    e('orch', 'pg', 'sync', 'JDBC', { ao: 198 }),
+    e('orch', 'forge', 'sync', '', { as: 'r', bs: 'l', ao: 234 }),
+    e('orch', 'other', 'sync', '', { as: 'r', bs: 'l', ao: 244, mid: 1100 }),
+  ],
+  sections: [
+    { h: 'What it is responsible for', items: [
+      'It runs the `ReviewLifecycle` decider and appends every domain event to the event store. No other part writes domain events.',
+      'Its sagas read what happened (`cs.results`, `cs.run-results`) and send the next command (`cs.commands`, `cs.run-commands`, `cs.review-runs`).',
+      'It runs the factory pipeline for a work item: intake, specification and plan, approval gates, build, verify, deliver, land.',
+      'It keeps the read models that the dashboard shows, and pushes changes over WebSockets.',
+      'It keeps settings: accounts, repositories, LLM providers, harness credentials, prompts, spend caps.',
+    ] },
+    { h: 'What it does not do', items: [
+      'It makes no review-time LLM call. The review worker and the run worker do that.',
+      'It does not run containers. It sends a run command and reads the result.',
+      'It does not read the gateway tables. It learns about webhook registrations from `cs.registry-integration`.',
+    ] },
+    { h: 'The parts inside', wide: true, head: ['Part', 'Packages', 'What it does'], rows: [
+      ['Repository intake', '`repository`', 'Reads verified forge events. It drops an event for a repository that is not registered or not enabled. Reviewer events go to the sagas. Factory events go to the work items.'],
+      ['Review sagas', '`pipeline`, `review/run`', 'One saga for each source of news: `IntegrationSaga` (forge events), `ResultSaga` (worker results), `ConversationSaga` (replies). `ReviewRunDispatch` starts harness reviews.'],
+      ['Review lifecycle', '`lifecycle`, `eventstore`, `policy`', '`ReviewLifecycleService` loads the stream, asks the decider, appends to `event_store`, and publishes to `cs.events`.'],
+      ['Work items', '`work` (78 files)', 'The largest package. Intake from trackers, the spec and plan, gates, verify, delivery, pull request watch, land. Most steps are timers that move a row to its next state.'],
+      ['Run dispatch', '`factory` (62 files)', '`RunCommandEmitter` sends run commands. `RunResultSaga` reads results. It also keeps harness credentials, seats, and the model catalogue of each agent image.'],
+      ['Read models', '`readmodel`, `view`, `analytics`, `memory`', 'Projections built from `cs.events`. The dashboard reads these tables.'],
+      ['Settings and accounts', '`provider`, `repository`, `settings`, `prompt`, `context`, `operator`', 'Forge accounts, repositories and their roles, prompts, context providers. Credentials are encrypted with Tink.'],
+      ['Cost ledger and caps', '`llm`, `caps`', 'Prices each model call, records one charge per call slot, and refuses a review when a cap is reached.'],
+      ['Attention, dead letters', '`attention`, `dlq`', 'Rows that need a person. Records from `cs.dlq` are stored, shown and can be replayed to their first topic.'],
+      ['Dashboard API', '`web`, `ws`, and each package above', 'REST under `/api`. WebSockets: reviews, runs, run transcript, work items, attention, timeline.'],
+    ] },
+    { h: 'Data it owns', p: [
+      'Postgres schema `orchestrator`, migrations V1 to V115. The main groups are the event store, review read models, settings and registries, the charge ledger, factory runs and harness credentials, work items, and dead letters.',
+      'Sensitive fields (findings, context, credentials, work outbox) are encrypted with Tink before they are stored.',
+    ] },
+    { h: 'Calls to outside systems', items: [
+      'Forges and trackers, through `spire-scm-*` and `spire-worksource-*`: open and watch pull requests, merge, read permissions, read tickets, write labels and comments.',
+      'Context sources, through `spire-context-*`: previews in the settings screens only.',
+      'LLM vendors: a key check only (`GET {baseUrl}/models`).',
+      'The OpenAI token endpoint, to renew a subscription seat every 15 minutes.',
+      'The identity provider, through OIDC.',
+    ] },
+    { h: 'Coupling to watch', wide: true, items: [
+      'The orchestrator deletes rows in the review worker schema: `worker.comment_idempotency` and `worker.context_blob`, on a re-run and on an unarchive (`ReviewProjection`). This is a direct database call between two services. It is the one place that breaks the rule that services talk only through Kafka.',
+      '`cs.repository-integration` has two reader groups in the orchestrator, and the orchestrator also writes to it (manual registration).',
+      '`cs.work-events`, `cs.repository-activity` and `cs.work-dlq` are written but no code reads them. `cs.integration` is read but no code writes it.',
+      'Many factory steps are timers that poll the database every 5 s. They are not driven by messages.',
+      'The run worker test classpath uses the orchestrator test classes. That is a build-time link only.',
+    ] },
+  ],
+};

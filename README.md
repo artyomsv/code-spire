@@ -142,6 +142,7 @@ generates an encryption keyset: [deploy/README.md](deploy/README.md).
 | [docs/TECH-STACK.md](docs/TECH-STACK.md) | Full stack, topology (microservices), build units, UI |
 | [docs/EVENT-MODEL.md](docs/EVENT-MODEL.md) | The event model: slices, events, commands, read models |
 | [docs/diagrams/event-model.html](docs/diagrams/event-model.html) | Visual Event Modeling board (open in a browser) |
+| [docs/architecture/index.html](docs/architecture/index.html) | Architecture sheets: one drawing for each module, the message bus, the two main flows, and the whole system (open in a browser) |
 | [docs/CONTRACT.md](docs/CONTRACT.md) | The shared kernel: event/command catalog, decider, SPI ports, topics, Bitbucket mapping |
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Value types, event store, blob store, read models, relationships, encryption |
 | [docs/SCM-MAPPING.md](docs/SCM-MAPPING.md) | Provider-neutral SCM model mapped to Bitbucket/GitHub/GitLab APIs (verified) |

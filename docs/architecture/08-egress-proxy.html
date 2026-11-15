@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>spire-egress-proxy | Spired architecture</title><link rel="stylesheet" href="sheet.css"></head>
+<body><nav><a href="index.html">All sheets</a><span><a href="07-model-proxy.html">Back: spire-model-proxy</a><a href="09-agent-images.html">Next: spire-agent-codex, spire-agent-claude-code</a></span></nav>
+<header><p class="no">Sheet 08 of 15</p><h1>spire-egress-proxy</h1><p class="kicker">The way out for the agent and the model proxy. It records every host, and it can refuse.</p><p class="summary">The egress proxy is tinyproxy on Alpine. When it is on, the agent network has no route to the internet, so each outgoing connection of the agent must go through this proxy. It holds no credential. It does not cover the init container or the publisher.</p></header>
+<div class="board"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 620" width="1440" height="620" role="img" aria-label="spire-egress-proxy: The way out for the agent and the model proxy. It records every host, and it can refuse.">
+<style>
+text{font-family:Bahnschrift, 'DIN Alternate', 'DIN Next', 'Roboto Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;fill:#e6f0fb}
+.nt{font-size:14.5px;font-weight:600;text-anchor:middle}
+.nl{font-size:11.5px;fill:#a3bfdb;text-anchor:middle}
+.lib .nt{font-size:13px;font-weight:500}
+.topic .nt{font-size:13px;fill:#ffc857}
+.topic .nl{fill:#ffc857;opacity:.8}
+.store .nt{fill:#8fe3c4}
+.note text{text-anchor:start;font-size:12px;fill:#a3bfdb}
+.note .nt{font-size:12.5px;fill:#e6f0fb;font-weight:600;text-anchor:start}
+.box{fill:#1d5080;stroke:#e6f0fb;stroke-width:1.3}
+.focus .box{stroke-width:2.4}
+.service .box{stroke-width:2}
+.lib .box{fill:none;stroke:#a3bfdb;stroke-width:1}
+.ext .box{fill:none;stroke-dasharray:6 4}
+.topic .box{fill:#3b4a4d;stroke:#ffc857;stroke-width:1.4}
+.store .box{fill:#1b5672;stroke:#8fe3c4;stroke-width:1.4}
+.grp{fill:none;stroke:#a3bfdb;stroke-width:1.1;stroke-dasharray:3 4}
+.grp.subject{stroke:#e6f0fb;stroke-width:2.2;stroke-dasharray:none}
+.grpl{font-size:12px;fill:#a3bfdb;text-anchor:start}
+.grpl.subject{font-size:16px;font-weight:600;fill:#e6f0fb}
+.e{fill:none;stroke-linejoin:round}
+.e.sync{stroke:#e6f0fb;stroke-width:1.5}
+.e.async{stroke:#ffc857;stroke-width:1.8}
+.e.dep{stroke:#a3bfdb;stroke-width:1.1;stroke-dasharray:4 4}
+.e.file{stroke:#8fe3c4;stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round}
+.el{font-size:11.5px;text-anchor:middle;paint-order:stroke;stroke:#16426b;stroke-width:6px;stroke-linejoin:round}
+.el.sync{fill:#e6f0fb} .el.async{fill:#ffc857} .el.dep{fill:#a3bfdb} .el.file{fill:#8fe3c4}
+.lg{font-size:11.5px;fill:#a3bfdb;text-anchor:start}
+.tb{fill:#16426b;stroke:#e6f0fb;stroke-width:1.2}
+.tb1{font-size:11.5px;fill:#a3bfdb;text-anchor:start}
+.tb2{font-size:19px;font-weight:600;text-anchor:start}
+.lane{font-size:13.5px;font-weight:600;text-anchor:middle}
+.life{stroke:#a3bfdb;stroke-width:1;stroke-dasharray:2 5}
+.band{font-size:13px;font-weight:600;fill:#e6f0fb;text-anchor:start}
+.bandl{stroke:#a3bfdb;stroke-width:.8}
+.num{font-size:10.5px;font-weight:600;text-anchor:middle;fill:#16426b}
+.sl{font-size:12px;text-anchor:middle;paint-order:stroke;stroke:#16426b;stroke-width:6px;stroke-linejoin:round}
+.sl.self{text-anchor:start}
+.mh{font-size:12.5px;font-weight:600;text-anchor:start}
+.ml{font-size:13px;text-anchor:start}
+.mi{font-size:11.5px;fill:#a3bfdb;text-anchor:start}
+.mr{stroke:#e6f0fb;stroke-opacity:.16;stroke-width:1}
+</style><defs>
+<pattern id="g1" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#ffffff" stroke-opacity=".045" stroke-width="1"/></pattern>
+<pattern id="g2" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M100 0H0V100" fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width="1"/></pattern>
+<marker id="a-sync" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="#e6f0fb"/></marker><marker id="a-async" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="#ffc857"/></marker><marker id="a-dep" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="#a3bfdb"/></marker><marker id="a-file" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="#8fe3c4"/></marker>
+</defs>
+<rect width="1440" height="620" fill="#16426b"/><rect width="1440" height="620" fill="url(#g1)"/><rect width="1440" height="620" fill="url(#g2)"/>
+<rect x="12" y="12" width="1416" height="596" fill="none" stroke="#e6f0fb" stroke-width="1.6"/><rect x="18" y="18" width="1404" height="584" fill="none" stroke="#e6f0fb" stroke-width=".5"/>
+<rect class="grp subject" x="330" y="96" width="586" height="252" rx="6"/><rect x="344" y="86" width="168.8" height="20" fill="#16426b"/><text class="grpl subject" x="351" y="101.5">spire-egress-proxy</text><path class="e sync" d="M230 165L348 165" marker-end="url(#a-sync)"/><path class="e sync" d="M230 291L283 291Q290 291 290 284L290 199Q290 192 297 192L348 192" marker-end="url(#a-sync)"/><path class="e sync" d="M518 170L538 170" marker-end="url(#a-sync)"/><path class="e sync" d="M708 170L728 170" marker-end="url(#a-sync)"/><path class="e sync" d="M898 170L1030 170" marker-end="url(#a-sync)"/><path class="e sync" d="M898 290L1030 290" marker-end="url(#a-sync)"/><path class="e sync" d="M1115 330L1115 385Q1115 392 1108 392L440 392Q433 392 433 385L433 330" marker-end="url(#a-sync)"/><g class="service"><rect class="box" x="40" y="130" width="190" height="70" rx="4"/><text class="nt" x="135" y="163.8">Agent</text><text class="nl" x="135" y="182.3">in a build run</text></g><g class="service"><rect class="box" x="40" y="256" width="190" height="70" rx="4"/><text class="nt" x="135" y="289.8">Model proxy</text><text class="nl" x="135" y="308.3">in a proxied review run</text></g><g class="part"><rect class="box" x="348" y="130" width="170" height="80" rx="4"/><text class="nt" x="433" y="161.5">Access rule</text><text class="nl" x="433" y="180">only the subnet of</text><text class="nl" x="433" y="194.5">the unit may connect</text></g><g class="part"><rect class="box" x="538" y="130" width="170" height="80" rx="4"/><text class="nt" x="623" y="161.5">Host filter</text><text class="nl" x="623" y="180">report: lets all through</text><text class="nl" x="623" y="194.5">enforce: default deny</text></g><g class="part"><rect class="box" x="728" y="130" width="170" height="80" rx="4"/><text class="nt" x="813" y="161.5">Tunnel</text><text class="nl" x="813" y="180">CONNECT, ports</text><text class="nl" x="813" y="194.5">443 and 80 only</text></g><g class="part"><rect class="box" x="348" y="250" width="170" height="80" rx="4"/><text class="nt" x="433" y="281.5">Start script</text><text class="nl" x="433" y="300">writes the config from</text><text class="nl" x="433" y="314.5">two env vars</text></g><g class="part"><rect class="box" x="728" y="250" width="170" height="80" rx="4"/><text class="nt" x="813" y="281.5">Connect log</text><text class="nl" x="813" y="300">every attempt,</text><text class="nl" x="813" y="314.5">allowed or refused</text></g><g class="ext"><rect class="box" x="1030" y="130" width="170" height="80" rx="4"/><text class="nt" x="1115" y="168.8">Declared hosts</text><text class="nl" x="1115" y="187.3">from the harness adapter</text></g><g class="service"><rect class="box" x="1030" y="250" width="170" height="80" rx="4"/><text class="nt" x="1115" y="281.5">spire-run-worker</text><text class="nl" x="1115" y="300">writes the config,</text><text class="nl" x="1115" y="314.5">reads the log</text></g><g class="note"><text class="nt" x="348" y="450">A small sandbox</text><text x="348" y="467">No Linux capabilities, a read-only root, 64 MiB of memory, half a CPU, 64 processes.</text><text x="348" y="482.5">It has no project libraries. The image is built from deploy/egress.</text></g><text class="el sync" x="289" y="169">CONNECT</text><text class="el sync" x="964" y="174">TLS</text><text class="el sync" x="964" y="294">stdout</text><text class="el sync" x="774" y="396">config in the env</text>
+<rect x="44" y="567" width="22" height="13" rx="2" fill="none" stroke="#e6f0fb" stroke-width="2.2"/><text class="lg" x="74" y="577">This module</text><rect x="163.1" y="567" width="22" height="13" rx="2" fill="#1d5080" stroke="#e6f0fb" stroke-width="1.2"/><text class="lg" x="193.1" y="577">Part inside it</text><rect x="300.5" y="567" width="22" height="13" rx="2" fill="#1d5080" stroke="#e6f0fb" stroke-width="2"/><text class="lg" x="330.5" y="577">Service</text><rect x="395.2" y="567" width="22" height="13" rx="2" fill="none" stroke="#e6f0fb" stroke-dasharray="4 3"/><text class="lg" x="425.2" y="577">Outside system</text><path d="M532.5999999999999 573h22" class="e sync" marker-end="url(#a-sync)"/><text class="lg" x="562.5999999999999" y="577">Call (sync)</text>
+<g><rect class="tb" x="1030" y="512" width="380" height="78"/><path d="M1030 536h380M1030 566h380M1300 512v24" stroke="#e6f0fb" stroke-width=".8"/>
+<text class="tb1" x="1040" y="528">Spired architecture</text><text class="tb1" x="1310" y="528">Sheet 08 of 15</text>
+<text class="tb2" x="1040" y="558">spire-egress-proxy</text><text class="tb1" x="1040" y="582">Checked against the code at 0e6fbde3, 2026-11-15</text></g>
+</svg></div>
+<main><section class=""><h2>What it is responsible for</h2><ul><li>When the egress mode is not <code>off</code>, it is the only route out for the agent. In a proxied unit it is the only route out for the model proxy.</li><li>It writes each connection attempt to its log: host, port, allowed or refused.</li><li>In <code>enforce</code> mode it refuses every host that is not on the list.</li></ul></section><section class="wide"><h2>The modes</h2><div class="tw"><table><thead><tr><th>Mode</th><th>Filter</th><th>When</th></tr></thead><tbody><tr><td><code>report</code></td><td>None. Every host passes and is logged.</td><td>The default for a build run.</td></tr><tr><td><code>enforce</code></td><td><code>FilterDefaultDeny Yes</code>, and one anchored pattern for each declared host.</td><td>By setting, and always when the unit has a model proxy.</td></tr><tr><td><code>off</code></td><td>No proxy is started, and no internal networks.</td><td>By setting only.</td></tr></tbody></table></div></section><section class=""><h2>Where the host list comes from</h2><p>Each harness adapter declares its hosts (<code>HarnessAdapter.egressHosts</code>): <code>api.openai.com</code> for Codex on an API key, <code>chatgpt.com</code> for Codex on a seat, <code>api.anthropic.com</code> for Claude Code.</p><p><code>TinyproxyConfig</code> in <code>spire-runtime-docker</code> renders the config. The run worker passes it in two environment variables: <code>SPIRE_EGRESS_CONF</code> and <code>SPIRE_EGRESS_FILTER</code>.</p></section><section class=""><h2>How the run worker reads the result</h2><p><code>ProxyLogParser</code> turns the log into <code>EgressAttempt(host, port, allowed)</code>, at most 256 for each run. The attempts are part of the run record.</p></section><section class="wide"><h2>What it does not cover</h2><ul><li>The init container and the publisher. They are on the default bridge and reach the forge directly. Their connections are not in the egress log and are not filtered.</li><li>An agent with the egress mode <code>off</code>. No proxy and no internal network exist then, and the agent has a direct route out.</li><li>So a clean egress log shows what the agent and the model proxy reached. It does not show every connection of the unit.</li></ul></section><section class="wide"><h2>Coupling to watch</h2><ul><li>It can chain to a corporate proxy, but only an <code>http://</code> one. An <code>https://</code> upstream is refused. The basic-auth of that upstream can be in its config.</li><li>The log format of tinyproxy is a contract with <code>ProxyLogParser</code>.</li><li>It needs Docker Engine 28 or later, for the isolated gateway mode of the internal network.</li></ul></section></main>
+<nav><a href="index.html">All sheets</a><span><a href="07-model-proxy.html">Back: spire-model-proxy</a><a href="09-agent-images.html">Next: spire-agent-codex, spire-agent-claude-code</a></span></nav>
+</body></html>
