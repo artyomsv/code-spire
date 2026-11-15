@@ -300,10 +300,49 @@ entrypoint or a launcher builds its image before merge. Every apk-based image ge
 
 `compose.ghcr.yml` defaults the unit images to the published ones at `SPIRE_VERSION`. The run worker pulls a
 unit image only when its daemon lacks it (`DockerRunRuntime.ensureImage`), so a moving tag never updates on
-its own: pin `sha-<short>` (a version tag works for these images only once `release.yml` publishes them, a follow-up PR), or pull by hand on upgrade (`deploy/README.md`).
+its own: pin a release version or `sha-<short>`, or pull by hand on upgrade (`deploy/README.md`).
 
-**Still open:** these images are amd64 only, unsigned and have no SBOM; that is `release.yml`'s work, with
-the Kubernetes deployment of the factory, in their own PRs.
+**Still open:** the Kubernetes deployment of the factory, in its own PR. The release half is §11.
+
+---
+
+## 11. The factory images join release.yml (2026-11-15)
+
+[The design](superpowers/specs/2026-11-15-release-factory-images-design.md). `release.yml`'s `publish` matrix now
+holds every image `docker.yml` publishes, ten in all, so a `v*` tag publishes each one as `:<version>` and
+`:latest` for `linux/amd64,linux/arm64`, with provenance and an SBOM, cosign-signed keyless by digest, after the
+same `gate` round-trip. An operator can now pin `SPIRE_VERSION=<version>` for every image `compose.ghcr.yml`
+names; before, a version pinned the four reviewer images and left the factory on `sha-<short>`.
+
+- **Same fields as `docker.yml`.** `apkUpgrade` sends `APK_UPGRADE_BUST=github.run_id` (the release sent none
+  before, so it restored the upgrade layer `docker.yml` had cached); `gradleDist` runs `installDist` for the
+  publisher and the model proxy first.
+- **The agents' model catalogue.** A multi-arch push cannot run the image it builds, so the job first runs the
+  image's own build script (`build-codex.sh`, `build-claude-code.sh`) on the runner's default builder, reads
+  `dev.codespire.agent.models` back from that amd64 image, and passes it to the multi-arch build as
+  `AGENT_MODELS`. The trim logic stays in the script; the step runs before `setup-buildx` so the image is loaded.
+- **arm64, checked statically.** `eclipse-temurin:25-jre-alpine` (already released for arm64 by the four
+  services), `alpine:3.20` and `node:22-bookworm-slim` are multi-arch; `@openai/codex@0.156.1` and
+  `@anthropic-ai/claude-code@2.1.319` each ship a `linux-arm64` optional dependency on npm. No arm64 image has
+  been run.
+- **The gate.** Its `.env` lacked `SPIRE_OIDC_RUN_WORKER_SECRET`, which `compose.ghcr.yml` requires with `:?`
+  even for the profiled run worker (compose interpolates every service before filtering by profile), so `up`
+  would refuse the file; the last dry run, 2026-08-05, predates that requirement. The gate now also runs
+  `config -q` with `--profile factory`. It still starts only the reviewer stack.
+- **Guards.** `ApkUpgradeIsNotCachedTest` reads both workflows' matrices, and
+  `DockerWorkflowBuildsEveryImageTest.theReleasePublishesEveryImageDockerYmlPublishes` fails when the two
+  publish different images or build one from different Dockerfiles.
+
+**Dry run.** Actions → release → Run workflow (or `gh workflow run release.yml --ref <branch>`). It runs the gate,
+builds all ten images for both architectures without pushing, installs cosign, and creates and deletes a draft
+release. It proves the gate's `.env` and the factory profile interpolate, every image builds on arm64 under
+QEMU, and both catalogue reads produce a value. It does not prove signing or a push: a dry run signs and pushes
+nothing. Actions run 43657172281 on 2026-11-15 (a dry run on the PR branch, 45 minutes) succeeded.
+
+**A failed image on a real tag.** The matrix runs with `fail-fast: false`, and each job pushes `:<version>` and
+`:latest` as soon as its image is built. If one of the ten fails, the other nine are already published and their
+`:latest` has moved, while `github-release` does not run. Recover by re-running the failed jobs of the same tag run:
+the pushes are idempotent and the version is the tag. A version is usable only once its GitHub release exists.
 
 ---
 

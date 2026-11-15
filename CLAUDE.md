@@ -274,11 +274,13 @@ its ticket told. M5 is next; harness reviews are being built alongside it.
   suite has not been re-measured since, and builds now run in CI rather than on the host.
 - **The automated GitLab run-unit gap is still open.** RunUnitSpec has no network field, so a
   run unit cannot reach the e2e stack's GitLab. A live GitHub run does not close it.
-- **The factory images are published on merge to master but not yet live-pulled.** docker.yml builds the run
-  worker, publisher, model proxy, egress proxy, Codex agent and Claude Code agent as public GHCR packages (each links to
-  this public repository by its source label; the Claude Code one by operator decision 2026-11-15, removed if Anthropic
-  asks; ADR-032 amended 2026-11-14 and 2026-11-15); no deployment has run a unit from them yet, and they are amd64
-  only, unsigned and without an SBOM.
+- **The factory images are partly live-pulled.** docker.yml builds the run worker, publisher, model proxy, egress
+  proxy, Codex agent and Claude Code agent as public GHCR packages (each links to this public repository by its source
+  label; the Claude Code one by operator decision 2026-11-15, removed if Anthropic asks; ADR-032 amended 2026-11-14 and
+  2026-11-15), and release.yml publishes them at a version, multi-arch and signed. On 2026-11-14/15 a dev-stack review
+  of spire-test #106 ran on the Codex agent, publisher, model proxy and egress proxy pulled at `sha-66dd409`; the
+  run worker and Claude Code images, the packaged run worker's Docker socket on Linux (uid 1001), any arm64 image and
+  a real release (no tag has run release.yml with them) are not live-proven (docs/UNVERIFIED.md).
 - **Claude Code ran on one model and one CLI version** (`claude-sonnet-5-5`, 2.1.319): its charge is not reconciled
   with the vendor, only the measured canaries are proven absent, and a re-review, a reply and a rate limit on it have
   no live run (docs/UNVERIFIED.md, the 3b entry).
@@ -303,9 +305,11 @@ cd spire-ui && npm install && npm run dev # React dashboard :34000 (UI_PORT)
 ```
 
 **The factory's images** are on GHCR (`ghcr.io/artyomsv/spire-{run-worker,publisher,model-proxy,egress-proxy,agent-codex,agent-claude-code}`,
-`:edge` and `:sha-<short>` from docker.yml; `compose.ghcr.yml` defaults to them). The Claude Code agent is public by operator
+`:edge` and `:sha-<short>` from docker.yml, amd64; `:<version>` and `:latest` from release.yml on a `v*` tag, amd64 + arm64,
+signed; `compose.ghcr.yml` defaults to them). The Claude Code agent is public by operator
 decision and removed if Anthropic asks (its CLI's terms do not address redistribution; LICENSING.md). The run worker pulls a unit image only when its daemon
-lacks it, so pin `SPIRE_VERSION` or pull `edge` by hand on upgrade. For the dev stack and `compose.yml` they are still
+lacks it, so pin `SPIRE_VERSION` (a release version or `sha-<short>`) or pull `edge` by hand on upgrade. release.yml's
+manual run is a dry run (builds both architectures, pushes and signs nothing). For the dev stack and `compose.yml` they are still
 built locally (SMOKE-TEST Mode Q, Mode R §7):
 
 ```bash

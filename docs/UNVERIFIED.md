@@ -136,7 +136,9 @@ subscription is refused `subscription_not_allowed` at every door.
   every path today, so the catch is defence in depth.
 - **No live run reached:** a re-review (`RECONCILE`), a reply (`FOLLOWUP`), a rate limit, an error result, a run killed
   before `result`, `ALL` mode, or a key whose kind is not its vendor's (`harness_credential.type` now picks the key).
-- **The image is opt-in and not on GHCR** (`SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE`, default `none`).
+- **The image is opt-in, and the published one has not run a review.** It is on GHCR (`:edge`, `:sha-<short>`, and
+  `:<version>` multi-arch from release.yml), but every live Claude Code review used a local build
+  (`SPIRE_FACTORY_AGENT_IMAGE_CLAUDE_CODE`, default `none`). Its arm64 build has never run.
 
 **What evidence would settle it.** A run's charge compared with its `total_cost_usd` and the console; a re-review and
 a reply on Claude Code; a rate-limited run; the canaries, the nested `CLAUDE.md` pair included, re-run on every CLI
@@ -219,7 +221,14 @@ run as `CREDENTIAL_REJECTED` and marks the pool member; a refused path fails it 
 - **Every image lookup failure reads as a missing image.** The worker's check before the unit is created reports
   any failure to describe or pull `SPIRE_RUN_CREDENTIAL_PROXY_IMAGE`, a daemon outage included, as
   `IMAGE_UNAVAILABLE`.
-- **The image is not on GHCR**, and only the Docker arm builds the topology (there is no Kubernetes arm).
+- **The published images are proven on one review, on amd64.** On 2026-11-14/15 the dev stack reviewed spire-test
+  #106 (RECONCILE on a Codex seat, approved, run `review-106-734b7396736b-3270b22e:1`) with `spire-agent-codex`,
+  `spire-publisher`, `spire-model-proxy` and `spire-egress-proxy` pulled from GHCR at `sha-66dd409`. Not
+  live-proven: the published `spire-run-worker` image, the packaged run worker's
+  access to the Docker socket on Linux as uid 1001, the published `spire-agent-claude-code`, any arm64 image, and a
+  versioned release (release.yml publishes these images since 2026-11-15; no tag has run it; the dry run 43657172281 built every image
+  for both architectures and passed the gate). Only the Docker arm
+  builds the topology (there is no Kubernetes arm).
 - **Address pool.** Each proxied unit takes two internal networks, so Docker's default address pool supports roughly
   half as many concurrent proxied units as unproxied ones; no test runs near the bound.
 
