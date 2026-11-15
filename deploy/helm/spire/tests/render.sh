@@ -324,6 +324,29 @@ check_any_cluster() {
     expect_ref "$cnpg" spire-gateway      QUARKUS_DATASOURCE_PASSWORD spire-db-gateway/password
 }
 
+# 11 + 12 — what a first install on a real cluster needs, which kind's world-writable local volumes
+# and resolv.conf hide.
+check_first_install() {
+    local out ui pod
+    out="$(render values-simple.yaml)"
+    ui="$(deployment "$out" spire-ui)"
+    for svc in orchestrator gateway worker; do
+        if printf '%s\n' "$ui" | grep -Eq "value: http://spire-$svc\.\\\$\(SPIRE_POD_NAMESPACE\)\.svc\.[a-z0-9.-]+:8080\$"; then
+            pass "the dashboard proxy addresses spire-$svc by fully qualified name"
+        else
+            fail "the dashboard proxy addresses spire-$svc by a short name nginx's resolver cannot find"
+        fi
+    done
+    for pair in postgres:999 redpanda:101; do
+        pod="$(object "$out" StatefulSet "spire-${pair%%:*}")"
+        if printf '%s\n' "$pod" | grep -q "fsGroup: ${pair##*:}\$"; then
+            pass "spire-${pair%%:*} owns its volume (fsGroup ${pair##*:})"
+        else
+            fail "spire-${pair%%:*} has no fsGroup ${pair##*:}: a root-owned volume stops it"
+        fi
+    done
+}
+
 check_repo_config() {
     local conf; conf="$(cat "$NGINX")"
 
@@ -486,6 +509,20 @@ self_test() {
         broken=1
     fi
 
+    # Break 1b: short upstream names and no volume ownership (check_first_install).
+    local fcopy; fcopy="$(mktemp -d)"
+    cp -R "$CHART" "$fcopy/spire"
+    sed -i.bak -e 's/\.{{ \$suffix }}:8080/:8080/' -e '/fsGroup:/d' "$fcopy/spire/templates/ui.yaml" \
+        "$fcopy/spire/templates/bundled-infra.yaml"
+    FAILED=0; RENDER_CHART="$fcopy/spire" check_first_install >/dev/null 2>&1
+    if [ "$FAILED" -ne 0 ]; then
+        pass "self-test: short upstream names and a missing fsGroup are caught"
+    else
+        fail "self-test: short upstream names and a missing fsGroup were NOT caught"
+        broken=1
+    fi
+    rm -rf "$fcopy"
+
     # Break 2: the nginx template loses /webhooks.
     cp "$NGINX" "$saved"
     grep -v 'location /webhooks' "$saved" > "$NGINX"
@@ -614,6 +651,9 @@ self_test() {
         --set postgres.passwordSecret.name=TEST-db-app --set postgres.passwordSecret.key=password \
         --set postgres.gatewayPasswordSecret.name=TEST-db-app \
         --set postgres.gatewayPasswordSecret.key=password || broken=1
+    refuses "an empty clusterDomain" \
+        'clusterDomain must not be empty' \
+        --set clusterDomain= || broken=1
     refuses "a password Secret with a name and no key" \
         'postgres.passwordSecret needs both name and key, or neither' \
         --set postgres.passwordSecret.name=TEST-db-app || broken=1
@@ -658,6 +698,8 @@ echo "== rendered manifests =="
 check_manifests
 echo "== any-cluster values =="
 check_any_cluster
+echo "== first install on a real cluster =="
+check_first_install
 echo "== in-repo config =="
 check_repo_config
 echo

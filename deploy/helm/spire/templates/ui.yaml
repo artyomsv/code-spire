@@ -11,13 +11,22 @@ This is the only workload reachable from outside the cluster.
 {{- define "spire.ui.env" -}}
 # Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
 # crash-loop when it starts before its siblings, and does not pin a stale address if a
-# Service is recreated.
+# Service is recreated. Fully qualified, because nginx's own resolver sends the name as given
+# and never applies resolv.conf's search domains: a short name like spire-orchestrator is
+# looked up as-is, fails, and every /api, /gw and /wk request answers 502 while /healthz and
+# the static dashboard stay green. The namespace comes from the pod itself, not from the render:
+# a manifest rendered once and placed in another namespace by kustomize keeps working.
+{{- $suffix := printf "$(SPIRE_POD_NAMESPACE).svc.%s" (required "clusterDomain must not be empty: the dashboard proxy builds every service name from it (default cluster.local)." .Values.clusterDomain) }}
+- name: SPIRE_POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
 - name: SPIRE_ORCHESTRATOR_URL
-  value: http://spire-orchestrator:8080
+  value: http://spire-orchestrator.{{ $suffix }}:8080
 - name: SPIRE_GATEWAY_URL
-  value: http://spire-gateway:8080
+  value: http://spire-gateway.{{ $suffix }}:8080
 - name: SPIRE_WORKER_URL
-  value: http://spire-worker:8080
+  value: http://spire-worker.{{ $suffix }}:8080
 {{- with .Values.publicHost }}
 # Pins the Host the proxy forwards, which is what OIDC builds redirect_uri from. Omitted
 # entirely when unset, so the image's own empty default applies and every Host is

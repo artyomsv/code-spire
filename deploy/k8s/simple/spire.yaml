@@ -432,13 +432,21 @@ spec:
           env:
             # Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
             # crash-loop when it starts before its siblings, and does not pin a stale address if a
-            # Service is recreated.
+            # Service is recreated. Fully qualified, because nginx's own resolver sends the name as given
+            # and never applies resolv.conf's search domains: a short name like spire-orchestrator is
+            # looked up as-is, fails, and every /api, /gw and /wk request answers 502 while /healthz and
+            # the static dashboard stay green. The namespace comes from the pod itself, not from the render:
+            # a manifest rendered once and placed in another namespace by kustomize keeps working.
+            - name: SPIRE_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: SPIRE_ORCHESTRATOR_URL
-              value: http://spire-orchestrator:8080
+              value: http://spire-orchestrator.$(SPIRE_POD_NAMESPACE).svc.cluster.local:8080
             - name: SPIRE_GATEWAY_URL
-              value: http://spire-gateway:8080
+              value: http://spire-gateway.$(SPIRE_POD_NAMESPACE).svc.cluster.local:8080
             - name: SPIRE_WORKER_URL
-              value: http://spire-worker:8080
+              value: http://spire-worker.$(SPIRE_POD_NAMESPACE).svc.cluster.local:8080
           livenessProbe:
             httpGet:
               path: /healthz
@@ -577,6 +585,12 @@ spec:
         app.kubernetes.io/name: spire
         app.kubernetes.io/component: postgres
     spec:
+      # A fresh volume is owned by root on most provisioners (Longhorn, EBS, Ceph). fsGroup makes
+      # the kubelet hand it to the image's user; kind's local-path volumes are world-writable, which
+      # is why the kind install never showed the problem.
+      securityContext:
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: postgres
           image: postgres:18.4-alpine
@@ -645,6 +659,10 @@ spec:
         app.kubernetes.io/name: spire
         app.kubernetes.io/component: kafka
     spec:
+      # See the Postgres pod: a fresh volume is root-owned, and Redpanda runs as 101.
+      securityContext:
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: redpanda
           image: redpandadata/redpanda:v26.1.12

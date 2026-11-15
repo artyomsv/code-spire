@@ -2502,3 +2502,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `localhost` URIs, held by `ProductionRealmTemplateIsSafeTest`. No run worker, no factory values, no Kafka outside
   the cluster (M5). Defaults render the same manifests (deploy/k8s unchanged). Not run on a real cluster yet
   (docs/UNVERIFIED.md); no NetworkPolicy is shipped (techdebt/global/3-2-no-networkpolicy-isolates-the-services.md).
+
+- **First release and two first-install fixes (2026-11-15, Part of #391).** Tag `v0.1.0` ran release.yml for real
+  (run 43730758996): ten images at `0.1.0` for amd64 and arm64 with SBOMs, the chart as `spire-0.1.0.tgz`, and a
+  signature that cosign 3.1.4 verifies on `spire-run-worker:0.1.0` (cosign 2 finds none: release.yml signs with
+  cosign 3's bundle format; deploy/README.md now says so). Review of the first home install (stukans/monorepo #1462)
+  found two chart defects the kind install hides. The dashboard proxy named the services by short name, but nginx's
+  `resolver` never applies resolv.conf search domains, so every `/api`, `/gw` and `/wk` request would answer 502 while
+  `/healthz` stayed green: the upstreams are now `spire-<svc>.$(SPIRE_POD_NAMESPACE).svc.<clusterDomain>`, with the
+  namespace from the downward API so a manifest rendered once and moved by kustomize still works (new value
+  `clusterDomain`, default `cluster.local`). And the bundled Postgres (uid 999) and Redpanda (uid 101) had no
+  `fsGroup`, so on a root-owned volume (Longhorn, EBS, Ceph; kind's local-path volumes are world-writable) neither
+  could write its data: both pods now set `fsGroup` with `fsGroupChangePolicy: OnRootMismatch`. render.sh
+  `check_first_install` asserts both and its self-test breaks both.

@@ -304,8 +304,10 @@ cosign-signed by digest with an SBOM and provenance (`release.yml`). For anythin
 `SPIRE_VERSION` to a release version, or to a `sha-<short>` between releases. Each image carries its
 licence as an OCI label and as a file (LICENSING.md, "Published images").
 
-To check a release image's signature (keyless, bound to the release workflow's identity). No real tag has published
-the factory images yet (a dry run built them, 2026-11-15), so the first one is the first proof:
+To check a release image's signature (keyless, bound to the release workflow's identity). Use **cosign 3 or later**:
+the release signs with cosign 3, which stores the signature as a new-format bundle, and cosign 2 answers "no
+signatures found" for a correctly signed image. Measured on `v0.1.0` (2026-11-15): cosign 3.1.4 verifies
+`spire-run-worker:0.1.0`, cosign 2.4.1 does not find the signature.
 
 ```bash
 cosign verify ghcr.io/artyomsv/spire-run-worker:<version> \
