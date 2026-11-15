@@ -28,8 +28,13 @@ import java.util.Set;
 @Produces(MediaType.APPLICATION_JSON)
 public class AuthResource {
 
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(AuthResource.class);
+
     @Inject
     SecurityIdentity identity;
+
+    @Inject
+    OperatorDirectory directory;
 
     @ConfigProperty(name = "spire.security.auth-enabled", defaultValue = "true")
     boolean authEnabled;
@@ -57,6 +62,9 @@ public class AuthResource {
     @Path("/me")
     public Me me() {
         boolean signedIn = !identity.isAnonymous();
+        if (signedIn) {
+            recordSignedIn();
+        }
         return new Me(
                 authEnabled,
                 signedIn,
@@ -65,22 +73,28 @@ public class AuthResource {
                 signedIn ? OidcSubjects.of(identity) : "");
     }
 
-
     /**
-     * The operator's human name when the token carries one.
+     * Records the caller in the operator directory, so an admin can pick them by name.
      *
-     * <p>Falls back to the principal name rather than to blank: the picker exists so a person can be
-     * recognised, and a row showing only an opaque subject would send an admin back to the database
-     * this whole change removes.
+     * <p>On the session probe because every dashboard load asks it once, which is exactly "who has
+     * been here". One UPSERT per load is cheap, so it is not throttled. Names go through
+     * {@link OperatorNames}, which drops every email address: on a realm whose login is the email,
+     * the username is stored empty and the {@code name} claim is shown. A subject that is itself an
+     * email (no JWT, a principal named by email) is not recorded at all.
+     *
+     * <p>{@link OperatorDirectory#seen} never throws by design; the catch keeps that promise here too,
+     * because a dashboard that cannot load its session over a display table is the worse outcome.
      */
-    private static String displayName(SecurityIdentity identity) {
-        if (identity.getPrincipal() instanceof org.eclipse.microprofile.jwt.JsonWebToken jwt) {
-            Object name = jwt.getClaim("name");
-            if (name instanceof String text && !text.isBlank()) {
-                return text;
-            }
+    private void recordSignedIn() {
+        String subject = OidcSubjects.of(identity);
+        if (OperatorNames.withoutEmail(subject).isEmpty()) {
+            return;
         }
-        return identity.getPrincipal().getName();
+        try {
+            directory.seen(subject, OperatorNames.username(identity), OperatorNames.displayName(identity));
+        } catch (RuntimeException e) {
+            LOG.warn("could not record the signed-in operator", e);
+        }
     }
 
     /** Only this application's own roles; an operator's other realm roles are not our business. */
