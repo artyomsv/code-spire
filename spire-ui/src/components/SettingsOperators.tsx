@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { invalidateLive } from '../liveCache';
 import AccountsTabs from './AccountsTabs';
+import { NameWithId } from './NameWithId';
 import { ScmConnections } from './ScmConnections';
 
 /**
@@ -215,24 +216,6 @@ export function SettingsOperators() {
  */
 function keyOf(author: ObservedAuthor): string {
   return `${author.providerType}|${author.authorId}`;
-}
-
-/**
- * A name with its id beneath, and the id once when there is no name: a row reading `3218389` over
- * `3218389` (first production install) says nothing twice.
- */
-interface NameWithIdProps {
-  name: string;
-  id: string;
-}
-
-function NameWithId({ name, id }: NameWithIdProps) {
-  return (
-    <>
-      <span className="prov-name">{name}</span>
-      {name !== id && <div className="prov-sub">{id}</div>}
-    </>
-  );
 }
 
 /**
