@@ -2515,3 +2515,15 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `fsGroup`, so on a root-owned volume (Longhorn, EBS, Ceph; kind's local-path volumes are world-writable) neither
   could write its data: both pods now set `fsGroup` with `fsGroupChangePolicy: OnRootMismatch`. render.sh
   `check_first_install` asserts both and its self-test breaks both.
+
+- **Operator names on the first install (2026-11-15, Part of #391).** Two People-tab defects from the first
+  production install. Nothing called `OperatorDirectory.seen`, so `operator_seen` stayed empty: Settings → Operators
+  said "Nobody has signed in yet" and a linked operator rendered as the raw OIDC subject twice. `/api/me` now records
+  the signed-in operator (one UPSERT per dashboard load, not throttled; a failure is logged and the probe still
+  answers). Email is never stored: on that realm `preferred_username` is the email address, so `OperatorNames` drops
+  any value with an `@` and the username is stored empty, the display name is the `name` claim, and a subject that is
+  itself an email is not recorded. Second, a linked SCM account showed its numeric id twice, because the only handle
+  came from authors observed in reviews. V116 adds `operator_identity.author_handle`: the connect callback stores the
+  login the forge reported (`Author.username`, never the email, dropped if it looks like one), the identity list
+  returns it, and the People table and the My activity chips show it with the id as fallback; a link made by hand
+  keeps null, and a hand relink of the same account keeps the observed login. A name equal to its id is shown once.

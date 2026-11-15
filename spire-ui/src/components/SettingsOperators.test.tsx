@@ -132,6 +132,58 @@ describe('SettingsOperators', () => {
     await waitFor(() => expect(screen.getAllByText('TEST-SUBJECT-1').length).toBe(2));
   });
 
+  /** First production install: the account read `3218389` over `3218389` with no review yet. */
+  it('shows the login a sign-in observed, with the id beneath', async () => {
+    vi.spyOn(api, 'fetchOperatorCandidates').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+      { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '900001', authorHandle: 'TEST-login' },
+    ]);
+
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+    const row = (await screen.findByText('TEST-login')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('900001')).toBeTruthy();
+  });
+
+  /** A link made by hand has no observed login and no review names it: the id once, not twice. */
+  it('shows the id once when nothing names the account', async () => {
+    vi.spyOn(api, 'fetchOperatorCandidates').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+      { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '900001', authorHandle: null },
+    ]);
+
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+    await waitFor(() => expect(screen.getAllByText('900001').length).toBe(1));
+  });
+
+  /** An operator whose login was an email has an empty username: the name alone, no trailing separator. */
+  it('names an operator with no username by their display name', async () => {
+    vi.spyOn(api, 'fetchSeenOperators').mockResolvedValue([
+      { subject: 'TEST-SUBJECT-7', username: '', displayName: 'TEST Operator Seven' },
+    ]);
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+      { oidcSubject: 'TEST-SUBJECT-7', providerType: 'github', authorId: '3218389' },
+    ]);
+
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+    const row = (await screen.findByText('TEST-SUBJECT-7')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('TEST Operator Seven')).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'TEST Operator Seven' })).toBeTruthy();
+  });
+
+  /** An operator never seen here is shown by subject, once. */
+  it('shows an unseen operator subject once', async () => {
+    vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+      { oidcSubject: 'TEST-SUBJECT-UNSEEN', providerType: 'github', authorId: '3218389' },
+    ]);
+
+    render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+    await waitFor(() => expect(screen.getAllByText('TEST-SUBJECT-UNSEEN').length).toBe(1));
+  });
+
   it('says what an empty list means', async () => {
     vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([]);
 

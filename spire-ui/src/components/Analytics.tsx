@@ -320,7 +320,7 @@ function MyActivityBody({ state, subject }: { state: LoadState<MyActivity>; subj
       <div className="an-identities">
         {state.value.identities.map((id) => (
           <span key={`${id.providerType}-${id.authorId}`} className="chip">
-            {id.providerType} · {id.authorId}
+            {id.providerType} · {id.authorHandle || id.authorId}
           </span>
         ))}
       </div>

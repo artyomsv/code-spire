@@ -38,8 +38,12 @@ public class OperatorIdentities {
      * <p>{@code providerType} is not decoration: a bare {@code providerUserId} is not a person. The
      * same numeric id on GitHub and GitLab belongs to two unrelated humans, and this project has
      * already been bitten twice by treating a workspace name as unique across platforms.
+     *
+     * <p>{@code authorHandle} is the login the forge reported when the operator proved the account by
+     * signing in (V116), or null for a link an admin made by hand. Display data only: nothing keys on
+     * it, and it is never an email address.
      */
-    public record Link(String oidcSubject, String providerType, String authorId) {
+    public record Link(String oidcSubject, String providerType, String authorId, String authorHandle) {
     }
 
     @Inject
@@ -50,11 +54,11 @@ public class OperatorIdentities {
         List<Link> links = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT oidc_subject, provider_type, author_id FROM operator_identity"
+                     "SELECT oidc_subject, provider_type, author_id, author_handle FROM operator_identity"
                              + " ORDER BY oidc_subject, provider_type");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                links.add(new Link(rs.getString(1), rs.getString(2), rs.getString(3)));
+                links.add(new Link(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("could not read operator identities", e);
@@ -70,12 +74,12 @@ public class OperatorIdentities {
         List<Link> links = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT oidc_subject, provider_type, author_id FROM operator_identity"
+                     "SELECT oidc_subject, provider_type, author_id, author_handle FROM operator_identity"
                              + " WHERE oidc_subject = ? ORDER BY provider_type")) {
             ps.setString(1, oidcSubject);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    links.add(new Link(rs.getString(1), rs.getString(2), rs.getString(3)));
+                    links.add(new Link(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)));
                 }
             }
         } catch (SQLException e) {
@@ -122,17 +126,28 @@ public class OperatorIdentities {
         return forSubject(oidcSubject).stream().findFirst();
     }
 
+    /**
+     * Writes the link.
+     *
+     * <p>A relink to the SAME account with no handle (an admin repairing it by hand) keeps the handle a
+     * sign-in observed; a link to a different account takes the new handle, null included, because the
+     * old login names somebody else's account.
+     */
     public void link(Link link) {
         String sql = """
-                INSERT INTO operator_identity (oidc_subject, provider_type, author_id)
-                VALUES (?, ?, ?)
+                INSERT INTO operator_identity (oidc_subject, provider_type, author_id, author_handle)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT (oidc_subject, provider_type)
-                DO UPDATE SET author_id = EXCLUDED.author_id
+                DO UPDATE SET author_id = EXCLUDED.author_id,
+                    author_handle = CASE WHEN operator_identity.author_id = EXCLUDED.author_id
+                        THEN COALESCE(EXCLUDED.author_handle, operator_identity.author_handle)
+                        ELSE EXCLUDED.author_handle END
                 """;
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, link.oidcSubject());
             ps.setString(2, link.providerType());
             ps.setString(3, link.authorId());
+            ps.setString(4, link.authorHandle());
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("could not link the operator identity", e);

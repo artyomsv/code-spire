@@ -180,13 +180,11 @@ export function SettingsOperators() {
               {links.map((link) => (
                 <tr key={`${link.oidcSubject}-${link.providerType}`}>
                   <td>
-                    <span className="prov-name">{operatorName(operators, link.oidcSubject)}</span>
-                    <div className="prov-sub">{link.oidcSubject}</div>
+                    <NameWithId name={operatorName(operators, link.oidcSubject)} id={link.oidcSubject} />
                   </td>
                   <td>{link.providerType}</td>
                   <td>
-                    <span className="prov-name">{nameFor(candidates, link)}</span>
-                    <div className="prov-sub">{link.authorId}</div>
+                    <NameWithId name={nameFor(candidates, link)} id={link.authorId} />
                   </td>
                   <td className="cell-r">
                     <button
@@ -219,12 +217,35 @@ function keyOf(author: ObservedAuthor): string {
   return `${author.providerType}|${author.authorId}`;
 }
 
-/** Name first, username second, and the opaque subject only when there is nothing else to show. */
+/**
+ * A name with its id beneath, and the id once when there is no name: a row reading `3218389` over
+ * `3218389` (first production install) says nothing twice.
+ */
+interface NameWithIdProps {
+  name: string;
+  id: string;
+}
+
+function NameWithId({ name, id }: NameWithIdProps) {
+  return (
+    <>
+      <span className="prov-name">{name}</span>
+      {name !== id && <div className="prov-sub">{id}</div>}
+    </>
+  );
+}
+
+/**
+ * Name first, username second, and the opaque subject only when there is nothing else to show.
+ *
+ * The username is empty when the identity provider's login is an email address (it is never stored),
+ * so the name stands alone then.
+ */
 function labelFor(operator: SeenOperator): string {
-  if (operator.displayName && operator.displayName !== operator.username) {
+  if (operator.displayName && operator.username && operator.displayName !== operator.username) {
     return `${operator.displayName} · ${operator.username}`;
   }
-  return operator.username || operator.subject;
+  return operator.displayName || operator.username || operator.subject;
 }
 
 function operatorName(operators: SeenOperator[], subject: string): string {
@@ -232,8 +253,12 @@ function operatorName(operators: SeenOperator[], subject: string): string {
   return match ? labelFor(match) : subject;
 }
 
-/** The display name the reviews recorded, falling back to the id when the author is gone. */
+/**
+ * The login the operator proved by signing in, else the name the reviews recorded, else the id
+ * (a link made by hand for an author no review has seen).
+ */
 function nameFor(candidates: ObservedAuthor[], link: OperatorIdentityLink): string {
+  if (link.authorHandle) return link.authorHandle;
   const match = candidates.find(
     (c) => c.providerType === link.providerType && c.authorId === link.authorId,
   );
