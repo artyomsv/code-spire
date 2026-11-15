@@ -599,6 +599,21 @@ self_test() {
         'postgres.gatewayPasswordSecret.name is "TEST-spire-secrets", the main Secret' \
         --set postgres.gatewayPasswordSecret.name=TEST-spire-secrets \
         --set postgres.gatewayPasswordSecret.key=password || broken=1
+    refuses "a gateway extraEnv reading the database owner's Secret" \
+        'gateway.extraEnv[0] reads from "TEST-db-app", the database owner' \
+        --set postgres.passwordSecret.name=TEST-db-app --set postgres.passwordSecret.key=password \
+        --set gateway.extraEnv[0].name=TEST_EXTRA_ENV \
+        --set gateway.extraEnv[0].valueFrom.secretKeyRef.name=TEST-db-app \
+        --set gateway.extraEnv[0].valueFrom.secretKeyRef.key=password || broken=1
+    refuses "a gateway extraEnvFrom loading the database owner's Secret" \
+        'gateway.extraEnvFrom[0] loads "TEST-db-app", the database owner' \
+        --set postgres.passwordSecret.name=TEST-db-app --set postgres.passwordSecret.key=password \
+        --set gateway.extraEnvFrom[0].secretRef.name=TEST-db-app || broken=1
+    refuses "the gateway's database password read from the owner's Secret" \
+        'postgres.gatewayPasswordSecret.name is "TEST-db-app", the database owner' \
+        --set postgres.passwordSecret.name=TEST-db-app --set postgres.passwordSecret.key=password \
+        --set postgres.gatewayPasswordSecret.name=TEST-db-app \
+        --set postgres.gatewayPasswordSecret.key=password || broken=1
     refuses "a password Secret with a name and no key" \
         'postgres.passwordSecret needs both name and key, or neither' \
         --set postgres.passwordSecret.name=TEST-db-app || broken=1

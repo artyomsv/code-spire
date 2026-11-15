@@ -102,6 +102,10 @@ master keyset, and the gateway is the internet-facing edge (ADR-015).
 {{- if and $ref.name (eq $ref.name .Values.secrets.existingSecret) -}}
 {{- fail (printf "postgres.gatewayPasswordSecret.name is %q, the main Secret (secrets.existingSecret). That Secret holds the master keyset, and the gateway must never reference it. Name the Secret that holds only the gateway role's password." $ref.name) -}}
 {{- end -}}
+{{- $owner := dig "passwordSecret" "name" "" .Values.postgres -}}
+{{- if and $ref.name $owner (eq $ref.name $owner) -}}
+{{- fail (printf "postgres.gatewayPasswordSecret.name is %q, the database owner's Secret (postgres.passwordSecret). The gateway must never hold the owner's password (ADR-015). Name the Secret that holds only the gateway role's password." $ref.name) -}}
+{{- end -}}
 {{ include "spire.passwordRef" (dict "value" "postgres.gatewayPasswordSecret" "ref" $ref "secret" (include "spire.gatewaySecretName" .) "key" "GATEWAY_POSTGRES_PASSWORD") }}
 {{- end -}}
 
@@ -141,6 +145,7 @@ Secret that also holds the master keyset cannot be policed here, and deploy/READ
 */}}
 {{- define "spire.gatewayExtraGuards" -}}
 {{- $main := .Values.secrets.existingSecret -}}
+{{- $owner := dig "passwordSecret" "name" "" .Values.postgres -}}
 {{- range $i, $e := .Values.gateway.extraEnv -}}
 {{- if eq $e.name "SPIRE_ENCRYPTION_KEYSET" -}}
 {{- fail (printf "gateway.extraEnv[%d] sets SPIRE_ENCRYPTION_KEYSET. The gateway is the internet-facing edge and must never hold the master keyset (ADR-015)." $i) -}}
@@ -149,11 +154,17 @@ Secret that also holds the master keyset cannot be policed here, and deploy/READ
 {{- if and $main (eq $ref $main) -}}
 {{- fail (printf "gateway.extraEnv[%d] reads from %q, the main Secret (secrets.existingSecret), which holds the master keyset. The gateway must never reference it." $i $main) -}}
 {{- end -}}
+{{- if and $owner (eq $ref $owner) -}}
+{{- fail (printf "gateway.extraEnv[%d] reads from %q, the database owner's Secret (postgres.passwordSecret). The gateway must never hold the owner's password (ADR-015)." $i $owner) -}}
+{{- end -}}
 {{- end -}}
 {{- range $i, $e := .Values.gateway.extraEnvFrom -}}
 {{- $ref := dig "secretRef" "name" "" $e -}}
 {{- if and $main (eq $ref $main) -}}
 {{- fail (printf "gateway.extraEnvFrom[%d] loads %q, the main Secret (secrets.existingSecret), which holds the master keyset. The gateway must never reference it." $i $main) -}}
+{{- end -}}
+{{- if and $owner (eq $ref $owner) -}}
+{{- fail (printf "gateway.extraEnvFrom[%d] loads %q, the database owner's Secret (postgres.passwordSecret). The gateway must never hold the owner's password (ADR-015)." $i $owner) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
