@@ -104,6 +104,11 @@ trustedProxies: ""
 # this matters most on a realm that was given a wildcard redirect URI.
 publicHost: ""
 
+# The cluster's DNS domain. The dashboard proxy addresses the services by fully qualified name, because
+# nginx's resolver does not apply resolv.conf search domains. Change it only if your cluster was set up
+# with another domain.
+clusterDomain: cluster.local
+
 ingress:
   enabled: true
   className: ""
