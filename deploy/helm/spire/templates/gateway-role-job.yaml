@@ -64,16 +64,12 @@ spec:
               value: {{ .Values.postgres.user | quote }}
             - name: PGPASSWORD
               valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: POSTGRES_PASSWORD
+                {{- include "spire.dbPasswordRef" . | nindent 16 }}
             - name: GATEWAY_USER
               value: {{ .Values.postgres.gatewayUser | quote }}
             - name: GATEWAY_PASSWORD
               valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.gatewaySecretName" . }}
-                  key: GATEWAY_POSTGRES_PASSWORD
+                {{- include "spire.gatewayDbPasswordRef" . | nindent 16 }}
           command:
             - /bin/sh
             - -c

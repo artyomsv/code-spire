@@ -1,0 +1,65 @@
+# Code Spire on any cluster: Postgres on CloudNativePG (cluster.yaml beside this file), the chart's
+# bundled Redpanda, and an identity provider you already run. Use it on top of the production preset:
+#
+#   helm install spire deploy/helm/spire -n spire \
+#     -f deploy/helm/spire/values-production.yaml \
+#     -f deploy/examples/cloudnative-pg/values.yaml
+#
+# Every value here is a placeholder (example.invalid, a sample pod CIDR). Change each one. The steps,
+# in order, are in deploy/README.md, "Install on any cluster". NOT YET RUN on a real cluster
+# (docs/UNVERIFIED.md).
+#
+# tests/render.sh renders this file with NO --set, so it must stay complete: a value the chart
+# requires that is missing here fails CI.
+
+# The two Secrets you make before the install (deploy/README.md lists their keys). With the passwords
+# below read from the CloudNativePG Secrets, neither needs a database password key.
+secrets:
+  existingSecret: spire-secrets
+  gatewayExistingSecret: spire-gateway-secrets
+
+# Your cluster's pod CIDR (k3s uses 10.42.0.0/16 by default). The services believe forwarded headers only
+# from this network (docs/TLS.md requirement 4).
+trustedProxies: 10.244.0.0/16
+
+# The host the browser uses. Set it whenever the Ingress is off: nothing else pins the Host that the
+# login redirect is built from.
+publicHost: spire.example.invalid
+
+postgres:
+  bundled: false
+  # The CloudNativePG read-write Service: <cluster>-rw.<namespace>.svc.cluster.local. Not a Pooler in
+  # transaction mode: the orchestrator holds a LISTEN session.
+  host: spire-db-rw.spire.svc.cluster.local
+  database: spire
+  user: spire
+  gatewayUser: gateway
+  # CloudNativePG's application owner cannot CREATE ROLE, and cluster.yaml makes the role and the schema
+  # already, so the chart's role Job must not run.
+  provisionGatewayRole: false
+  # The basic-auth Secret CloudNativePG made for the owner `spire` (<cluster>-app).
+  passwordSecret:
+    name: spire-db-app
+    key: password
+  # The basic-auth Secret you made for the managed role `gateway` (cluster.yaml).
+  gatewayPasswordSecret:
+    name: spire-db-gateway
+    key: password
+
+# The chart's single-replica Redpanda. Enough while every Kafka client is in the cluster.
+kafka:
+  bundled: true
+  # storageClass: your-storage-class   # empty means the cluster's default
+
+oidc:
+  bundled: false
+  # Must be reachable from the pods AND be the issuer the browser sees. The realm:
+  # deploy/keycloak/realm-spire-production.json.
+  authServerUrl: https://auth.example.invalid/realms/spire
+
+# No ingress controller: a TLS terminator in the cluster forwards to the spire-ui Service
+# (spire-ui.<namespace>.svc.cluster.local:8080). See docs/TLS.md.
+ingress:
+  enabled: false
+
+# image.tag is left empty: the chart's appVersion. A chart from a release pulls that release's images.

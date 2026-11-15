@@ -1,0 +1,67 @@
+# A CloudNativePG Postgres for Code Spire. An example: read it, change the names and the size, then apply
+# it in the SAME namespace as Code Spire (a pod can read a Secret only from its own namespace, and the
+# services read the passwords from the Secrets below):
+#
+#   kubectl -n spire apply -f deploy/examples/cloudnative-pg/cluster.yaml
+#
+# NOT YET RUN on a real cluster (docs/UNVERIFIED.md). The field names are checked against the
+# CloudNativePG 1.28 schemas by kubeconform in CI (.github/workflows/manifests.yml).
+#
+# Needs: the CloudNativePG operator 1.26 or later (the Database object's `schemas` field), and
+# Postgres 15 or later (the migrations use NULLS NOT DISTINCT). The image is the operator's default
+# unless you set spec.imageName.
+#
+# What this makes:
+#   - the database `spire`, owned by the role `spire`. CloudNativePG makes the role and its password and
+#     writes them to the basic-auth Secret `spire-db-app` (keys `username`, `password`). The chart reads
+#     that Secret (postgres.passwordSecret), so the password is stored once.
+#   - the role `gateway`, login, password from the basic-auth Secret `spire-db-gateway`, which YOU make
+#     first (deploy/README.md, "Install on any cluster"). The chart reads the same Secret
+#     (postgres.gatewayPasswordSecret).
+#   - the schema `gateway` in the database `spire`, owned by `gateway`. That is the only thing the
+#     gateway role gets: no grant on any other schema, no membership in `spire` (deploy/README.md, "The
+#     gateway's database role").
+#
+# Why a Database object and not bootstrap.initdb.postInitApplicationSQL: post-init SQL runs once, at
+# bootstrap, BEFORE the managed role exists, so `CREATE SCHEMA gateway AUTHORIZATION gateway` would fail
+# and the cluster would not come up. The Database object is reconciled after the role exists, and it
+# works on a cluster that already exists too.
+#
+# Connect the services to `spire-db-rw` (the read-write Service). Do not put a transaction-mode Pooler
+# between them: the orchestrator holds a LISTEN session.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: spire-db
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+    # storageClass: your-storage-class   # empty means the cluster's default
+  bootstrap:
+    initdb:
+      database: spire
+      owner: spire
+  managed:
+    roles:
+      - name: gateway
+        ensure: present
+        login: true
+        passwordSecret:
+          name: spire-db-gateway
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: spire-db-spire
+spec:
+  cluster:
+    name: spire-db
+  name: spire
+  owner: spire
+  # Keep the database when this object is deleted.
+  databaseReclaimPolicy: retain
+  schemas:
+    - name: gateway
+      owner: gateway
+      ensure: present

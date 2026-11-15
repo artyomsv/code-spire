@@ -2,6 +2,29 @@
 The orchestrator: deciders, sagas, the event store and the operator API. Holds the MASTER keyset,
 which decrypts event payloads and provider credentials.
 */}}
+{{- define "spire.orchestrator.env" -}}
+{{ include "spire.commonEnv" . }}
+- name: QUARKUS_DATASOURCE_USERNAME
+  valueFrom:
+    configMapKeyRef:
+      name: spire-config
+      key: POSTGRES_USER
+- name: QUARKUS_DATASOURCE_PASSWORD
+  valueFrom:
+    {{- include "spire.dbPasswordRef" . | nindent 4 }}
+- name: SPIRE_ENCRYPTION_KEYSET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_ENCRYPTION_KEYSET
+- name: SPIRE_OIDC_CLIENT_ID
+  value: spire-orchestrator
+- name: SPIRE_OIDC_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_OIDC_ORCHESTRATOR_SECRET
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,35 +46,17 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: "{{ .Values.image.registry }}/spire-orchestrator:{{ .Values.image.tag }}"
+          image: {{ include "spire.image" (dict "root" . "name" "spire-orchestrator") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8080
           env:
-            {{- include "spire.commonEnv" . | nindent 12 }}
-            - name: QUARKUS_DATASOURCE_USERNAME
-              valueFrom:
-                configMapKeyRef:
-                  name: spire-config
-                  key: POSTGRES_USER
-            - name: QUARKUS_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: POSTGRES_PASSWORD
-            - name: SPIRE_ENCRYPTION_KEYSET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_ENCRYPTION_KEYSET
-            - name: SPIRE_OIDC_CLIENT_ID
-              value: spire-orchestrator
-            - name: SPIRE_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_OIDC_ORCHESTRATOR_SECRET
+            {{- include "spire.env" (dict "root" . "service" "orchestrator" "own" (include "spire.orchestrator.env" .)) | nindent 12 }}
+          {{- with .Values.orchestrator.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- include "spire.probes" . | nindent 10 }}
           {{- include "spire.securityContext" . | nindent 10 }}
           resources:

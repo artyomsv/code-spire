@@ -3,6 +3,29 @@ The review worker: diff, context and review work, plus the assembled-context rea
 Context card needs. Holds the master keyset because it decrypts the per-command SCM credential the
 orchestrator brokers to it (ADR-015).
 */}}
+{{- define "spire.worker.env" -}}
+{{ include "spire.commonEnv" . }}
+- name: QUARKUS_DATASOURCE_USERNAME
+  valueFrom:
+    configMapKeyRef:
+      name: spire-config
+      key: POSTGRES_USER
+- name: QUARKUS_DATASOURCE_PASSWORD
+  valueFrom:
+    {{- include "spire.dbPasswordRef" . | nindent 4 }}
+- name: SPIRE_ENCRYPTION_KEYSET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_ENCRYPTION_KEYSET
+- name: SPIRE_OIDC_CLIENT_ID
+  value: spire-review-worker
+- name: SPIRE_OIDC_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_OIDC_WORKER_SECRET
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,35 +47,17 @@ spec:
     spec:
       containers:
         - name: worker
-          image: "{{ .Values.image.registry }}/spire-review-worker:{{ .Values.image.tag }}"
+          image: {{ include "spire.image" (dict "root" . "name" "spire-review-worker") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8080
           env:
-            {{- include "spire.commonEnv" . | nindent 12 }}
-            - name: QUARKUS_DATASOURCE_USERNAME
-              valueFrom:
-                configMapKeyRef:
-                  name: spire-config
-                  key: POSTGRES_USER
-            - name: QUARKUS_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: POSTGRES_PASSWORD
-            - name: SPIRE_ENCRYPTION_KEYSET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_ENCRYPTION_KEYSET
-            - name: SPIRE_OIDC_CLIENT_ID
-              value: spire-review-worker
-            - name: SPIRE_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_OIDC_WORKER_SECRET
+            {{- include "spire.env" (dict "root" . "service" "worker" "own" (include "spire.worker.env" .)) | nindent 12 }}
+          {{- with .Values.worker.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- include "spire.probes" . | nindent 10 }}
           {{- include "spire.securityContext" . | nindent 10 }}
           resources:

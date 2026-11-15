@@ -182,23 +182,36 @@ invisible until a login quietly fails.
 
 ### Reaching the dashboard from outside the cluster
 
-On Kubernetes the chart's `spire-ui` Service is `ClusterIP`, which an external terminator cannot
-reach. Two changes are needed for this topology:
+On Kubernetes the chart's `spire-ui` Service is `ClusterIP` by default. There are two ways for a
+terminator to reach it, and the first is the better one:
 
-- **Expose the Service**, or run the terminator inside the cluster. The chart has no values knob for
-  this today, and the rendered manifest declares `type: ClusterIP`, so
-  `kubectl patch svc spire-ui -p '{"spec":{"type":"NodePort"}}'` works but **is reverted by the next
-  `helm upgrade`** — the terminator then silently loses its route, which is the shape of failure this
-  document exists to prevent. Use a kustomize patch (`deploy/kustomize/`) so the change survives an
-  upgrade, or keep the terminator in-cluster and leave the Service alone.
-- **Turn the Ingress off** — `ingress.enabled: false`. It defaults to `true`, and with no ingress
-  controller installed it renders an object nothing acts on.
+- **Run the terminator inside the cluster** and leave the Service as it is. A terminator that runs as a
+  pod (nginx proxy manager, Caddy, Traefik) forwards to
+  `spire-ui.<namespace>.svc.cluster.local:8080`. Nothing is published in plaintext, so requirement 3
+  holds with no extra step.
+- **Expose the Service through chart values**, for a terminator outside the cluster:
 
-A NodePort re-opens requirement 3: it publishes the dashboard in plaintext on every node interface,
-reachable around the terminator. Firewall it to the terminator's address. An in-cluster terminator
-avoids the problem rather than mitigating it, and is the better answer where it is available.
+  ```yaml
+  ui:
+    service:
+      type: LoadBalancer           # or NodePort
+      annotations: {}              # e.g. your load balancer's address-pool annotation
+      loadBalancerSourceRanges:    # rendered only for LoadBalancer
+        - 192.0.2.10/32            # the terminator's address
+  ```
 
-Then set `trustedProxies` to the **pod CIDR** (requirement 4), not a Docker range.
+  The values survive `helm upgrade`. Do not use `kubectl patch` for this: the next upgrade reverts
+  it, and the terminator then loses its route with no error. A NodePort or a LoadBalancer re-opens
+  requirement 3: it publishes the dashboard in plaintext beside the terminator. Restrict it to the
+  terminator's address (`loadBalancerSourceRanges`, or a firewall for a NodePort).
+
+In both cases, **turn the Ingress off** (`ingress.enabled: false`). It defaults to `true`, and with no
+ingress controller installed it renders an object that nothing acts on. Then set `publicHost` to the
+host the browser uses: with the Ingress off, nothing else pins the Host that the login redirect is built
+from.
+
+Set `trustedProxies` to the **pod CIDR** (requirement 4), not a Docker range. That is correct for an
+in-cluster terminator too, because the services see the `spire-ui` pod as the peer.
 
 ### nginx proxy manager
 
@@ -207,8 +220,8 @@ Configured through its UI rather than a file, so as a settings list:
 | Setting | Value |
 |---|---|
 | Scheme | `http` |
-| Forward Hostname / IP | the node address (NodePort) or the dashboard host |
-| Forward Port | the NodePort, or `34700` under Compose |
+| Forward Hostname / IP | in the cluster: `spire-ui.<namespace>.svc.cluster.local`; outside it: the node address (NodePort) or the load balancer address; under Compose: the dashboard host |
+| Forward Port | in the cluster: `8080`; outside it: the NodePort or `8080` on the load balancer; under Compose: `34700` |
 | Block Common Exploits | on |
 | Websockets Support | **on** — required; four surfaces are WebSockets |
 | SSL certificate | Let's Encrypt, or your own |

@@ -18,6 +18,9 @@ Dashboard:
 {{- if .Values.ingress.enabled }}
   http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}
 {{- else }}
+  No Ingress. Point your TLS terminator at the spire-ui Service
+  (spire-ui.{{ .Release.Namespace }}.svc.cluster.local:8080, type {{ .Values.ui.service.type }}).
+  See docs/TLS.md. For a quick look without TLS:
   kubectl port-forward svc/spire-ui 34700:8080     then http://localhost:34700
 {{- end }}
 
@@ -33,15 +36,23 @@ is what puts all four services on one origin. Two things follow:
 Check it:
 
   kubectl get pods -l app.kubernetes.io/name=spire
+{{- if .Values.oidc.bundled }}
   kubectl port-forward svc/spire-ui 34700:8080
   ./deploy/e2e.sh http://localhost:34700 <your-idp-url>
+{{- else }}
+
+  deploy/e2e.sh cannot check this install: it signs in with the bundled realm's
+  dev users. Use the checks in deploy/README.md, "Install on any cluster":
+  every pod Ready, /q/health/ready of each service, a sign-in at the dashboard
+  through your identity provider, a webhook ping, and one review.
+{{- end }}
 
 {{ if not .Values.oidc.bundled }}
 Using your own identity provider. It must offer three confidential clients
 (spire-orchestrator, spire-gateway, spire-review-worker), each with an audience
 mapper, plus the roles spire-viewer and spire-admin readable from the ACCESS
-token. See deploy/README.md; deploy/keycloak/realm-spire.json is a worked
-example.
+token. See deploy/README.md. deploy/keycloak/realm-spire-production.json is a
+template for a production realm.
 {{ end }}
 {{- if .Values.gateway.giveMasterKeyset }}
 

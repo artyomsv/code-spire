@@ -38,9 +38,7 @@ spec:
               value: {{ .Values.postgres.user | quote }}
             - name: POSTGRES_PASSWORD
               valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: POSTGRES_PASSWORD
+                {{- include "spire.dbPasswordRef" . | nindent 16 }}
             # postgres:18+ wants the PARENT directory mounted: data lives in a versioned subdirectory,
             # which is what makes an in-place pg_upgrade --link possible later.
             - name: PGDATA
@@ -65,6 +63,9 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgres.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.postgres.storage }}
@@ -146,6 +147,9 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        {{- with .Values.kafka.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
         resources:
           requests:
             storage: {{ .Values.kafka.storage }}

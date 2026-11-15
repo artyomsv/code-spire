@@ -2482,3 +2482,23 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `spire-model-proxy` and `spire-egress-proxy` all pulled from GHCR at `sha-66dd409`. The `spire-run-worker` and
   `spire-agent-claude-code` images and the packaged run worker's Docker socket on Linux (uid 1001) are not yet
   live-proven (docs/UNVERIFIED.md).
+
+- **Kubernetes on any cluster: a reviewer-only install (2026-11-15, Part of #391).** The chart now installs the
+  reviewer on a cluster with CloudNativePG Postgres, no ingress controller and an external identity provider with no
+  hand patch (docs/superpowers/specs/2026-11-15-k8s-any-cluster-design.md; deploy/README.md, "Install on any
+  cluster"). New values: `ui.service` (type, annotations, `loadBalancerSourceRanges` only for a LoadBalancer);
+  `extraEnv` and `extraEnvFrom` on the four services; `postgres.passwordSecret` and `gatewayPasswordSecret`, so a
+  CloudNativePG basic-auth Secret is the one home of each password; `kafka.storageClass` and
+  `postgres.storageClass`; and `image.tag` empty by default, meaning the chart's appVersion, so a chart packaged at a
+  release pulls that release (the kustomize inputs, which also drive deploy/k8s, set `edge`). The render fails, naming
+  the value, on an `extraEnv` name the chart already sets (read from the rendered env, not a hand list), on
+  `SPIRE_ENCRYPTION_KEYSET` or any reference to the main Secret on the gateway, on the gateway's password from the
+  main Secret, and on half a password reference; `render.sh --self-test` renders each and requires the refusal's own
+  message. Check 5 now allows only `spire-ui` to be external. `deploy/examples/cloudnative-pg/` has a Cluster with the
+  managed role `gateway` and a `Database` object that makes the `gateway` schema (post-init SQL runs before managed
+  roles exist, so it cannot), validated by kubeconform against the CloudNativePG schemas; its values render with no
+  `--set`. `deploy/keycloak/realm-spire-production.json` is the three reviewer clients and two roles with
+  `SPIRE_REALM` and `SPIRE_HOST` placeholders and none of the dev realm's users, secrets, password grant or
+  `localhost` URIs, held by `ProductionRealmTemplateIsSafeTest`. No run worker, no factory values, no Kafka outside
+  the cluster (M5). Defaults render the same manifests (deploy/k8s unchanged). Not run on a real cluster yet
+  (docs/UNVERIFIED.md); no NetworkPolicy is shipped (techdebt/global/3-2-no-networkpolicy-isolates-the-services.md).

@@ -23,6 +23,8 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Test-only external library for ProductionRealmTemplateIsSafeTest; still no project-module dependency.
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 }
 
 tasks.test {
@@ -107,6 +109,15 @@ tasks.test {
             include("spire-*/src/main/resources/application.yml")
         }
     ).withPropertyName("serviceConfiguration").withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // ProductionRealmTemplateIsSafeTest reads both realm files. Undeclared, adding a localhost URI or a
+    // client secret to the template changes no input of this task, and Gradle reports a cached PASS
+    // from the very edit the check exists to catch.
+    inputs.files(
+        fileTree(rootProject.file("deploy/keycloak")) {
+            include("*.json")
+        }
+    ).withPropertyName("realmFiles").withPathSensitivity(PathSensitivity.RELATIVE)
 
     // ApkUpgradeIsNotCachedTest DERIVES its file list by walking the tree for Dockerfiles, so every
     // Dockerfile and the docker workflow are real inputs. Undeclared, adding an image that upgrades

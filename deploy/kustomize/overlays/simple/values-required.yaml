@@ -11,3 +11,8 @@ trustedProxies: 10.244.0.0/16
 
 ingress:
   host: spire.example.invalid
+
+# The image tag, set here rather than left to the chart's appVersion, so the manifests rendered from
+# this file (deploy/k8s and kustomize) name `edge` whatever appVersion the chart carries.
+image:
+  tag: edge

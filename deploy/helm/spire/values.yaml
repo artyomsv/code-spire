@@ -6,8 +6,10 @@
 
 image:
   registry: ghcr.io/artyomsv
-  # `edge` tracks master. Pin a release tag for a deployment you intend to keep.
-  tag: edge
+  # Empty means the chart's appVersion: a chart packaged at a release pulls that release's images.
+  # This repository's chart has appVersion "edge", which tracks master. Pin a release tag for a
+  # deployment you intend to keep.
+  tag: ""
   pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
@@ -56,13 +58,25 @@ postgres:
   # set this false and run the two statements by hand (deploy/README.md). The gateway cannot connect at
   # all until the role exists, so one or the other must happen.
   provisionGatewayRole: true
+  # Where the services read the database passwords. Empty (the default) means the chart's own
+  # Secrets: POSTGRES_PASSWORD from secrets.existingSecret, GATEWAY_POSTGRES_PASSWORD from
+  # secrets.gatewayExistingSecret. Set both name and key to read the password from any other Secret,
+  # e.g. the basic-auth Secret CloudNativePG makes (key `password`), so each password lives in ONE
+  # place. Half a reference (a name without a key) is refused. gatewayPasswordSecret may never name
+  # secrets.existingSecret: that Secret holds the master keyset.
+  passwordSecret: {name: "", key: ""}
+  gatewayPasswordSecret: {name: "", key: ""}
   storage: 10Gi
+  # The bundled Postgres's PVC. Empty means the cluster's default storage class.
+  storageClass: ""
   image: postgres:18.4-alpine
 
 kafka:
   bundled: true
   bootstrapServers: ""
   storage: 10Gi
+  # The bundled Redpanda's PVC. Empty means the cluster's default storage class.
+  storageClass: ""
   image: redpandadata/redpanda:v26.1.12
 
 oidc:
@@ -109,7 +123,47 @@ resources:
     requests: {cpu: 25m, memory: 64Mi}
     limits: {memory: 128Mi}
 
+# ---------------------------------------------------------------------------
+# extraEnv / extraEnvFrom, per service: settings the chart does not model. Each is a list of
+# Kubernetes EnvVar / EnvFromSource, appended after the chart's own entries. Empty by default.
+#
+# The render FAILS, naming the value, when:
+#   - an extraEnv entry repeats a name the chart already sets on that container (it would override
+#     a chart-owned setting, and server-side apply rejects duplicate names anyway);
+#   - gateway.extraEnv sets SPIRE_ENCRYPTION_KEYSET by any means;
+#   - gateway.extraEnv has a secretKeyRef, or gateway.extraEnvFrom a secretRef, naming
+#     secrets.existingSecret (the main Secret, which holds the master keyset).
+#
+# Not policed, and your responsibility: an extraEnvFrom on the gateway that loads ANOTHER Secret which
+# also holds the master keyset. An envFrom entry never overrides a chart entry (env wins in
+# Kubernetes), but it adds every key of that Secret to the container.
+# ---------------------------------------------------------------------------
+orchestrator:
+  extraEnv: []
+  extraEnvFrom: []
+
+worker:
+  extraEnv: []
+  extraEnvFrom: []
+
+ui:
+  # The dashboard's Service, the only one that may leave the cluster. ClusterIP is the default and the
+  # recommendation: a TLS terminator inside the cluster forwards to it (docs/TLS.md). NodePort and
+  # LoadBalancer publish plaintext HTTP beside the terminator (docs/TLS.md requirement 3), so restrict
+  # who can reach them.
+  service:
+    type: ClusterIP            # ClusterIP | NodePort | LoadBalancer
+    annotations: {}            # e.g. a MetalLB address-pool or loadBalancerIPs annotation
+    # Rendered only when type is LoadBalancer. No loadBalancerIP field: it is deprecated upstream; use
+    # your load balancer's annotation instead.
+    loadBalancerSourceRanges: []
+  # The image passes only SPIRE_* variables into its nginx template.
+  extraEnv: []
+  extraEnvFrom: []
+
 gateway:
+  extraEnv: []
+  extraEnvFrom: []
   # TEST-ONLY, and it exists for one reason: tests/render.sh --self-test needs to render the forbidden
   # shape to prove the "master keyset never reaches the gateway" assertion can actually catch it. A
   # negative assertion passes trivially when a key is renamed, so it must be shown to fail.
