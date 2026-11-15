@@ -41,7 +41,7 @@ export default {
       'It writes each connection attempt to its log: host, port, allowed or refused.',
       'In `enforce` mode it refuses every host that is not on the list.',
     ] },
-    { h: 'The two modes', head: ['Mode', 'Filter', 'When'], rows: [
+    { h: 'The modes', head: ['Mode', 'Filter', 'When'], rows: [
       ['`report`', 'None. Every host passes and is logged.', 'The default for a build run.'],
       ['`enforce`', '`FilterDefaultDeny Yes`, and one anchored pattern for each declared host.', 'By setting, and always when the unit has a model proxy.'],
       ['`off`', 'No proxy is started, and no internal networks.', 'By setting only.'],
