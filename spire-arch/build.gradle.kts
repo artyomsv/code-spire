@@ -108,6 +108,15 @@ tasks.test {
         }
     ).withPropertyName("serviceConfiguration").withPathSensitivity(PathSensitivity.RELATIVE)
 
+    // ProductionRealmTemplateIsSafeTest reads both realm files. Undeclared, adding a localhost URI or a
+    // client secret to the template changes no input of this task, and Gradle reports a cached PASS
+    // from the very edit the check exists to catch.
+    inputs.files(
+        fileTree(rootProject.file("deploy/keycloak")) {
+            include("*.json")
+        }
+    ).withPropertyName("realmFiles").withPathSensitivity(PathSensitivity.RELATIVE)
+
     // ApkUpgradeIsNotCachedTest DERIVES its file list by walking the tree for Dockerfiles, so every
     // Dockerfile and the docker workflow are real inputs. Undeclared, adding an image that upgrades
     // its base packages without busting the layer cache -- or dropping the per-build value from the

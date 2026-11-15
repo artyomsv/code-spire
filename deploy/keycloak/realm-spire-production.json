@@ -1,0 +1,125 @@
+{
+  "realm": "SPIRE_REALM",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "spire-viewer",
+        "description": "Read the dashboard"
+      },
+      {
+        "name": "spire-admin",
+        "description": "Manage configuration, replay, prompts"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "spire-orchestrator",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://SPIRE_HOST/api/auth/callback"
+      ],
+      "webOrigins": [
+        "https://SPIRE_HOST"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://SPIRE_HOST/"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "spire-orchestrator",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
+    },
+    {
+      "clientId": "spire-gateway",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://SPIRE_HOST/gw/auth/callback"
+      ],
+      "webOrigins": [
+        "https://SPIRE_HOST"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "spire-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
+    },
+    {
+      "clientId": "spire-review-worker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://SPIRE_HOST/wk/auth/callback"
+      ],
+      "webOrigins": [
+        "https://SPIRE_HOST"
+      ],
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "spire-review-worker",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
+    }
+  ]
+}
