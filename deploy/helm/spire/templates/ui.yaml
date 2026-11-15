@@ -16,7 +16,7 @@ This is the only workload reachable from outside the cluster.
 # looked up as-is, fails, and every /api, /gw and /wk request answers 502 while /healthz and
 # the static dashboard stay green. The namespace comes from the pod itself, not from the render:
 # a manifest rendered once and placed in another namespace by kustomize keeps working.
-{{- $suffix := printf "$(SPIRE_POD_NAMESPACE).svc.%s" .Values.clusterDomain }}
+{{- $suffix := printf "$(SPIRE_POD_NAMESPACE).svc.%s" (required "clusterDomain must not be empty: the dashboard proxy builds every service name from it (default cluster.local)." .Values.clusterDomain) }}
 - name: SPIRE_POD_NAMESPACE
   valueFrom:
     fieldRef:

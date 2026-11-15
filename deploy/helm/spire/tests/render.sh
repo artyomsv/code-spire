@@ -651,6 +651,9 @@ self_test() {
         --set postgres.passwordSecret.name=TEST-db-app --set postgres.passwordSecret.key=password \
         --set postgres.gatewayPasswordSecret.name=TEST-db-app \
         --set postgres.gatewayPasswordSecret.key=password || broken=1
+    refuses "an empty clusterDomain" \
+        'clusterDomain must not be empty' \
+        --set clusterDomain= || broken=1
     refuses "a password Secret with a name and no key" \
         'postgres.passwordSecret needs both name and key, or neither' \
         --set postgres.passwordSecret.name=TEST-db-app || broken=1
