@@ -6,6 +6,7 @@ import dev.codespire.contract.scm.Author;
 import dev.codespire.contract.scm.OAuthApp;
 import dev.codespire.orchestrator.analytics.OperatorIdentities;
 import dev.codespire.orchestrator.security.OidcSubjects;
+import dev.codespire.orchestrator.security.OperatorNames;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -191,8 +192,20 @@ public class OperatorConnectResource {
             return back("noaccount");
         }
 
-        identities.link(new OperatorIdentities.Link(attempt.oidcSubject(), type, author.providerUserId()));
+        identities.link(linkOf(attempt, type, author));
         return back("connected");
+    }
+
+    /**
+     * The proved link, with the login the forge just reported kept beside the id so the dashboard can
+     * show {@code artyomsv} rather than {@code 3218389}. The login is display data only, never a key.
+     * Only {@code username}: the author's email is never stored, and a login that looks like an email
+     * is dropped too (null, as for a link made by hand).
+     */
+    static OperatorIdentities.Link linkOf(ConnectStates.Pending attempt, String type, Author author) {
+        String handle = OperatorNames.withoutEmail(author.username());
+        return new OperatorIdentities.Link(attempt.oidcSubject(), type, author.providerUserId(),
+                handle.isEmpty() ? null : handle);
     }
 
     /**

@@ -1615,6 +1615,12 @@ export interface OperatorIdentityLink {
   oidcSubject: string;
   providerType: string;
   authorId: string;
+  /**
+   * The login the forge reported when the operator signed in to prove the account (V116). Null for
+   * a link an admin made by hand. Shown, never keyed on; the server never sends an email here.
+   * Optional because a link the dashboard sends has none.
+   */
+  authorHandle?: string | null;
 }
 
 export const analyticsOverviewKey = ['analytics', 'overview'] as const;

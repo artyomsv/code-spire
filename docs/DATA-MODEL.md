@@ -361,7 +361,9 @@ there was no history to recover — the same honest shape as the symbol index.
 with the platform because a bare `providerUserId` is not a person: the same id on two SCMs belongs
 to two unrelated humans. Admin-managed; inferring the link by matching usernames is refused, since
 a coincidental match shows one person another person's performance data with nothing on screen
-looking wrong.
+looking wrong. **V116** adds `author_handle` TEXT NULL: the login the forge reported when the operator
+proved the account by signing in (never an email address), null for a link made by hand. Display
+data only; `author_id` stays the key.
 
 `review_event` (flattened timeline for the dashboard): `id` BIGINT PK, `review_id`, `type`,
 `at`, `summary` — non-sensitive projection of the log for the UI (no payloads).

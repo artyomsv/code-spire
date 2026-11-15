@@ -85,7 +85,7 @@ public class OperatorIdentityResource {
             return Response.status(Response.Status.BAD_REQUEST).entity(rejection).build();
         }
         identities.link(new OperatorIdentities.Link(request.oidcSubject().trim(),
-                request.providerType().trim(), request.authorId().trim()));
+                request.providerType().trim(), request.authorId().trim(), null));
         return Response.noContent().build();
     }
 

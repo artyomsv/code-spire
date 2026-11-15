@@ -92,6 +92,26 @@ describe('MyAnalytics', () => {
     expect(screen.getByText('NAMING')).toBeInTheDocument();
   });
 
+  /** The account chip names the login a sign-in observed, and the id only when there is none. */
+  it('shows the observed login on the account chip, with the id as the fallback', async () => {
+    vi.spyOn(api, 'fetchMyActivity').mockResolvedValue({
+      linked: true,
+      identities: [
+        { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '900001', authorHandle: 'TEST-login' },
+        { oidcSubject: 'TEST-SUBJECT-1', providerType: 'gitlab', authorId: '900002', authorHandle: null },
+      ],
+      totals: { ...EMPTY_TOTALS },
+      breakdown: [],
+    });
+    vi.spyOn(api, 'fetchConnectablePlatforms').mockResolvedValue([]);
+
+    renderWithQuery(<MemoryRouter><MyAnalytics /></MemoryRouter>);
+
+    expect(await screen.findByText('github · TEST-login')).toBeInTheDocument();
+    expect(screen.getByText('gitlab · 900002')).toBeInTheDocument();
+    expect(screen.queryByText(/900001/)).toBeNull();
+  });
+
   /** An error must not read as "no activity" either — three states, three sentences. */
   it('reports a failed load as an error rather than as no activity', async () => {
     vi.spyOn(api, 'fetchMyActivity').mockRejectedValue(new Error('TEST-BOOM'));
