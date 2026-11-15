@@ -56,7 +56,7 @@ export default {
       ['Run unit', '05', 'One set of containers for one agent run. Made from the five images below.'],
       ['`spire-publisher`', '06', 'Clones the repository, and is the only container that can push.'],
       ['`spire-model-proxy`', '07', 'Holds the model credential, so the agent does not.'],
-      ['`spire-egress-proxy`', '08', 'The only way out of a run unit. Logs or refuses hosts.'],
+      ['`spire-egress-proxy`', '08', 'The way out for the agent and the model proxy. Logs or refuses hosts. The init container and the publisher reach the forge directly.'],
       ['`spire-agent-codex`, `spire-agent-claude-code`', '09', 'Run a coding CLI over the code, with no way to push.'],
     ] },
     { h: 'How the parts are coupled', items: [

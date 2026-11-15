@@ -5,8 +5,8 @@ const X = [348, 538, 728], Y = [130, 250], PW = 170, PH = 80;
 export default {
   slug: 'egress-proxy',
   title: 'spire-egress-proxy',
-  kicker: 'The one way out of a run unit. It records every host, and it can refuse.',
-  summary: 'The egress proxy is tinyproxy on Alpine. The agent network has no route to the internet, so each outgoing connection must go through this proxy. It holds no credential.',
+  kicker: 'The way out for the agent and the model proxy. It records every host, and it can refuse.',
+  summary: 'The egress proxy is tinyproxy on Alpine. When it is on, the agent network has no route to the internet, so each outgoing connection of the agent must go through this proxy. It holds no credential. It does not cover the init container or the publisher.',
   size: [1440, 620],
   groups: [
     g('ep', 330, 96, 586, 252, 'spire-egress-proxy', { subject: true }),
@@ -37,7 +37,7 @@ export default {
   ],
   sections: [
     { h: 'What it is responsible for', items: [
-      'It is the only container of the unit with a route to the internet (the default bridge).',
+      'When the egress mode is not `off`, it is the only route out for the agent. In a proxied unit it is the only route out for the model proxy.',
       'It writes each connection attempt to its log: host, port, allowed or refused.',
       'In `enforce` mode it refuses every host that is not on the list.',
     ] },
@@ -52,6 +52,11 @@ export default {
     ] },
     { h: 'How the run worker reads the result', p: [
       '`ProxyLogParser` turns the log into `EgressAttempt(host, port, allowed)`, at most 256 for each run. The attempts are part of the run record.',
+    ] },
+    { h: 'What it does not cover', wide: true, items: [
+      'The init container and the publisher. They are on the default bridge and reach the forge directly. Their connections are not in the egress log and are not filtered.',
+      'An agent with the egress mode `off`. No proxy and no internal network exist then, and the agent has a direct route out.',
+      'So a clean egress log shows what the agent and the model proxy reached. It does not show every connection of the unit.',
     ] },
     { h: 'Coupling to watch', wide: true, items: [
       'It can chain to a corporate proxy, but only an `http://` one. An `https://` upstream is refused. The basic-auth of that upstream can be in its config.',

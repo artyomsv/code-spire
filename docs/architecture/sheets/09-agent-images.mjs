@@ -54,7 +54,7 @@ export default {
     { h: 'What it never has', items: [
       'A git token. It cannot push.',
       'On a proxied run, a real model credential. It has `TEST-PLACEHOLDER`.',
-      'A route to the internet. Its network is internal.',
+      'A direct route to the internet, when the egress mode is not `off`. Its network is then internal, and the only way out is a proxy. With the egress mode `off` the agent has a direct route.',
     ] },
     { h: 'The two images', wide: true, head: ['', '`spire-agent-codex`', '`spire-agent-claude-code`'], rows: [
       ['CLI', '`@openai/codex` 0.156.1', '`@anthropic-ai/claude-code` 2.1.319'],

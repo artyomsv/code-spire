@@ -56,9 +56,11 @@ export default {
       ['Limits', '8 requests at a time (503 above that), 8 MiB for a request body, 10 minutes idle, 60 minutes in total.'],
     ] },
     { h: 'How the run worker reads the result', items: [
-      'A 401 on a model path fails the run as `CREDENTIAL_REJECTED`, and the orchestrator marks that credential.',
-      'A refused path fails the run as `BLOCKED_EGRESS`.',
-      'A 403 does not fail the run.',
+      'The log does not fail a run. The run worker reads it only after the agent has failed, to name the cause (`RunLauncher.agentFailure`).',
+      'A 401 on a model path names the cause `CREDENTIAL_REJECTED`, and the orchestrator marks that credential.',
+      'A refused path names the cause `BLOCKED_EGRESS`.',
+      'A 403 changes nothing. The cause from the harness adapter stays, and the credential is not marked.',
+      'A run that finished well stays finished, even if the proxy saw a 401.',
     ] },
     { h: 'How it is set up', p: [
       'Environment: `SPIRE_MODEL_UPSTREAM`, `SPIRE_MODEL_INJECTION` (`BEARER`, `X_API_KEY` or `CHATGPT_SEAT`), `SPIRE_MODEL_PATHS_EXACT`, `SPIRE_MODEL_PATHS_PREFIX`, `SPIRE_MODEL_SECRET`, `SPIRE_MODEL_ACCOUNT`.',

@@ -53,7 +53,7 @@ export default {
   sections: [
     { h: 'Who holds what', wide: true, head: ['Container', 'Image', 'Mounts', 'Network', 'Credential'], rows: [
       ['Init', '`spire-publisher`, script `spire-clone`', '`/workspace` and `/inputs` read-write', 'default bridge', 'The clone secret. Today this is the same machine-account secret as the write one.'],
-      ['Agent', '`spire-agent-codex` or `spire-agent-claude-code`', '`/workspace` and `/handoff` read-write, `/inputs` read-only', 'the agent network only. It is internal and has no route out.', 'A placeholder when the model proxy is on. The model key or seat in a build run.'],
+      ['Agent', '`spire-agent-codex` or `spire-agent-claude-code`', '`/workspace` and `/handoff` read-write, `/inputs` read-only', 'the agent network only, when the egress mode is not `off`. It is internal and has no route out.', 'A placeholder when the model proxy is on. The model key or seat in a build run.'],
       ['Publisher', '`spire-publisher`', '`/handoff` read-only. It never mounts `/workspace` or `/inputs`.', 'default bridge', 'The git write secret in a build run. None on a review (`spire-publish-none`).'],
       ['Model proxy', '`spire-model-proxy`', 'none', 'the agent network and the model network', 'The real model key, or the access token and account id of a seat.'],
       ['Egress proxy', '`spire-egress-proxy`', 'none', 'default bridge, and the agent network or the model network', 'None.'],
@@ -75,6 +75,7 @@ export default {
       ['`SPIRE_RUN_CREDENTIAL_PROXY_MODE`', '`OFF`, `REVIEWS`, `ALL`', '`REVIEWS` is the default: review runs get a model proxy.'],
     ] },
     { h: 'Coupling to watch', items: [
+      'The init container and the publisher reach the forge directly, on the default bridge. The egress proxy does not see them.',
       'One machine-account secret fills the clone slot and the push slot today. So the init container also holds a token that can write.',
       'The topology exists for Docker only. There is no Kubernetes form of it.',
       'Codex and Claude Code declare a model route. Any other harness runs without the model proxy.',
