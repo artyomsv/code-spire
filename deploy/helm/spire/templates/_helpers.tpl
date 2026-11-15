@@ -61,6 +61,103 @@ at boot and silently falls back to localhost for the broker.
   value: {{ include "spire.trustedProxies" . | quote }}
 {{- end -}}
 
+{{/*
+One service image. An empty image.tag means the chart's appVersion, so a chart packaged at a release
+(release.yml sets --app-version) pulls that release's images rather than a moving tag.
+*/}}
+{{- define "spire.image" -}}
+"{{ .root.Values.image.registry }}/{{ .name }}:{{ .root.Values.image.tag | default .root.Chart.AppVersion }}"
+{{- end -}}
+
+{{/*
+A password reference: the chart's own Secret and key, or the Secret and key the operator names (a
+CloudNativePG basic-auth Secret's `password`, so a password lives in one place). Half a reference is
+refused: a name without a key, or a key without a name, would silently read the wrong place.
+
+  include "spire.passwordRef" (dict "value" "postgres.passwordSecret" "ref" .Values.postgres.passwordSecret
+                                    "secret" (include "spire.secretName" .) "key" "POSTGRES_PASSWORD")
+*/}}
+{{- define "spire.passwordRef" -}}
+{{- $ref := .ref | default dict -}}
+{{- $name := $ref.name | default "" -}}
+{{- $key := $ref.key | default "" -}}
+{{- if ne (empty $name) (empty $key) -}}
+{{- fail (printf "%s needs both name and key, or neither. Got name=%q key=%q." .value $name $key) -}}
+{{- end -}}
+secretKeyRef:
+  name: {{ $name | default .secret }}
+  key: {{ $key | default .key }}
+{{- end -}}
+
+{{- define "spire.dbPasswordRef" -}}
+{{ include "spire.passwordRef" (dict "value" "postgres.passwordSecret" "ref" .Values.postgres.passwordSecret "secret" (include "spire.secretName" .) "key" "POSTGRES_PASSWORD") }}
+{{- end -}}
+
+{{/*
+The gateway's database password. Its Secret may never be the main one: the main Secret holds the
+master keyset, and the gateway is the internet-facing edge (ADR-015).
+*/}}
+{{- define "spire.gatewayDbPasswordRef" -}}
+{{- $ref := .Values.postgres.gatewayPasswordSecret | default dict -}}
+{{- if and $ref.name (eq $ref.name .Values.secrets.existingSecret) -}}
+{{- fail (printf "postgres.gatewayPasswordSecret.name is %q, the main Secret (secrets.existingSecret). That Secret holds the master keyset, and the gateway must never reference it. Name the Secret that holds only the gateway role's password." $ref.name) -}}
+{{- end -}}
+{{ include "spire.passwordRef" (dict "value" "postgres.gatewayPasswordSecret" "ref" $ref "secret" (include "spire.gatewaySecretName" .) "key" "GATEWAY_POSTGRES_PASSWORD") }}
+{{- end -}}
+
+{{/*
+A container's env: the chart's own entries, then <service>.extraEnv. The chart's names are read from
+the rendered list itself, not from a second list kept by hand, so a new chart entry is protected the
+moment it exists. A repeated name is refused: the later entry would override a chart-owned setting
+(the gateway's database user, for one) and server-side apply rejects the object anyway.
+
+  include "spire.env" (dict "root" . "service" "orchestrator" "own" (include "spire.orchestrator.env" .))
+*/}}
+{{- define "spire.env" -}}
+{{- $svc := index .root.Values .service | default dict -}}
+{{- $names := list -}}
+{{- range (fromYamlArray .own) -}}
+{{- if not (and (kindIs "map" .) (hasKey . "name")) -}}
+{{- fail (printf "internal: the chart's own env could not be read as a list of named entries: %v" .) -}}
+{{- end -}}
+{{- $names = append $names .name -}}
+{{- end -}}
+{{- range $i, $e := $svc.extraEnv -}}
+{{- if has $e.name $names -}}
+{{- fail (printf "%s.extraEnv[%d] sets %s, which this container already has. extraEnv may only add names; it cannot override a setting the chart owns." $.service $i $e.name) -}}
+{{- end -}}
+{{- $names = append $names $e.name -}}
+{{- end -}}
+{{ .own }}
+{{- with $svc.extraEnv }}
+{{ toYaml . }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The refusals that keep the master keyset off the gateway when extraEnv and extraEnvFrom are used.
+render.sh greps env NAMES, so it cannot see an envFrom; these refusals are the guard. A different
+Secret that also holds the master keyset cannot be policed here, and deploy/README.md says so.
+*/}}
+{{- define "spire.gatewayExtraGuards" -}}
+{{- $main := .Values.secrets.existingSecret -}}
+{{- range $i, $e := .Values.gateway.extraEnv -}}
+{{- if eq $e.name "SPIRE_ENCRYPTION_KEYSET" -}}
+{{- fail (printf "gateway.extraEnv[%d] sets SPIRE_ENCRYPTION_KEYSET. The gateway is the internet-facing edge and must never hold the master keyset (ADR-015)." $i) -}}
+{{- end -}}
+{{- $ref := dig "valueFrom" "secretKeyRef" "name" "" $e -}}
+{{- if and $main (eq $ref $main) -}}
+{{- fail (printf "gateway.extraEnv[%d] reads from %q, the main Secret (secrets.existingSecret), which holds the master keyset. The gateway must never reference it." $i $main) -}}
+{{- end -}}
+{{- end -}}
+{{- range $i, $e := .Values.gateway.extraEnvFrom -}}
+{{- $ref := dig "secretRef" "name" "" $e -}}
+{{- if and $main (eq $ref $main) -}}
+{{- fail (printf "gateway.extraEnvFrom[%d] loads %q, the main Secret (secrets.existingSecret), which holds the master keyset. The gateway must never reference it." $i $main) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "spire.probes" -}}
 livenessProbe:
   httpGet:

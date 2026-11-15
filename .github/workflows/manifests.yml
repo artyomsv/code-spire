@@ -124,12 +124,18 @@ jobs:
             echo "$preset: $(grep -c '^kind:' "/tmp/$preset.yaml") resources"
           done
 
+      # The CloudNativePG example's Cluster and Database are custom resources, not in the default schema
+      # set. They are validated against the CRD schemas in the datreeio CRDs-catalog (the second
+      # location: postgresql.cnpg.io/cluster_v1.json and database_v1.json), NOT skipped with
+      # -ignore-missing-schemas: a wrong field name in the example must fail here. -strict rejects an
+      # unknown field.
       - name: Schemas
         run: |
           kubeconform -strict -summary \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            deploy/k8s/simple/spire.yaml deploy/k8s/production/spire.yaml
+            deploy/k8s/simple/spire.yaml deploy/k8s/production/spire.yaml \
+            deploy/examples/cloudnative-pg/cluster.yaml
 
   kind-install:
     name: kind install (simple preset)

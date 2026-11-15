@@ -11,6 +11,39 @@ Two things about it are deliberate and easy to undo by accident:
 Both are asserted by tests/render.sh, because flattening either would fail nothing and break
 everything.
 */}}
+{{- define "spire.gateway.env" -}}
+{{ include "spire.commonEnv" . }}
+- name: QUARKUS_DATASOURCE_USERNAME
+  valueFrom:
+    configMapKeyRef:
+      name: spire-config
+      key: GATEWAY_POSTGRES_USER
+- name: QUARKUS_DATASOURCE_PASSWORD
+  valueFrom:
+    {{- include "spire.gatewayDbPasswordRef" . | nindent 4 }}
+- name: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.gatewaySecretName" . }}
+      key: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
+{{- if .Values.gateway.giveMasterKeyset }}
+# TEST-ONLY, and forbidden in any real install. Present so tests/render.sh --self-test can
+# render the shape assertion 1 must catch: a negative assertion passes trivially when a key
+# is renamed, so it has to be shown failing.
+- name: SPIRE_ENCRYPTION_KEYSET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_ENCRYPTION_KEYSET
+{{- end }}
+- name: SPIRE_OIDC_CLIENT_ID
+  value: spire-gateway
+- name: SPIRE_OIDC_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "spire.secretName" . }}
+      key: SPIRE_OIDC_GATEWAY_SECRET
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,45 +65,18 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: "{{ .Values.image.registry }}/spire-gateway:{{ .Values.image.tag }}"
+          image: {{ include "spire.image" (dict "root" . "name" "spire-gateway") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8080
+          {{- include "spire.gatewayExtraGuards" . }}
           env:
-            {{- include "spire.commonEnv" . | nindent 12 }}
-            - name: QUARKUS_DATASOURCE_USERNAME
-              valueFrom:
-                configMapKeyRef:
-                  name: spire-config
-                  key: GATEWAY_POSTGRES_USER
-            - name: QUARKUS_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.gatewaySecretName" . }}
-                  key: GATEWAY_POSTGRES_PASSWORD
-            - name: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.gatewaySecretName" . }}
-                  key: SPIRE_ENCRYPTION_WEBHOOK_KEYSET
-            {{- if .Values.gateway.giveMasterKeyset }}
-            # TEST-ONLY, and forbidden in any real install. Present so tests/render.sh --self-test can
-            # render the shape assertion 1 must catch: a negative assertion passes trivially when a key
-            # is renamed, so it has to be shown failing.
-            - name: SPIRE_ENCRYPTION_KEYSET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_ENCRYPTION_KEYSET
-            {{- end }}
-            - name: SPIRE_OIDC_CLIENT_ID
-              value: spire-gateway
-            - name: SPIRE_OIDC_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "spire.secretName" . }}
-                  key: SPIRE_OIDC_GATEWAY_SECRET
+            {{- include "spire.env" (dict "root" . "service" "gateway" "own" (include "spire.gateway.env" .)) | nindent 12 }}
+          {{- with .Values.gateway.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- include "spire.probes" . | nindent 10 }}
           {{- include "spire.securityContext" . | nindent 10 }}
           resources:

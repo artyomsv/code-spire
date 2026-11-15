@@ -8,6 +8,24 @@ asserts over directly because it is baked into the image rather than templated h
 
 This is the only workload reachable from outside the cluster.
 */}}
+{{- define "spire.ui.env" -}}
+# Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
+# crash-loop when it starts before its siblings, and does not pin a stale address if a
+# Service is recreated.
+- name: SPIRE_ORCHESTRATOR_URL
+  value: http://spire-orchestrator:8080
+- name: SPIRE_GATEWAY_URL
+  value: http://spire-gateway:8080
+- name: SPIRE_WORKER_URL
+  value: http://spire-worker:8080
+{{- with .Values.publicHost }}
+# Pins the Host the proxy forwards, which is what OIDC builds redirect_uri from. Omitted
+# entirely when unset, so the image's own empty default applies and every Host is
+# forwarded as sent — including the pod IP a kubelet probe addresses.
+- name: SPIRE_PUBLIC_HOST
+  value: {{ . | quote }}
+{{- end }}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,28 +47,17 @@ spec:
     spec:
       containers:
         - name: ui
-          image: "{{ .Values.image.registry }}/spire-ui:{{ .Values.image.tag }}"
+          image: {{ include "spire.image" (dict "root" . "name" "spire-ui") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: 8080
           env:
-            # Service DNS, resolved at REQUEST time by the template's resolver — so this pod does not
-            # crash-loop when it starts before its siblings, and does not pin a stale address if a
-            # Service is recreated.
-            - name: SPIRE_ORCHESTRATOR_URL
-              value: http://spire-orchestrator:8080
-            - name: SPIRE_GATEWAY_URL
-              value: http://spire-gateway:8080
-            - name: SPIRE_WORKER_URL
-              value: http://spire-worker:8080
-            {{- with .Values.publicHost }}
-            # Pins the Host the proxy forwards, which is what OIDC builds redirect_uri from. Omitted
-            # entirely when unset, so the image's own empty default applies and every Host is
-            # forwarded as sent — including the pod IP a kubelet probe addresses.
-            - name: SPIRE_PUBLIC_HOST
-              value: {{ . | quote }}
-            {{- end }}
+            {{- include "spire.env" (dict "root" . "service" "ui" "own" (include "spire.ui.env" .)) | nindent 12 }}
+          {{- with .Values.ui.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -78,8 +85,24 @@ metadata:
   name: spire-ui
   labels:
     {{- include "spire.labels" . | nindent 4 }}
+  {{- with .Values.ui.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  type: ClusterIP
+  {{- $type := .Values.ui.service.type | default "ClusterIP" }}
+  {{- if not (has $type (list "ClusterIP" "NodePort" "LoadBalancer")) }}
+  {{- fail (printf "ui.service.type is %q. It must be ClusterIP, NodePort or LoadBalancer." $type) }}
+  {{- end }}
+  {{- /* The only Service that may leave the cluster. A NodePort or LoadBalancer publishes plaintext
+       beside the TLS terminator (docs/TLS.md requirement 3), so ClusterIP stays the default. */}}
+  type: {{ $type }}
+  {{- if eq $type "LoadBalancer" }}
+  {{- with .Values.ui.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
   selector:
     app.kubernetes.io/name: spire
     app.kubernetes.io/component: ui
