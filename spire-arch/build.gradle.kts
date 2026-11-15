@@ -23,6 +23,8 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // Test-only external library for ProductionRealmTemplateIsSafeTest; still no project-module dependency.
+    testImplementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 }
 
 tasks.test {

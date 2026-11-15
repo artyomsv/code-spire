@@ -1,9 +1,10 @@
 package dev.codespire.arch;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -31,11 +32,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the dev realm gains (and the services then need) fails this check until the template has it too. The
  * one exception is {@link #RUN_WORKER}: the template is for a reviewer-only install, and M5 adds the
  * run worker to Kubernetes.
- *
- * <p>Read with {@link MiniJson}, because this module depends on nothing but JUnit.
  */
 class ProductionRealmTemplateIsSafeTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String RUN_WORKER = "spire-run-worker";
     private static final String HOST = "SPIRE_HOST";
     private static final String REALM = "SPIRE_REALM";
@@ -49,8 +49,8 @@ class ProductionRealmTemplateIsSafeTest {
 
     @Test
     void clientsAndRolesAreTheDevRealmsWithoutTheRunWorker() throws IOException {
-        Map<String, Object> dev = realm("realm-spire.json");
-        Map<String, Object> production = realm("realm-spire-production.json");
+        JsonNode dev = realm("realm-spire.json");
+        JsonNode production = realm("realm-spire-production.json");
 
         Set<String> devClients = clientIds(dev);
         assertTrue(devClients.contains(RUN_WORKER),
@@ -66,22 +66,22 @@ class ProductionRealmTemplateIsSafeTest {
 
     @Test
     void holdsNoUsersAndNoSecrets() throws IOException {
-        Map<String, Object> production = realm("realm-spire-production.json");
+        JsonNode production = realm("realm-spire-production.json");
 
-        assertFalse(production.containsKey("users"), "the template must hold no users");
-        for (Map<String, Object> client : clients(production)) {
-            assertFalse(client.containsKey("secret"),
-                    client.get("clientId") + " carries a secret. Keycloak makes one; the operator copies it"
-                            + " into the main Secret after import.");
+        assertFalse(production.has("users"), "the template must hold no users");
+        for (JsonNode client : clients(production)) {
+            assertFalse(client.has("secret"),
+                    client.path("clientId").asText() + " carries a secret. Keycloak makes one; the operator"
+                            + " copies it into the main Secret after import.");
         }
     }
 
     @Test
     void usesPlaceholdersAndNothingFromDev() throws IOException {
-        Map<String, Object> production = realm("realm-spire-production.json");
+        JsonNode production = realm("realm-spire-production.json");
 
-        assertEquals(REALM, production.get("realm"), "the realm name must be the placeholder " + REALM);
-        assertEquals("external", production.get("sslRequired"), "sslRequired must be external, never none");
+        assertEquals(REALM, production.path("realm").asText(), "the realm name must be the placeholder " + REALM);
+        assertEquals("external", production.path("sslRequired").asText(), "sslRequired must be external, never none");
         for (String text : strings(production)) {
             String lower = text.toLowerCase(Locale.ROOT);
             assertFalse(lower.contains("http://"), "plaintext URL in the template: " + text);
@@ -103,11 +103,13 @@ class ProductionRealmTemplateIsSafeTest {
 
     @Test
     void everyClientIsConfidentialWithNoPasswordGrant() throws IOException {
-        for (Map<String, Object> client : clients(realm("realm-spire-production.json"))) {
-            Object id = client.get("clientId");
-            assertEquals(Boolean.FALSE, client.get("publicClient"), id + " must be confidential");
-            assertEquals(Boolean.TRUE, client.get("standardFlowEnabled"), id + " needs the code flow");
-            assertEquals(Boolean.FALSE, client.get("directAccessGrantsEnabled"),
+        for (JsonNode client : clients(realm("realm-spire-production.json"))) {
+            String id = client.path("clientId").asText();
+            assertTrue(client.path("publicClient").isBoolean() && !client.path("publicClient").asBoolean(),
+                    id + " must state publicClient false");
+            assertTrue(client.path("standardFlowEnabled").asBoolean(), id + " needs the code flow");
+            assertTrue(client.path("directAccessGrantsEnabled").isBoolean()
+                            && !client.path("directAccessGrantsEnabled").asBoolean(),
                     id + " must state directAccessGrantsEnabled false: the password grant is for deploy/e2e.sh"
                             + " against the dev realm only");
         }
@@ -116,11 +118,11 @@ class ProductionRealmTemplateIsSafeTest {
     @Test
     void redirectAndLogoutUrisAreExactHttpsPlaceholders() throws IOException {
         boolean anyPostLogout = false;
-        for (Map<String, Object> client : clients(realm("realm-spire-production.json"))) {
-            String id = (String) client.get("clientId");
+        for (JsonNode client : clients(realm("realm-spire-production.json"))) {
+            String id = client.path("clientId").asText();
             assertEquals(List.of("https://" + HOST + "/" + CALLBACK_PREFIX.get(id) + "/auth/callback"),
-                    client.get("redirectUris"), id + " must have exactly its own https callback, no wildcard");
-            assertEquals(List.of("https://" + HOST), client.get("webOrigins"),
+                    texts(client.path("redirectUris")), id + " must have exactly its own https callback, no wildcard");
+            assertEquals(List.of("https://" + HOST), texts(client.path("webOrigins")),
                     id + " web origins must be the one https origin");
             for (String uri : postLogoutUris(client)) {
                 anyPostLogout = true;
@@ -133,93 +135,81 @@ class ProductionRealmTemplateIsSafeTest {
 
     @Test
     void everyClientPutsItsOwnAudienceAndTheRolesOnTheAccessToken() throws IOException {
-        for (Map<String, Object> client : clients(realm("realm-spire-production.json"))) {
-            Object id = client.get("clientId");
+        for (JsonNode client : clients(realm("realm-spire-production.json"))) {
+            String id = client.path("clientId").asText();
             assertTrue(hasOwnAudienceMapper(client), id + " needs an audience mapper naming itself on the access"
                     + " token, or login fails with \"No Audience (aud) claim present\"");
-            assertTrue(asList(client.get("defaultClientScopes")).contains("roles"),
+            assertTrue(texts(client.path("defaultClientScopes")).contains("roles"),
                     id + " needs the roles scope, or the operator has no roles on the access token");
         }
     }
 
-    private static boolean hasOwnAudienceMapper(Map<String, Object> client) {
-        for (Object item : asList(client.get("protocolMappers"))) {
-            Map<String, Object> mapper = asMap(item);
-            Map<String, Object> config = asMap(mapper.get("config"));
-            if ("oidc-audience-mapper".equals(mapper.get("protocolMapper"))
-                    && client.get("clientId").equals(config.get("included.client.audience"))
-                    && "true".equals(config.get("access.token.claim"))) {
+    private static boolean hasOwnAudienceMapper(JsonNode client) {
+        for (JsonNode mapper : client.path("protocolMappers")) {
+            JsonNode config = mapper.path("config");
+            if ("oidc-audience-mapper".equals(mapper.path("protocolMapper").asText())
+                    && client.path("clientId").asText().equals(config.path("included.client.audience").asText())
+                    && "true".equals(config.path("access.token.claim").asText())) {
                 return true;
             }
         }
         return false;
     }
 
-    private static List<String> postLogoutUris(Map<String, Object> client) {
-        Object attributes = client.get("attributes");
-        if (attributes == null) {
-            return List.of();
-        }
-        Object value = asMap(attributes).get(POST_LOGOUT);
-        return value == null ? List.of() : List.of(((String) value).split("##"));
+    private static List<String> postLogoutUris(JsonNode client) {
+        JsonNode value = client.path("attributes").path(POST_LOGOUT);
+        return value.isTextual() ? List.of(value.asText().split("##")) : List.of();
     }
 
-    private static Map<String, Object> realm(String file) throws IOException {
+    private static JsonNode realm(String file) throws IOException {
         Path path = RootBuild.repoRoot().resolve("deploy/keycloak").resolve(file);
-        return asMap(MiniJson.parse(Files.readString(path)));
+        JsonNode realm = JSON.readTree(path.toFile());
+        assertTrue(realm.isObject(), file + " is not a JSON object");
+        return realm;
     }
 
-    private static List<Map<String, Object>> clients(Map<String, Object> realm) {
-        List<Map<String, Object>> clients = new ArrayList<>();
-        for (Object client : asList(realm.get("clients"))) {
-            clients.add(asMap(client));
-        }
+    private static List<JsonNode> clients(JsonNode realm) {
+        List<JsonNode> clients = new ArrayList<>();
+        realm.path("clients").forEach(clients::add);
         assertFalse(clients.isEmpty(), "the realm has no clients, so every per-client check passes vacuously");
         return clients;
     }
 
-    private static Set<String> clientIds(Map<String, Object> realm) {
+    private static Set<String> clientIds(JsonNode realm) {
         Set<String> ids = new LinkedHashSet<>();
-        for (Map<String, Object> client : clients(realm)) {
-            ids.add((String) client.get("clientId"));
+        for (JsonNode client : clients(realm)) {
+            ids.add(client.path("clientId").asText());
         }
         return ids;
     }
 
-    private static Set<String> roleNames(Map<String, Object> realm) {
+    private static Set<String> roleNames(JsonNode realm) {
         Set<String> names = new LinkedHashSet<>();
-        for (Object role : asList(asMap(realm.get("roles")).get("realm"))) {
-            names.add((String) asMap(role).get("name"));
+        for (JsonNode role : realm.path("roles").path("realm")) {
+            names.add(role.path("name").asText());
         }
         assertFalse(names.isEmpty(), "the realm has no realm roles");
         return names;
     }
 
+    private static List<String> texts(JsonNode array) {
+        List<String> texts = new ArrayList<>();
+        array.forEach(item -> texts.add(item.asText()));
+        return texts;
+    }
+
     /** Every string value anywhere in the document. */
-    private static List<String> strings(Object node) {
+    private static List<String> strings(JsonNode node) {
         List<String> found = new ArrayList<>();
         collectStrings(node, found);
         return found;
     }
 
-    private static void collectStrings(Object node, List<String> found) {
-        if (node instanceof String text) {
-            found.add(text);
-        } else if (node instanceof Map<?, ?> map) {
-            map.values().forEach(value -> collectStrings(value, found));
-        } else if (node instanceof List<?> list) {
-            list.forEach(value -> collectStrings(value, found));
+    private static void collectStrings(JsonNode node, List<String> found) {
+        if (node.isTextual()) {
+            found.add(node.asText());
+            return;
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> asMap(Object node) {
-        assertTrue(node instanceof Map, "expected a JSON object, got " + node);
-        return (Map<String, Object>) node;
-    }
-
-    private static List<?> asList(Object node) {
-        assertTrue(node instanceof List, "expected a JSON array, got " + node);
-        return (List<?>) node;
+        node.forEach(child -> collectStrings(child, found));
     }
 }
