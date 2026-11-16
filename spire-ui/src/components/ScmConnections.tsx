@@ -1,12 +1,14 @@
-import { FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Trash2 } from 'lucide-react';
-import { ScmOAuthApp, deleteScmOAuthApp, fetchScmOAuthApps, saveScmOAuthApp, scmOAuthAppsKey } from '../api';
+import { ScmOAuthApp, deleteScmOAuthApp, fetchScmOAuthApps, scmOAuthAppsKey } from '../api';
 import { invalidateLive } from '../liveCache';
+import ConfirmDialog from './ConfirmDialog';
+import CopyField from './CopyField';
+import { oauthSetupGuide } from './oauthAppSetup';
+import { ScmOAuthAppForm } from './ScmOAuthAppForm';
 
 const NO_APPS: ScmOAuthApp[] = [];
-import CopyField from './CopyField';
-import { baseUrlHint, oauthSetupGuide } from './oauthAppSetup';
 
 /**
  * The OAuth applications operators sign into to prove which SCM account is theirs.
@@ -33,17 +35,16 @@ export function ScmConnections() {
   const [actionError, setError] = useState<string | null>(null);
   const error = actionError ?? (read.error ? (read.error instanceof Error ? read.error.message : String(read.error)) : null);
   const [open, setOpen] = useState<string | null>(null);
+  // Removing an application stops every operator proving their account on that platform, so it waits for a yes.
+  const [removing, setRemoving] = useState<ScmOAuthApp | null>(null);
 
   const reload = () => invalidateLive(client, scmOAuthAppsKey);
 
+  // A failed delete stays in the dialog; a failed re-read shows through the read's own error.
   const remove = async (providerType: string) => {
     setError(null);
-    try {
-      await deleteScmOAuthApp(providerType);
-      await reload();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    await deleteScmOAuthApp(providerType);
+    void reload();
   };
 
   return (
@@ -103,10 +104,22 @@ export function ScmConnections() {
             setRereading(true);
             void reload().finally(() => setRereading(false));
           }}
-          onDelete={() => void remove(app.providerType)}
+          onDelete={() => setRemoving(app)}
           onError={setError}
         />
       ))}
+
+      {removing && (
+        <ConfirmDialog
+          title="Remove sign-in application"
+          message={`Remove the ${platformName(removing.providerType)} sign-in application? Operators can no longer prove their ${platformName(removing.providerType)} account until it is set up again.`}
+          confirmLabel="Remove"
+          busyLabel="Removing…"
+          danger
+          onConfirm={() => remove(removing.providerType)}
+          onClose={() => setRemoving(null)}
+        />
+      )}
     </div>
   );
 }
@@ -164,89 +177,16 @@ function AppRow({
 
           {guide && <SetupChecklist providerType={app.providerType} />}
 
-          <AppForm app={app} onSaved={onSaved} onError={onError} />
+          <ScmOAuthAppForm app={app} onSaved={onSaved} onError={onError} />
         </div>
       )}
     </div>
   );
 }
 
-/**
- * The form of one platform. Mounted only while its row is open, so its fields start from the row as last read, not as
- * it was when the page first drew it.
- */
-function AppForm({ app, onSaved, onError }: { app: ScmOAuthApp; onSaved: () => void; onError: (message: string) => void }) {
-  const [clientId, setClientId] = useState(app.clientId);
-  const [clientSecret, setClientSecret] = useState('');
-  const [webBaseUrl, setWebBaseUrl] = useState(app.webBaseUrl ?? '');
-  const [apiBaseUrl, setApiBaseUrl] = useState(app.apiBaseUrl ?? '');
-  const [saving, setSaving] = useState(false);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      // clientSecret is sent as typed, and blank means KEEP. Sending '' would wipe a working
-      // credential the moment somebody edited only a base URL.
-      await saveScmOAuthApp({ providerType: app.providerType, webBaseUrl, apiBaseUrl, clientId, clientSecret });
-      setClientSecret('');
-      onSaved();
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={submit} className="oauth-app-form">
-      <label className="field">
-        <span className="field-label">Client id</span>
-        <input
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          placeholder={placeholderFor(app.providerType, 'id')}
-          required
-        />
-      </label>
-      <label className="field">
-        <span className="field-label">Client secret</span>
-        <input
-          type="password"
-          value={clientSecret}
-          onChange={(e) => setClientSecret(e.target.value)}
-          placeholder={app.hasSecret ? 'leave blank to keep the stored one' : ''}
-          required={!app.hasSecret}
-        />
-        {app.hasSecret && (
-          <small className="field-hint">
-            Stored and never shown again. Leave blank unless you are replacing it.
-          </small>
-        )}
-      </label>
-      <label className="field">
-        <span className="field-label">Sign-in base URL</span>
-        <input
-          value={webBaseUrl}
-          onChange={(e) => setWebBaseUrl(e.target.value)}
-          placeholder="hosted service"
-        />
-        <small className="field-hint">{baseUrlHint(app.providerType, 'web')}</small>
-      </label>
-      <label className="field">
-        <span className="field-label">API base URL</span>
-        <input
-          value={apiBaseUrl}
-          onChange={(e) => setApiBaseUrl(e.target.value)}
-          placeholder="hosted service"
-        />
-        <small className="field-hint">{baseUrlHint(app.providerType, 'api')}</small>
-      </label>
-      <button className="btn" type="submit" disabled={saving}>
-        {saving ? 'Saving…' : 'Save'}
-      </button>
-    </form>
-  );
+/** The platform as it names itself, the way the row shows it. */
+function platformName(providerType: string): string {
+  return oauthSetupGuide(providerType)?.providerLabel ?? providerType;
 }
 
 /** The platform's own portal, step by step — the same shape Settings → Repositories uses. */
@@ -281,24 +221,4 @@ function SetupChecklist({ providerType }: { providerType: string }) {
       </ol>
     </div>
   );
-}
-
-/**
- * What the client id looks like on each platform.
- *
- * <p>Only a shape, never a value that could be mistaken for a real credential — the placeholders are
- * the platform's own field name rather than a plausible-looking id.
- */
-function placeholderFor(providerType: string, field: 'id'): string {
-  if (field !== 'id') {
-    return '';
-  }
-  switch (providerType) {
-    case 'bitbucket-cloud':
-      return 'the consumer’s Key';
-    case 'gitlab':
-      return 'the Application ID';
-    default:
-      return 'the Client ID';
-  }
 }

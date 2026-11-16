@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import { beforeEach, expect, test, vi } from 'vitest';
 import ActorPicker from './ActorPicker';
@@ -115,4 +115,41 @@ test('edits a repository deny with the stored version', async () => {
   expect(api.saveActor).toHaveBeenCalledWith('/api/repositories/TEST-repo/fix-actors', {
     handle: '@TEST-person', providerUserId: '900123', effect: 'DENY', revision: 2,
   });
+});
+
+// Removing a person changes who may command the bot, so the row's Remove only asks.
+async function askToRemove(repositoryId?: string) {
+  vi.mocked(api.fetchActors).mockResolvedValue({ revision: 1, actors: [stored] });
+  vi.mocked(api.deleteActor).mockResolvedValue(undefined as never);
+  renderWithQuery(<ActorPicker accountId="TEST-account" accountType="github" repositoryId={repositoryId} />);
+  const row = await screen.findByRole('button', { name: 'Remove @TEST-person' });
+  await waitFor(() => expect(row).toBeEnabled());
+  await user.click(row);
+  return screen.getByRole('dialog');
+}
+
+test('asks before removing an allowed person, naming what it means', async () => {
+  const dialog = await askToRemove();
+  expect(dialog).toHaveTextContent('Remove @TEST-person from the allowed people? Their review commands and conversations are no longer accepted until they are added again.');
+  expect(api.deleteActor).not.toHaveBeenCalled();
+});
+
+test('asks before removing a fix override, naming what it means', async () => {
+  const dialog = await askToRemove('TEST-repo');
+  expect(dialog).toHaveTextContent('Remove the override for @TEST-person? Whether they may use /fix on this repository is decided by their push access again.');
+  expect(api.deleteActor).not.toHaveBeenCalled();
+});
+
+test('removes the person once the dialog is confirmed', async () => {
+  const dialog = await askToRemove();
+  await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
+  expect(api.deleteActor).toHaveBeenCalledWith('/api/providers/TEST-account/actors', stored, 1);
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+});
+
+test('keeps the person when the dialog is cancelled', async () => {
+  const dialog = await askToRemove();
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(api.deleteActor).not.toHaveBeenCalled();
 });

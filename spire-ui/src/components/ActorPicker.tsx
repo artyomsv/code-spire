@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invalidateLive, writeLive } from '../liveCache';
-import { actorLabel, actorPath, actorsKey, deleteActor, fetchActors, resolveActor, saveActor, type Actor, type ActorPolicy } from './actorsApi';
+import { actorLabel, actorPath, actorsKey, deleteActor, fetchActors, resolveActor, saveActor, type Actor, type ActorDisplay, type ActorPolicy } from './actorsApi';
 import { fetchRepositories, repositoriesKey } from './repositories/repositoriesApi';
+import ConfirmDialog from './ConfirmDialog';
 
 interface Props {
   accountId: string;
@@ -36,6 +37,8 @@ export default function ActorPicker({ accountId, accountType, repositoryId }: Pr
     ?? (read.error ? String(read.error) : null)
     ?? (scopeAsked && repositoriesRead.error ? String(repositoriesRead.error) : null);
   const [busy, setBusy] = useState(false);
+  // Removing a person changes who may command the bot, so it waits for a yes.
+  const [removing, setRemoving] = useState<ActorDisplay | null>(null);
 
   async function load(refresh = false) {
     if (!refresh) { await invalidateLive(client, actorsKey(path)); return; }
@@ -64,6 +67,13 @@ export default function ActorPicker({ accountId, accountType, repositoryId }: Pr
       setDraft(''); setResolution({ choices: [], selected: '', detail: null }); await load();
     } catch (failure) { setError(String(failure)); }
     finally { setBusy(false); }
+  }
+  // A failed remove stays in the dialog, so it can be tried again or cancelled.
+  async function remove(actor: ActorDisplay) {
+    if (!policy) return;
+    setError(null);
+    await deleteActor(path, actor, repositoryId ? actor.revision : policy.revision);
+    await load();
   }
   function chooseScope() {
     // Each click asks again, as it always did; the cached list fills the select meanwhile.
@@ -95,12 +105,14 @@ export default function ActorPicker({ accountId, accountType, repositoryId }: Pr
     {error && <p className="prov-error" role="alert">{error}</p>}
     {policy ? <ul>{policy.actors.map(actor => <li key={actor.providerUserId}>
       <span>{actorLabel(actor)}</span> — {actor.effect === 'DENY' ? 'Denied' : 'Allowed'}{actor.stale && <span> · stale display; refresh by ID</span>}
-      <button className="btn-ghost" type="button" disabled={busy || !current} onClick={async () => {
-        setBusy(true); setError(null);
-        try { await deleteActor(path, actor, repositoryId ? actor.revision : policy.revision); await load(); }
-        catch (failure) { setError(String(failure)); } finally { setBusy(false); }
-      }}>Remove {actorLabel(actor)}</button>
+      <button className="btn-ghost" type="button" disabled={busy || !current} onClick={() => setRemoving(actor)}>Remove {actorLabel(actor)}</button>
     </li>)}</ul> : <p>People have not loaded.</p>}
     <button className="btn-ghost" type="button" disabled={busy} onClick={() => { setError(null); void load(true); }}>Reload people and refresh names</button>
+    {removing && <ConfirmDialog title={repositoryId ? 'Remove fix override' : 'Remove allowed person'}
+      message={repositoryId
+        ? `Remove the override for ${actorLabel(removing)}? Whether they may use /fix on this repository is decided by their push access again.`
+        : `Remove ${actorLabel(removing)} from the allowed people? Their review commands and conversations are no longer accepted until they are added again.`}
+      confirmLabel="Remove" busyLabel="Removing…" danger
+      onConfirm={() => remove(removing)} onClose={() => setRemoving(null)} />}
   </section>;
 }

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { hashKey, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { AlertTriangle, ArrowLeft, FileText, RotateCcw } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FileText } from 'lucide-react';
 import { acceptPromptDefault, fetchPrompt, GLOBAL_SCOPE, promptKey, promptsKey, resetPrompt, savePrompt, type PromptView } from '../api';
 import { updateLive, writeLive } from '../liveCache';
 import AutoTextarea from './AutoTextarea';
 import PromptDriftBanner, { type PromptDrift } from './PromptDriftBanner';
 import ProvenanceLine from './PromptProvenance';
 import PromptSamplePicker from './PromptSamplePicker';
+import ResetPromptButton from './ResetPromptButton';
 import { KIND_LABELS } from './promptKinds';
 
 function driftOf(v: PromptView): PromptDrift {
@@ -277,9 +278,7 @@ function PromptEditor({ initial }: { initial: PromptView }) {
         )}
 
         <div className="prov-actions" style={{ marginTop: 4 }}>
-          <button type="button" className="btn-ghost" disabled={busy !== null} onClick={() => void onReset()}>
-            <RotateCcw size={14} aria-hidden="true" /> Reset to default
-          </button>
+          <ResetPromptButton promptName={KIND_LABELS[initial.kind] ?? initial.kind} disabled={busy !== null} onReset={onReset} />
           <button
             type="button"
             className="btn"

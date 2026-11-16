@@ -227,4 +227,50 @@ describe('SettingsOperators', () => {
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/TEST-REJECTED/));
   });
+
+  /**
+   * Unlinking stops an operator seeing their own numbers for that account, so the trash icon only
+   * asks; nothing is unlinked until the dialog's Unlink is pressed.
+   */
+  describe('unlinking', () => {
+    beforeEach(() => {
+      vi.spyOn(api, 'fetchOperatorIdentities').mockResolvedValue([
+        { oidcSubject: 'TEST-SUBJECT-1', providerType: 'github', authorId: '3218389', authorHandle: 'TEST-handle' },
+      ]);
+    });
+
+    it('asks first, naming the operator and the account', async () => {
+      const unlink = vi.spyOn(api, 'unlinkOperatorIdentity').mockResolvedValue(undefined);
+      render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Unlink TEST-SUBJECT-1 on github' }));
+
+      expect(screen.getByRole('dialog')).toHaveTextContent(
+        'Unlink TEST Operator One · test-user-one from github · TEST-handle?',
+      );
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('unlinks once the dialog is confirmed', async () => {
+      const unlink = vi.spyOn(api, 'unlinkOperatorIdentity').mockResolvedValue(undefined);
+      render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Unlink TEST-SUBJECT-1 on github' }));
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Unlink' }));
+
+      await waitFor(() => expect(unlink).toHaveBeenCalledWith('TEST-SUBJECT-1', 'github'));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+
+    it('keeps the link when the dialog is cancelled', async () => {
+      const unlink = vi.spyOn(api, 'unlinkOperatorIdentity').mockResolvedValue(undefined);
+      render(<SettingsOperators />, { wrapper: queryWrapper() });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Unlink TEST-SUBJECT-1 on github' }));
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(unlink).not.toHaveBeenCalled();
+    });
+  });
 });

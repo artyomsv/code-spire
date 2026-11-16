@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, UsersRound } from 'lucide-react';
+import { UsersRound } from 'lucide-react';
 import {
   ObservedAuthor,
   OperatorIdentityLink,
@@ -10,11 +10,10 @@ import {
   fetchSeenOperators,
   operatorsKey,
   linkOperatorIdentity,
-  unlinkOperatorIdentity,
 } from '../api';
 import { invalidateLive } from '../liveCache';
 import AccountsTabs from './AccountsTabs';
-import { NameWithId } from './NameWithId';
+import { OperatorLinksTable, labelFor } from './OperatorLinksTable';
 import { ScmConnections } from './ScmConnections';
 
 /**
@@ -81,16 +80,6 @@ export function SettingsOperators() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const remove = async (link: OperatorIdentityLink) => {
-    setError(null);
-    try {
-      await unlinkOperatorIdentity(link.oidcSubject, link.providerType);
-      await reload();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -168,38 +157,7 @@ export function SettingsOperators() {
         )}
 
         {links !== null && links.length > 0 && (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Operator</th>
-                <th>Platform</th>
-                <th>SCM account</th>
-                <th className="cell-r" />
-              </tr>
-            </thead>
-            <tbody>
-              {links.map((link) => (
-                <tr key={`${link.oidcSubject}-${link.providerType}`}>
-                  <td>
-                    <NameWithId name={operatorName(operators, link.oidcSubject)} id={link.oidcSubject} />
-                  </td>
-                  <td>{link.providerType}</td>
-                  <td>
-                    <NameWithId name={nameFor(candidates, link)} id={link.authorId} />
-                  </td>
-                  <td className="cell-r">
-                    <button
-                      className="iconbtn"
-                      aria-label={`Unlink ${link.oidcSubject} on ${link.providerType}`}
-                      onClick={() => void remove(link)}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <OperatorLinksTable links={links} operators={operators} candidates={candidates} onUnlinked={() => void reload()} />
         )}
       </div>
     </section>
@@ -216,34 +174,4 @@ export function SettingsOperators() {
  */
 function keyOf(author: ObservedAuthor): string {
   return `${author.providerType}|${author.authorId}`;
-}
-
-/**
- * Name first, username second, and the opaque subject only when there is nothing else to show.
- *
- * The username is empty when the identity provider's login is an email address (it is never stored),
- * so the name stands alone then.
- */
-function labelFor(operator: SeenOperator): string {
-  if (operator.displayName && operator.username && operator.displayName !== operator.username) {
-    return `${operator.displayName} · ${operator.username}`;
-  }
-  return operator.displayName || operator.username || operator.subject;
-}
-
-function operatorName(operators: SeenOperator[], subject: string): string {
-  const match = operators.find((o) => o.subject === subject);
-  return match ? labelFor(match) : subject;
-}
-
-/**
- * The login the operator proved by signing in, else the name the reviews recorded, else the id
- * (a link made by hand for an author no review has seen).
- */
-function nameFor(candidates: ObservedAuthor[], link: OperatorIdentityLink): string {
-  if (link.authorHandle) return link.authorHandle;
-  const match = candidates.find(
-    (c) => c.providerType === link.providerType && c.authorId === link.authorId,
-  );
-  return match ? match.displayName : link.authorId;
 }
