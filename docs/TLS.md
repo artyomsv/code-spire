@@ -227,9 +227,33 @@ Configured through its UI rather than a file, so as a settings list:
 | SSL certificate | Let's Encrypt, or your own |
 | Force SSL | on |
 | HTTP/2 Support | optional |
+| Advanced → Custom Nginx Configuration | **required** — the six lines below |
 
-Proxy manager sends `X-Forwarded-Proto` and preserves `Host` by default, satisfying requirements 1
-and 2 with no custom configuration. Give the identity provider its own proxy host under requirement 5.
+```nginx
+proxy_buffer_size 16k;
+proxy_buffers 8 16k;
+large_client_header_buffers 4 32k;
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+client_max_body_size 25m;
+```
+
+These match the dashboard's own proxy (`spire-ui/nginx/default.conf.template`), and proxy manager
+needs them for the same reasons, because it is a second nginx in front of that one:
+
+- **The buffers.** The sign-in callback answers with the operator session as several large
+  `Set-Cookie` headers, and the browser sends them back as one large `Cookie` header. At nginx's
+  4k/8k defaults the callback fails with a bare 502 and `upstream sent too big header` in proxy
+  manager's log, while every Code Spire service logs nothing, because each one answered correctly.
+  Proven on the first production install (2026-11-15): sign-in returned 502 until these three lines
+  were added.
+- **The timeouts.** The WebSockets are idle between events; at the 60-second default they reconnect
+  every minute (see [Long-lived connections](#long-lived-connections)).
+- **The body size.** An SCM webhook for a large pull request exceeds proxy manager's 1 MB default,
+  and the SCM records a failed delivery.
+
+Proxy manager sends `X-Forwarded-Proto` and preserves `Host` by default, so requirements 1 and 2
+need no custom configuration; the Advanced lines above are for the buffers, timeouts and body size. Give the identity provider its own proxy host under requirement 5.
 
 **Websockets Support is not optional.** With it off, the dashboard loads and REST works, so the
 deployment looks healthy — but the timeline, the review detail, the attention panel and the gateway's
@@ -348,6 +372,7 @@ Each of these is silent in at least one component, which is why the symptom is t
 | Login completes, then bounces back to the login screen | The browser is discarding a `Secure` cookie over a non-trustworthy origin. You are on plain HTTP somewhere other than a loopback address. |
 | Identity provider rejects the redirect | Either `redirect_uri` is `http://` (requirement 1 or 4), or it is correct and simply not registered for the client (requirement 5). Check which before changing proxy settings — with the bundled realm, an unregistered callback is the likelier cause. |
 | Login redirects to an address the browser cannot resolve | The IdP is advertising a hostname only the containers can reach — requirement 5, point 1. |
+| Sign-in callback answers 502, the terminator logs `upstream sent too big header` | The terminator's header buffers are at nginx's defaults and the session cookies do not fit. Raise them as in [nginx proxy manager](#nginx-proxy-manager). |
 | Login round-trip lands on a backend port | `Host` was rewritten — requirement 2. |
 | Services refuse to start | `SPIRE_TRUSTED_PROXIES` is unset — requirement 4. This one is loud, by design. |
 | Everything starts, but `redirect_uri` is `http://` anyway | `SPIRE_TRUSTED_PROXIES` is *set but wrong* — it does not cover the dashboard's actual address, so the headers are distrusted. A Docker range carried into Kubernetes does this. |

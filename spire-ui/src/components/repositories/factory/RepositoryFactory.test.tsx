@@ -53,8 +53,6 @@ describe('people', () => {
     const people = within(await step(2));
     expect(people.getByText('@TEST-person')).toBeInTheDocument();
     expect(people.getByText('900123')).toHaveClass('prov-sub');
-    fireEvent.click(people.getByRole('button', { name: 'Remove @TEST-person' }));
-    await waitFor(() => expect(sources.removeWorkActor).toHaveBeenCalledWith(source(), '900123'));
   });
   it('allows the one person a lookup finds, naming them on the button, with the source revision', async () => {
     vi.spyOn(sources, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [{ providerUserId: '900456', handle: 'TEST-new', displayName: 'TEST-new' }], detail: null });

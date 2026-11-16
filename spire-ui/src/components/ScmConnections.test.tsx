@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { ScmConnections } from './ScmConnections';
 import * as api from '../api';
 import { queryWrapper } from '../test/queryWrapper';
@@ -190,5 +190,54 @@ describe('ScmConnections', () => {
     fireEvent.submit(document.querySelector('form.oauth-app-form') as HTMLFormElement);
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/TEST-REJECTED/));
+  });
+
+  /**
+   * Removing an application stops every operator proving their account on that platform, so the
+   * trash icon only asks; nothing is deleted until the dialog's Remove is pressed.
+   */
+  it('asks before removing a sign-in application, naming what it means', async () => {
+    const remove = vi.spyOn(api, 'deleteScmOAuthApp').mockResolvedValue(undefined);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove the github sign-in application' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent(
+      'Remove the GitHub sign-in application? Operators can no longer prove their GitHub account until it is set up again.',
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('removes the application once the dialog is confirmed', async () => {
+    const remove = vi.spyOn(api, 'deleteScmOAuthApp').mockResolvedValue(undefined);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove the github sign-in application' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('github'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('keeps the application when the dialog is cancelled', async () => {
+    const remove = vi.spyOn(api, 'deleteScmOAuthApp').mockResolvedValue(undefined);
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove the github sign-in application' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dialog open with the reason when the removal is refused', async () => {
+    vi.spyOn(api, 'deleteScmOAuthApp').mockRejectedValue(new Error('TEST-REFUSED'));
+    render(<ScmConnections />, { wrapper: queryWrapper() });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove the github sign-in application' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+    expect(await within(screen.getByRole('dialog')).findByText('TEST-REFUSED')).toBeTruthy();
   });
 });

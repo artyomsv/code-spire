@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { actorLabel, type ActorResult } from '../../actorsApi';
 import * as api from '../../work-items/workSourcesApi';
+import ConfirmDialog from '../../ConfirmDialog';
 import SettingField from '../../SettingField';
 import FactoryStep from './FactoryStep';
 
@@ -63,12 +64,15 @@ function AllowPerson({ source, cancelled, changed }: { source: api.WorkSource; c
 
 export default function PeopleStep({ sources, open, setOpen, changed }: Props) {
   // Holds the person being removed, so only that row reports work — not every row at once.
-  const [busy, setBusy] = useState<string | null>(null), [error, setError] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  // Removing a person stops their labels starting work, so it waits for a yes.
+  const [removing, setRemoving] = useState<{ source: api.WorkSource; id: string; label: string } | null>(null);
   const counted = sources.some(source => source.enabled && source.allowedPeople.length > 0);
-  async function remove(source: api.WorkSource, id: string, label: string) {
-    setBusy(id); setError('');
+  // A failed remove stays in the dialog, so it can be tried again or cancelled.
+  async function remove({ source, id, label }: { source: api.WorkSource; id: string; label: string }) {
+    setBusy(id);
     try { await api.removeWorkActor(source, id); changed(`Removed ${label} from ${source.name}.`); }
-    catch (failure) { setError(String(failure)); } finally { setBusy(null); }
+    finally { setBusy(null); }
   }
   return <FactoryStep number={2} question="Who may start work" term="allowed people"
     state={open?.startsWith('people') ? 'editing' : counted ? 'done' : 'missing'}
@@ -80,13 +84,16 @@ export default function PeopleStep({ sources, open, setOpen, changed }: Props) {
       <ul className="prov-list">{source.allowedPeople.map(person => <li key={person.providerUserId}>
         <span><span className="prov-name">{actorLabel(person)}</span><span className="prov-sub">{person.providerUserId}</span></span>
         <button className="btn-ghost sm" type="button" disabled={busy !== null || open !== null} aria-label={`Remove ${actorLabel(person)}`}
-          onClick={() => void remove(source, person.providerUserId, actorLabel(person))}>
+          onClick={() => setRemoving({ source, id: person.providerUserId, label: actorLabel(person) })}>
           {busy === person.providerUserId ? 'Removing…' : 'Remove'}</button></li>)}</ul>
       {open === `people:${source.id}`
         ? <AllowPerson key={source.id} source={source} cancelled={() => setOpen(null)} changed={changed} />
         : <button className={source.allowedPeople.length ? 'btn-ghost sm' : 'btn sm'} type="button" disabled={busy !== null || open !== null || !source.enabled}
           onClick={() => setOpen(`people:${source.id}`)} aria-label={`Add a person to ${source.name}`}>Add person</button>}
     </section>)}
-    {error && <p className="prov-error" role="alert">{error}</p>}
+    {removing && <ConfirmDialog title="Remove allowed person"
+      message={`Remove ${removing.label} from ${removing.source.name}? Labels they add no longer start work.`}
+      confirmLabel="Remove" busyLabel="Removing…" danger
+      onConfirm={() => remove(removing)} onClose={() => setRemoving(null)} />}
   </FactoryStep>;
 }

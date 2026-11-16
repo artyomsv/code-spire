@@ -2528,3 +2528,13 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   login the forge reported (`Author.username`, never the email, dropped if it looks like one), the identity list
   returns it, and the People table and the My activity chips show it with the id as fallback; a link made by hand
   keeps null, and a hand relink of the same account keeps the observed login. A name equal to its id is shown once.
+
+- **Destructive actions ask first (2026-11-16, Part of #391).** The first production install found that the trash
+  icons on the People tab acted at once. An audit of every destructive action in the dashboard found five that did
+  not ask: removing a sign-in application, unlinking an operator's SCM account, removing a person from an account's
+  allowed people or a repository's /fix overrides, removing an allowed person from a work source, and Reset to
+  default on a prompt. Each now opens `ConfirmDialog`, which names what goes and what that means; a refused request
+  stays in the dialog. The drift banner's "Take the new default" stays one click, as it already shows both texts.
+  `ScmOAuthAppForm` and `OperatorLinksTable` moved out of their screens to keep the files small. docs/TLS.md now gives
+  nginx proxy manager's advanced settings from that install: without the header buffers the sign-in callback
+  answered 502 "upstream sent too big header".
