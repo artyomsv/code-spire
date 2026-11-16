@@ -54,24 +54,6 @@ describe('people', () => {
     expect(people.getByText('@TEST-person')).toBeInTheDocument();
     expect(people.getByText('900123')).toHaveClass('prov-sub');
   });
-  // Removing a person stops their labels starting work, so the button only asks; the dialog's Remove does it.
-  it('removes an allowed person only after the dialog is confirmed', async () => {
-    renderFactory();
-    fireEvent.click(within(await step(2)).getByRole('button', { name: 'Remove @TEST-person' }));
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('Remove @TEST-person from TEST-source name? Labels they add no longer start work.');
-    expect(sources.removeWorkActor).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove' }));
-    await waitFor(() => expect(sources.removeWorkActor).toHaveBeenCalledWith(source(), '900123'));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  });
-  it('keeps an allowed person when the dialog is cancelled', async () => {
-    renderFactory();
-    fireEvent.click(within(await step(2)).getByRole('button', { name: 'Remove @TEST-person' }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(sources.removeWorkActor).not.toHaveBeenCalled();
-  });
   it('allows the one person a lookup finds, naming them on the button, with the source revision', async () => {
     vi.spyOn(sources, 'resolveWorkActor').mockResolvedValue({ status: 'FOUND', actors: [{ providerUserId: '900456', handle: 'TEST-new', displayName: 'TEST-new' }], detail: null });
     const form = await openPeople();

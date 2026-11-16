@@ -252,8 +252,8 @@ needs them for the same reasons, because it is a second nginx in front of that o
 - **The body size.** An SCM webhook for a large pull request exceeds proxy manager's 1 MB default,
   and the SCM records a failed delivery.
 
-Proxy manager sends `X-Forwarded-Proto` and preserves `Host` by default, satisfying requirements 1
-and 2 with no custom configuration. Give the identity provider its own proxy host under requirement 5.
+Proxy manager sends `X-Forwarded-Proto` and preserves `Host` by default, so requirements 1 and 2
+need no custom configuration; the Advanced lines above are for the buffers, timeouts and body size. Give the identity provider its own proxy host under requirement 5.
 
 **Websockets Support is not optional.** With it off, the dashboard loads and REST works, so the
 deployment looks healthy — but the timeline, the review detail, the attention panel and the gateway's
