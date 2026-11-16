@@ -78,7 +78,9 @@ const fieldComponent = (file: string) => FIELD_COMPONENTS.some(name => file.ends
  * means a new screen repeated a mistake these rules exist to stop. Recorded 2026-09-14.
  */
 const LEGACY_SCREENS = [
-  'ProviderFormModal.tsx', 'SettingsOperators.tsx', 'ScmConnections.tsx', 'SettingsWebhookRepos.tsx',
+  // ScmOAuthAppForm.tsx is ScmConnections.tsx's legacy form, moved out unchanged (2026-11-16) so the
+  // screen fits its size limit; the debt moved with it, it did not grow.
+  'ProviderFormModal.tsx', 'SettingsOperators.tsx', 'ScmOAuthAppForm.tsx', 'SettingsWebhookRepos.tsx',
   'SettingsLlmProviders.tsx', 'SettingsLlmModelForm.tsx', 'SettingsContextProviders.tsx',
   // Field groups of the legacy forms above. They were always in the same debt; the field rule only
   // saw them once it stopped being limited to screens (2026-09-15). They leave with their forms.
