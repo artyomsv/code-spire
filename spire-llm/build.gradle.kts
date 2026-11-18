@@ -21,7 +21,7 @@ dependencies {
     api(project(":spire-contract"))
     implementation(project(":spire-diff"))
     implementation("dev.langchain4j:langchain4j-open-ai:1.22.0")
-    implementation("dev.langchain4j:langchain4j-anthropic:1.22.0")
+    implementation("dev.langchain4j:langchain4j-anthropic:1.23.0")
     implementation("dev.langchain4j:langchain4j-google-ai-gemini:1.22.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.4")
 
