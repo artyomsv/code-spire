@@ -13,6 +13,7 @@ import { catalogRow, catalogView } from '../test/catalogFixtures';
 // Every test reads the catalog; one with no rows unless a test says otherwise.
 beforeEach(() => {
   vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView());
+  vi.spyOn(api, 'fetchLlmDefaultModel').mockResolvedValue({ provider: null, model: null });
 });
 
 const renderPage = (wrapper = queryWrapper()) =>
@@ -25,7 +26,7 @@ const renderPage = (wrapper = queryWrapper()) =>
 
 const provider = (over: Partial<api.LlmProviderView> = {}): api.LlmProviderView => ({
   id: 'TEST-provider-1', name: 'TEST-provider', type: 'openai', baseUrl: 'https://llm.example.test/v1',
-  model: 'TEST-MODEL', temperature: 0.2, maxTokens: null, hasApiKey: true, enabled: true, isDefault: true,
+  temperature: 0.2, maxTokens: null, hasApiKey: true, enabled: true, isDefault: true,
   createdAt: '1970-01-01T00:00:00Z', lastCheckAt: null, lastCheckOk: null, lastCheckError: null, ...over,
 });
 
@@ -334,5 +335,47 @@ describe('SettingsLlmProviders — catalog models', () => {
     expect(within(dialog).queryByText('This overrides the catalog model with the same name.')).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText(/^model name/i), { target: { value: 'TEST-cat-a-dated' } });
     expect(within(dialog).getByText('This overrides the catalog model with the same name.')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsLlmProviders — default provider and model', () => {
+  const openaiModel = manualModel({ id: 'TEST-o-id', name: 'TEST-o', label: 'TEST openai' });
+  const anthropicModel = manualModel({ id: 'TEST-a-id', type: 'anthropic', name: 'TEST-a', label: 'TEST anthropic' });
+
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([openaiModel, anthropicModel]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
+  });
+
+  it('the provider form has no model field', async () => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([]);
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }));
+    const form = (await screen.findByRole('heading', { name: 'Add LLM provider' })).closest('.modal') as HTMLElement;
+
+    expect(within(form).queryByRole('combobox', { name: 'Model' })).not.toBeInTheDocument();
+    expect(within(form).queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument();
+    expect(within(form).getByLabelText('Use as the default provider')).toBeInTheDocument();
+  });
+
+  it('making another provider default asks for its model and sends both', async () => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([
+      provider(),
+      provider({ id: 'TEST-provider-2', name: 'TEST-anthropic', type: 'anthropic', isDefault: false }),
+    ]);
+    const setDefault = vi.spyOn(api, 'setDefaultLlmProvider').mockResolvedValue(provider());
+    renderPage();
+    const row = (await screen.findByText('TEST-anthropic')).closest('tr') as HTMLElement;
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Set default' })).toBeEnabled());
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Set default' }));
+    const dialog = (await screen.findByRole('heading', { name: /Make .TEST-anthropic. the default/ })).closest('.modal') as HTMLElement;
+    expect(within(dialog).getByRole('button', { name: 'Make default' })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Default review model' }));
+    expect(screen.queryByRole('option', { name: 'TEST openai (TEST-o)' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: 'TEST anthropic (TEST-a)' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Make default' }));
+
+    await waitFor(() => expect(setDefault).toHaveBeenCalledWith('TEST-provider-2', 'TEST-a'));
   });
 });

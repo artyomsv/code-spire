@@ -17,14 +17,22 @@ const provider = (id: string, role: accounts.ProviderRole, baseUrl = 'https://fo
 });
 const repo: api.Repository = {
   id: 'TEST-repo-id', scmType: 'gitlab', forgeOrigin: 'https://forge.example.test', workspace: 'TEST-group/nested',
-  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', reviewLlmProviderId: null, reviewHarness: null,
+  slug: 'TEST-repo', enabled: true, revision: 3, reviewerMayApprove: true, blockApprovalAt: 'BLOCKER', reviewLlmProviderId: null, reviewLlmModel: null,
+  reviewHarness: null,
   reviewer: { id: 'TEST-reviewer', name: 'TEST-reviewer', role: 'REVIEWER', handle: 'TEST-review-bot', state: 'configured' },
   factory: { id: 'TEST-factory', name: 'TEST-factory', role: 'FACTORY', handle: null, state: 'disabled' },
 };
 const llmProvider = (id: string, enabled: boolean, isDefault = false): accounts.LlmProviderView => ({
-  id, name: id, type: 'openai', baseUrl: 'https://llm.example.test', model: `TEST-model-${id}`, temperature: 0.2,
+  id, name: id, type: 'openai', baseUrl: 'https://llm.example.test', temperature: 0.2,
   maxTokens: null, hasApiKey: true, enabled, isDefault, createdAt: '', lastCheckAt: null, lastCheckOk: null, lastCheckError: null,
 });
+const llmModel = (name: string, over: Partial<accounts.LlmModelView> = {}): accounts.LlmModelView => ({
+  id: `${name}-id`, type: 'openai', name, label: name, pricingMode: 'METERED', rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [],
+  outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
+  createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL', ...over,
+});
+const REVIEW_MODELS = [llmModel('TEST-review-model'), llmModel('TEST-other-model'),
+  llmModel('TEST-anthropic-model', { type: 'anthropic' }), llmModel('TEST-off-model', { enabled: false })];
 
 describe('Repository registry', () => {
   it('uses a text link and shared account column and keeps repair labels concise', async () => {
@@ -77,6 +85,8 @@ describe('Repository registry', () => {
     vi.spyOn(api, 'saveRepository').mockResolvedValue(repo);
     vi.spyOn(accounts, 'fetchLlmProviders').mockResolvedValue([llmProvider('TEST-default-llm', true, true),
       llmProvider('TEST-other-llm', true), llmProvider('TEST-off-llm', false)]);
+    vi.spyOn(accounts, 'fetchLlmModels').mockResolvedValue(REVIEW_MODELS);
+    vi.spyOn(accounts, 'fetchLlmDefaultModel').mockResolvedValue({ provider: 'TEST-default-llm', model: 'TEST-review-model' });
   });
 
   it('shows workspace and the selected reviewer and disabled factory', async () => {
@@ -140,19 +150,65 @@ describe('Repository registry', () => {
     fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     const reviewWith = await screen.findByRole('combobox', { name: 'Review with' });
-    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm)' })).toBeInTheDocument();
-    expect(reviewWith).toHaveDisplayValue('Global default (TEST-default-llm)');
+    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm, TEST-review-model)' })).toBeInTheDocument();
+    expect(reviewWith).toHaveDisplayValue('Global default (TEST-default-llm, TEST-review-model)');
     expect(within(reviewWith).getByRole('option', { name: 'TEST-other-llm' })).toBeInTheDocument();
     expect(within(reviewWith).queryByRole('option', { name: /TEST-off-llm/ })).not.toBeInTheDocument();
     fireEvent.change(reviewWith, { target: { value: 'TEST-other-llm' } });
+    const model = await screen.findByRole('combobox', { name: 'Review model' });
+    await within(model).findByRole('option', { name: 'TEST-review-model (TEST-review-model)' });
+    fireEvent.change(model, { target: { value: 'TEST-review-model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
-      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm' }), repo));
+      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm', reviewLlmModel: 'TEST-review-model' }), repo));
+  });
+
+  it('review with: save requires a model', async () => {
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const reviewWith = await screen.findByRole('combobox', { name: 'Review with' });
+    await within(reviewWith).findByRole('option', { name: 'TEST-other-llm' });
+
+    fireEvent.change(reviewWith, { target: { value: 'TEST-other-llm' } });
+
+    expect(screen.getByText('To save, choose a review model.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  });
+
+  it('review with: choosing a provider shows its vendor\'s models and resets the model', async () => {
+    const named = { ...repo, reviewLlmProviderId: 'TEST-other-llm', reviewLlmModel: 'TEST-other-model' };
+    vi.mocked(api.fetchRepositories).mockResolvedValue([named]);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const model = await screen.findByRole('combobox', { name: 'Review model' });
+    await within(model).findByRole('option', { name: 'TEST-other-model (TEST-other-model)' });
+    expect(model).toHaveValue('TEST-other-model');
+    expect(within(model).queryByRole('option', { name: /TEST-anthropic-model/ })).not.toBeInTheDocument();
+
+    const reviewWith = screen.getByRole('combobox', { name: 'Review with' });
+    await within(reviewWith).findByRole('option', { name: 'TEST-default-llm' });
+    fireEvent.change(reviewWith, { target: { value: 'TEST-default-llm' } });
+
+    expect(screen.getByRole('combobox', { name: 'Review model' })).toHaveValue('');
+  });
+
+  it('a stored switched-off model stays selected and labelled', async () => {
+    const named = { ...repo, reviewLlmProviderId: 'TEST-other-llm', reviewLlmModel: 'TEST-off-model' };
+    vi.mocked(api.fetchRepositories).mockResolvedValue([named]);
+    render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
+    fireEvent.click(await screen.findByRole('link', { name: 'TEST-repo' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
+    const model = await screen.findByRole('combobox', { name: 'Review model' });
+
+    expect(await within(model).findByRole('option', { name: 'TEST-off-model (switched off)' })).toBeInTheDocument();
+    expect(model).toHaveValue('TEST-off-model');
   });
 
   /** A repository already naming a switched-off provider shows it, and a save keeps it: nothing changes the payer silently. */
   it('shows a named provider that is switched off, selected, and saves it unchanged', async () => {
-    const named = { ...repo, reviewLlmProviderId: 'TEST-off-llm' };
+    const named = { ...repo, reviewLlmProviderId: 'TEST-off-llm', reviewLlmModel: 'TEST-review-model' };
     vi.mocked(api.fetchRepositories).mockResolvedValue([named]);
     vi.mocked(api.saveRepository).mockResolvedValue(named);
     render(<MemoryRouter><RepositoryRegistryPage /></MemoryRouter>, { wrapper: queryWrapper() });
@@ -177,7 +233,7 @@ describe('Repository registry', () => {
     const reviewWith = screen.getByRole('combobox', { name: 'Review with' });
     expect(within(reviewWith).queryByRole('option', { name: /none set/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading LLM providers' }));
-    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm)' })).toBeInTheDocument();
+    expect(await within(reviewWith).findByRole('option', { name: 'Global default (TEST-default-llm, TEST-review-model)' })).toBeInTheDocument();
     expect(screen.queryByText(/TEST-llm down/)).not.toBeInTheDocument();
   });
 
@@ -413,6 +469,7 @@ describe('Review with a harness', () => {
     vi.spyOn(accounts, 'fetchLlmProviders').mockResolvedValue([llmProvider('TEST-default-llm', true, true),
       llmProvider('TEST-other-llm', true)]);
     vi.spyOn(build, 'buildDefaults').mockResolvedValue(buildSetup());
+    vi.spyOn(accounts, 'fetchLlmDefaultModel').mockResolvedValue({ provider: 'TEST-default-llm', model: 'TEST-model' });
     vi.spyOn(build, 'buildOptions').mockResolvedValue({ harnesses: ['codex'], buildHarnesses: ['codex'], subscriptionHarnesses: ['codex'],
       reportedTypes: { codex: ['INPUT', 'CACHED_INPUT', 'CACHE_WRITE', 'OUTPUT', 'REASONING'] }, models: { codex: catalogue } });
     vi.spyOn(accounts, 'fetchLlmModels').mockResolvedValue([
@@ -470,9 +527,10 @@ describe('Review with a harness', () => {
     vi.mocked(api.saveRepository).mockResolvedValue(onHarness);
     await openSettings();
     await choose('Review with', 'TEST-other-llm');
+    await choose('Review model', 'TEST-model');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.saveRepository).toHaveBeenCalledWith(
-      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm', reviewHarness: null }), onHarness));
+      expect.objectContaining({ reviewLlmProviderId: 'TEST-other-llm', reviewLlmModel: 'TEST-model', reviewHarness: null }), onHarness));
   });
 
   it('a saved harness review opens with its values selected', async () => {

@@ -889,7 +889,6 @@ export interface LlmProviderView {
   name: string;
   type: LlmType;
   baseUrl: string;
-  model: string;
   temperature: number;
   maxTokens: number | null;
   hasApiKey: boolean; // the key is never returned
@@ -906,11 +905,12 @@ export interface LlmProviderInput {
   type: LlmType;
   baseUrl: string;
   apiKey?: string; // omit/empty on edit = keep the stored key
-  model: string;
   temperature?: number;
   maxTokens?: number | null;
   enabled?: boolean;
-  isDefault?: boolean;
+  isDefault?: boolean; // create only
+  /** The default review model, written with isDefault on create; required when a default provider exists. */
+  defaultModel?: string;
 }
 
 export async function fetchLlmProviders(): Promise<LlmProviderView[]> {
@@ -939,9 +939,39 @@ export async function updateLlmProvider(id: string, input: LlmProviderInput): Pr
   return res.json();
 }
 
-export async function setDefaultLlmProvider(id: string): Promise<LlmProviderView> {
-  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, { method: 'PUT' });
+/** Makes a provider the default together with its model, in one request: both change, or neither. */
+export async function setDefaultLlmProvider(id: string, model: string): Promise<LlmProviderView> {
+  const res = await apiFetch(`/api/llm-providers/${encodeURIComponent(id)}/default`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
   if (!res.ok) return throwResponse(res, 'Failed to set default LLM provider');
+  return res.json();
+}
+
+/** The enabled default provider's id and the default review model; either may be null. */
+export interface LlmDefaultModelView {
+  provider: string | null;
+  model: string | null;
+}
+
+export const llmDefaultModelKey = ['llm-default-model'] as const;
+
+export async function fetchLlmDefaultModel(): Promise<LlmDefaultModelView> {
+  const res = await apiFetch('/api/settings/llm-default-model');
+  if (!res.ok) return throwResponse(res, 'Failed to load the default review model');
+  return res.json();
+}
+
+/** Changes only the model, for the current default provider; null clears it. */
+export async function putLlmDefaultModel(model: string | null): Promise<LlmDefaultModelView> {
+  const res = await apiFetch('/api/settings/llm-default-model', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
+  if (!res.ok) return throwResponse(res, 'Failed to save the default review model');
   return res.json();
 }
 

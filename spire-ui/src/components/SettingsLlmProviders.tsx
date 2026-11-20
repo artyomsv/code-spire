@@ -9,10 +9,10 @@ import {
   fetchLlmModels,
   fetchLlmProviders,
   llmCatalogKey,
+  llmDefaultModelKey,
   llmProvidersKey,
   type CatalogModelView,
   type CatalogRowView,
-  setDefaultLlmProvider,
   updateLlmProvider,
   type LlmModelView,
   type LlmProviderInput,
@@ -32,6 +32,9 @@ import SettingsLlmModelForm from './SettingsLlmModelForm';
 import SettingsLlmCatalogHeader from './SettingsLlmCatalogHeader';
 import SettingsLlmModelsTable, { type ModelRowActions } from './SettingsLlmModelsTable';
 import LlmCatalogModelDetail from './LlmCatalogModelDetail';
+import LlmMakeDefaultDialog from './LlmMakeDefaultDialog';
+import SettingsLlmDefaultModel from './SettingsLlmDefaultModel';
+import { vendorModelOptions } from '../llmModelOptions';
 import { catalogNames } from '../llmCatalog';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 import { useEachRead } from '../hooks/useEachRead';
@@ -99,6 +102,7 @@ export default function SettingsLlmProviders() {
   const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConfirmDelete | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogModelView | null>(null);
+  const [defaultFor, setDefaultFor] = useState<LlmProviderView | null>(null);
   const catalogRead = useQuery({ queryKey: llmCatalogKey, queryFn: () => fetchLlmCatalog() });
   const catalogRows = catalogRead.data?.rows ?? NO_ROWS;
   const modelActions: ModelRowActions = {
@@ -139,6 +143,7 @@ export default function SettingsLlmProviders() {
     invalidateLive(client, llmProvidersKey),
     invalidateLive(client, preparationKeys.llmModels()),
     invalidateLive(client, llmCatalogKey),
+    invalidateLive(client, llmDefaultModelKey),
   ]);
 
   async function act(fn: () => Promise<unknown>) {
@@ -158,6 +163,8 @@ export default function SettingsLlmProviders() {
           {error}
         </div>
       )}
+
+      <SettingsLlmDefaultModel providers={providers} models={models} />
 
       {/* --- Providers --- */}
       <div className="card">
@@ -185,7 +192,6 @@ export default function SettingsLlmProviders() {
               <tr>
                 <th>Name</th>
                 <th>Type</th>
-                <th>Model</th>
                 <th>Default</th>
                 <th>Connection</th>
                 <th>Status</th>
@@ -197,7 +203,6 @@ export default function SettingsLlmProviders() {
                 <tr key={p.id}>
                   <td>{p.name}</td>
                   <td className="mono">{p.type}</td>
-                  <td className="mono">{p.model}</td>
                   <td>
                     {p.isDefault ? (
                       <span className="pill completed">
@@ -205,7 +210,7 @@ export default function SettingsLlmProviders() {
                         Default
                       </span>
                     ) : (
-                      <button className="btn-ghost" onClick={() => act(() => setDefaultLlmProvider(p.id))}>
+                      <button className="btn-ghost" disabled={!current} onClick={() => setDefaultFor(p)}>
                         Set default
                       </button>
                     )}
@@ -315,6 +320,18 @@ export default function SettingsLlmProviders() {
         </div>
       )}
 
+      {defaultFor && (
+        <LlmMakeDefaultDialog
+          provider={defaultFor}
+          models={models}
+          onClose={() => setDefaultFor(null)}
+          onSaved={async () => {
+            setDefaultFor(null);
+            await load();
+          }}
+        />
+      )}
+
       {catalogDetail && <LlmCatalogModelDetail model={catalogDetail} onClose={() => setCatalogDetail(null)} />}
     </section>
   );
@@ -372,7 +389,7 @@ function LlmProviderForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [type, setType] = useState<LlmType>(initial?.type ?? 'openai');
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? defaultBaseUrl('openai'));
-  const [model, setModel] = useState(initial?.model ?? '');
+  const [defaultModel, setDefaultModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [temperature, setTemperature] = useState(String(initial?.temperature ?? 0.2));
   const [maxTokens, setMaxTokens] = useState(initial?.maxTokens != null ? String(initial.maxTokens) : '');
@@ -380,7 +397,15 @@ function LlmProviderForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const typeModels = byExpenseDesc(models.filter((m) => m.type === type && m.enabled));
+  const typeModels = vendorModelOptions(models, type);
+
+  function chooseType(t: LlmType) {
+    setType(t);
+    setDefaultModel('');
+    if (!baseUrl.trim() || Object.values(DEFAULT_BASE_URLS).includes(baseUrl)) {
+      setBaseUrl(defaultBaseUrl(t));
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -390,12 +415,11 @@ function LlmProviderForm({
       name: name.trim(),
       type,
       baseUrl: baseUrl.trim(),
-      model: model.trim(),
       apiKey: apiKey.trim() || undefined,
       temperature: temperature.trim() === '' ? undefined : Number(temperature),
       maxTokens: maxTokens.trim() === '' ? null : Number(maxTokens),
       enabled: initial?.enabled ?? true,
-      isDefault,
+      ...(editing ? {} : { isDefault, defaultModel: isDefault && defaultModel ? defaultModel : undefined }),
     };
     try {
       if (editing && initial) {
@@ -421,47 +445,17 @@ function LlmProviderForm({
             <input placeholder="OpenAI (prod)" value={name} onChange={(e) => setName(e.target.value)} />
           </label>
 
-          <div className="field-row-2">
-            <label className="field">
-              <span>Type</span>
-              <Select
-                ariaLabel="Type"
-                value={type}
+          <label className="field">
+            <span>Type</span>
+            <Select
+              ariaLabel="Type"
+              value={type}
+              disabled={editing}
                 options={LLM_TYPES.map((t) => ({ value: t, label: t }))}
-                onChange={(v) => {
-                  const t = v as LlmType;
-                  setType(t);
-                  if (!baseUrl.trim() || Object.values(DEFAULT_BASE_URLS).includes(baseUrl)) {
-                    setBaseUrl(defaultBaseUrl(t));
-                  }
-                }}
-              />
-            </label>
-            <label className="field">
-              <span>Model</span>
-              {typeModels.length > 0 ? (
-                <Select
-                  ariaLabel="Model"
-                  value={model}
-                  options={[
-                    { value: '', label: '— select a model —' },
-                    ...typeModels.map((m) => ({ value: m.name, label: `${m.label} (${m.name})` })),
-                  ]}
-                  onChange={setModel}
-                />
-              ) : (
-                <input
-                  className="mono"
-                  placeholder="gpt-4o"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                />
-              )}
-              {typeModels.length === 0 && (
-                <small className="field-hint">No models registered — add one above to price reviews.</small>
-              )}
-            </label>
-          </div>
+              onChange={(v) => chooseType(v as LlmType)}
+            />
+            {editing && <small className="field-hint">A provider's type is fixed; add a new provider for another vendor.</small>}
+          </label>
 
           <label className="field">
             <span>Base URL</span>
@@ -515,10 +509,28 @@ function LlmProviderForm({
             </label>
           </div>
 
-          <label className="field-check">
-            <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
-            <span>Use as the default review model</span>
-          </label>
+          {!editing && (
+            <label className="field-check">
+              <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
+              <span>Use as the default provider</span>
+            </label>
+          )}
+          {!editing && isDefault && (
+            <label className="field">
+              <span>Default review model</span>
+              <Select
+                ariaLabel="Default review model"
+                value={defaultModel}
+                options={[{ value: '', label: '— select a model —' }, ...typeModels]}
+                onChange={setDefaultModel}
+              />
+              <small className="field-hint">
+                {typeModels.length === 0
+                  ? `No enabled ${type} models — add one under Models first.`
+                  : 'Written with the default provider; leave empty to choose it later.'}
+              </small>
+            </label>
+          )}
 
           {error && <div className="modal-msg modal-error">{error}</div>}
 

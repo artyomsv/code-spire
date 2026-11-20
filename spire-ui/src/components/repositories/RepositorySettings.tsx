@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchLlmProviders, llmProvidersKey, type ProviderView } from '../../api';
+import { fetchLlmDefaultModel, fetchLlmModels, fetchLlmProviders, llmDefaultModelKey, llmProvidersKey, type ProviderView } from '../../api';
 import { saveRepository, type Repository, type RepositoryInput, type ReviewHarness } from './repositoriesApi';
 import RepositoryAccountSelects from './RepositoryAccountSelects';
 import RepositorySwitches from './RepositorySwitches';
 import RepositoryReviewProvider, { HARNESS_CHOICE } from './RepositoryReviewProvider';
 import ReviewHarnessFields from './ReviewHarnessFields';
+import RepositoryReviewModel from './RepositoryReviewModel';
+import { preparationKeys } from '../work-items/workQueries';
 import { buildDefaults, buildDefaultsKey, type BuildDefaults } from './factory/buildDefaultsApi';
 
 interface Props {
@@ -31,6 +33,7 @@ function inputOf(repository: Repository): RepositoryInput {
     enabled: repository.enabled, reviewerAccountId: repository.reviewer?.id ?? null, factoryAccountId: repository.factory?.id ?? null,
     reviewerMayApprove: repository.reviewerMayApprove, blockApprovalAt: repository.blockApprovalAt ?? 'BLOCKER',
     reviewLlmProviderId: repository.reviewLlmProviderId ?? null,
+    reviewLlmModel: repository.reviewLlmModel ?? null,
     reviewHarness: repository.reviewHarness ?? null,
   };
 }
@@ -63,11 +66,17 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
   const llmProviders = useQuery({ queryKey: llmProvidersKey, queryFn: () => fetchLlmProviders() });
+  // Shared with Settings → LLM, so a model or a default saved there reaches this select.
+  const llmModels = useQuery({ queryKey: preparationKeys.llmModels(), queryFn: () => fetchLlmModels() });
+  const defaultModel = useQuery({ queryKey: llmDefaultModelKey, queryFn: () => fetchLlmDefaultModel() });
+  const namedProvider = llmProviders.data?.find(p => p.id === fields.reviewLlmProviderId) ?? null;
   const onHarness = fields.reviewHarness !== null;
   // Read only while a harness is chosen; a copy the Factory tab already read is used at once.
   const defaultsRead = useQuery({ queryKey: buildDefaultsKey(repository.id), queryFn: () => buildDefaults(repository.id), enabled: onHarness });
   const dirty = changed(fields, inputOf(saved));
   const harnessIncomplete = onHarness && (!fields.reviewHarness?.harness || !fields.reviewHarness?.model);
+  // The server refuses a provider without its model; say so before Save rather than after.
+  const modelMissing = fields.reviewLlmProviderId !== null && !fields.reviewLlmModel;
   // The panel owns the lock: an input still editable while a save is in flight is overwritten by its answer.
   useEffect(() => { onState({ dirty, busy }); }, [dirty, busy, onState]);
   useEffect(() => () => onState(SETTLED), [onState]);
@@ -87,10 +96,12 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
   // One "Review with" choice: a harness clears the provider, and a provider or the default clears the harness.
   function chooseReview(choice: string | null) {
     if (choice === HARNESS_CHOICE) {
-      patch({ reviewLlmProviderId: null, reviewHarness: fields.reviewHarness ?? harnessFrom(defaultsRead.data) });
+      patch({ reviewLlmProviderId: null, reviewLlmModel: null, reviewHarness: fields.reviewHarness ?? harnessFrom(defaultsRead.data) });
       return;
     }
-    patch({ reviewLlmProviderId: choice, reviewHarness: null });
+    // A model is of its provider's vendor, so another provider starts with none.
+    const model = choice === fields.reviewLlmProviderId ? fields.reviewLlmModel : null;
+    patch({ reviewLlmProviderId: choice, reviewLlmModel: model, reviewHarness: null });
   }
   async function submit() {
     setBusy(true); setError(null);
@@ -110,7 +121,11 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
       <RepositoryReviewProvider value={fields.reviewLlmProviderId} harness={onHarness} providers={llmProviders.data}
         failure={llmProviders.error ? (llmProviders.error instanceof Error ? llmProviders.error.message : String(llmProviders.error)) : null}
         onRetry={() => void llmProviders.refetch()}
+        defaultModel={defaultModel.isSuccess ? defaultModel.data.model : undefined}
         onChange={chooseReview} />
+      {fields.reviewLlmProviderId !== null && <RepositoryReviewModel providerType={namedProvider?.type ?? null}
+        value={fields.reviewLlmModel} models={llmModels.data} onChange={model => patch({ reviewLlmModel: model })} />}
+      {modelMissing && <p className="factory-note" role="status">To save, choose a review model.</p>}
       {fields.reviewHarness && <ReviewHarnessFields repositoryId={repository.id} value={fields.reviewHarness} onChange={patchHarness} />}
       {harnessIncomplete && <p className="factory-note" role="status">To save, choose a harness and a model.</p>}</section>
     <section aria-label="Identity" className="settings-group"><h4>Identity</h4>
@@ -123,7 +138,7 @@ export default function RepositorySettings({ repository, providers, hidden, onSa
       <p className="prov-sub">Set at registration and never edited. A different one is a different repository: register it.</p></section>
     {error && <p className="prov-error" role="alert">{error}</p>}
     <div className="settings-actions">
-      <button className="btn" type="button" disabled={!dirty || busy || harnessIncomplete} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save changes'}</button>
+      <button className="btn" type="button" disabled={!dirty || busy || harnessIncomplete || modelMissing} onClick={() => void submit()}>{busy ? 'Saving…' : 'Save changes'}</button>
       <button className="btn-ghost" type="button" disabled={!dirty || busy} onClick={discard}>Discard</button>
       {dirty ? <span className="settings-state warn">Unsaved changes</span> : justSaved && <span className="settings-state good">Saved</span>}
     </div>
