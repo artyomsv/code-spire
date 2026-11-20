@@ -129,3 +129,17 @@ it('offers nothing for a key when the server prices none', () => {
 
   expect(modelChoices('codex', none, [priced('TEST-fast')], REPORTED, 'API_KEY')).toEqual([]);
 });
+
+// The server's keyPriced resolves catalog aliases; the local list knows only the canonical name. An offered alias the
+// server prices is runnable even though no local row carries its name.
+it('trusts the server for an offered alias it prices', () => {
+  const aliased: HarnessModels = {
+    status: 'OK',
+    offered: [{ slug: 'TEST-fast-alias', displayName: 'TEST-fast-alias', defaultEffort: 'low', efforts: ['low'], visible: true, priority: 1 }],
+    keyPriced: ['TEST-fast-alias'],
+  };
+
+  const choices = modelChoices('codex', aliased, [priced('TEST-fast')], REPORTED, 'API_KEY');
+
+  expect(choices).toEqual([{ value: 'TEST-fast-alias', label: 'TEST-fast-alias', blocked: null }]);
+});

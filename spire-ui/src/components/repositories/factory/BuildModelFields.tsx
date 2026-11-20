@@ -13,6 +13,16 @@ const NO_LIST: Record<string, string> = {
 
 const missingLabel = (types: string[]) => types.map(type => TOKEN_TYPE_LABEL[type as keyof typeof TOKEN_TYPE_LABEL]).join(', ');
 
+/**
+ * Why an offered model cannot be paid for with an API key, from the local price list: an API-key run needs a rate for
+ * every type the harness reports, and the save would refuse it anyway. Only for a server that sends no keyPriced.
+ */
+function localBlock(price: LlmModelView | undefined, unpriced: (model: LlmModelView) => string[]): string | null {
+  if (!price) return 'no price yet — add it in Settings → LLM';
+  const missing = unpriced(price);
+  return missing.length ? `no price for ${missingLabel(missing)}` : null;
+}
+
 /** One choosable model: what it is called, and why it cannot be chosen when it cannot. */
 export interface ModelChoice { value: string; label: string; blocked: string | null }
 
@@ -29,21 +39,15 @@ export function modelChoices(harness: string, known: HarnessModels | undefined, 
   const subscription = payWith === 'SUBSCRIPTION';
   const unpriced = (model: LlmModelView) => (harness && !subscription ? unpricedTypesFor(model, reported[harness]) : []);
   if (known?.status === 'OK') {
-    // The server says which offered models an API key can pay for; only those are offered for a key. An older
-    // server sends no list, and the price list below then marks the rest as blocked instead.
+    // The server says which offered models an API key can pay for; only those are offered for a key, and its answer
+    // decides (it resolves catalog aliases, which the local list below cannot). An older server sends no list, and
+    // the local price list then marks the rest as blocked instead.
     const keyPriced = Array.isArray(known.keyPriced) ? known.keyPriced : null;
-    return known.offered.filter(model => subscription || keyPriced === null || keyPriced.includes(model.slug)).map(model => {
-      const price = priced.find(entry => entry.name === model.slug);
-      const missing = price ? unpriced(price) : [];
-      return {
-        value: model.slug,
-        label: model.displayName === model.slug ? model.slug : `${model.displayName} (${model.slug})`,
-        // Not offered as runnable until it can be paid for: an API-key run needs a rate for every type
-        // the harness reports, and the save would refuse it anyway.
-        blocked: subscription ? null : !price ? 'no price yet — add it in Settings → LLM'
-          : missing.length ? `no price for ${missingLabel(missing)}` : null,
-      };
-    });
+    return known.offered.filter(model => subscription || keyPriced === null || keyPriced.includes(model.slug)).map(model => ({
+      value: model.slug,
+      label: model.displayName === model.slug ? model.slug : `${model.displayName} (${model.slug})`,
+      blocked: subscription || keyPriced !== null ? null : localBlock(priced.find(entry => entry.name === model.slug), unpriced),
+    }));
   }
   return priced.map(model => {
     const missing = unpriced(model);
