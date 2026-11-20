@@ -11,7 +11,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -48,7 +47,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider ORDER BY created_at");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                out.add(toView(rs));
+                out.add(LlmProviderRows.toView(rs));
             }
             return out;
         } catch (SQLException e) {
@@ -61,7 +60,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(toView(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.toView(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to load LLM provider " + id, e);
@@ -86,17 +85,18 @@ public class LlmProviderRegistry {
         boolean asked = Boolean.TRUE.equals(in.isDefault());
         try (Connection c = dataSource.getConnection()) {
             LlmDefaultModel.lockDefaultPair(c);
-            if (asked && in.defaultModel() == null && hasEnabledDefault(c)) {
+            if (asked && in.defaultModel() == null && LlmProviderRows.hasEnabledDefault(c)) {
                 throw new IllegalArgumentException("A default provider exists; send defaultModel with isDefault, so the"
                         + " default provider and its model change together.");
             }
             // First provider is auto-defaulted; else honor the flag. Only one default.
-            boolean makeDefault = asked || isEmpty(c);
+            boolean makeDefault = asked || LlmProviderRows.isEmpty(c);
             if (makeDefault) {
-                clearDefault(c);
+                LlmProviderRows.clearDefault(c);
                 replaceDefaultModel(c, asked ? in.defaultModel() : null);
             }
-            insert(c, id, in, apiKey, makeDefault);
+            LlmProviderRows.insert(c, new LlmProviderRows.NewRow(id, in,
+                    encryption.encryptString(apiKey, LlmProviderRows.aad(id)), makeDefault));
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to create LLM provider", e);
         }
@@ -112,26 +112,6 @@ public class LlmProviderRegistry {
         }
     }
 
-    private void insert(Connection c, UUID id, LlmProviderInput in, String apiKey, boolean makeDefault)
-            throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO llm_provider (id, name, type, base_url, api_key, temperature,
-                        max_tokens, enabled, is_default)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """)) {
-            ps.setObject(1, id);
-            ps.setString(2, in.name());
-            ps.setString(3, in.type());
-            ps.setString(4, in.baseUrl());
-            ps.setString(5, encryption.encryptString(apiKey, aad(id)));
-            ps.setDouble(6, temperatureOf(in));
-            setIntOrNull(ps, 7, in.maxTokens());
-            ps.setBoolean(8, in.enabled() == null || in.enabled());
-            ps.setBoolean(9, makeDefault);
-            ps.executeUpdate();
-        }
-    }
-
     /**
      * Update everything except the type and the default flag (the default changes through
      * {@link LlmDefaultModel#setDefaultProvider}, with its model).
@@ -143,7 +123,7 @@ public class LlmProviderRegistry {
     public Optional<LlmProviderView> update(UUID id, LlmProviderInput in) {
         try (Connection c = dataSource.getConnection()) {
             LlmDefaultModel.lockDefaultPair(c);
-            Optional<String> storedType = typeOf(c, id);
+            Optional<String> storedType = LlmProviderRows.typeOf(c, id);
             if (storedType.isEmpty()) {
                 return Optional.empty();
             }
@@ -157,12 +137,12 @@ public class LlmProviderRegistry {
             try (PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, in.name());
                 ps.setString(2, in.baseUrl());
-                ps.setDouble(3, temperatureOf(in));
-                setIntOrNull(ps, 4, in.maxTokens());
+                ps.setDouble(3, LlmProviderRows.temperatureOf(in));
+                LlmProviderRows.setIntOrNull(ps, 4, in.maxTokens());
                 ps.setBoolean(5, in.enabled() == null || in.enabled());
                 int idx = 6;
                 if (rotateKey) {
-                    ps.setString(idx++, encryption.encryptString(in.apiKey(), aad(id)));
+                    ps.setString(idx++, encryption.encryptString(in.apiKey(), LlmProviderRows.aad(id)));
                 }
                 ps.setObject(idx, id);
                 ps.executeUpdate();
@@ -180,7 +160,7 @@ public class LlmProviderRegistry {
      * model would spend the previous default's model, of whatever vendor.
      */
     void setDefault(Connection c, UUID id) throws SQLException {
-        clearDefault(c);
+        LlmProviderRows.clearDefault(c);
         try (PreparedStatement ps = c.prepareStatement(
                 "UPDATE llm_provider SET is_default = TRUE, updated_at = now() WHERE id = ?")) {
             ps.setObject(1, id);
@@ -194,7 +174,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement(
                      "SELECT * FROM llm_provider WHERE is_default = TRUE AND enabled = TRUE")) {
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(toView(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.toView(rs)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to read the default LLM provider", e);
@@ -218,8 +198,8 @@ public class LlmProviderRegistry {
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
             LlmDefaultModel.lockDefaultPair(c);
-            boolean wasDefault = lockIsDefault(c, id);
-            List<String> naming = repositoriesNaming(c, id);
+            boolean wasDefault = LlmProviderRows.lockIsDefault(c, id);
+            List<String> naming = LlmProviderRows.repositoriesNaming(c, id);
             if (!naming.isEmpty()) {
                 throw new ProviderInUse(naming);
             }
@@ -238,35 +218,11 @@ public class LlmProviderRegistry {
         }
     }
 
-    /** Lock the row (see {@link #delete}) and read whether it is the default; false when there is no such row. */
-    private static boolean lockIsDefault(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement lock = c.prepareStatement("SELECT is_default FROM llm_provider WHERE id = ? FOR UPDATE")) {
-            lock.setObject(1, id);
-            try (ResultSet rs = lock.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
-            }
-        }
-    }
-
     /** A provider that repositories review with; switch it off instead, or choose another for them first. */
     public static final class ProviderInUse extends RuntimeException {
         public ProviderInUse(List<String> repositories) {
             super("This LLM provider is used by repositories: " + String.join(", ", repositories)
                     + ". Choose another provider in their settings first, or switch this one off.");
-        }
-    }
-
-    private static List<String> repositoriesNaming(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT workspace || '/' || slug FROM repository"
-                + " WHERE review_llm_provider_id = ? ORDER BY workspace, slug")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                List<String> out = new ArrayList<>();
-                while (rs.next()) {
-                    out.add(rs.getString(1));
-                }
-                return out;
-            }
         }
     }
 
@@ -309,8 +265,10 @@ public class LlmProviderRegistry {
                      + " LEFT JOIN app_setting s ON s.key = ? WHERE p.is_default = TRUE AND p.enabled = TRUE")) {
             ps.setString(1, LlmDefaultModel.KEY);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(new ResolvedDefault(decrypted(rs), rs.getString("default_model")))
-                        : Optional.empty();
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new ResolvedDefault(LlmProviderRows.decrypted(rs, encryption), rs.getString("default_model")));
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve the default LLM provider and model", e);
@@ -323,7 +281,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement(
                      "SELECT * FROM llm_provider WHERE is_default = TRUE AND enabled = TRUE")) {
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.decrypted(rs, encryption)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve the default LLM provider", e);
@@ -336,7 +294,7 @@ public class LlmProviderRegistry {
              PreparedStatement ps = c.prepareStatement("SELECT * FROM llm_provider WHERE id = ?")) {
             ps.setObject(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(decrypted(rs)) : Optional.empty();
+                return rs.next() ? Optional.of(LlmProviderRows.decrypted(rs, encryption)) : Optional.empty();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to resolve LLM provider " + id, e);
@@ -344,82 +302,6 @@ public class LlmProviderRegistry {
     }
 
     // ---- helpers -----------------------------------------------------------
-
-    private LlmProviderConfig decrypted(ResultSet rs) throws SQLException {
-        UUID id = rs.getObject("id", UUID.class);
-        return new LlmProviderConfig(id, rs.getString("name"), rs.getString("type"),
-                rs.getString("base_url"),
-                encryption.decryptString(rs.getString("api_key"), aad(id)),
-                rs.getDouble("temperature"), intOrNull(rs, "max_tokens"),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"));
-    }
-
-    private LlmProviderView toView(ResultSet rs) throws SQLException {
-        String key = rs.getString("api_key");
-        return new LlmProviderView(
-                rs.getObject("id", UUID.class).toString(),
-                rs.getString("name"), rs.getString("type"), rs.getString("base_url"),
-                rs.getDouble("temperature"), intOrNull(rs, "max_tokens"),
-                key != null && !key.isBlank(),
-                rs.getBoolean("enabled"), rs.getBoolean("is_default"),
-                rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("last_check_at") == null
-                        ? null : rs.getTimestamp("last_check_at").toInstant(),
-                rs.getObject("last_check_ok", Boolean.class),
-                rs.getString("last_check_error"));
-    }
-
-    private void clearDefault(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "UPDATE llm_provider SET is_default = FALSE, updated_at = now() WHERE is_default = TRUE")) {
-            ps.executeUpdate();
-        }
-    }
-
-    private static Optional<String> typeOf(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT type FROM llm_provider WHERE id = ?")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
-            }
-        }
-    }
-
-    private static boolean hasEnabledDefault(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(
-                "SELECT 1 FROM llm_provider WHERE is_default = TRUE AND enabled = TRUE");
-             ResultSet rs = ps.executeQuery()) {
-            return rs.next();
-        }
-    }
-
-    private boolean isEmpty(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM llm_provider LIMIT 1");
-             ResultSet rs = ps.executeQuery()) {
-            return !rs.next();
-        }
-    }
-
-    private static double temperatureOf(LlmProviderInput in) {
-        return in.temperature() == null ? 0.2 : in.temperature();
-    }
-
-    private static void setIntOrNull(PreparedStatement ps, int idx, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(idx, Types.INTEGER);
-        } else {
-            ps.setInt(idx, value);
-        }
-    }
-
-    private static Integer intOrNull(ResultSet rs, String col) throws SQLException {
-        int v = rs.getInt(col);
-        return rs.wasNull() ? null : v;
-    }
-
-    private static String aad(UUID id) {
-        return "llm-provider:" + id;
-    }
 
     private static String require(String value, String field) {
         if (value == null || value.isBlank()) {

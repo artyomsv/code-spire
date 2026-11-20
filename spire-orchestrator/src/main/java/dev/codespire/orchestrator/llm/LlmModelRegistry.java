@@ -121,7 +121,7 @@ public class LlmModelRegistry {
         PricingMode mode = validated.mode();
         Map<TokenType, ModelRate> rates = validated.rates();
         try (Connection c = dataSource.getConnection()) {
-            ManualRow existing = manualRow(c, id);
+            ModelUses.ManualRow existing = ModelUses.manualRow(c, id);
             if (existing == null) {
                 return Optional.empty();
             }
@@ -153,7 +153,7 @@ public class LlmModelRegistry {
     @Transactional
     public boolean delete(UUID id) {
         try (Connection c = dataSource.getConnection()) {
-            ManualRow existing = manualRow(c, id);
+            ModelUses.ManualRow existing = ModelUses.manualRow(c, id);
             if (existing == null) {
                 return false;
             }
@@ -256,7 +256,7 @@ public class LlmModelRegistry {
      * stays freely editable while the model is in use. Not serialised against a concurrent setting or repository save;
      * the review path and the attention rows are the backstop (spec section 6).
      */
-    private void requireChangeIsSafe(Connection c, ManualRow existing, LlmModelInput in) throws SQLException {
+    private void requireChangeIsSafe(Connection c, ModelUses.ManualRow existing, LlmModelInput in) throws SQLException {
         if (!existing.name().equals(in.name())) {
             requireUnused(c, existing.name(), ". Choose another model there first, then rename it.");
         } else if (!existing.type().equals(in.type())) {
@@ -268,19 +268,6 @@ public class LlmModelRegistry {
         List<String> uses = ModelUses.of(c, catalog.snapshot(), name);
         if (!uses.isEmpty()) {
             throw new ModelInUseException("Model '" + name + "' is in use by " + String.join(", ", uses) + fix);
-        }
-    }
-
-    /** The name and type a manual model is stored with; null when there is no such row. */
-    private record ManualRow(String name, String type) {
-    }
-
-    private static ManualRow manualRow(Connection c, UUID id) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT name, type FROM llm_model WHERE id = ?")) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? new ManualRow(rs.getString("name"), rs.getString("type")) : null;
-            }
         }
     }
 

@@ -1655,16 +1655,10 @@ public class ReviewProjection {
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list reviews", e);
         }
-        Map<String, String> types = new HashMap<>();
+        VendorBadges badges = new VendorBadges(catalog);
         List<ReviewSummary> out = new ArrayList<>();
         for (UntypedSummary row : rows) {
-            String model = row.ledger().model();
-            // containsKey, not computeIfAbsent: an unknown model or a fault answers null, and null is an answer
-            // too, asked once per model for the whole list rather than once per row.
-            if (model != null && !types.containsKey(model)) {
-                types.put(model, llmTypeFor(model));
-            }
-            String type = model == null ? null : types.get(model);
+            String type = badges.typeOf(row.ledger().model());
             out.add(row.row().toSummary(row.ledger().withLlmType(type), openCounts(row.row())));
         }
         return out;
@@ -2097,7 +2091,7 @@ public class ReviewProjection {
             // Same ledger-derived figures as listSummaries' join, computed separately here since this
             // path loads one row outside that query (plain SELECT * FROM review_status).
             String model = latestModelFor(c, reviewId);
-            LedgerSummary ledger = new LedgerSummary(model, llmTypeFor(model),
+            LedgerSummary ledger = new LedgerSummary(model, new VendorBadges(catalog).typeOf(model),
                     cumulativeCost(c, reviewId), unpricedCallsFor(c, reviewId));
             summary = row.toSummary(ledger, openCounts(row));
         } catch (SQLException e) {
@@ -2349,23 +2343,6 @@ public class ReviewProjection {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;
             }
-        }
-    }
-
-    /**
-     * The LLM vendor for a model name, manual first, then the catalog; null when nobody has the model,
-     * when there is no model yet, or when the manual tables cannot be read — a badge is not worth
-     * failing the reviews list over.
-     */
-    private String llmTypeFor(String model) {
-        if (model == null || model.isBlank()) {
-            return null;
-        }
-        try {
-            return catalog.resolve(model).map(resolved -> resolved.type()).orElse(null);
-        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
-            LOG.debugf("vendor badge unknown for model %s: the model tables could not be read", model);
-            return null;
         }
     }
 

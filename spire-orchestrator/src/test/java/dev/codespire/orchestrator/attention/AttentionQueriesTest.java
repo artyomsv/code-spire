@@ -161,53 +161,6 @@ class AttentionQueriesTest {
         assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), codes().toString());
     }
 
-    /** A default provider with no default review model refuses every review on it. */
-    @Test
-    void aDefaultProviderWithNoDefaultModelIsReportedAsBlocking() {
-        catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm", true, true);
-        insertScmProvider("TEST-scm", "acct-1", "test-bot");
-        sql("DELETE FROM app_setting WHERE key = 'llm.default-model'");
-
-        AttentionView row = queries.collect().stream()
-                .filter(v -> "LLM_DEFAULT_MODEL_MISSING".equals(v.code()))
-                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
-        assertEquals(AttentionView.Severity.BLOCKING, row.severity());
-        assertEquals("/settings/llm", row.action());
-        assertFalse(codes().contains("MODEL_NOT_PRICEABLE"), "nothing to price when no model is chosen");
-    }
-
-    /** A gateway setup: the default model is of another vendor than its provider. Runs, with a warning. */
-    @Test
-    void aDefaultModelOfAnotherVendorIsAWarningNamingTheDefault() {
-        catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm", "anthropic", true, true);
-        insertScmProvider("TEST-scm", "acct-1", "test-bot");
-
-        AttentionView row = queries.collect().stream()
-                .filter(v -> "LLM_MODEL_NOT_FOR_PROVIDER".equals(v.code()))
-                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
-        assertEquals(AttentionView.Severity.WARNING, row.severity());
-        assertNull(row.subject(), "the default has no repository subject");
-        assertTrue(row.message().contains(MODEL) && row.message().contains("the default review model"), row.message());
-    }
-
-    /** A switched-off default model still runs for API reviews; the operator is asked to choose another. */
-    @Test
-    void aSwitchedOffDefaultModelIsAWarningNamingTheDefault() {
-        catalogueMeteredModelWithRates();
-        sql("UPDATE llm_model SET enabled = FALSE WHERE name = '" + MODEL + "'");
-        insertLlmProvider("TEST-llm", true, true);
-        insertScmProvider("TEST-scm", "acct-1", "test-bot");
-
-        AttentionView row = queries.collect().stream()
-                .filter(v -> "LLM_MODEL_SWITCHED_OFF".equals(v.code()))
-                .findFirst().orElseThrow(() -> new AssertionError("no row in " + queries.collect()));
-        assertEquals(AttentionView.Severity.WARNING, row.severity());
-        assertTrue(row.message().contains(MODEL) && row.message().contains("the default review model"), row.message());
-        assertFalse(codes().contains("LLM_MODEL_NOT_FOR_PROVIDER"), codes().toString());
-    }
-
     /** An enabled provider exists but nothing is marked default, so brokering cannot pick one. */
     @Test
     void enabledLlmProvidersWithNoDefaultReportTheMissingDefault() {

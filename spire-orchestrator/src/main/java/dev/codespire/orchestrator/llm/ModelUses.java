@@ -29,6 +29,20 @@ final class ModelUses {
     private ModelUses() {
     }
 
+    /** The name and type a manual model is stored with. */
+    record ManualRow(String name, String type) {
+    }
+
+    /** The manual model with this id, or null when there is no such row. */
+    static ManualRow manualRow(Connection c, UUID id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT name, type FROM llm_model WHERE id = ?")) {
+            ps.setObject(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? new ManualRow(rs.getString("name"), rs.getString("type")) : null;
+            }
+        }
+    }
+
     /** The uses of a manual model, in a stable order, named for a message; empty when nothing chooses it. */
     static List<String> of(Connection c, CatalogSnapshot snapshot, String name) throws SQLException {
         Set<String> names = namesAnsweredTo(snapshot, name);
