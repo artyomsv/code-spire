@@ -369,7 +369,7 @@ describe('SettingsLlmProviders — default provider and model', () => {
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Set default' })).toBeEnabled());
 
     fireEvent.click(within(row).getByRole('button', { name: 'Set default' }));
-    const dialog = (await screen.findByRole('heading', { name: /Make .TEST-anthropic. the default/ })).closest('.modal') as HTMLElement;
+    const dialog = await screen.findByRole('dialog', { name: /Make .TEST-anthropic. the default/ });
     expect(within(dialog).getByRole('button', { name: 'Make default' })).toBeDisabled();
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Default review model' }));
     expect(screen.queryByRole('option', { name: 'TEST openai (TEST-o)' })).not.toBeInTheDocument();

@@ -17,7 +17,7 @@ final class CatalogText {
         if (detail == null) {
             return "";
         }
-        String flat = detail.replaceAll("\p{Cntrl}", " ");
+        String flat = detail.replaceAll("\\p{Cntrl}", " ");
         return flat.length() <= MAX_DETAIL ? flat : flat.substring(0, MAX_DETAIL - ELLIPSIS.length()) + ELLIPSIS;
     }
 }
