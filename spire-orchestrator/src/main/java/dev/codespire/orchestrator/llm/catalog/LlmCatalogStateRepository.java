@@ -21,6 +21,7 @@ import java.time.Instant;
 public class LlmCatalogStateRepository {
 
     static final String CHANNEL = "llm_catalog_changed";
+    static final String REMOTE = "remote";
     /** The etag column's width; a longer etag is not kept, so the next fetch is unconditional. */
     private static final int MAX_ETAG = 256;
 
@@ -47,18 +48,26 @@ public class LlmCatalogStateRepository {
     public void storeDocument(StoredDocument doc) {
         try (Connection c = dataSource.getConnection()) {
             lockRow(c);
+            // last_checked_at and last_success_at describe the URL, so storing the bundled copy leaves them.
             try (PreparedStatement ps = c.prepareStatement("""
                     UPDATE llm_catalog_state SET document = ?, sha256 = ?, etag = ?, source = ?, url = ?,
-                           loaded_at = now(), last_checked_at = now(), last_success_at = now(), last_error = NULL,
+                           loaded_at = now(),
+                           last_checked_at = CASE WHEN ? THEN now() ELSE last_checked_at END,
+                           last_success_at = CASE WHEN ? THEN now() ELSE last_success_at END,
+                           last_error = CASE WHEN ? THEN NULL ELSE last_error END,
                            last_change = CAST(? AS JSONB)
                      WHERE id = 1
                     """)) {
+                boolean fromUrl = REMOTE.equals(doc.source());
                 ps.setString(1, doc.document());
                 ps.setString(2, doc.sha256());
                 ps.setString(3, keptEtag(doc.etag()));
                 ps.setString(4, doc.source());
                 ps.setString(5, doc.url());
-                ps.setString(6, doc.lastChangeJson());
+                ps.setBoolean(6, fromUrl);
+                ps.setBoolean(7, fromUrl);
+                ps.setBoolean(8, fromUrl);
+                ps.setString(9, doc.lastChangeJson());
                 ps.executeUpdate();
             }
             notifyChanged(c, doc.sha256());

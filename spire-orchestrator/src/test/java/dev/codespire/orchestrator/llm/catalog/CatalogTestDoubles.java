@@ -78,12 +78,18 @@ public final class CatalogTestDoubles {
     }
 
     /** The state row in memory, counting reads. */
-    static final class FakeStates extends LlmCatalogStateRepository {
+    public static final class FakeStates extends LlmCatalogStateRepository {
         final AtomicInteger reads = new AtomicInteger();
         volatile LlmCatalogState state = LlmCatalogState.EMPTY;
         final List<StoredDocument> stored = new ArrayList<>();
         final List<String> failures = new ArrayList<>();
         final List<String> unchanged = new ArrayList<>();
+
+        /** Holds exactly this row. */
+        public FakeStates with(LlmCatalogState row) {
+            state = row;
+            return this;
+        }
 
         FakeStates holding(String document) {
             state = new LlmCatalogState(document, document == null ? null : CatalogSnapshot.sha256Of(document),
@@ -117,6 +123,11 @@ public final class CatalogTestDoubles {
 
     static LlmModelCatalog catalog(FakeManualModels manual, FakeStates states, String url) {
         return new LlmModelCatalog(manual, states, testBundle(), url);
+    }
+
+    /** The TEST- catalog read from this URL's stored row, falling back to the bundled TEST- copy. */
+    public static LlmModelCatalog catalogAt(String url, FakeStates states) {
+        return catalog(new FakeManualModels(), states, url);
     }
 
     /** The TEST- catalog alone (url none), with these manual models. */

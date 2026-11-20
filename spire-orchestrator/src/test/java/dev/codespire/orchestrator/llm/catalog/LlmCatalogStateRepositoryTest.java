@@ -122,6 +122,18 @@ class LlmCatalogStateRepositoryTest {
     }
 
     @Test
+    void storingTheBundledCopyLeavesTheUrlTimesAlone() {
+        repository.storeDocument(new LlmCatalogStateRepository.StoredDocument(DOCUMENT, SHA, null, "bundled", null,
+                null));
+
+        LlmCatalogState state = repository.read();
+        assertEquals("bundled", state.source());
+        assertNotNull(state.loadedAt());
+        assertNull(state.lastSuccessAt(), "no URL has answered yet");
+        assertNull(state.lastCheckedAt());
+    }
+
+    @Test
     void anOverlongEtagIsNotKept() {
         repository.storeDocument(stored());
 

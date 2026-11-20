@@ -45,6 +45,9 @@ public class AttentionQueries {
      */
     private static final int MAX_REVIEW_ROWS = 5;
 
+    /** What an API review needs priced (LlmModelPricer.isPriceable). */
+    private static final List<TokenType> REQUIRED_RATES = List.of(TokenType.INPUT, TokenType.OUTPUT);
+
     @Inject
     DataSource dataSource;
 
@@ -69,6 +72,10 @@ public class AttentionQueries {
     @Inject
     RunAttentionRows runRows;
 
+    /** Where a missing price is fixed for a catalog model, and whether the catalog URL is stale. */
+    @Inject
+    LlmCatalogAttention catalogAttention;
+
     @ConfigProperty(name = "spire.attention.stuck-minutes")
     int stuckMinutes;
 
@@ -90,6 +97,7 @@ public class AttentionQueries {
             runRows.collect(c, rows);
             credentialRows(c, rows);
             costRows(c, rows);
+            catalogAttention.staleRow(rows);
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to evaluate attention conditions", e);
         }
@@ -140,9 +148,10 @@ public class AttentionQueries {
                 // A provider saved with no model at all is equally blocking, but naming "" as the
                 // subject would render an empty label; the message alone carries it.
                 model.isBlank() ? null : model,
-                "The default LLM provider's model has no usable pricing, so every review stops before"
+                catalogAttention.catalogText(model, REQUIRED_RATES).orElse(
+                        "The default LLM provider's model has no usable pricing, so every review stops before"
                         + " it calls the model. Set input and output rates in Settings → LLM → Models,"
-                        + " or mark the model unmetered if it is self-hosted.", "/settings/llm"));
+                        + " or mark the model unmetered if it is self-hosted."), "/settings/llm"));
     }
 
     /**
@@ -163,7 +172,7 @@ public class AttentionQueries {
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT r.workspace || '/' || r.slug AS repository, d.harness, d.model
                   FROM repository_build_defaults d JOIN repository r ON r.id = d.repository_id
-                 WHERE r.enabled = TRUE
+                 WHERE r.enabled = TRUE AND d.pay_with <> 'SUBSCRIPTION'
                 """);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) setups.add(new Setup(rs.getString("repository"), rs.getString("harness"), rs.getString("model")));
@@ -174,11 +183,12 @@ public class AttentionQueries {
                 continue;
             }
             rows.add(new AttentionView("BUILD_MODEL_NOT_PRICEABLE", Severity.WARNING, setup.repository(),
+                    catalogAttention.catalogText(setup.model(), unpriced).orElse(
                     "This repository builds with " + setup.model() + " on " + setup.harness()
                             + ", which has no price for "
                             + unpriced.stream().map(Enum::name).collect(java.util.stream.Collectors.joining(", "))
                             + ". A build is refused before it starts until each type has a rate, or is marked"
-                            + " as one this vendor does not bill, in Settings → LLM → Models.", "/settings/llm"));
+                            + " as one this vendor does not bill, in Settings → LLM → Models."), "/settings/llm"));
         }
     }
 
@@ -211,10 +221,11 @@ public class AttentionQueries {
                                 + " choose another provider in the repository's settings.", "/settings/repositories"));
             } else if (!pricer.isPriceable(repository.model())) {
                 rows.add(new AttentionView("REPOSITORY_LLM_MODEL_NOT_PRICEABLE", Severity.BLOCKING,
-                        repository.repository(), "This repository reviews with LLM provider " + repository.provider()
+                        repository.repository(), catalogAttention.catalogText(repository.model(), REQUIRED_RATES).orElse(
+                                "This repository reviews with LLM provider " + repository.provider()
                                 + ", whose model " + repository.model() + " has no usable pricing, so its reviews and"
                                 + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
-                                + " mark the model unmetered if it is self-hosted.", "/settings/llm"));
+                                + " mark the model unmetered if it is self-hosted."), "/settings/llm"));
             }
         }
     }
