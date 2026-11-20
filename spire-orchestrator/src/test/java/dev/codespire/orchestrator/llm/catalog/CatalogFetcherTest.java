@@ -35,42 +35,68 @@ class CatalogFetcherTest {
 
     private HttpServer server;
     private final CountDownLatch released = new CountDownLatch(1);
+    private final CountDownLatch endlessStopped = new CountDownLatch(1);
     private final AtomicReference<String> seenIfNoneMatch = new AtomicReference<>();
     private final CatalogFetcher fetcher = new CatalogFetcher(CatalogFetcher.clientBuilder().build());
+
+    /** What a context answers: a status, a body and an optional ETag. */
+    private record Reply(int status, byte[] body, String etag) {
+        static Reply of(int status, String body) {
+            return new Reply(status, body.getBytes(StandardCharsets.UTF_8), null);
+        }
+    }
 
     @BeforeEach
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-        server.createContext("/catalog", exchange -> {
-            seenIfNoneMatch.set(exchange.getRequestHeaders().getFirst("If-None-Match"));
-            if ("\"TEST-etag\"".equals(seenIfNoneMatch.get())) {
-                respond(exchange, 304, new byte[0], null);
-            } else {
-                respond(exchange, 200, BODY.getBytes(StandardCharsets.UTF_8), "\"TEST-etag\"");
-            }
-        });
+        server.createContext("/catalog", this::catalog);
         server.createContext("/moved", exchange -> {
             exchange.getResponseHeaders().add("Location", "/catalog");
-            respond(exchange, 302, new byte[0], null);
+            respond(exchange, Reply.of(302, ""));
         });
         server.createContext("/large", exchange ->
-                respond(exchange, 200, new byte[CatalogLimits.MAX_BYTES + 1], null));
-        server.createContext("/broken", exchange ->
-                respond(exchange, 500, "SECRET-BODY".getBytes(StandardCharsets.UTF_8), null));
-        server.createContext("/stall", exchange -> {
-            // Headers and a first chunk, then nothing: the body never ends until the test is over.
-            exchange.sendResponseHeaders(200, 1000);
-            OutputStream out = exchange.getResponseBody();
-            out.write("providers: []\n".getBytes(StandardCharsets.UTF_8));
-            out.flush();
-            try {
-                released.await(10, TimeUnit.SECONDS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            }
-            exchange.close();
-        });
+                respond(exchange, new Reply(200, new byte[CatalogLimits.MAX_BYTES + 1], null)));
+        server.createContext("/broken", exchange -> respond(exchange, Reply.of(500, "SECRET-BODY")));
+        server.createContext("/stall", this::stall);
+        server.createContext("/endless", this::endless);
         server.start();
+    }
+
+    private void catalog(HttpExchange exchange) throws IOException {
+        seenIfNoneMatch.set(exchange.getRequestHeaders().getFirst("If-None-Match"));
+        if ("\"TEST-etag\"".equals(seenIfNoneMatch.get())) {
+            respond(exchange, Reply.of(304, ""));
+        } else {
+            respond(exchange, new Reply(200, BODY.getBytes(StandardCharsets.UTF_8), "\"TEST-etag\""));
+        }
+    }
+
+    /** Headers and a first chunk, then nothing: the body never ends until the test is over. */
+    private void stall(HttpExchange exchange) throws IOException {
+        exchange.sendResponseHeaders(200, 1000);
+        OutputStream out = exchange.getResponseBody();
+        out.write("providers: []\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        try {
+            released.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        exchange.close();
+    }
+
+    /** A chunked body that never ends: writes until the client stops reading and the connection fails. */
+    private void endless(HttpExchange exchange) throws IOException {
+        exchange.sendResponseHeaders(200, 0);
+        byte[] chunk = new byte[64 * 1024];
+        try (OutputStream out = exchange.getResponseBody()) {
+            while (released.getCount() > 0) {
+                out.write(chunk);
+                out.flush();
+            }
+        } catch (IOException clientGone) {
+            endlessStopped.countDown();
+        }
     }
 
     @AfterEach
@@ -79,13 +105,13 @@ class CatalogFetcherTest {
         server.stop(0);
     }
 
-    private static void respond(HttpExchange exchange, int status, byte[] body, String etag) throws IOException {
-        if (etag != null) {
-            exchange.getResponseHeaders().add("ETag", etag);
+    private static void respond(HttpExchange exchange, Reply reply) throws IOException {
+        if (reply.etag() != null) {
+            exchange.getResponseHeaders().add("ETag", reply.etag());
         }
-        exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
+        exchange.sendResponseHeaders(reply.status(), reply.body().length == 0 ? -1 : reply.body().length);
         try (OutputStream out = exchange.getResponseBody()) {
-            out.write(body);
+            out.write(reply.body());
         }
     }
 
@@ -133,6 +159,21 @@ class CatalogFetcherTest {
     @Test
     void aBodyOverTheCapIsAFailure() {
         assertInstanceOf(CatalogFetcher.Failed.class, fetcher.fetch(at("/large"), null));
+    }
+
+    /**
+     * The cap stops the read, not the deadline: a body that never ends fails as over the cap, long before the
+     * deadline, and the client stops consuming it (the server's write fails). A read that buffered the whole body
+     * before checking its size would wait for the deadline and fail as a timeout instead.
+     */
+    @Test
+    void anEndlessBodyIsCutAtTheCapNotAtTheDeadline() throws InterruptedException {
+        CatalogFetcher patient = new CatalogFetcher(CatalogFetcher.clientBuilder().build(), Duration.ofSeconds(60));
+
+        CatalogFetcher.Failed failed = assertInstanceOf(CatalogFetcher.Failed.class, patient.fetch(at("/endless"), null));
+
+        assertEquals("body_over_" + CatalogLimits.MAX_BYTES + "_bytes", failed.reason());
+        assertTrue(endlessStopped.await(30, TimeUnit.SECONDS), "the client stopped reading the endless body");
     }
 
     @Test
