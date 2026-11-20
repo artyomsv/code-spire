@@ -102,7 +102,16 @@ public class LlmProviderAttentionRows {
      * have nothing to use.
      */
     void repositoryRows(Connection c, List<AttentionView> rows) throws SQLException {
-        record Named(String repository, String provider, String type, String model, boolean enabled) {}
+        for (Named repository : namedChoices(c)) {
+            repositoryRow(repository, rows);
+        }
+    }
+
+    /** An enabled repository that names its own provider, with that provider's name, type and state, and its model. */
+    private record Named(String repository, String provider, String type, String model, boolean enabled) {
+    }
+
+    private static List<Named> namedChoices(Connection c) throws SQLException {
         List<Named> named = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT r.workspace || '/' || r.slug AS repository, p.name, p.type, r.review_llm_model, p.enabled
@@ -113,23 +122,26 @@ public class LlmProviderAttentionRows {
             while (rs.next()) named.add(new Named(rs.getString("repository"), rs.getString("name"), rs.getString("type"),
                     blankIfNull(rs.getString("review_llm_model")), rs.getBoolean("enabled")));
         }
-        for (Named repository : named) {
-            if (!repository.enabled()) {
-                rows.add(new AttentionView("REPOSITORY_LLM_PROVIDER_OFF", Severity.BLOCKING, repository.repository(),
-                        "This repository reviews with LLM provider " + repository.provider() + ", which is switched"
-                                + " off, so its reviews and replies are refused. Switch it on in Settings → LLM, or"
-                                + " choose another provider in the repository's settings.", "/settings/repositories"));
-            } else if (!pricer.isPriceable(repository.model())) {
-                rows.add(new AttentionView("REPOSITORY_LLM_MODEL_NOT_PRICEABLE", Severity.BLOCKING,
-                        repository.repository(), catalogAttention.catalogText(repository.model(), REQUIRED_RATES).orElse(
-                                "This repository reviews with LLM provider " + repository.provider()
-                                + " and model " + repository.model() + ", which has no usable pricing, so its reviews and"
-                                + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
-                                + " mark the model unmetered if it is self-hosted."), "/settings/llm"));
-            } else {
-                choiceRows.check(LlmChoiceAttentionRows.Choice.ofRepository(repository.repository(), repository.type(),
-                        repository.model()), rows);
-            }
+        return named;
+    }
+
+    /** At most one row per repository: its provider off, else its model unpriced, else the choice's own warnings. */
+    private void repositoryRow(Named repository, List<AttentionView> rows) {
+        if (!repository.enabled()) {
+            rows.add(new AttentionView("REPOSITORY_LLM_PROVIDER_OFF", Severity.BLOCKING, repository.repository(),
+                    "This repository reviews with LLM provider " + repository.provider() + ", which is switched"
+                            + " off, so its reviews and replies are refused. Switch it on in Settings → LLM, or"
+                            + " choose another provider in the repository's settings.", "/settings/repositories"));
+        } else if (!pricer.isPriceable(repository.model())) {
+            rows.add(new AttentionView("REPOSITORY_LLM_MODEL_NOT_PRICEABLE", Severity.BLOCKING,
+                    repository.repository(), catalogAttention.catalogText(repository.model(), REQUIRED_RATES).orElse(
+                            "This repository reviews with LLM provider " + repository.provider()
+                            + " and model " + repository.model() + ", which has no usable pricing, so its reviews and"
+                            + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
+                            + " mark the model unmetered if it is self-hosted."), "/settings/llm"));
+        } else {
+            choiceRows.check(LlmChoiceAttentionRows.Choice.ofRepository(repository.repository(), repository.type(),
+                    repository.model()), rows);
         }
     }
 

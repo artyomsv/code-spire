@@ -264,36 +264,8 @@ class LlmCatalogRefreshTest {
     @Test
     void aStaleEmptyReadNeverOverwritesAnAcceptedRemoteFile() {
         states.holding(REPRICED);
-        FakeStates staleOnce = new FakeStates() {
-            private boolean first = true;
-
-            @Override
-            public LlmCatalogState read() {
-                if (first) {
-                    first = false;
-                    return LlmCatalogState.EMPTY;
-                }
-                return states.read();
-            }
-
-            @Override
-            public boolean storeIfEmpty(StoredDocument doc) {
-                return states.storeIfEmpty(doc);
-            }
-
-            /** Delegated too, so an unconditional store of the bundle would land in the shared row and fail here. */
-            @Override
-            public void storeDocument(StoredDocument doc) {
-                states.storeDocument(doc);
-            }
-
-            @Override
-            public void recordFailure(String reason) {
-                states.recordFailure(reason);
-            }
-        };
         LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Failed("http_503")));
-        refresh.states = staleOnce;
+        refresh.states = new StaleOnceStates(states);
 
         assertEquals(LlmCatalogRefresh.RefreshOutcome.FAILED, refresh.refreshNow());
 
