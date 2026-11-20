@@ -122,6 +122,65 @@ class RepositoryResourceTest extends RepositoryFixture {
                 .body("reviewLlmProviderId", nullValue());
     }
 
+    /** The model is saved and read back beside its provider. */
+    @Test void aProviderAndModelSaveAndRead() {
+        UUID provider = llmProvider("model");
+        String id = given().contentType("application/json").body(repositoryReviewingWith(provider)).post("/api/repositories")
+                .then().statusCode(201).body("reviewLlmModel", equalTo(modelOf.get(provider))).extract().path("id");
+        given().get("/api/repositories/" + id).then().statusCode(200)
+                .body("reviewLlmProviderId", equalTo(provider.toString()))
+                .body("reviewLlmModel", equalTo(modelOf.get(provider)));
+    }
+
+    /** Neither provider nor model is the global default; both columns clear together. */
+    @Test void clearingBothFallsBackToTheDefault() {
+        UUID provider = llmProvider("clear");
+        String id = given().contentType("application/json").body(repositoryReviewingWith(provider)).post("/api/repositories")
+                .then().statusCode(201).extract().path("id");
+        given().contentType("application/json").body(repositoryReviewingWith(null))
+                .put("/api/repositories/" + id + "?revision=1").then().statusCode(200)
+                .body("reviewLlmProviderId", nullValue())
+                .body("reviewLlmModel", nullValue());
+    }
+
+    /**
+     * An older dashboard sends a provider with no model. Refused with the pairing reason, never a silent clear; the
+     * reason is asserted because the vendor check would also refuse a null model, as unknown.
+     */
+    @Test void aProviderWithoutAModelIs400() {
+        UUID provider = llmProvider("no-model");
+        RepositoryInput withoutModel = repositoryReviewingWith(provider).withReviewLlm(provider, null);
+        given().contentType("application/json").body(withoutModel).post("/api/repositories")
+                .then().statusCode(400).body(containsString("together"));
+    }
+
+    /** Known, priced and enabled, but an anthropic model for an openai provider: only the vendor check refuses it. */
+    @Test void aModelOfAnotherVendorIs400() {
+        UUID provider = llmProvider("vendor");
+        String anthropic = "TEST-repository-anthropic-" + UUID.randomUUID();
+        llmModels.create(new LlmModelInput("anthropic", anthropic, anthropic, "UNMETERED", java.util.Map.of(),
+                null, null, null, null, true, java.util.List.of()));
+        RepositoryInput mismatched = repositoryReviewingWith(provider).withReviewLlm(provider, anthropic);
+        given().contentType("application/json").body(mismatched).post("/api/repositories")
+                .then().statusCode(400).body(containsString("model_not_for_provider"));
+    }
+
+    /** A harness review takes its model from the harness; an API model beside it is refused before the write. */
+    @Test void aHarnessWithAModelIs400() {
+        RepositoryInput harnessWithModel = repositoryReviewingOn(new ReviewHarness("codex", "TEST-model", null, "API_KEY"))
+                .withReviewLlm(null, "TEST-repository-stray-model");
+        given().contentType("application/json").body(harnessWithModel).post("/api/repositories")
+                .then().statusCode(400).body(containsString("harness"));
+    }
+
+    /** normalize rebuilds the input component by component; the model must survive it, stripped. */
+    @Test void normalizeKeepsTheModel() {
+        UUID provider = UUID.randomUUID();
+        RepositoryInput normalized = repositories.normalize(repositoryReviewingWith(null).withReviewLlm(provider, " TEST-m "));
+        assertEquals(provider, normalized.reviewLlmProviderId());
+        assertEquals("TEST-m", normalized.reviewLlmModel());
+    }
+
     @Test void aReviewLlmProviderThatDoesNotExistIsBadRequest() {
         UUID missing = UUID.randomUUID();
         given().contentType("application/json").body(repositoryReviewingWith(missing)).post("/api/repositories")
@@ -245,6 +304,9 @@ class RepositoryResourceTest extends RepositoryFixture {
     @Inject LlmModelRegistry llmModels;
     final java.util.Set<UUID> createdLlmProviders = new java.util.HashSet<>();
 
+    final java.util.Map<UUID, String> modelOf = new java.util.HashMap<>();
+
+    /** An openai provider and a priced openai model chosen with it. */
     UUID llmProvider(String name) {
         String model = "TEST-repository-model-" + UUID.randomUUID();
         llmModels.create(new LlmModelInput("openai", model, model, "UNMETERED", java.util.Map.of(),
@@ -252,16 +314,19 @@ class RepositoryResourceTest extends RepositoryFixture {
         UUID id = UUID.fromString(llmProviders.create(new LlmProviderInput("TEST-" + name, "openai",
                 "https://llm.example.invalid", "TEST-key", null, null, true, false, null)).id());
         createdLlmProviders.add(id);
+        modelOf.put(id, model);
         return id;
     }
 
+    /** The provider with its own model, or neither (the global default); an unknown provider has no model. */
     RepositoryInput repositoryReviewingWith(UUID provider) {
-        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, provider);
+        return new RepositoryInput("gitlab", origin, workspace, "TEST-repo", true, null, null, null, provider)
+                .withReviewLlm(provider, provider == null ? null : modelOf.getOrDefault(provider, "TEST-repository-unknown"));
     }
 
     /** Runs before the fixture removes the repository, so the provider is unnamed first; a named one cannot go. */
     @AfterEach void removeLlmProviders() throws Exception {
-        execute("UPDATE repository SET review_llm_provider_id=NULL WHERE workspace=?", workspace);
+        execute("UPDATE repository SET review_llm_provider_id=NULL, review_llm_model=NULL WHERE workspace=?", workspace);
         for (UUID id : createdLlmProviders) execute("DELETE FROM llm_provider WHERE id=?", id);
     }
 }

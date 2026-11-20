@@ -7,6 +7,8 @@ import java.util.UUID;
  *
  * @param reviewLlmProviderId the LLM provider this repository's reviews and replies use; null means the
  *                            global default
+ * @param reviewLlmModel      the model this repository's reviews use with {@code reviewLlmProviderId}; both null (the
+ *                            global default) or both set
  * @param reviewHarness       the harness this repository's reviews run on (harness reviews, step 5); null means
  *                            the API, on {@code reviewLlmProviderId} or the global default
  * @param blockApprovalAt     "Block approval at" (V115) as sent: {@code BLOCKER}, {@code MAJOR} or {@code MINOR};
@@ -16,8 +18,26 @@ import java.util.UUID;
  */
 public record RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
                               Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
-                              Boolean reviewerMayApprove, UUID reviewLlmProviderId, ReviewHarness reviewHarness,
-                              String blockApprovalAt) {
+                              Boolean reviewerMayApprove, UUID reviewLlmProviderId, String reviewLlmModel,
+                              ReviewHarness reviewHarness, String blockApprovalAt) {
+    /** Call sites from before the review model moved off the provider; null means no model of their own. */
+    public RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
+                           Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
+                           Boolean reviewerMayApprove, UUID reviewLlmProviderId, ReviewHarness reviewHarness,
+                           String blockApprovalAt) {
+        this(scmType, forgeOrigin, workspace, slug, enabled, reviewerAccountId, factoryAccountId,
+                reviewerMayApprove, reviewLlmProviderId, null, reviewHarness, blockApprovalAt);
+    }
+
+    /**
+     * This input with another API choice, every other component carried over. The one place besides the canonical
+     * constructor that lists every component, so a component added later is not dropped by a rebuild.
+     */
+    public RepositoryInput withReviewLlm(UUID providerId, String model) {
+        return new RepositoryInput(scmType, forgeOrigin, workspace, slug, enabled, reviewerAccountId, factoryAccountId,
+                reviewerMayApprove, providerId, model, reviewHarness, blockApprovalAt);
+    }
+
     /** Call sites from before "Block approval at" existed; null means {@code BLOCKER}. */
     public RepositoryInput(String scmType, String forgeOrigin, String workspace, String slug,
                            Boolean enabled, UUID reviewerAccountId, UUID factoryAccountId,
