@@ -14,11 +14,15 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The fetcher against a JDK HttpServer on loopback. Plain HTTP on purpose: the https rule lives in
@@ -30,6 +34,7 @@ class CatalogFetcherTest {
     private static final String BODY = "providers: []\nmodels: []\n";
 
     private HttpServer server;
+    private final CountDownLatch released = new CountDownLatch(1);
     private final AtomicReference<String> seenIfNoneMatch = new AtomicReference<>();
     private final CatalogFetcher fetcher = new CatalogFetcher(CatalogFetcher.clientBuilder().build());
 
@@ -52,11 +57,26 @@ class CatalogFetcherTest {
                 respond(exchange, 200, new byte[CatalogLimits.MAX_BYTES + 1], null));
         server.createContext("/broken", exchange ->
                 respond(exchange, 500, "SECRET-BODY".getBytes(StandardCharsets.UTF_8), null));
+        server.createContext("/stall", exchange -> {
+            // Headers and a first chunk, then nothing: the body never ends until the test is over.
+            exchange.sendResponseHeaders(200, 1000);
+            OutputStream out = exchange.getResponseBody();
+            out.write("providers: []
+".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            try {
+                released.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
         server.start();
     }
 
     @AfterEach
     void stopServer() {
+        released.countDown();
         server.stop(0);
     }
 
@@ -87,6 +107,19 @@ class CatalogFetcherTest {
         CatalogFetcher.Failed failed = assertInstanceOf(CatalogFetcher.Failed.class, fetcher.fetch(at("/moved"), null));
 
         assertEquals("http_302", failed.reason());
+    }
+
+    /** HttpRequest.timeout ends at the headers; the fetcher's deadline covers the body as well. */
+    @Test
+    void aBodyThatStallsAfterTheHeadersFailsAtTheDeadline() {
+        CatalogFetcher quick = new CatalogFetcher(CatalogFetcher.clientBuilder().build(), Duration.ofMillis(300));
+        long started = System.nanoTime();
+
+        CatalogFetcher.Failed failed = assertInstanceOf(CatalogFetcher.Failed.class, quick.fetch(at("/stall"), null));
+
+        assertEquals("TimeoutException", failed.reason());
+        assertTrue(Duration.ofNanos(System.nanoTime() - started).compareTo(Duration.ofSeconds(5)) < 0,
+                "the read waited past its deadline");
     }
 
     @Test
