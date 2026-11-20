@@ -1,0 +1,14 @@
+# The public LLM model catalog, format v1. Read ai-catalog/README.md before changing it.
+# Every price is entered by hand from the vendor's own page, with pricing.sourceUrl and
+# pricing.observedAt. A model is never removed: set lifecycle.status to RETIRED.
+providers:
+  - code: openai
+    displayName: OpenAI
+    pricingUrl: null
+  - code: anthropic
+    displayName: Anthropic
+    pricingUrl: null
+  - code: gemini
+    displayName: Google Gemini
+    pricingUrl: null
+models: []

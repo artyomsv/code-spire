@@ -27,3 +27,16 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+// CI's catalog check: `--args="<head> [<base>]"`, paths relative to the repository root. The same
+// parser and validator the orchestrator uses, run strictly, plus the change rules against master.
+tasks.register<JavaExec>("checkCatalog") {
+    group = "verification"
+    description = "Validates ai-catalog/v1/catalog.yaml strictly and against a base copy."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "dev.codespire.llmcatalog.CheckCatalogMain"
+    workingDir = rootProject.projectDir
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
