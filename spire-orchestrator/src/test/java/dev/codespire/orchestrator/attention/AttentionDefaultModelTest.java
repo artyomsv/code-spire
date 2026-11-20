@@ -48,7 +48,7 @@ class AttentionDefaultModelTest {
     @Test
     void aDefaultProviderWithNoDefaultModelIsReportedAsBlocking() {
         catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
         sql("DELETE FROM app_setting WHERE key = 'llm.default-model'");
 
         AttentionView row = queries.collect().stream()
@@ -63,7 +63,7 @@ class AttentionDefaultModelTest {
     @Test
     void aDefaultModelOfAnotherVendorIsAWarningNamingTheDefault() {
         catalogueMeteredModelWithRates();
-        insertLlmProvider("TEST-llm", "anthropic", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm").ofType("anthropic"));
 
         AttentionView row = queries.collect().stream()
                 .filter(v -> "LLM_MODEL_NOT_FOR_PROVIDER".equals(v.code()))
@@ -78,7 +78,7 @@ class AttentionDefaultModelTest {
     void aSwitchedOffDefaultModelIsAWarningNamingTheDefault() {
         catalogueMeteredModelWithRates();
         sql("UPDATE llm_model SET enabled = FALSE WHERE name = '" + MODEL + "'");
-        insertLlmProvider("TEST-llm", true, true);
+        insertLlmProvider(TestLlmProvider.enabledDefault("TEST-llm"));
 
         AttentionView row = queries.collect().stream()
                 .filter(v -> "LLM_MODEL_SWITCHED_OFF".equals(v.code()))
@@ -100,19 +100,9 @@ class AttentionDefaultModelTest {
         }
     }
 
-    private void insertLlmProvider(String name, boolean enabled, boolean isDefault) {
-        insertLlmProvider(name, "openai", enabled, isDefault);
-    }
-
-    /** A default provider gets {@link #MODEL} as the default review model, as the dashboard writes them together. */
-    private void insertLlmProvider(String name, String type, boolean enabled, boolean isDefault) {
-        sql("INSERT INTO llm_provider (id, name, type, base_url, api_key, temperature, enabled, is_default) "
-                + "VALUES ('" + UUID.randomUUID() + "', '" + name + "', '" + type + "', "
-                + "'https://llm.example.invalid', 'TEST-KEY', 0.0, " + enabled + ", " + isDefault + ")");
-        if (isDefault) {
-            sql("INSERT INTO app_setting (key, value) VALUES ('llm.default-model', '" + MODEL + "')"
-                    + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
-        }
+    /** Writes the row; a default provider gets {@link #MODEL} as the default review model. */
+    private void insertLlmProvider(TestLlmProvider provider) {
+        provider.statements(MODEL).forEach(this::sql);
     }
 
     /** {@link #MODEL}, METERED with input and output rates of 1: obviously synthetic, not any vendor's price. */
