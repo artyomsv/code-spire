@@ -176,6 +176,8 @@ class LlmModelNotBilledRatesTest {
         assertThrows(LlmModelRegistry.CatalogueUnavailable.class, () -> broken.isDisabled("TEST-any-model"));
         // The discriminating name: the catalog has it enabled, so a fall-through would answer "not off".
         assertThrows(LlmModelRegistry.CatalogueUnavailable.class, () -> broken.isDisabled("TEST-cat-o"));
+        // The build-setup save asks this one: a fault must refuse, never read as "known".
+        assertThrows(LlmModelRegistry.CatalogueUnavailable.class, () -> broken.isKnownAndEnabled("TEST-cat-o"));
     }
 
     /** A model the catalogue does not have cannot be priced for any harness, and says every type. */

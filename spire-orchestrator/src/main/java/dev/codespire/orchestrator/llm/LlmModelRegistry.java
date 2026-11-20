@@ -206,6 +206,20 @@ public class LlmModelRegistry {
         }
     }
 
+    /**
+     * Whether this name resolves (manual first, then the catalog, by model id or alias) to an enabled model.
+     * A read fault is {@link CatalogueUnavailable}, never an answer.
+     */
+    public boolean isKnownAndEnabled(String model) {
+        if (model == null || model.isBlank()) return false;
+        try {
+            return catalog.resolve(model).map(ResolvedModel::enabled).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed failure) {
+            LOG.warnf(failure, "Could not read whether model %s is known", model);
+            throw new CatalogueUnavailable();
+        }
+    }
+
     /** The catalogue could not be read, so whether this model may run is unknown — never assumed. */
     public static final class CatalogueUnavailable extends RuntimeException {
         CatalogueUnavailable() { super("catalogue_unavailable"); }
