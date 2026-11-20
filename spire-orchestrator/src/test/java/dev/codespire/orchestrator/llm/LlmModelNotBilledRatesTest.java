@@ -172,22 +172,10 @@ class LlmModelNotBilledRatesTest {
     @Test
     void aCatalogueThatCannotBeReadRefusesRatherThanGuessing() {
         LlmModelRegistry broken = new LlmModelRegistry();
-        broken.dataSource = new javax.sql.DataSource() {
-            @Override public java.sql.Connection getConnection() throws java.sql.SQLException {
-                throw new java.sql.SQLException("TEST-catalogue-unreadable");
-            }
-            @Override public java.sql.Connection getConnection(String user, String password) throws java.sql.SQLException {
-                throw new java.sql.SQLException("TEST-catalogue-unreadable");
-            }
-            @Override public java.io.PrintWriter getLogWriter() { return null; }
-            @Override public void setLogWriter(java.io.PrintWriter out) {}
-            @Override public void setLoginTimeout(int seconds) {}
-            @Override public int getLoginTimeout() { return 0; }
-            @Override public java.util.logging.Logger getParentLogger() { return java.util.logging.Logger.getGlobal(); }
-            @Override public <T> T unwrap(Class<T> type) { return null; }
-            @Override public boolean isWrapperFor(Class<?> type) { return false; }
-        };
+        broken.catalog = dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.failingCatalog();
         assertThrows(LlmModelRegistry.CatalogueUnavailable.class, () -> broken.isDisabled("TEST-any-model"));
+        // The discriminating name: the catalog has it enabled, so a fall-through would answer "not off".
+        assertThrows(LlmModelRegistry.CatalogueUnavailable.class, () -> broken.isDisabled("TEST-cat-o"));
     }
 
     /** A model the catalogue does not have cannot be priced for any harness, and says every type. */

@@ -15,8 +15,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-/** Hand-built collaborators for the resolver: no database, no CDI. Synthetic TEST- data only. */
-final class CatalogTestDoubles {
+/**
+ * Hand-built collaborators for the resolver: no database, no CDI. Synthetic TEST- data only. Public so a
+ * hand-built pricer, registry or projection elsewhere can be wired with a catalog (CLAUDE.md: a fake
+ * with an unwired collaborator opens a real database, or throws, from a plain unit test).
+ */
+public final class CatalogTestDoubles {
 
     static final String TEST_CATALOG = "llm-catalog-test/catalog.yaml";
 
@@ -32,18 +36,18 @@ final class CatalogTestDoubles {
     }
 
     /** A manual model with rates 5 and 6, so it can never be mistaken for a catalog answer (1 and 2). */
-    static ResolvedModel manual(String name, String type, boolean enabled) {
+    public static ResolvedModel manual(String name, String type, boolean enabled) {
         return new ResolvedModel(name, type, "TEST manual " + name, ModelSource.MANUAL, PricingMode.METERED,
                 Map.of(TokenType.INPUT, ModelRate.rated(5), TokenType.OUTPUT, ModelRate.rated(6)), enabled,
                 ModelParamProfile.legacyDefault(), null);
     }
 
     /** Manual models held in a list; {@code failing} makes every read throw, as a lost database would. */
-    static final class FakeManualModels implements ManualModels {
+    public static final class FakeManualModels implements ManualModels {
         final List<ResolvedModel> models = new ArrayList<>();
         boolean failing;
 
-        FakeManualModels with(ResolvedModel model) {
+        public FakeManualModels with(ResolvedModel model) {
             models.add(model);
             return this;
         }
@@ -113,5 +117,22 @@ final class CatalogTestDoubles {
 
     static LlmModelCatalog catalog(FakeManualModels manual, FakeStates states, String url) {
         return new LlmModelCatalog(manual, states, testBundle(), url);
+    }
+
+    /** The TEST- catalog alone (url none), with these manual models. */
+    public static LlmModelCatalog testCatalog(FakeManualModels manual) {
+        return catalog(manual, new FakeStates(), "none");
+    }
+
+    /** The TEST- catalog with no manual models. */
+    public static LlmModelCatalog testCatalog() {
+        return testCatalog(new FakeManualModels());
+    }
+
+    /** The TEST- catalog over manual tables that cannot be read: every manual read throws. */
+    public static LlmModelCatalog failingCatalog() {
+        FakeManualModels failing = new FakeManualModels();
+        failing.failing = true;
+        return testCatalog(failing);
     }
 }

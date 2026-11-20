@@ -116,6 +116,11 @@ public class LlmModelCatalog {
         return List.copyOf(models);
     }
 
+    /** A catalog entry as the answer the resolver gives when nothing shadows it. */
+    public static ResolvedModel asResolved(CatalogModel entry) {
+        return CatalogEntries.resolved(entry);
+    }
+
     /** Every catalog entry, each marked when a manual model shadows it. */
     public List<CatalogRow> catalogRows() {
         Set<String> manualNames;

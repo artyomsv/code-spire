@@ -116,7 +116,7 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
       enabled: initial?.enabled ?? true,
     };
     try {
-      if (editing && initial) {
+      if (editing && initial?.id) {
         await updateLlmModel(initial.id, input);
       } else {
         await createLlmModel(input);

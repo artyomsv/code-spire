@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.llmcatalog.CatalogLimits;
 import dev.codespire.contract.review.TokenType;
 
 import java.util.EnumMap;
@@ -32,7 +33,7 @@ final class LlmModelPricingValidator {
      * tokens cannot overflow it (2.1e9 × 1e9 = 2.1e18, against a ceiling of 9.2e18), which means the
      * bound holds without knowing anything about the call it will price.
      */
-    static final long MAX_RATE_MILLICENTS_PER_MILLION = 1_000_000_000L;
+    static final long MAX_RATE_MILLICENTS_PER_MILLION = CatalogLimits.MAX_RATE_MILLICENTS_PER_MILLION;
 
     private LlmModelPricingValidator() {
     }

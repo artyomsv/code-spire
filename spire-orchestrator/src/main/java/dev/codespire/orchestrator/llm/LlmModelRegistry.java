@@ -6,6 +6,9 @@ import dev.codespire.contract.llm.ModelParamProfile;
 import dev.codespire.contract.llm.ModelParamProfile.OutputTokenParam;
 import dev.codespire.contract.review.ModelUsage;
 import dev.codespire.contract.review.TokenType;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
+import dev.codespire.orchestrator.llm.catalog.ModelSource;
+import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -17,6 +20,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +50,13 @@ public class LlmModelRegistry {
     @Inject
     LlmModelPricer pricer;
 
+    @Inject
+    LlmModelCatalog catalog;
+
+    /**
+     * The effective list: every manual model, plus every catalog model no manual model shadows, one row
+     * per name, by type then name. Pickers and the build-setup guard read this and never see a name twice.
+     */
     public List<LlmModelView> list() {
         List<LlmModelView> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
@@ -54,10 +65,12 @@ public class LlmModelRegistry {
             while (rs.next()) {
                 out.add(toView(c, rs));
             }
-            return out;
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list LLM models", e);
         }
+        out.addAll(CatalogModelViews.unshadowed(catalog.snapshot(), out));
+        out.sort(Comparator.comparing(LlmModelView::type).thenComparing(LlmModelView::name));
+        return out;
     }
 
     public Optional<LlmModelView> get(UUID id) {
@@ -147,7 +160,10 @@ public class LlmModelRegistry {
             // Without this, the save-time guard that a provider's model must be catalogued is
             // defeated after the fact: deleting the entry leaves the provider pointing at nothing
             // and every call it makes unpriceable.
-            int users = countProvidersUsing(c, name);
+            // "Use catalog": a manual model that shadows an enabled, priced catalog entry may go while in
+            // use, because its name still resolves (to the catalog entry) after the delete.
+            int users = CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), name)
+                    ? 0 : countProvidersUsing(c, name);
             if (users > 0) {
                 throw new ModelInUseException("Model '" + name + "' is in use by " + users
                         + " LLM provider(s). Point them at another model first.");
@@ -176,16 +192,12 @@ public class LlmModelRegistry {
      */
     public boolean isDisabled(String model) {
         if (model == null || model.isBlank()) return false;
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement("SELECT enabled FROM llm_model WHERE name = ?")) {
-            ps.setString(1, model);
-            try (ResultSet rs = ps.executeQuery()) {
-                // A model the catalogue does not have is NOT "disabled": it has no rates either, and the
-                // pricing guard already refuses it with the types it cannot price. Answering true here
-                // would replace that precise refusal with a switched-off message for a typo.
-                return rs.next() && !rs.getBoolean("enabled");
-            }
-        } catch (SQLException failure) {
+        try {
+            // A model nobody has is NOT "disabled": it has no rates either, and the pricing guard already
+            // refuses it with the types it cannot price. Answering true here would replace that precise
+            // refusal with a switched-off message for a typo. A RETIRED catalog model is disabled.
+            return catalog.resolve(model).map(resolved -> !resolved.enabled()).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed failure) {
             // NOT false. Answering "not switched off" on a failed read is failing open: pricing ignores
             // the enabled column on purpose, so a fully priced model an operator had switched off would
             // start a run on any database hiccup. The caller refuses with a reason that says what happened.
@@ -213,22 +225,9 @@ public class LlmModelRegistry {
         if (name == null || name.isBlank()) {
             return Optional.empty();
         }
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(
-                     "SELECT output_token_param, supports_temperature, reasoning_effort, extra_params "
-                             + "FROM llm_model WHERE name = ?")) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                return Optional.of(new ModelParamProfile(
-                        parseTokenParam(rs.getString("output_token_param")),
-                        rs.getBoolean("supports_temperature"),
-                        rs.getString("reasoning_effort"),
-                        readExtra(rs.getString("extra_params"))));
-            }
-        } catch (SQLException e) {
+        try {
+            return catalog.resolve(name).map(ResolvedModel::profile);
+        } catch (LlmModelCatalog.CatalogueReadFailed e) {
             LOG.warnf(e, "profile lookup failed for model %s", name);
             return Optional.empty();
         }
@@ -287,7 +286,8 @@ public class LlmModelRegistry {
                 rs.getBoolean("supports_temperature"),
                 rs.getString("reasoning_effort"),
                 readExtra(rs.getString("extra_params")),
-                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled));
+                rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(), List.copyOf(notBilled),
+                ModelSource.MANUAL.name());
     }
 
     /** Normalize an operator-supplied token-param name to a valid enum name (default MAX_TOKENS). */

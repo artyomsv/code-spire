@@ -1,98 +1,71 @@
 package dev.codespire.orchestrator.llm;
 
 import dev.codespire.contract.review.ModelUsage;
+import dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles;
 import org.junit.jupiter.api.Test;
 
-import javax.sql.DataSource;
-import java.io.PrintWriter;
-import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
-import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link LlmModelPricer}'s catalog lookup can fail below the "model not catalogued" case: a database
- * fault mid-query. {@link LlmModelRegistryPricingTest} never exercises that branch — every case there
- * is either a query that finds nothing or one that succeeds — so this test wires the pricer to a
- * {@link DataSource} that cannot yield a connection at all and asserts the SAME UNKNOWN outcome, never
- * a coerced zero or a stray UNMETERED. Collaborators are field-injected, so the fake is set directly.
+ * {@link LlmModelPricer}'s lookup can fail below the "model not catalogued" case: a database fault while
+ * reading the manual models. This wires a real pricer to a hand-built resolver whose manual reads throw
+ * and asserts the SAME UNKNOWN outcome, never a coerced zero, a stray UNMETERED, or the catalog's rate
+ * for a name a manual model might be shadowing. Collaborators are field-injected, so the fake is set
+ * directly.
  */
 class LlmModelPricerFailureTest {
 
-    private static LlmModelPricer pricerOverA(DataSource brokenDataSource) {
+    private static LlmModelPricer pricerOverAFailingCatalog() {
         LlmModelPricer pricer = new LlmModelPricer();
-        pricer.dataSource = brokenDataSource;
-        pricer.rateRepository = new LlmModelRateRepository();
+        pricer.catalog = CatalogTestDoubles.failingCatalog();
         return pricer;
+    }
+
+    private static void assertAllUnknown(List<ChargeLine> lines) {
+        assertFalse(lines.isEmpty());
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNKNOWN), lines.toString());
+        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null), lines.toString());
     }
 
     @Test
     void aDatabaseFaultDuringPricingLookupIsUnknownNeverZero() {
-        LlmModelPricer pricer = pricerOverA(unreachableDataSource());
+        LlmModelPricer pricer = pricerOverAFailingCatalog();
 
-        List<ChargeLine> lines = pricer.priceCall("TEST-ANY-MODEL",
-                ModelUsage.of("TEST-ANY-MODEL", 1_000, 500));
-
-        assertFalse(lines.isEmpty());
-        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.UNKNOWN));
-        assertTrue(lines.stream().allMatch(l -> l.costMillicents() == null));
+        assertAllUnknown(pricer.priceCall("TEST-ANY-MODEL", ModelUsage.of("TEST-ANY-MODEL", 1_000, 500)));
     }
 
     @Test
     void aDatabaseFaultDuringPricingLookupMakesAModelUnpriceable() {
-        LlmModelPricer pricer = pricerOverA(unreachableDataSource());
+        LlmModelPricer pricer = pricerOverAFailingCatalog();
 
         assertFalse(pricer.isPriceable("TEST-ANY-MODEL"));
     }
 
-    /** getConnection() always fails — the same shape a fully exhausted or closed pool presents. */
-    private static DataSource unreachableDataSource() {
-        return new DataSource() {
-            @Override
-            public Connection getConnection() throws SQLException {
-                throw new SQLException("TEST: connection pool unreachable");
-            }
+    /**
+     * The name the catalog prices (TEST-cat-o, rates 1 and 2) is the discriminating case: a pricer or
+     * a resolver that fell through to the catalog on a fault would price these lines.
+     */
+    @Test
+    void aPricingReadFaultIsUnknownNotTheCatalogRate() {
+        LlmModelPricer pricer = pricerOverAFailingCatalog();
 
-            @Override
-            public Connection getConnection(String username, String password) throws SQLException {
-                throw new SQLException("TEST: connection pool unreachable");
-            }
+        assertAllUnknown(pricer.priceCall("TEST-cat-o", ModelUsage.of("TEST-cat-o", 1_000_000, 1_000_000)));
+        assertFalse(pricer.isPriceable("TEST-cat-o"));
+        assertFalse(pricer.isPriceable("TEST-cat-o", "codex"));
+    }
 
-            @Override
-            public PrintWriter getLogWriter() {
-                return null;
-            }
+    @Test
+    void withoutAFaultTheSameNameIsPricedFromTheCatalog() {
+        LlmModelPricer pricer = new LlmModelPricer();
+        pricer.catalog = CatalogTestDoubles.testCatalog();
 
-            @Override
-            public void setLogWriter(PrintWriter out) {
-            }
+        List<ChargeLine> lines = pricer.priceCall("TEST-cat-o", ModelUsage.of("TEST-cat-o", 1_000_000, 1_000_000));
 
-            @Override
-            public void setLoginTimeout(int seconds) {
-            }
-
-            @Override
-            public int getLoginTimeout() {
-                return 0;
-            }
-
-            @Override
-            public Logger getParentLogger() {
-                return Logger.getGlobal();
-            }
-
-            @Override
-            public <T> T unwrap(Class<T> iface) {
-                return null;
-            }
-
-            @Override
-            public boolean isWrapperFor(Class<?> iface) {
-                return false;
-            }
-        };
+        assertTrue(lines.stream().allMatch(l -> l.mode() == PricingMode.METERED), lines.toString());
+        assertTrue(lines.stream().anyMatch(l -> Long.valueOf(1).equals(l.costMillicents())), lines.toString());
+        assertTrue(lines.stream().anyMatch(l -> Long.valueOf(2).equals(l.costMillicents())), lines.toString());
     }
 }

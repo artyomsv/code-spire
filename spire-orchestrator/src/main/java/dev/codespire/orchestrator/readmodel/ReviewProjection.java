@@ -17,6 +17,7 @@ import dev.codespire.orchestrator.attention.AttentionBroadcaster;
 import dev.codespire.orchestrator.llm.ChargeCall;
 import dev.codespire.orchestrator.llm.ChargeSubject;
 import dev.codespire.orchestrator.llm.ChargeLine;
+import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
 import dev.codespire.orchestrator.repository.BlockApprovalAt;
 import io.quarkus.websockets.next.OpenConnections;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -85,6 +86,10 @@ public class ReviewProjection {
     /** No cycle: the broadcaster reads conditions through its own queries, never through here. */
     @Inject
     AttentionBroadcaster attention;
+
+    /** The vendor badge of a review's model: manual models first, then the public catalog. */
+    @Inject
+    LlmModelCatalog catalog;
 
     public Optional<java.util.UUID> repositoryIdOf(String reviewId) {
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(
@@ -1616,20 +1621,16 @@ public class ReviewProjection {
         //
         // All four ledger subqueries exclude purged charges, not just the cost SUM: filtering one of
         // them would leave a dead review's model name and unpriced-call count leaking into the row of
-        // the PR that later reuses its review_id. The llm_type subquery is the one to watch — the
-        // filter belongs on its INNER llm_charge lookup, since the outer query reads llm_model, which
-        // has no archived_at at all.
+        // the PR that later reuses its review_id.
+        //
+        // The vendor badge (llm_type) is not a subquery: a model may come from the catalog, which has
+        // no table. It is resolved in Java once per distinct model, after the result set is closed.
         String sql = """
                 SELECT rs.*,
                        (SELECT model FROM llm_charge c
                          WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
                            AND c.archived_at IS NULL
                          ORDER BY c.priced_at DESC LIMIT 1)                                      AS model,
-                       (SELECT m.type FROM llm_model m
-                         WHERE m.name = (SELECT model FROM llm_charge c
-                                          WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
-                                            AND c.archived_at IS NULL
-                                          ORDER BY c.priced_at DESC LIMIT 1) LIMIT 1)            AS llm_type,
                        COALESCE((SELECT SUM(c.cost_millicents) FROM llm_charge c
                                   WHERE c.subject_kind = 'REVIEW' AND c.subject_id = rs.review_id
                                     AND c.archived_at IS NULL), 0)
@@ -1642,19 +1643,30 @@ public class ReviewProjection {
                  WHERE (? OR rs.archived_at IS NULL)
                  ORDER BY rs.updated_at DESC
                 """;
-        List<ReviewSummary> out = new ArrayList<>();
+        List<UntypedSummary> rows = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setBoolean(1, includeArchived);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    out.add(toSummary(rs));
+                    rows.add(untypedSummary(rs));
                 }
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to list reviews", e);
         }
+        Map<String, String> types = new HashMap<>();
+        List<ReviewSummary> out = new ArrayList<>();
+        for (UntypedSummary row : rows) {
+            String model = row.ledger().model();
+            String type = model == null ? null : types.computeIfAbsent(model, this::llmTypeFor);
+            out.add(row.row().toSummary(row.ledger().withLlmType(type), openCounts(row.row())));
+        }
         return out;
+    }
+
+    /** A list row read before its vendor badge is resolved. */
+    private record UntypedSummary(ReviewRow row, LedgerSummary ledger) {
     }
 
     /**
@@ -2080,7 +2092,7 @@ public class ReviewProjection {
             // Same ledger-derived figures as listSummaries' join, computed separately here since this
             // path loads one row outside that query (plain SELECT * FROM review_status).
             String model = latestModelFor(c, reviewId);
-            LedgerSummary ledger = new LedgerSummary(model, llmTypeFor(c, model),
+            LedgerSummary ledger = new LedgerSummary(model, llmTypeFor(model),
                     cumulativeCost(c, reviewId), unpricedCallsFor(c, reviewId));
             summary = row.toSummary(ledger, openCounts(row));
         } catch (SQLException e) {
@@ -2127,6 +2139,9 @@ public class ReviewProjection {
      *                      spend" apart from "some calls have no known price yet"
      */
     private record LedgerSummary(String model, String llmType, long totalCostMillicents, int unpricedCalls) {
+        LedgerSummary withLlmType(String type) {
+            return new LedgerSummary(model, type, totalCostMillicents, unpricedCalls);
+        }
     }
 
     private record ReviewRow(String id, String workspace, String slug, long pr, String title, String author,
@@ -2172,11 +2187,10 @@ public class ReviewProjection {
         }
     }
 
-    private ReviewSummary toSummary(ResultSet rs) throws SQLException {
-        ReviewRow row = readRow(rs);
-        LedgerSummary ledger = new LedgerSummary(rs.getString("model"), rs.getString("llm_type"),
+    private UntypedSummary untypedSummary(ResultSet rs) throws SQLException {
+        LedgerSummary ledger = new LedgerSummary(rs.getString("model"), null,
                 rs.getLong("total_cost_millicents"), rs.getInt("unpriced_calls"));
-        return row.toSummary(ledger, openCounts(row));
+        return new UntypedSummary(readRow(rs), ledger);
     }
 
     /** Count of blocker-severity (critical) findings on a row — drives the detail page's
@@ -2333,16 +2347,20 @@ public class ReviewProjection {
         }
     }
 
-    /** The LLM vendor for a model name, from the catalog; null when uncatalogued or no model yet. */
-    private String llmTypeFor(Connection c, String model) throws SQLException {
+    /**
+     * The LLM vendor for a model name, manual first, then the catalog; null when nobody has the model,
+     * when there is no model yet, or when the manual tables cannot be read — a badge is not worth
+     * failing the reviews list over.
+     */
+    private String llmTypeFor(String model) {
         if (model == null || model.isBlank()) {
             return null;
         }
-        try (PreparedStatement ps = c.prepareStatement("SELECT type FROM llm_model WHERE name = ? LIMIT 1")) {
-            ps.setString(1, model);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString(1) : null;
-            }
+        try {
+            return catalog.resolve(model).map(resolved -> resolved.type()).orElse(null);
+        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
+            LOG.debugf("vendor badge unknown for model %s: the model tables could not be read", model);
+            return null;
         }
     }
 

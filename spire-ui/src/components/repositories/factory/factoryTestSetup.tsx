@@ -32,8 +32,8 @@ export function stubFactoryApis() {
   vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
     // Complete for codex: priced where this fake vendor bills, asserted where it does not.
     { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
     { id: 'TEST-unpriced-id', type: 'openai', name: 'TEST-unpriced', label: 'TEST unpriced', pricingMode: 'METERED', rates: { INPUT: 100 },
-      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', notBilled: [] },
+      outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL', notBilled: [] },
   ]);
 }

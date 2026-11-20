@@ -277,7 +277,7 @@ export default function SettingsLlmProviders() {
               {byExpenseDesc(models).map((m) => {
                 const rates = ratesSummary(m);
                 return (
-                  <tr key={m.id}>
+                  <tr key={m.name}>
                     <td>
                       {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
                       {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
@@ -285,16 +285,14 @@ export default function SettingsLlmProviders() {
                     <td className="mono">{m.type}</td>
                     <td className={`mono${rates.warn ? ' rate-unset' : ''}`}>{rates.text}</td>
                     <td>
-                      <div className="prov-actions">
-                        <IconButton kind="edit" onClick={() => setModelForm(m)} title="Edit" aria-label="Edit" disabled={!current} />
-                        <IconButton
-                          kind="delete"
+                      {/* A catalog model has no id: it changes only through a catalog update. */}
+                      {m.id !== null && (
+                        <ModelActions
                           disabled={!current}
-                          onClick={() => setConfirmDelete({ kind: 'model', id: m.id, name: m.label })}
-                          title="Delete"
-                          aria-label="Delete"
+                          onEdit={() => setModelForm(m)}
+                          onDelete={() => setConfirmDelete({ kind: 'model', id: m.id as string, name: m.label })}
                         />
-                      </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -351,6 +349,15 @@ export default function SettingsLlmProviders() {
         </div>
       )}
     </section>
+  );
+}
+
+function ModelActions({ disabled, onEdit, onDelete }: { disabled: boolean; onEdit: () => void; onDelete: () => void }) {
+  return (
+    <div className="prov-actions">
+      <IconButton kind="edit" onClick={onEdit} title="Edit" aria-label="Edit" disabled={disabled} />
+      <IconButton kind="delete" disabled={disabled} onClick={onDelete} title="Delete" aria-label="Delete" />
+    </div>
   );
 }
 

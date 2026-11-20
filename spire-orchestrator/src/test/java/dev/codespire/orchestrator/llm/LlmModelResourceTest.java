@@ -43,7 +43,8 @@ class LlmModelResourceTest {
         // creating a model and its provider — would otherwise make this method throw, and whether it
         // throws would depend on which class or test ran first: a green suite that depends on order.
         providers.list().forEach(p -> providers.delete(UUID.fromString(p.id())));
-        registry.list().forEach(m -> registry.delete(UUID.fromString(m.id())));
+        // Catalog rows have no id and are not deletable; only manual rows are this class's to clean.
+        registry.list().stream().filter(m -> m.id() != null).forEach(m -> registry.delete(UUID.fromString(m.id())));
     }
 
     private static Map<String, Object> gpt4o() {
@@ -57,7 +58,9 @@ class LlmModelResourceTest {
         given().contentType("application/json").body(gpt4o())
                 .when().post("/api/llm-models")
                 .then().statusCode(201).body("name", equalTo("gpt-4o"));
-        when().get("/api/llm-models").then().statusCode(200).body("[0].label", equalTo("GPT-4o"));
+        when().get("/api/llm-models").then().statusCode(200)
+                .body("find { it.name == 'gpt-4o' }.label", equalTo("GPT-4o"))
+                .body("find { it.name == 'gpt-4o' }.source", equalTo("MANUAL"));
     }
 
     @Test

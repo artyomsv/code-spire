@@ -418,7 +418,7 @@ describe('Review with a harness', () => {
     vi.spyOn(accounts, 'fetchLlmModels').mockResolvedValue([
       { id: 'TEST-model-id', type: 'openai', name: 'TEST-model', label: 'TEST model', pricingMode: 'METERED', rates: { INPUT: 100, OUTPUT: 200 },
         outputTokenParam: 'MAX_TOKENS', supportsTemperature: true, reasoningEffort: null, extraParams: {}, enabled: true,
-        createdAt: '2026-09-16T00:00:00Z', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
+        createdAt: '2026-09-16T00:00:00Z', source: 'MANUAL', notBilled: ['CACHED_INPUT', 'CACHE_WRITE', 'REASONING'] },
     ]);
   });
 

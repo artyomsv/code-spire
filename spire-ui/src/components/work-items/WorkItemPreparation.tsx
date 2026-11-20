@@ -114,7 +114,7 @@ export default function WorkItemPreparation({ item, changed }: { item: WorkItemD
         <option value="">{choices.models.length ? 'Select a model' : 'No model is enabled'}</option>
         {choices.models.map(model => {
           const missing = unpriced(model, form.harness, choices.reportedTypes);
-          return <option key={model.id} value={model.name} disabled={missing.length > 0}>
+          return <option key={model.name} value={model.name} disabled={missing.length > 0}>
             {model.label}{model.name === model.label ? '' : ` (${model.name})`}
             {missing.length > 0 ? ` — no price for ${missingLabel(missing)}` : ''}</option>;
         })}

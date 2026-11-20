@@ -230,12 +230,41 @@ describe('SettingsLlmProviders — model form', () => {
         reasoningEffort: null,
         extraParams: {},
         enabled: true,
-        createdAt: '2026-08-06T00:00:00Z',
+        createdAt: '2026-08-06T00:00:00Z', source: 'MANUAL',
       },
     ]);
     renderPage();
 
     expect(await screen.findByText('Self-hosted')).toBeInTheDocument();
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+  });
+});
+
+describe('SettingsLlmProviders — catalog models', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([]);
+    vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
+  });
+
+  it('renders a catalog model with no id without a delete button', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
+      {
+        id: null, type: 'anthropic', name: 'TEST-cat-a', label: 'TEST catalog', pricingMode: 'METERED',
+        rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [], outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
+        reasoningEffort: null, extraParams: {}, enabled: true, createdAt: null, source: 'CATALOG',
+      },
+      {
+        id: 'TEST-manual-id', type: 'openai', name: 'TEST-manual', label: 'TEST manual', pricingMode: 'METERED',
+        rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [], outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
+        reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL',
+      },
+    ]);
+    renderPage();
+
+    const catalogRow = (await screen.findByText('TEST-cat-a')).closest('tr') as HTMLElement;
+    expect(within(catalogRow).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(within(catalogRow).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    const manualRow = screen.getByText('TEST-manual').closest('tr') as HTMLElement;
+    expect(within(manualRow).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
   });
 });

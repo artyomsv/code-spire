@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.factory;
 
+import dev.codespire.llmcatalog.Vendors;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -39,7 +40,7 @@ public class HarnessCredentialResource {
     private static final Logger LOG = Logger.getLogger(HarnessCredentialResource.class);
 
     /** The vendor types this deployment can speak to, as the LLM registry lists them. */
-    private static final java.util.Set<String> TYPES = java.util.Set.of("openai", "anthropic", "gemini");
+    private static final java.util.Set<String> TYPES = Vendors.TYPES;
 
     @Inject
     HarnessCredentialPool pool;

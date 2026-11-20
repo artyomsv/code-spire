@@ -1,5 +1,6 @@
 package dev.codespire.orchestrator.llm;
 
+import dev.codespire.llmcatalog.Vendors;
 import dev.codespire.orchestrator.security.PublicHttpsGuard;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -36,7 +37,7 @@ import java.util.UUID;
 public class LlmProviderResource {
 
     private static final Logger LOG = Logger.getLogger(LlmProviderResource.class);
-    private static final Set<String> TYPES = Set.of("openai", "anthropic", "gemini");
+    private static final Set<String> TYPES = Vendors.TYPES;
 
     @Inject
     LlmProviderRegistry registry;

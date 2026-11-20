@@ -1066,7 +1066,8 @@ export async function checkContextProvider(id: string): Promise<ContextProviderC
 export type OutputTokenParam = 'MAX_TOKENS' | 'MAX_COMPLETION_TOKENS' | 'NONE';
 
 export interface LlmModelView {
-  id: string;
+  /** Null for a catalog model: it has no row of its own and cannot be edited or deleted. */
+  id: string | null;
   type: LlmType;
   name: string; // wire model id, e.g. gpt-4o
   label: string;
@@ -1079,7 +1080,9 @@ export interface LlmModelView {
   reasoningEffort: string | null; // low | medium | high, or null
   extraParams: Record<string, unknown>; // free-form pass-through params
   enabled: boolean;
-  createdAt: string;
+  createdAt: string | null;
+  /** MANUAL: typed in Settings. CATALOG: from the public model catalog, read-only. */
+  source: 'MANUAL' | 'CATALOG';
 }
 
 export interface LlmModelInput {

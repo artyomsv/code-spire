@@ -11,7 +11,7 @@ function priced(name: string, notBilled: string[] = []): LlmModelView {
   return {
     id: `TEST-${name}`, type: 'openai', name, label: name, pricingMode: 'METERED',
     rates: { INPUT: 1, OUTPUT: 1 }, outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
-    reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', notBilled,
+    reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL', notBilled,
   } as unknown as LlmModelView;
 }
 
