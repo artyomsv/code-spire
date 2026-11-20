@@ -35,7 +35,8 @@ public class LlmCatalogRefresh {
     @Inject
     LlmCatalogStateRepository states;
 
-    CatalogFetcher fetcher = new CatalogFetcher(CatalogFetcher.clientBuilder().build());
+    /** Built on first use: an HttpClient starts a thread, which a CDI proxy or a unit test need not own. */
+    CatalogFetcher fetcher;
 
     /** Where the first refresh runs: off the startup thread, so a slow URL never delays boot. */
     Executor startup = task -> Thread.ofVirtual().name("llm-catalog-first-refresh").start(task);
@@ -85,11 +86,18 @@ public class LlmCatalogRefresh {
             state = storeBundledCopy();
         }
         String etag = url.equals(state.url()) ? state.etag() : null;
-        return switch (fetcher.fetch(URI.create(url), etag)) {
+        return switch (fetcher().fetch(URI.create(url), etag)) {
             case CatalogFetcher.NotModified ignored -> notModified(etag);
             case CatalogFetcher.Failed failed -> failed(failed.reason());
             case CatalogFetcher.Fetched fetched -> accept(fetched, state, url);
         };
+    }
+
+    private CatalogFetcher fetcher() {
+        if (fetcher == null) {
+            fetcher = new CatalogFetcher(CatalogFetcher.clientBuilder().build());
+        }
+        return fetcher;
     }
 
     private RefreshOutcome notModified(String etag) {
