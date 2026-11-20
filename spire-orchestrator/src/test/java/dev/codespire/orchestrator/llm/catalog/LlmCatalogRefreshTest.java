@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.FakeManualModels;
 import static dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles.FakeStates;
@@ -151,6 +152,30 @@ models:
         assertEquals(REMOTE, stored.url());
         assertEquals("\"TEST-2\"", stored.etag());
         assertEquals(CatalogSnapshot.sha256Of(REPRICED), refresh.catalog.snapshot().sha256());
+    }
+
+    /** The listener installed a newer file while this refresh stored its own: the refresh must not undo it. */
+    @Test
+    void aNewerCatalogInstalledMidRefreshIsKept() throws Exception {
+        CatalogSnapshot newer = LlmModelCatalog.parse(document(4, "2026-11-20"));
+        AtomicReference<LlmModelCatalog> installedInto = new AtomicReference<>();
+        FakeStates racing = new FakeStates() {
+            @Override
+            public void storeDocument(LlmCatalogStateRepository.StoredDocument doc) {
+                super.storeDocument(doc);
+                installedInto.get().replace(newer); // what the listener does on another instance's notice
+            }
+        };
+        racing.holding(STORED);
+        LlmCatalogRefresh refresh = new LlmCatalogRefresh();
+        refresh.catalog = CatalogTestDoubles.catalog(new FakeManualModels(), racing, REMOTE);
+        refresh.states = racing;
+        refresh.fetcher = new StubFetcher(new CatalogFetcher.Fetched(REPRICED, null));
+        installedInto.set(refresh.catalog);
+
+        refresh.refreshNow();
+
+        assertEquals(newer.sha256(), refresh.catalog.snapshot().sha256());
     }
 
     @Test

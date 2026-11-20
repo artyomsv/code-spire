@@ -130,7 +130,9 @@ public class LlmCatalogRefresh {
                 next.sha256());
         states.storeDocument(new LlmCatalogStateRepository.StoredDocument(fetched.body(), next.sha256(),
                 fetched.etag(), "remote", url, change.toJson()));
-        catalog.replace(next);
+        if (!catalog.replaceIf(current.sha256(), next)) {
+            LOG.info("LLM catalog: a newer file arrived while this one was stored; keeping the newer one");
+        }
         LOG.info(change.summary());
         return RefreshOutcome.REPLACED;
     }

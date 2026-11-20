@@ -78,7 +78,7 @@ public final class CatalogTestDoubles {
     }
 
     /** The state row in memory, counting reads. */
-    public static final class FakeStates extends LlmCatalogStateRepository {
+    public static class FakeStates extends LlmCatalogStateRepository {
         final AtomicInteger reads = new AtomicInteger();
         volatile LlmCatalogState state = LlmCatalogState.EMPTY;
         final List<StoredDocument> stored = new ArrayList<>();

@@ -154,6 +154,22 @@ public class LlmModelCatalog {
         }
     }
 
+    /**
+     * Swaps to {@code next} only while the catalog in use is still the one with {@code expectedSha}. A refresh
+     * reads the catalog, stores its file, then swaps; a newer file another instance stored in between, and the
+     * listener already installed, must not be overwritten by the older one. Answers whether it swapped.
+     */
+    public boolean replaceIf(String expectedSha, CatalogSnapshot next) {
+        synchronized (this) {
+            CatalogSnapshot current = snapshot;
+            if (current != null && !java.util.Objects.equals(current.sha256(), expectedSha)) {
+                return false;
+            }
+            snapshot = next;
+            return true;
+        }
+    }
+
     /** Whether remote loading is off, so only the bundled copy is ever used and nothing is written. */
     public boolean remoteLoadingOff() {
         return url == null || URL_NONE.equalsIgnoreCase(url.strip());
