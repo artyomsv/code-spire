@@ -239,7 +239,13 @@ public class HarnessCatalogues {
         if (!HarnessPolicy.offersFromCatalog(harness)) return stored;
         String configured = config.configuredAgentImages().get(harness);
         if (configured == null) return Optional.empty();
-        return Optional.of(catalogOffer(harness, configured, stored));
+        Pin pin = stored.map(known -> new Pin(known.image(), known.observedAt(), known.pinnedImage()))
+                .orElseGet(() -> new Pin(configured, Instant.EPOCH, null));
+        return Optional.of(catalogOffer(harness, pin));
+    }
+
+    /** The image, when it was read and its pin: what the run worker last read, else the configured image. */
+    private record Pin(String image, Instant observedAt, String pinnedImage) {
     }
 
     /**
@@ -247,8 +253,7 @@ public class HarnessCatalogues {
      * (manual models first, then the catalog), in the resolver's order, with no thinking levels. The image
      * and its pin still come from what the run worker last read, when it has read anything.
      */
-    private Catalogue catalogOffer(String harness, String configured, Optional<Catalogue> stored) {
-        Optional<String> vendor = HarnessPolicy.keyKind(harness);
+    private Catalogue catalogOffer(String harness, Pin pin) {
         List<ResolvedModel> known;
         try {
             known = models.effective();
@@ -256,16 +261,16 @@ public class HarnessCatalogues {
             // The same failure a lost harness_catalogue read is: callers already refuse on it.
             throw new IllegalStateException("The model catalogue for " + harness + " could not be read", unreadable);
         }
+        // A harness with no key kind pays with no vendor's key, so it is offered nothing.
+        String vendor = HarnessPolicy.keyKind(harness).orElse(null);
         List<HarnessImageResult.Model> offer = new ArrayList<>();
         for (ResolvedModel model : known) {
-            if (model.enabled() && vendor.isPresent() && vendor.get().equals(model.type())) {
+            if (model.enabled() && model.type().equals(vendor)) {
                 offer.add(new HarnessImageResult.Model(model.name(), model.label(), null, List.of(), true, offer.size()));
             }
         }
-        String image = stored.map(Catalogue::image).orElse(configured);
-        Instant observedAt = stored.map(Catalogue::observedAt).orElse(Instant.EPOCH);
-        String pinned = stored.map(Catalogue::pinnedImage).orElse(null);
-        return new Catalogue(harness, image, HarnessImageResult.Status.OK, List.copyOf(offer), observedAt, pinned);
+        return new Catalogue(harness, pin.image(), HarnessImageResult.Status.OK, List.copyOf(offer), pin.observedAt(),
+                pin.pinnedImage());
     }
 
     /** What the run worker last read from this harness's configured image, or empty. */

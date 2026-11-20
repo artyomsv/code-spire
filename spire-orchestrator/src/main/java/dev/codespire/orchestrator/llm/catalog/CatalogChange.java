@@ -2,7 +2,6 @@ package dev.codespire.orchestrator.llm.catalog;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.codespire.llmcatalog.CatalogDocument;
 import dev.codespire.llmcatalog.CatalogModel;
 import dev.codespire.llmcatalog.CatalogPricing;
 import dev.codespire.llmcatalog.CatalogValidator;
@@ -30,7 +29,8 @@ public record CatalogChange(String oldSha, String newSha, List<String> added, Li
     public record RePriced(String modelId, Map<String, Object> before, Map<String, Object> after) {
     }
 
-    public static CatalogChange between(CatalogDocument before, String oldSha, CatalogDocument after, String newSha) {
+    /** What {@code after} changed against {@code before}, each named by its sha. */
+    public static CatalogChange between(CatalogSnapshot before, CatalogSnapshot after) {
         Map<String, CatalogModel> earlier = new HashMap<>();
         before.models().forEach(model -> earlier.put(model.modelId(), model));
         List<String> added = new ArrayList<>();
@@ -51,7 +51,7 @@ public record CatalogChange(String oldSha, String newSha, List<String> added, Li
                 rePriced.add(new RePriced(model.modelId(), oldRates, newRates));
             }
         }
-        return new CatalogChange(oldSha, newSha, List.copyOf(added), List.copyOf(retired), List.copyOf(rePriced));
+        return new CatalogChange(before.sha256(), after.sha256(), List.copyOf(added), List.copyOf(retired), List.copyOf(rePriced));
     }
 
     public String toJson() {

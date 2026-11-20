@@ -167,26 +167,30 @@ public class LlmDefaultModel {
     private Optional<ChoiceRefused> refusal(String providerType, String model) {
         Optional<ResolvedModel> resolved = model == null || model.isBlank() ? Optional.empty() : catalog.resolve(model);
         if (resolved.isEmpty()) {
-            return Optional.of(new ChoiceRefused(UNKNOWN_MODEL, model, null, providerType));
+            return Optional.of(new ChoiceRefused(UNKNOWN_MODEL, new Pairing(model, null, providerType)));
         }
         String modelType = resolved.orElseThrow().type();
         if (!modelType.equals(providerType)) {
-            return Optional.of(new ChoiceRefused(MODEL_NOT_FOR_PROVIDER, model, modelType, providerType));
+            return Optional.of(new ChoiceRefused(MODEL_NOT_FOR_PROVIDER, new Pairing(model, modelType, providerType)));
         }
         if (!models.isPriceable(model)) {
-            return Optional.of(new ChoiceRefused(MODEL_NOT_PRICEABLE, model, modelType, providerType));
+            return Optional.of(new ChoiceRefused(MODEL_NOT_PRICEABLE, new Pairing(model, modelType, providerType)));
         }
         return Optional.empty();
+    }
+
+    /** A model and its type (null when unknown) against the provider's type. */
+    record Pairing(String model, String modelType, String providerType) {
     }
 
     /** A model that may not be chosen for this provider; the message names the reason and the two types. */
     public static final class ChoiceRefused extends RuntimeException {
         private final String reason;
 
-        ChoiceRefused(String reason, String model, String modelType, String providerType) {
-            super(reason + ": model '" + model + "' is "
-                    + (modelType == null ? "not in the catalog" : "a " + modelType + " model")
-                    + "; the provider is " + providerType + ". Choose a priced " + providerType
+        ChoiceRefused(String reason, Pairing pairing) {
+            super(reason + ": model '" + pairing.model() + "' is "
+                    + (pairing.modelType() == null ? "not in the catalog" : "a " + pairing.modelType() + " model")
+                    + "; the provider is " + pairing.providerType() + ". Choose a priced " + pairing.providerType()
                     + " model listed in Settings → LLM → Models.");
             this.reason = reason;
         }

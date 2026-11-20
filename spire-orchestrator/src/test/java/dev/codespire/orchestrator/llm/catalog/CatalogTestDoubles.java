@@ -132,7 +132,7 @@ public final class CatalogTestDoubles {
     }
 
     static LlmModelCatalog catalog(FakeManualModels manual, FakeStates states, String url) {
-        return new LlmModelCatalog(manual, states, testBundle(), url);
+        return new LlmModelCatalog(new LlmModelCatalog.Wiring(manual, states, testBundle(), url));
     }
 
     /** The TEST- catalog read from this URL's stored row, falling back to the bundled TEST- copy. */

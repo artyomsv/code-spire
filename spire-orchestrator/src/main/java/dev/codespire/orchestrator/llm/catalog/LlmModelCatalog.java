@@ -60,12 +60,16 @@ public class LlmModelCatalog {
     public LlmModelCatalog() {
     }
 
+    /** For tests: every collaborator, by hand. */
+    record Wiring(ManualModels manual, LlmCatalogStateRepository states, Supplier<String> bundledText, String url) {
+    }
+
     /** For tests: every collaborator by hand. */
-    LlmModelCatalog(ManualModels manual, LlmCatalogStateRepository states, Supplier<String> bundledText, String url) {
-        this.manual = manual;
-        this.states = states;
-        this.bundledText = bundledText;
-        this.url = url;
+    LlmModelCatalog(Wiring wiring) {
+        this.manual = wiring.manual();
+        this.states = wiring.states();
+        this.bundledText = wiring.bundledText();
+        this.url = wiring.url();
     }
 
     /** A catalog entry as the display list shows it: shadowed when a manual model has any of its names. */

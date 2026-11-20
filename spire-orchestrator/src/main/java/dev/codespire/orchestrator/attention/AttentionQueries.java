@@ -133,7 +133,7 @@ public class AttentionQueries {
             return;
         }
         modelPricingRow(choice.model(), rows);
-        choiceRows.checkDefault(choice.providerType(), choice.model(), rows);
+        choiceRows.check(LlmChoiceAttentionRows.Choice.ofDefault(choice.providerType(), choice.model()), rows);
     }
 
     /**
@@ -239,7 +239,8 @@ public class AttentionQueries {
                                 + " replies are refused. Set input and output rates in Settings → LLM → Models, or"
                                 + " mark the model unmetered if it is self-hosted."), "/settings/llm"));
             } else {
-                choiceRows.checkRepository(repository.repository(), repository.type(), repository.model(), rows);
+                choiceRows.check(LlmChoiceAttentionRows.Choice.ofRepository(repository.repository(), repository.type(),
+                        repository.model()), rows);
             }
         }
     }

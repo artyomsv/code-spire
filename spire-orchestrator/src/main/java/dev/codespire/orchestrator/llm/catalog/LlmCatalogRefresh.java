@@ -1,6 +1,5 @@
 package dev.codespire.orchestrator.llm.catalog;
 
-import dev.codespire.llmcatalog.CatalogDocument;
 import dev.codespire.llmcatalog.CatalogException;
 import io.quarkus.runtime.StartupEvent;
 import io.quarkus.scheduler.Scheduled;
@@ -10,7 +9,6 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.net.URI;
-import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -126,8 +124,7 @@ public class LlmCatalogRefresh {
             return RefreshOutcome.UNCHANGED;
         }
         CatalogSnapshot current = catalog.snapshot();
-        CatalogChange change = CatalogChange.between(documentOf(current), current.sha256(), documentOf(next),
-                next.sha256());
+        CatalogChange change = CatalogChange.between(current, next);
         states.storeDocument(new LlmCatalogStateRepository.StoredDocument(fetched.body(), next.sha256(),
                 fetched.etag(), "remote", url, change.toJson()));
         if (!catalog.replaceIf(current.sha256(), next)) {
@@ -153,10 +150,6 @@ public class LlmCatalogRefresh {
         states.storeIfEmpty(new LlmCatalogStateRepository.StoredDocument(text, bundled.sha256(), null, "bundled",
                 null, null));
         return states.read();
-    }
-
-    private static CatalogDocument documentOf(CatalogSnapshot snapshot) {
-        return new CatalogDocument(List.of(), snapshot.models());
     }
 
     static boolean isHttps(String url) {

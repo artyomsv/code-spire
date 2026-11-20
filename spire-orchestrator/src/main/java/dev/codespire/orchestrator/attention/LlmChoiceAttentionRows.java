@@ -27,21 +27,22 @@ public class LlmChoiceAttentionRows {
     @Inject
     LlmModelCatalog catalog;
 
-    /** The model the default provider spends, checked against that provider's type. */
-    void checkDefault(String providerType, String model, List<AttentionView> rows) {
-        check(new Choice(null, "the default review model", providerType, model), rows);
-    }
+    /** A chosen model, where it is chosen (the subject and the words naming it), and its provider's type. */
+    record Choice(String subject, String where, String providerType, String model) {
 
-    /** A repository's own model, checked against its own provider's type. */
-    void checkRepository(String repository, String providerType, String model, List<AttentionView> rows) {
-        check(new Choice(repository, "repository " + repository, providerType, model), rows);
-    }
+        /** The model the default provider spends, checked against that provider's type. */
+        static Choice ofDefault(String providerType, String model) {
+            return new Choice(null, "the default review model", providerType, model);
+        }
 
-    private record Choice(String subject, String where, String providerType, String model) {
+        /** A repository's own model, checked against its own provider's type. */
+        static Choice ofRepository(String repository, String providerType, String model) {
+            return new Choice(repository, "repository " + repository, providerType, model);
+        }
     }
 
     /** An unknown model adds nothing here: it cannot be priced, and the pricing row already blocks it. */
-    private void check(Choice choice, List<AttentionView> rows) {
+    void check(Choice choice, List<AttentionView> rows) {
         Optional<ResolvedModel> resolved = catalog.resolve(choice.model());
         if (resolved.isEmpty()) {
             return;
