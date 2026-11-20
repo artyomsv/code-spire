@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Where a manual model's name is chosen: the default review model and each repository's review model. A model name is
@@ -42,10 +43,25 @@ final class ModelUses {
     }
 
     /**
+     * Whether a manual model other than {@code except} answers to one of these names (from {@link #namesAnsweredTo}).
+     * The resolver asks the manual table for all of them, so after deleting one override such a row, not the
+     * catalog entry, is what the name resolves to.
+     */
+    static boolean anotherManualAnswers(Connection c, Set<String> names, UUID except) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM llm_model WHERE id <> ? AND name = ANY(?)")) {
+            ps.setObject(1, except);
+            ps.setArray(2, textArray(c, names));
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /**
      * Every name a choice may hold that reaches this manual model: its own, and when it shadows a catalog entry, that
      * entry's id and aliases (the resolver asks the manual table for all of them).
      */
-    private static Set<String> namesAnsweredTo(CatalogSnapshot snapshot, String name) {
+    static Set<String> namesAnsweredTo(CatalogSnapshot snapshot, String name) {
         Set<String> names = new LinkedHashSet<>();
         names.add(name);
         snapshot.byName(name).map(CatalogModel::names).ifPresent(names::addAll);

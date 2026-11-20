@@ -162,7 +162,11 @@ public class LlmModelRegistry {
             // the same vendor may go while in use, because its name still resolves (to that entry) after the delete.
             // Not serialised against a concurrent setting or repository save: the review path (the pricing refusal)
             // and the attention rows are the backstop for that race (spec section 6).
-            if (!CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), existing.name(), existing.type())) {
+            // Another manual row answering to one of the entry's names would win instead of the catalog entry.
+            boolean catalogTakesOver = CatalogModelViews.stillResolvesAfterDelete(catalog.snapshot(), existing.name(),
+                    existing.type()) && !ModelUses.anotherManualAnswers(c,
+                    ModelUses.namesAnsweredTo(catalog.snapshot(), existing.name()), id);
+            if (!catalogTakesOver) {
                 requireUnused(c, existing.name(), ". Choose another model there first.");
             }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM llm_model WHERE id = ?")) {

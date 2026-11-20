@@ -129,6 +129,28 @@ class LlmModelInUseGuardTest {
         assertThrows(ModelInUseException.class, () -> models.delete(UUID.fromString(model.id())));
     }
 
+    /**
+     * Two manual rows shadow one catalog entry (TEST-cat-a, anthropic, priced): its id, anthropic, and its alias,
+     * openai. Deleting the id's row would not hand TEST-cat-a to the catalog: the resolver asks the manual table for
+     * every name of the entry, so the openai alias row would answer instead. The in-use guard must apply.
+     */
+    @Test
+    void useCatalogWithAnotherOverrideOfTheEntryIsRefused() throws SQLException {
+        LlmModelView canonical = models.create(new LlmModelInput("anthropic", "TEST-cat-a", "TEST-cat-a", "METERED",
+                Map.of("INPUT", 2L, "OUTPUT", 3L), null, null, null, null, true, List.of()));
+        LlmModelView alias = models.create(new LlmModelInput("openai", "TEST-cat-a-dated", "TEST-cat-a-dated",
+                "METERED", Map.of("INPUT", 2L, "OUTPUT", 3L), null, null, null, null, true, List.of()));
+        try {
+            repositoryChoosing("TEST-repo-1", "TEST-cat-a");
+
+            assertThrows(ModelInUseException.class, () -> models.delete(UUID.fromString(canonical.id())));
+        } finally {
+            execute("DELETE FROM repository WHERE workspace=?", WORKSPACE);
+            execute("DELETE FROM llm_model WHERE id IN (?, ?)", UUID.fromString(canonical.id()),
+                    UUID.fromString(alias.id()));
+        }
+    }
+
     @Test
     void theMessageNamesTheUses() throws SQLException {
         LlmModelView model = models.create(metered("TEST-miu-named-" + suffix));
