@@ -8,6 +8,12 @@ import { invalidateLive } from '../liveCache';
 import { queryWrapper } from '../test/queryWrapper';
 import SettingsLlmProviders from './SettingsLlmProviders';
 import * as api from '../api';
+import { catalogRow, catalogView } from '../test/catalogFixtures';
+
+// Every test reads the catalog; one with no rows unless a test says otherwise.
+beforeEach(() => {
+  vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView());
+});
 
 const renderPage = (wrapper = queryWrapper()) =>
   render(
@@ -240,31 +246,93 @@ describe('SettingsLlmProviders — model form', () => {
   });
 });
 
+
+const manualModel = (over: Partial<api.LlmModelView> = {}): api.LlmModelView => ({
+  id: 'TEST-manual-id', type: 'openai', name: 'TEST-manual', label: 'TEST manual', pricingMode: 'METERED',
+  rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [], outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
+  reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL', ...over,
+});
+
+const rowOf = async (text: string) => (await screen.findByText(text)).closest('tr') as HTMLElement;
+
 describe('SettingsLlmProviders — catalog models', () => {
   beforeEach(() => {
     vi.spyOn(api, 'fetchLlmProviders').mockResolvedValue([]);
     vi.spyOn(api, 'checkLlmProvider').mockResolvedValue({ ok: true, detail: null });
   });
 
-  it('renders a catalog model with no id without a delete button', async () => {
-    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([
-      {
-        id: null, type: 'anthropic', name: 'TEST-cat-a', label: 'TEST catalog', pricingMode: 'METERED',
-        rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [], outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
-        reasoningEffort: null, extraParams: {}, enabled: true, createdAt: null, source: 'CATALOG',
-      },
-      {
-        id: 'TEST-manual-id', type: 'openai', name: 'TEST-manual', label: 'TEST manual', pricingMode: 'METERED',
-        rates: { INPUT: 1, OUTPUT: 2 }, notBilled: [], outputTokenParam: 'MAX_TOKENS', supportsTemperature: true,
-        reasoningEffort: null, extraParams: {}, enabled: true, createdAt: '1970-01-01T00:00:00Z', source: 'MANUAL',
-      },
-    ]);
+  it('a shadowed catalog row says Ignored', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([manualModel({ name: 'TEST-cat-a' })]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({}, true)] }));
     renderPage();
 
-    const catalogRow = (await screen.findByText('TEST-cat-a')).closest('tr') as HTMLElement;
-    expect(within(catalogRow).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-    expect(within(catalogRow).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-    const manualRow = screen.getByText('TEST-manual').closest('tr') as HTMLElement;
-    expect(within(manualRow).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    const catalogRowEl = await rowOf('Ignored · a manual model has this name');
+    expect(within(catalogRowEl).getByText('Catalog')).toBeInTheDocument();
+  });
+
+  it('a manual row that shadows offers Use catalog', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([manualModel({ name: 'TEST-cat-a' })]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({}, true)] }));
+    const remove = vi.spyOn(api, 'deleteLlmModel').mockResolvedValue(undefined);
+    renderPage();
+
+    const manualRowEl = await rowOf('Active · overrides catalog');
+    await waitFor(() => expect(within(manualRowEl).getByRole('button', { name: 'Use catalog' })).toBeEnabled());
+    fireEvent.click(within(manualRowEl).getByRole('button', { name: 'Use catalog' }));
+    const confirm = (await screen.findByRole('heading', { name: /Use the catalog for/ })).closest('.modal') as HTMLElement;
+    expect(confirm).toHaveTextContent('The catalog model with the same name takes its place.');
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Use catalog' }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('TEST-manual-id'));
+  });
+
+  it('a catalog row has no Edit or Delete', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([manualModel(), manualModel({
+      id: null, name: 'TEST-cat-a', label: 'TEST catalog model', source: 'CATALOG', createdAt: null,
+    })]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow()] }));
+    renderPage();
+
+    const catalogRowEl = (await screen.findByRole('button', { name: 'Catalog model TEST-cat-a' })).closest('tr') as HTMLElement;
+    expect(within(catalogRowEl).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(within(catalogRowEl).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    const manualRowEl = await rowOf('TEST-manual');
+    expect(within(manualRowEl).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getAllByText('TEST-cat-a')).toHaveLength(1);
+  });
+
+  it('a retired catalog row says Retired', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({
+      lifecycle: { status: 'RETIRED', deprecationDate: null, retirementDate: null, successor: null },
+    })] }));
+    renderPage();
+
+    expect(within(await rowOf('Retired')).getByText('Catalog')).toBeInTheDocument();
+  });
+
+  it('opens a catalog row read-only', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow()] }));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Catalog model TEST-cat-a' }));
+
+    const panel = await screen.findByRole('dialog', { name: 'TEST catalog model' });
+    expect(within(panel).getByText('Prices from')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('typing a catalog name shows the override notice', async () => {
+    vi.spyOn(api, 'fetchLlmModels').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchLlmCatalog').mockResolvedValue(catalogView({ rows: [catalogRow({ aliases: ['TEST-cat-a-dated'] })] }));
+    renderPage();
+    await screen.findByRole('button', { name: 'Catalog model TEST-cat-a' });
+    const dialog = await openAddModelForm();
+
+    fireEvent.change(within(dialog).getByLabelText(/^model name/i), { target: { value: 'TEST-other' } });
+    expect(within(dialog).queryByText('This overrides the catalog model with the same name.')).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText(/^model name/i), { target: { value: 'TEST-cat-a-dated' } });
+    expect(within(dialog).getByText('This overrides the catalog model with the same name.')).toBeInTheDocument();
   });
 });

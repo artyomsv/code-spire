@@ -27,11 +27,13 @@ interface ModelIdentity {
 
 interface SettingsLlmModelFormProps {
   initial: LlmModelView | null;
+  /** Every name the model catalog answers to; a manual model with one of them overrides that catalog entry. */
+  catalogNames?: Set<string>;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }
 
-export default function SettingsLlmModelForm({ initial, onClose, onSaved }: SettingsLlmModelFormProps) {
+export default function SettingsLlmModelForm({ initial, catalogNames, onClose, onSaved }: SettingsLlmModelFormProps) {
   const editing = initial !== null;
   const [identity, setIdentity] = useState<ModelIdentity>({
     type: initial?.type ?? 'openai',
@@ -156,6 +158,9 @@ export default function SettingsLlmModelForm({ initial, onClose, onSaved }: Sett
                   />
                 </label>
               </div>
+              {catalogNames?.has(identity.name.trim()) && (
+                <small className="field-hint" role="note">This overrides the catalog model with the same name.</small>
+              )}
 
               <label className="field">
                 <span>

@@ -1130,6 +1130,80 @@ export async function deleteLlmModel(id: string): Promise<void> {
   if (!res.ok) await throwResponse(res, 'Failed to delete LLM model');
 }
 
+/** One model of the public catalog, as the file states it (ai-catalog/README.md). Rates in millicents per 1M. */
+export interface CatalogModelView {
+  modelId: string;
+  provider: LlmType;
+  displayName: string;
+  aliases: string[];
+  lifecycle: {
+    status: 'ACTIVE' | 'DEPRECATED' | 'RETIRED';
+    deprecationDate: string | null;
+    retirementDate: string | null;
+    successor: string | null;
+  } | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  capabilities: { tools: boolean; structuredOutput: boolean; imageInput: boolean; promptCache: boolean } | null;
+  api: { outputTokenParam: 'MAX_TOKENS' | 'MAX_COMPLETION_TOKENS'; temperature: boolean; reasoningEffort: string | null } | null;
+  pricing: {
+    input: number | null;
+    output: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    cacheWrite1h: number | null;
+    reasoning: number | null;
+    notBilled: string[];
+    sourceUrl: string | null;
+    observedAt: string | null;
+  } | null;
+}
+
+/** A catalog entry in Settings; shadowed when a manual model has its id or one of its aliases. */
+export interface CatalogRowView {
+  model: CatalogModelView;
+  shadowed: boolean;
+}
+
+/** What the last accepted catalog file changed against the one before it. */
+export interface CatalogChangeView {
+  oldSha: string | null;
+  newSha: string | null;
+  added: string[];
+  retired: string[];
+  rePriced: { modelId: string; before: Record<string, unknown>; after: Record<string, unknown> }[];
+}
+
+/** The catalog in use and how the last read of its URL went. `url` is null when remote loading is off. */
+export interface LlmCatalogView {
+  url: string | null;
+  source: 'bundled' | 'remote' | null;
+  sha256: string | null;
+  loadedAt: string | null;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  lastChange: CatalogChangeView | null;
+  rows: CatalogRowView[];
+}
+
+export type CatalogRefreshOutcome = 'DISABLED' | 'NOT_MODIFIED' | 'UNCHANGED' | 'REPLACED' | 'INVALID' | 'FAILED';
+
+export const llmCatalogKey = ['llm-catalog'] as const;
+
+export async function fetchLlmCatalog(): Promise<LlmCatalogView> {
+  const res = await apiFetch('/api/llm-catalog');
+  if (!res.ok) return throwResponse(res, 'Failed to load the model catalog');
+  return res.json();
+}
+
+/** "Reload now": reads the catalog URL on this instance; every instance follows a new file. */
+export async function refreshLlmCatalog(): Promise<{ outcome: CatalogRefreshOutcome }> {
+  const res = await apiFetch('/api/llm-catalog/refresh', { method: 'POST' });
+  if (!res.ok) return throwResponse(res, 'Failed to reload the model catalog');
+  return res.json();
+}
+
 // ---- dead-letter queue (cs.dlq) ----
 
 export interface DlqEntry {

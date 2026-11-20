@@ -5,9 +5,13 @@ import {
   createLlmProvider,
   deleteLlmModel,
   deleteLlmProvider,
+  fetchLlmCatalog,
   fetchLlmModels,
   fetchLlmProviders,
+  llmCatalogKey,
   llmProvidersKey,
+  type CatalogModelView,
+  type CatalogRowView,
   setDefaultLlmProvider,
   updateLlmProvider,
   type LlmModelView,
@@ -15,13 +19,20 @@ import {
   type LlmProviderView,
   type LlmType,
 } from '../api';
-import { RATE_TYPES, TOKEN_TYPE_LABEL, formatRate, sumRates } from '../llmPricing';
+import { sumRates } from '../llmPricing';
+
+// Moved to llmPricing so the models table can use them without importing this page; re-exported for callers.
+export { profileHint, ratesSummary, type RatesSummary } from '../llmPricing';
 import { Plus } from 'lucide-react';
 import IconButton from './IconButton';
 import LastChecked from './LastCheckedBadge';
 import Select from './Select';
 import Tooltip from './Tooltip';
 import SettingsLlmModelForm from './SettingsLlmModelForm';
+import SettingsLlmCatalogHeader from './SettingsLlmCatalogHeader';
+import SettingsLlmModelsTable, { type ModelRowActions } from './SettingsLlmModelsTable';
+import LlmCatalogModelDetail from './LlmCatalogModelDetail';
+import { catalogNames } from '../llmCatalog';
 import { useEditDeepLink } from '../hooks/useEditDeepLink';
 import { useEachRead } from '../hooks/useEachRead';
 import { invalidateLive } from '../liveCache';
@@ -30,6 +41,15 @@ import { preparationKeys } from './work-items/workQueries';
 /** One array each while nothing is read, so the deep link's effect does not re-run on every render. */
 const NO_PROVIDERS: LlmProviderView[] = [];
 const NO_MODELS: LlmModelView[] = [];
+const NO_ROWS: CatalogRowView[] = [];
+
+/** A delete waiting for its confirmation; "Use catalog" is a delete of the manual model that shadows an entry. */
+interface ConfirmDelete {
+  kind: 'provider' | 'model';
+  id: string;
+  name: string;
+  useCatalog?: boolean;
+}
 
 // Phase 1: OpenAI only. Anthropic/Gemini land in phase 2.
 const LLM_TYPES: LlmType[] = ['openai', 'anthropic', 'gemini'];
@@ -38,16 +58,6 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   anthropic: 'https://api.anthropic.com/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
 };
-
-/** A one-glance hint of a model's non-default API dialect, or '' when it's the classic one. */
-export function profileHint(m: LlmModelView): string {
-  const bits: string[] = [];
-  if (m.outputTokenParam === 'MAX_COMPLETION_TOKENS') bits.push('max_completion_tokens');
-  else if (m.outputTokenParam === 'NONE') bits.push('no cap');
-  if (!m.supportsTemperature) bits.push('no temp');
-  if (m.reasoningEffort) bits.push(`effort: ${m.reasoningEffort}`);
-  return bits.join(' · ');
-}
 
 /** The default API base URL for a provider type ('' when unknown). */
 export function defaultBaseUrl(type: string): string {
@@ -58,31 +68,6 @@ export function defaultBaseUrl(type: string): string {
  *  `rates` sums to 0 and sorts last — correctly, since it is the cheapest thing in the list. */
 export function byExpenseDesc(models: LlmModelView[]): LlmModelView[] {
   return [...models].sort((a, b) => sumRates(b.rates) - sumRates(a.rates) || a.label.localeCompare(b.label));
-}
-
-/** The catalog table's compact rate cell. */
-export interface RatesSummary {
-  text: string;
-  /** True for a METERED model with no rate at all — the state a legacy upgrade can leave behind
-   *  (the migration skips a model whose old price was ever zero rather than fabricate a rate for
-   *  it) and the one state in this cell that needs an operator's attention, not just a read. */
-  warn: boolean;
-}
-
-/** "Self-hosted" for UNMETERED; a flagged "Not priced" for a METERED model with no rate at all
- *  (never a blank cell, which reads as nothing to report rather than as something to fix); else
- *  each priced dimension joined together — never "$0.00" for a self-hosted model, which would read
- *  as a priced free tier rather than as an operator's assertion that there is no per-token cost. */
-export function ratesSummary(m: LlmModelView): RatesSummary {
-  if (m.pricingMode === 'UNMETERED') return { text: 'Self-hosted', warn: false };
-  const priced = RATE_TYPES.filter((t) => m.rates[t] != null);
-  const asserted = RATE_TYPES.filter((t) => (m.notBilled ?? []).includes(t));
-  if (priced.length === 0 && asserted.length === 0) return { text: 'Not priced', warn: true };
-  // Three states, not two. A model with every remaining dimension marked "not billed" used to read
-  // exactly like one where nobody had said, and the difference is whether a run stops mid-flight.
-  const parts = priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`);
-  if (asserted.length > 0) parts.push(`not billed: ${asserted.map((t) => TOKEN_TYPE_LABEL[t]).join(', ')}`);
-  return { text: parts.join(' · '), warn: false };
 }
 
 // Per-provider connectivity status, keyed by provider id.
@@ -112,9 +97,17 @@ export default function SettingsLlmProviders() {
   // An attention row names one provider; land the operator on it, not just on this page.
   useEditDeepLink(current ? providers : NO_PROVIDERS, setProviderForm);
   const [modelForm, setModelForm] = useState<'new' | LlmModelView | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{ kind: 'provider' | 'model'; id: string; name: string } | null>(
-    null,
-  );
+  const [confirmDelete, setConfirmDelete] = useState<ConfirmDelete | null>(null);
+  const [catalogDetail, setCatalogDetail] = useState<CatalogModelView | null>(null);
+  const catalogRead = useQuery({ queryKey: llmCatalogKey, queryFn: () => fetchLlmCatalog() });
+  const catalogRows = catalogRead.data?.rows ?? NO_ROWS;
+  const modelActions: ModelRowActions = {
+    current,
+    onEdit: setModelForm,
+    onDelete: (m) => setConfirmDelete({ kind: 'model', id: m.id as string, name: m.label }),
+    onUseCatalog: (m) => setConfirmDelete({ kind: 'model', id: m.id as string, name: m.name, useCatalog: true }),
+    onOpenCatalog: setCatalogDetail,
+  };
   const [conns, setConns] = useState<Record<string, Conn>>({});
 
   async function checkOne(id: string) {
@@ -145,6 +138,7 @@ export default function SettingsLlmProviders() {
   const load = () => Promise.all([
     invalidateLive(client, llmProvidersKey),
     invalidateLive(client, preparationKeys.llmModels()),
+    invalidateLive(client, llmCatalogKey),
   ]);
 
   async function act(fn: () => Promise<unknown>) {
@@ -256,49 +250,16 @@ export default function SettingsLlmProviders() {
             </button>
           </Tooltip>
         </div>
+        <SettingsLlmCatalogHeader catalog={catalogRead.data} />
         {modelsLoading ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>Loading…</div>
-        ) : models.length === 0 ? (
+        ) : models.length === 0 && catalogRows.length === 0 ? (
           <div style={{ padding: '20px 18px', color: 'var(--text-3)', fontSize: 13 }}>
             No models yet — add one (name + rate per 1M tokens, or mark it self-hosted) so reviews can
             be priced and providers can pick it.
           </div>
         ) : (
-          <table className="prov-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Type</th>
-                <th>Rates / 1M tokens</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {byExpenseDesc(models).map((m) => {
-                const rates = ratesSummary(m);
-                return (
-                  <tr key={m.name}>
-                    <td>
-                      {m.label} <span className="mono" style={{ color: 'var(--text-3)', fontSize: 11 }}>{m.name}</span>
-                      {profileHint(m) && <div className="prov-sub">{profileHint(m)}</div>}
-                    </td>
-                    <td className="mono">{m.type}</td>
-                    <td className={`mono${rates.warn ? ' rate-unset' : ''}`}>{rates.text}</td>
-                    <td>
-                      {/* A catalog model has no id: it changes only through a catalog update. */}
-                      {m.id !== null && (
-                        <ModelActions
-                          disabled={!current}
-                          onEdit={() => setModelForm(m)}
-                          onDelete={() => setConfirmDelete({ kind: 'model', id: m.id as string, name: m.label })}
-                        />
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <SettingsLlmModelsTable models={models} catalogRows={catalogRows} actions={modelActions} />
         )}
       </div>
 
@@ -317,6 +278,7 @@ export default function SettingsLlmProviders() {
       {modelForm && (
         <SettingsLlmModelForm
           initial={modelForm === 'new' ? null : modelForm}
+          catalogNames={catalogNames(catalogRows)}
           onClose={() => setModelForm(null)}
           onSaved={async () => {
             setModelForm(null);
@@ -328,8 +290,12 @@ export default function SettingsLlmProviders() {
       {confirmDelete && (
         <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Delete “{confirmDelete.name}”?</h3>
-            <p style={{ color: 'var(--text-3)', fontSize: 13 }}>This cannot be undone.</p>
+            <h3>{confirmDelete.useCatalog ? `Use the catalog for “${confirmDelete.name}”?` : `Delete “${confirmDelete.name}”?`}</h3>
+            <p style={{ color: 'var(--text-3)', fontSize: 13 }}>
+              {confirmDelete.useCatalog
+                ? 'This deletes the manual model. The catalog model with the same name takes its place.'
+                : 'This cannot be undone.'}
+            </p>
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setConfirmDelete(null)}>
                 Cancel
@@ -342,22 +308,15 @@ export default function SettingsLlmProviders() {
                   void act(() => (kind === 'model' ? deleteLlmModel(id) : deleteLlmProvider(id)));
                 }}
               >
-                Delete
+                {confirmDelete.useCatalog ? 'Use catalog' : 'Delete'}
               </button>
             </div>
           </div>
         </div>
       )}
-    </section>
-  );
-}
 
-function ModelActions({ disabled, onEdit, onDelete }: { disabled: boolean; onEdit: () => void; onDelete: () => void }) {
-  return (
-    <div className="prov-actions">
-      <IconButton kind="edit" onClick={onEdit} title="Edit" aria-label="Edit" disabled={disabled} />
-      <IconButton kind="delete" disabled={disabled} onClick={onDelete} title="Delete" aria-label="Delete" />
-    </div>
+      {catalogDetail && <LlmCatalogModelDetail model={catalogDetail} onClose={() => setCatalogDetail(null)} />}
+    </section>
   );
 }
 

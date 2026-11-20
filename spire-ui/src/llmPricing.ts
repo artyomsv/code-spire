@@ -1,6 +1,6 @@
 // Shared knowledge about the per-token-type rate dimensions, used by the model catalog form/table
 // and the review cost card, so the token-type vocabulary is written once rather than three times.
-import type { TokenType } from './api';
+import type { LlmModelView, TokenType } from './api';
 import { formatCost } from './money';
 
 /** A rate dimension a model's catalog entry can carry — everything but the degraded TOTAL case. */
@@ -58,3 +58,38 @@ export function sumRates(rates: Partial<Record<RateType, number>>): number {
  * not a review's spend, and reusing `formatCost`'s name at a rate call site read as a copy-paste slip.
  */
 export const formatRate = formatCost;
+
+/** A one-glance hint of a model's non-default API dialect, or '' when it's the classic one. */
+export function profileHint(m: LlmModelView): string {
+  const bits: string[] = [];
+  if (m.outputTokenParam === 'MAX_COMPLETION_TOKENS') bits.push('max_completion_tokens');
+  else if (m.outputTokenParam === 'NONE') bits.push('no cap');
+  if (!m.supportsTemperature) bits.push('no temp');
+  if (m.reasoningEffort) bits.push(`effort: ${m.reasoningEffort}`);
+  return bits.join(' · ');
+}
+
+/** The catalog table's compact rate cell. */
+export interface RatesSummary {
+  text: string;
+  /** True for a METERED model with no rate at all — the state a legacy upgrade can leave behind
+   *  (the migration skips a model whose old price was ever zero rather than fabricate a rate for
+   *  it) and the one state in this cell that needs an operator's attention, not just a read. */
+  warn: boolean;
+}
+
+/** "Self-hosted" for UNMETERED; a flagged "Not priced" for a METERED model with no rate at all
+ *  (never a blank cell, which reads as nothing to report rather than as something to fix); else
+ *  each priced dimension joined together — never "$0.00" for a self-hosted model, which would read
+ *  as a priced free tier rather than as an operator's assertion that there is no per-token cost. */
+export function ratesSummary(m: LlmModelView): RatesSummary {
+  if (m.pricingMode === 'UNMETERED') return { text: 'Self-hosted', warn: false };
+  const priced = RATE_TYPES.filter((t) => m.rates[t] != null);
+  const asserted = RATE_TYPES.filter((t) => (m.notBilled ?? []).includes(t));
+  if (priced.length === 0 && asserted.length === 0) return { text: 'Not priced', warn: true };
+  // Three states, not two. A model with every remaining dimension marked "not billed" used to read
+  // exactly like one where nobody had said, and the difference is whether a run stops mid-flight.
+  const parts = priced.map((t) => `${TOKEN_TYPE_LABEL[t]} ${formatRate(m.rates[t]!)}/1M`);
+  if (asserted.length > 0) parts.push(`not billed: ${asserted.map((t) => TOKEN_TYPE_LABEL[t]).join(', ')}`);
+  return { text: parts.join(' · '), warn: false };
+}
