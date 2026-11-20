@@ -111,6 +111,19 @@ class CatalogValidatorTest {
     }
 
     @Test
+    void anAbsentApiIsAllowedButAnApiWithoutItsOutputParamIsNot() {
+        CatalogModel base = model("TEST-a");
+        CatalogModel noApi = new CatalogModel(base.modelId(), base.provider(), base.displayName(), base.aliases(),
+                base.lifecycle(), base.contextWindow(), base.maxOutputTokens(), base.capabilities(), null, base.pricing());
+        CatalogModel noParam = new CatalogModel(base.modelId(), base.provider(), base.displayName(), base.aliases(),
+                base.lifecycle(), base.contextWindow(), base.maxOutputTokens(), base.capabilities(),
+                new CatalogApiDialect(null, true, null), base.pricing());
+
+        assertEquals(List.of(), problemsOf(noApi));
+        assertOneProblemNaming(problemsOf(noParam), "TEST-a", "outputTokenParam");
+    }
+
+    @Test
     void reasoningEffortIsNullOrLowMediumHigh() {
         CatalogModel base = model("TEST-a");
         CatalogModel xhigh = new CatalogModel(base.modelId(), base.provider(), base.displayName(), base.aliases(),

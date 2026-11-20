@@ -4,6 +4,47 @@ Architecture decision records for Code Spire. Newest first.
 
 ---
 
+## ADR-051 — Chat models and their prices come from a public catalog file
+
+**Status:** built on branch `feat/ai-catalog` (2026-11-20), not yet merged or live-proven. Design:
+[the AI catalog design](superpowers/specs/2026-11-20-ai-catalog-design.md), revision 2. Amends ADR-018's
+"models and prices are operator-entered, never hard-coded": the operator may still enter them, and a public,
+reviewed file supplies the rest.
+
+**Context.** Every install typed each model, its rates in millicents and its API dialect by hand into Settings →
+LLM → Models, and prices drifted. Claude Code's model offer was a hand-kept `models.json` baked into its image.
+The schema had no context window, no capabilities and no 1-hour cache-write price.
+
+**Decision.**
+- **One file:** `ai-catalog/v1/catalog.yaml`, with the format, parser and validator in the Apache-2.0 module
+  `spire-llm-catalog`. CI parses it strictly (an unknown field is refused) and adds two rules against `master`:
+  a model is never removed (it becomes `RETIRED`), and a changed price changes `observedAt`. Every price carries
+  `sourceUrl` and `observedAt`; none is recalled from memory. `ai-catalog/` has a code owner.
+- **Read from a URL:** `SPIRE_LLM_CATALOG_URL` (default: the file on `master` through raw GitHub; `none` turns it
+  off) every `SPIRE_LLM_CATALOG_REFRESH_INTERVAL` (default `6h`; `off` reads once at startup). A default on
+  purpose and an exception to "no defaults for environment values": the file is public, not a credential.
+  Redirects are refused, the body is capped at 1 MiB, and an invalid or unreadable file never replaces the one in
+  use. The app parses leniently, so an older install reads a newer additive `v1` file.
+- **Kept in one row, held in memory:** `llm_catalog_state` (V117) holds the last good document. The resolver
+  loads it synchronously on first use (else the copy built into the image), so no price is asked of an empty
+  catalog. A new file is announced on `llm_catalog_changed`, and every instance swaps to it. With the URL `none`
+  the built-in copy is used in memory only, and the row is never written.
+- **One resolver, manual first:** `LlmModelCatalog` answers price, enabled, dialect and vendor by name. A manual
+  model shadows the whole catalog entry it names, by id or alias, even when switched off. A fault reading the
+  manual tables is UNKNOWN / `CatalogueUnavailable`, never the catalog's answer. `RETIRED` disables a model for
+  new runs and keeps it priced. "Use catalog" deletes a shadowing manual model even while a provider names it.
+- **Claude Code's offer is the resolver's** enabled `anthropic` models (`HarnessPolicy.offersFromCatalog`), with
+  no thinking levels; another vendor's name is refused `model_not_run_by_harness`. Its image carries no model
+  label. Codex still reads its image label.
+- **Not in the catalog:** free-form request parameters and the `NONE` output parameter (manual models keep both),
+  so a remote file cannot add keys to a vendor request or lift the output cap.
+
+**Consequences.** A model or price change is a merged pull request. The ledger has one rate per token type, so
+long-context tiers and the 1-hour cache-write price are recorded, not charged (docs/UNVERIFIED.md). `cacheWrite1h`
+needs a token type and a harness that reports cache lifetime before it can be charged.
+
+---
+
 ## ADR-050 — Reviews may run on a harness, on the run-worker's own lane
 
 **Status:** step 4 of harness reviews, the plumbing, merged to master with PR #367, 2026-11-01. Step 5, first

@@ -69,9 +69,13 @@ public final class CatalogValidator {
         apiProblems(model, problems);
     }
 
+    /** {@code api} may be absent (no vendor page stated it; the review path's default dialect applies). */
     private static void apiProblems(CatalogModel model, List<String> problems) {
-        if (model.api() == null || model.api().outputTokenParam() == null) {
-            problems.add(label(model) + ": api.outputTokenParam is required");
+        if (model.api() == null) {
+            return;
+        }
+        if (model.api().outputTokenParam() == null) {
+            problems.add(label(model) + ": api.outputTokenParam is required when api is given");
             return;
         }
         String effort = model.api().reasoningEffort();

@@ -31,7 +31,8 @@ models:
       structuredOutput: true
       imageInput: true
       promptCache: true
-    api:                        # how the review path calls it; a closed set
+    api:                        # how the review path calls it; a closed set. Optional: null when no vendor
+                                # page states it, and the review path's default dialect applies
       outputTokenParam: MAX_TOKENS        # MAX_TOKENS | MAX_COMPLETION_TOKENS
       temperature: true
       reasoningEffort: null               # null | low | medium | high

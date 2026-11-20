@@ -33,6 +33,29 @@ evidence would settle it**.
 
 ---
 
+## Model catalog from a public file (ADR-051, branch feat/ai-catalog, 2026-11-20)
+
+Built and tested in CI only; no live deployment has read the catalog yet.
+
+- **Raw GitHub's `ETag` and cache.** The refresh sends `If-None-Match` with the stored etag and treats 304 as
+  unchanged. Whether raw.githubusercontent.com answers 304 for an unchanged file, and how long its CDN serves the
+  old file after a merge, is not measured. Tests use a JDK HttpServer.
+- **A refresh across two instances.** `llm_catalog_changed` swapping a second instance is proven by
+  `LlmCatalogChangeListenerTest` on one database with a hand-started listener, not by two running orchestrators.
+- **Claude Code's offer from the catalog.** `HarnessCataloguesCatalogOfferTest` proves the offer and the refusals
+  against a TEST catalog; no live Claude Code run has used a model offered this way.
+- **`cacheWrite1h` is recorded, not charged.** The ledger has one `CACHE_WRITE` type and no harness reports the
+  cache lifetime, so a 1-hour write is charged at the 5-minute rate (`cacheWrite`).
+- **Long-context tiers are not modelled.** OpenAI prices prompts over 272K input tokens at 2x input and cache and
+  1.5x output, and Claude Haiku 5.5 prompts over 100,000 tokens higher; the catalog holds one rate per type, so
+  such calls are under-priced (ai-catalog/PRICES-REVIEW.md).
+- **The catalog's API dialect is absent** for every model in the first file: no vendor page stated `temperature`
+  support or `max_tokens` against `max_completion_tokens`, so an API review on a catalog-only model uses the
+  default dialect. Whether each vendor accepts it is not proven; a manual model of the same name can set it.
+- **OpenAI cache writes.** The 30-minute write price is recorded as `cacheWrite`; the 12-hour price has no field.
+  Whether Codex reports cache-write tokens separately from input (PR #182 counts them as input) decides whether
+  the rate is ever applied.
+
 ## Kubernetes on any cluster (reviewer only, 2026-11-15)
 
 **The claim.** The Helm chart installs the reviewer (gateway, orchestrator, review worker, dashboard) on any

@@ -2538,3 +2538,16 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   `ScmOAuthAppForm` and `OperatorLinksTable` moved out of their screens to keep the files small. docs/TLS.md now gives
   nginx proxy manager's advanced settings from that install: without the header buffers the sign-in callback
   answered 502 "upstream sent too big header".
+
+- **Model catalog from a public file (2026-11-20, branch `feat/ai-catalog`, ADR-051).** Chat models, their
+  capabilities and their prices now come from `ai-catalog/v1/catalog.yaml`, read from `SPIRE_LLM_CATALOG_URL`
+  (default: the file on `master`) every 6 h, kept in `llm_catalog_state` (V117) and shared across instances on
+  `llm_catalog_changed`. The new module `spire-llm-catalog` parses and validates it; CI runs it strictly, with
+  "never remove a model" and "a changed price changes `observedAt`" against master. One resolver, `LlmModelCatalog`,
+  answers every model question manual first, and a manual-table fault is never answered from the catalog. Settings →
+  LLM → Models shows both sources, with "Reload now", "Use catalog" and a read-only catalog detail. Claude Code's
+  offer is the resolver's enabled Anthropic models, so its image carries no model label and `models.json` is gone.
+  Two attention changes: the pricing rows say where a catalog model's price is fixed, and `LLM_CATALOG_STALE` fires
+  when the URL has not served a good file for three intervals. The first file holds 12 models, every price read from
+  the vendor pages on 2026-11-20 (ai-catalog/PRICES-REVIEW.md lists each one for the operator's check). Not yet run
+  live: see the docs/UNVERIFIED.md entry.
