@@ -107,3 +107,25 @@ it('hides the thinking level when a model declares none', () => {
   expect(screen.queryByRole('combobox', { name: 'Thinking level' })).not.toBeInTheDocument();
   expect(screen.queryByText(/Model default/)).not.toBeInTheDocument();
 });
+
+// The server's own answer (keyPriced): an API key is offered only the models it can pay for; a seat any offered one.
+const PRICED_BY_SERVER: HarnessModels = { ...KNOWN, keyPriced: ['TEST-fast'] };
+
+it('does not offer an unpriced model for API-key payment', () => {
+  const choices = modelChoices('codex', PRICED_BY_SERVER, [priced('TEST-fast'), priced('TEST-deep')], REPORTED, 'API_KEY');
+
+  expect(choices.map(choice => choice.value)).toEqual(['TEST-fast']);
+});
+
+it('offers the same unpriced model for seat payment', () => {
+  const choices = modelChoices('codex', PRICED_BY_SERVER, [priced('TEST-fast')], REPORTED, 'SUBSCRIPTION');
+
+  expect(choices.map(choice => choice.value)).toEqual(['TEST-fast', 'TEST-deep']);
+  expect(choices.every(choice => choice.blocked === null)).toBe(true);
+});
+
+it('offers nothing for a key when the server prices none', () => {
+  const none: HarnessModels = { ...KNOWN, keyPriced: [] };
+
+  expect(modelChoices('codex', none, [priced('TEST-fast')], REPORTED, 'API_KEY')).toEqual([]);
+});

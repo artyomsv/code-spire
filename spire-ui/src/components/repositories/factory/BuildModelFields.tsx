@@ -29,7 +29,10 @@ export function modelChoices(harness: string, known: HarnessModels | undefined, 
   const subscription = payWith === 'SUBSCRIPTION';
   const unpriced = (model: LlmModelView) => (harness && !subscription ? unpricedTypesFor(model, reported[harness]) : []);
   if (known?.status === 'OK') {
-    return known.offered.map(model => {
+    // The server says which offered models an API key can pay for; only those are offered for a key. An older
+    // server sends no list, and the price list below then marks the rest as blocked instead.
+    const keyPriced = Array.isArray(known.keyPriced) ? known.keyPriced : null;
+    return known.offered.filter(model => subscription || keyPriced === null || keyPriced.includes(model.slug)).map(model => {
       const price = priced.find(entry => entry.name === model.slug);
       const missing = price ? unpriced(price) : [];
       return {

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.command.HarnessImageCommand;
 import dev.codespire.contract.event.HarnessImageResult;
 import dev.codespire.contract.llm.HarnessPolicy;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.catalog.LlmModelCatalog;
 import dev.codespire.orchestrator.llm.catalog.ResolvedModel;
 import dev.codespire.orchestrator.pipeline.KafkaSends;
@@ -50,6 +51,8 @@ public class HarnessCatalogues {
     @Inject FactoryConfig config;
     /** The offer of a harness that takes its models from the catalog (HarnessPolicy.offersFromCatalog). */
     @Inject LlmModelCatalog models;
+    /** Whether an API key can pay for an offered model: every type the harness reports is priced. */
+    @Inject LlmModelPricer pricer;
 
     @Inject @Channel("harness-image-commands-out")
     Emitter<HarnessImageCommand> commands;
@@ -143,6 +146,36 @@ public class HarnessCatalogues {
             ps.executeUpdate();
         } catch (SQLException | JsonProcessingException failure) {
             throw new IllegalStateException("The model catalogue for " + answer.harness() + " could not be stored", failure);
+        }
+    }
+
+    /** One model a build setup may choose, and whether an API key can pay for it (a seat always can). */
+    public record Offer(HarnessImageResult.Model model, boolean keyPriced) { }
+
+    /**
+     * The models to offer from a read catalogue: the ones the harness runs (its image's list, or the model
+     * catalog for a harness that has none) that the resolver knows and has enabled. {@code keyPriced} says
+     * whether every token type the harness reports is priced, which an API-key setup needs and a seat does not.
+     *
+     * <p>Offering is narrower than admitting on purpose: {@link #admit} still answers for every model the image
+     * runs, so a saved setup whose model left the offer is refused with its own reason, never changed.
+     */
+    public List<Offer> offers(Catalogue catalogue) {
+        if (catalogue.status() != HarnessImageResult.Status.OK) return List.of();
+        List<Offer> offers = new ArrayList<>();
+        for (HarnessImageResult.Model model : catalogue.offered()) {
+            if (knownAndEnabled(model.slug())) {
+                offers.add(new Offer(model, pricer.unpricedTypes(model.slug(), catalogue.harness()).isEmpty()));
+            }
+        }
+        return List.copyOf(offers);
+    }
+
+    private boolean knownAndEnabled(String slug) {
+        try {
+            return models.resolve(slug).map(ResolvedModel::enabled).orElse(false);
+        } catch (LlmModelCatalog.CatalogueReadFailed unreadable) {
+            throw new IllegalStateException("The model catalogue could not be read", unreadable);
         }
     }
 

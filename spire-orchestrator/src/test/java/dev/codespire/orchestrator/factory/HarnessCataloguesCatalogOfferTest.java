@@ -2,6 +2,7 @@ package dev.codespire.orchestrator.factory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.codespire.contract.event.HarnessImageResult;
+import dev.codespire.orchestrator.llm.LlmModelPricer;
 import dev.codespire.orchestrator.llm.catalog.CatalogTestDoubles;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -38,6 +39,9 @@ class HarnessCataloguesCatalogOfferTest {
     @Inject
     ObjectMapper mapper;
 
+    @Inject
+    LlmModelPricer pricer;
+
     @AfterEach
     void removeTheRows() throws SQLException {
         execute("DELETE FROM harness_catalogue WHERE image IN (?, ?)", CLAUDE_IMAGE, CODEX_IMAGE);
@@ -48,6 +52,7 @@ class HarnessCataloguesCatalogOfferTest {
         catalogues.dataSource = dataSource;
         catalogues.mapper = mapper;
         catalogues.models = CatalogTestDoubles.testCatalog(manual);
+        catalogues.pricer = pricer;
         catalogues.config = new FactoryConfig() {
             @Override public Map<String, String> agentImage() {
                 return Map.of(CODEX, CODEX_IMAGE, CLAUDE, claudeImage);
@@ -138,6 +143,73 @@ class HarnessCataloguesCatalogOfferTest {
     @Test
     void claudeCodeWithAnEffortIsNotOffered() {
         assertEquals("effort_not_offered", configured().admit(CLAUDE, "TEST-cat-a", "high").refusal());
+    }
+
+    /** Codex's image lists four models: one fully priced, one missing REASONING, one RETIRED, one nobody knows. */
+    private HarnessCatalogues.Catalogue codexWithFourModels() throws SQLException {
+        execute("""
+                INSERT INTO harness_catalogue (harness, image, status, models, observed_at, pinned_image, asked_at)
+                VALUES (?, ?, 'OK', CAST(? AS jsonb), now(), NULL, now())
+                ON CONFLICT (harness) DO UPDATE SET image = excluded.image, status = excluded.status,
+                       models = excluded.models, pinned_image = excluded.pinned_image""", CODEX, CODEX_IMAGE,
+                "[" + label("TEST-cat-o", 1) + "," + label("TEST-cat-a", 2) + "," + label("TEST-cat-retired", 3)
+                        + "," + label("TEST-not-in-any-catalog", 4) + "]");
+        return configured().get(CODEX).orElseThrow();
+    }
+
+    private static String label(String slug, int priority) {
+        return "{\"slug\":\"" + slug + "\",\"displayName\":\"" + slug + "\",\"defaultEffort\":\"\",\"efforts\":[],"
+                + "\"visible\":true,\"priority\":" + priority + "}";
+    }
+
+    private static List<String> offered(List<HarnessCatalogues.Offer> offers) {
+        return offers.stream().map(offer -> offer.model().slug()).toList();
+    }
+
+    private static List<String> keyPriced(List<HarnessCatalogues.Offer> offers) {
+        return offers.stream().filter(HarnessCatalogues.Offer::keyPriced).map(offer -> offer.model().slug()).toList();
+    }
+
+    @Test
+    void aModelMissingFromTheCatalogAndTheManualTablesIsNotOffered() throws SQLException {
+        List<HarnessCatalogues.Offer> offers = configured().offers(codexWithFourModels());
+
+        assertTrue(!offered(offers).contains("TEST-not-in-any-catalog"), offered(offers).toString());
+    }
+
+    @Test
+    void aRetiredModelIsNotOffered() throws SQLException {
+        List<HarnessCatalogues.Offer> offers = configured().offers(codexWithFourModels());
+
+        assertTrue(!offered(offers).contains("TEST-cat-retired"), offered(offers).toString());
+    }
+
+    /** Codex reports REASONING; TEST-cat-a has no reasoning rate, so a key cannot pay for it and a seat can. */
+    @Test
+    void anUnpricedModelIsNotKeyPricedButStaysOfferedForASeat() throws SQLException {
+        List<HarnessCatalogues.Offer> offers = configured().offers(codexWithFourModels());
+
+        assertEquals(List.of("TEST-cat-o", "TEST-cat-a"), offered(offers), "a seat may choose either");
+        assertEquals(List.of("TEST-cat-o"), keyPriced(offers), "an API key may choose only the fully priced one");
+    }
+
+    @Test
+    void aSwitchedOffManualModelHidesTheCatalogEntry() throws SQLException {
+        HarnessCatalogues.Catalogue codex = codexWithFourModels();
+        HarnessCatalogues shadowed = catalogues(CLAUDE_IMAGE, new CatalogTestDoubles.FakeManualModels()
+                .with(CatalogTestDoubles.manual("TEST-cat-o", "openai", false)));
+
+        assertTrue(!offered(shadowed.offers(codex)).contains("TEST-cat-o"));
+    }
+
+    /** Offering is narrower than admitting: a saved model that left the offer keeps its own refusal. */
+    @Test
+    void admitStillAnswersForAModelTheImageRunsButTheOfferLeftOut() throws SQLException {
+        codexWithFourModels();
+
+        assertNull(configured().admit(CODEX, "TEST-not-in-any-catalog", null).refusal(),
+                "the image runs it: pricing refuses it later, with model_pricing_incomplete");
+        assertEquals("model_not_run_by_harness", configured().admit(CODEX, "TEST-not-in-the-image", null).refusal());
     }
 
     private void execute(String sql, String... binds) throws SQLException {

@@ -66,7 +66,12 @@ public class RepositoryBuildResource {
      * @param offered the models to show, in the vendor's order. The vendor's hidden ones are left out:
      *     they still run if named, but an operator choosing from a list should see what the vendor offers.
      */
-    public record HarnessModels(String status, List<dev.codespire.contract.event.HarnessImageResult.Model> offered) {}
+    /**
+     * @param offered   the models a setup may choose: run by the harness, known and enabled
+     * @param keyPriced the slugs of {@code offered} an API key can pay for; a seat may choose any of them
+     */
+    public record HarnessModels(String status, List<dev.codespire.contract.event.HarnessImageResult.Model> offered,
+                                List<String> keyPriced) {}
 
     @Inject HarnessCatalogues catalogues;
     /** @param account the role whose account answered, so a reviewer-confirmed head is not read as factory push access */
@@ -91,9 +96,13 @@ public class RepositoryBuildResource {
     }
 
     private HarnessModels modelsOf(String harness) {
-        return catalogues.get(harness)
-                .map(catalogue -> new HarnessModels(catalogue.status().name(), catalogue.offered()))
-                .orElse(new HarnessModels("UNKNOWN", List.of()));
+        return catalogues.get(harness).map(this::offeredBy).orElse(new HarnessModels("UNKNOWN", List.of(), List.of()));
+    }
+
+    private HarnessModels offeredBy(HarnessCatalogues.Catalogue catalogue) {
+        List<HarnessCatalogues.Offer> offers = catalogues.offers(catalogue);
+        return new HarnessModels(catalogue.status().name(), offers.stream().map(HarnessCatalogues.Offer::model).toList(),
+                offers.stream().filter(HarnessCatalogues.Offer::keyPriced).map(offer -> offer.model().slug()).toList());
     }
 
     @PUT @Path("/build")
