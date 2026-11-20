@@ -118,6 +118,26 @@ class LlmCatalogRefreshTest {
         assertTrue(states.failures.getFirst().startsWith("invalid: "), states.failures.toString());
     }
 
+    /** A validation message names text from the file; what is stored is flat and capped, whatever the file held. */
+    @Test
+    void anInvalidFilesErrorIsFlatAndCapped() {
+        states.holding(STORED);
+        String hostile = "providers: []
+models:
+  - modelId: \"TEST-a\nforged log line\r" + "x".repeat(500_000) + "\"
+"
+                + "    provider: openai
+";
+        LlmCatalogRefresh refresh = refresh(REMOTE, new StubFetcher(new CatalogFetcher.Fetched(hostile, null)));
+
+        assertEquals(LlmCatalogRefresh.RefreshOutcome.INVALID, refresh.refreshNow());
+
+        String error = states.failures.getFirst();
+        assertTrue(error.startsWith("invalid: model TEST-a forged log line"), error);
+        assertTrue(error.length() <= "invalid: ".length() + CatalogText.MAX_DETAIL, "length " + error.length());
+        assertTrue(error.chars().noneMatch(Character::isISOControl), error);
+    }
+
     @Test
     void aNewValidFileIsStoredAndSwapped() {
         states.holding(STORED);

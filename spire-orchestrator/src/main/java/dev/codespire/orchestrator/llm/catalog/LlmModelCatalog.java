@@ -169,7 +169,7 @@ public class LlmModelCatalog {
         try {
             return parse(text);
         } catch (CatalogException e) {
-            LOG.errorf("The bundled LLM catalog does not read (%s); catalog models are unpriced", e.getMessage());
+            LOG.errorf("The bundled LLM catalog does not read (%s); catalog models are unpriced", CatalogText.safe(e.getMessage()));
             return CatalogSnapshot.EMPTY;
         }
     }
@@ -213,7 +213,7 @@ public class LlmModelCatalog {
         try {
             return parse(stored);
         } catch (CatalogException e) {
-            LOG.errorf("The stored LLM catalog does not read (%s); using the bundled copy", e.getMessage());
+            LOG.errorf("The stored LLM catalog does not read (%s); using the bundled copy", CatalogText.safe(e.getMessage()));
             return bundled();
         }
     }

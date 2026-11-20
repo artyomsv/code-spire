@@ -146,7 +146,7 @@ public class LlmCatalogChangeListener {
             catalog.replace(LlmModelCatalog.parse(state.document()));
             LOG.infof("LLM catalog followed to %s", state.sha256());
         } catch (CatalogException e) {
-            LOG.errorf("The stored LLM catalog does not read (%s); keeping the catalog in use", e.getMessage());
+            LOG.errorf("The stored LLM catalog does not read (%s); keeping the catalog in use", CatalogText.safe(e.getMessage()));
         }
     }
 

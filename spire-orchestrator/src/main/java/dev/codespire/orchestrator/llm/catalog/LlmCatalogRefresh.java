@@ -116,9 +116,9 @@ public class LlmCatalogRefresh {
         try {
             next = LlmModelCatalog.parse(fetched.body());
         } catch (CatalogException invalid) {
-            states.recordFailure("invalid: " + invalid.getMessage());
+            states.recordFailure("invalid: " + CatalogText.safe(invalid.getMessage()));
             LOG.warnf("LLM catalog at the configured URL is invalid (%s); the catalog in use is kept",
-                    invalid.getMessage());
+                    CatalogText.safe(invalid.getMessage()));
             return RefreshOutcome.INVALID;
         }
         if (next.sha256().equals(state.sha256()) && url.equals(state.url())) {
