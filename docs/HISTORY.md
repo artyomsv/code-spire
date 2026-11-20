@@ -2551,3 +2551,19 @@ lives in `docs/`, the locked decisions in `docs/DECISIONS.md`, and claims no tes
   when the URL has not served a good file for three intervals. The first file holds 12 models, every price read from
   the vendor pages on 2026-11-20 (ai-catalog/PRICES-REVIEW.md lists each one for the operator's check). Not yet run
   live: see the docs/UNVERIFIED.md entry.
+
+- **An LLM provider is a connection; the model is chosen where it is used (2026-11-20, branch `feat/ai-catalog`,
+  ADR-018 amended).** A provider no longer has a model. The global default is the default provider plus the default
+  review model (app setting `llm.default-model`), changed together in one request; a repository names a provider and
+  its model together (`repository.review_llm_model`, V118) or neither. Settings → LLM has a "Default review model"
+  select of the default provider's vendor, "Set default" asks for the model, and Repository → Settings → "Review
+  with" shows a model select after the provider. A new choice must be a priced model of the provider's vendor; a
+  default provider with no model refuses reviews `NO_DEFAULT_MODEL` and raises `LLM_DEFAULT_MODEL_MISSING`; a vendor
+  mismatch or a switched-off model runs with a warning (`LLM_MODEL_NOT_FOR_PROVIDER`, `LLM_MODEL_SWITCHED_OFF`). The
+  model-in-use guard counts the default and repository choices, also through a catalog alias, and covers a type
+  change. A provider's type is fixed after create. `LlmCredential` on the wire is unchanged.
+  Upgrading: **stop every orchestrator instance** before deploying (an old instance selects and inserts
+  `llm_provider.model`, which V119 drops). V118 copies the default provider's model into `llm.default-model` and each
+  repository's provider model into `review_llm_model`; V119 drops the column. There is no rollback without a database
+  backup. An older dashboard that saves a repository with a provider and no model is refused 400. Not yet run live:
+  see the docs/UNVERIFIED.md entry.

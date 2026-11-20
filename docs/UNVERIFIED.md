@@ -58,6 +58,21 @@ Built and tested in CI only; no live deployment has read the catalog yet.
   Whether Codex reports cache-write tokens separately from input (PR #182 counts them as input) decides whether
   the rate is ever applied.
 
+## LLM provider without a model (ADR-018 amended, branch feat/ai-catalog, 2026-11-20)
+
+Written without a local build or test run; CI has not run it yet, and no live deployment has upgraded.
+
+- **V118 and V119 on a real database.** The staged-Flyway tests (`LlmModelNewHomesMigrationTest`,
+  `LlmProviderDropModelMigrationTest`) seed a few rows in a private schema. No upgraded production database with
+  repositories, harness rows and a disabled default has run them.
+- **The gateway mismatch warning.** An existing setup with an `openai`-type provider in front of another vendor's
+  model keeps running and raises `LLM_MODEL_NOT_FOR_PROVIDER`; only `WorkerLlmCredentialsTest.aVendorMismatchStillRuns`
+  and the attention tests show it, against fakes of such a gateway.
+- **The in-use guard races a concurrent choice.** A model deleted while a setting or repository save naming it is in
+  flight is not serialised; the review path's pricing refusal and the attention rows are the backstop, unproven live.
+- **The dashboard flow.** "Set default" with its model dialog, the default-model select and the repository model
+  select are covered by vitest only; no operator has used them.
+
 ## Kubernetes on any cluster (reviewer only, 2026-11-15)
 
 **The claim.** The Helm chart installs the reviewer (gateway, orchestrator, review worker, dashboard) on any

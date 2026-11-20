@@ -11,6 +11,11 @@ Architecture decision records for Code Spire. Newest first.
 "models and prices are operator-entered, never hard-coded": the operator may still enter them, and a public,
 reviewed file supplies the rest.
 
+**Note (2026-11-20):** with ADR-018 as amended the same day, a catalog model is chosen as the default review
+model or a repository's review model, never on a provider. "Use catalog" deletes an in-use manual model only
+when the catalog entry it shadows is of the same vendor, and a catalog entry's alias counts as a use of the
+manual model that shadows it.
+
 **Context.** Every install typed each model, its rates in millicents and its API dialect by hand into Settings →
 LLM → Models, and prices drifted. Claude Code's model offer was a hand-kept `models.json` baked into its image.
 The schema had no context window, no capabilities and no 1-hour cache-write price.
@@ -2932,6 +2937,18 @@ else the global default (`WorkerLlmCredentials.resolveForReview`). A named provi
 refuses rather than falling back, and one a repository names cannot be deleted. `scm_provider.llm_provider_id`
 will not be built. Subscription backends for reviews are being designed in
 [the harness reviews design](superpowers/specs/2026-10-30-harness-reviews-design.md).
+
+**Amended (2026-11-20): a provider is a connection; the model is chosen where it is used.** Built on branch
+`feat/ai-catalog`, not yet merged or live-proven
+([design](superpowers/specs/2026-11-20-llm-provider-without-model-design.md), revision 2). `llm_provider` loses
+its `model` (V119). The global default is the default provider plus the default review model, the app setting
+`llm.default-model`; a repository names a provider and its `review_llm_model` together, or neither. The default
+provider and model change in one request (`PUT /api/llm-providers/{id}/default` with `{ "model" }`); the model
+alone changes through `PUT /api/settings/llm-default-model`. A new choice must be a priced model of the
+provider's vendor (400 otherwise, naming the reason); at runtime a mismatch from before (a gateway setup) or a
+switched-off model still runs, with an attention warning. A default provider with no default model refuses
+reviews `NO_DEFAULT_MODEL`. A provider's type is fixed after create. The wire record `LlmCredential` is
+unchanged: the orchestrator fills its `model` from the choice.
 
 ---
 
